@@ -1,0 +1,1023 @@
+{
+ "%@ · 剩余 %@": [
+  "BrewEditorView.swift"
+ ],
+ "%@ 个文件 · %@": [
+  "MoreView.swift"
+ ],
+ "%@ 养豆结束": [
+  "ReminderKind.swift"
+ ],
+ "%@ 分": [
+  "StarRating.swift"
+ ],
+ "%@ 包": [
+  "HomeView.swift"
+ ],
+ "%@ 天": [
+  "PhaseRulesView.swift"
+ ],
+ "%@ 建议优先喝": [
+  "ReminderKind.swift"
+ ],
+ "%@ 星": [
+  "StarRating.swift"
+ ],
+ "%@ 条": [
+  "TastingTimelineView.swift"
+ ],
+ "%@ 条待送达": [
+  "MoreView.swift"
+ ],
+ "%@ 次": [
+  "BeanDetailView.swift",
+  "BrewHistoryView.swift"
+ ],
+ "%@ 现在进入最佳风味窗口，可以开始喝了。": [
+  "ReminderKind.swift"
+ ],
+ "%@ 的排气期基本结束，风味开始打开了。": [
+  "ReminderKind.swift"
+ ],
+ "%@ 的窗口已经过半，接下来的风味会慢慢变平。": [
+  "ReminderKind.swift"
+ ],
+ "%@ 的窗口快结束了": [
+  "ReminderKind.swift"
+ ],
+ "%@ 的窗口比你的消耗速度更短，建议优先喝完。": [
+  "ReminderKind.swift"
+ ],
+ "%@ 的窗口过半了": [
+  "ReminderKind.swift"
+ ],
+ "%@ 的窗口还剩两天，想喝到最好的状态就趁现在。": [
+  "ReminderKind.swift"
+ ],
+ "%@ 进入风味窗口": [
+  "ReminderKind.swift"
+ ],
+ "22 格": [
+  "DemoData.swift"
+ ],
+ "JSON 完整备份 · CSV 表格": [
+  "MoreView.swift"
+ ],
+ "· 这次用掉的比剩下的还多": [
+  "BrewEditorView.swift"
+ ],
+ "一句话总结": [
+  "BrewEditorView.swift",
+  "TastingEditorView.swift"
+ ],
+ "上次这杯不太理想": [
+  "PriorityEngine.swift"
+ ],
+ "下午好": [
+  "HomeView.swift"
+ ],
+ "不同豆子、不同烘焙曲线都会不一样。下面是「%@」，改到符合你自己的经验就好。": [
+  "PhaseRulesView.swift"
+ ],
+ "不足一次": [
+  "ConsumptionEstimator.swift"
+ ],
+ "中午好": [
+  "HomeView.swift"
+ ],
+ "中深烘": [
+  "RoastLevel.swift"
+ ],
+ "中烘": [
+  "RoastLevel.swift"
+ ],
+ "产区": [
+  "BeanEditorView.swift"
+ ],
+ "今天": [
+  "PhaseTrack.swift"
+ ],
+ "今天建议": [
+  "TodayCard.swift"
+ ],
+ "价格": [
+  "BeanEditorView.swift"
+ ],
+ "会把你改过的所有烘焙度都改回默认值。": [
+  "PhaseRulesView.swift"
+ ],
+ "余韵": [
+  "BrewEditorView.swift"
+ ],
+ "保存": [
+  "BeanDetailView.swift",
+  "BeanEditorView.swift",
+  "BrewEditorView.swift",
+  "TastingEditorView.swift"
+ ],
+ "保存后剩余 %@": [
+  "BrewEditorView.swift"
+ ],
+ "元": [
+  "BeanEditorView.swift"
+ ],
+ "先填粉量吧，这样才能从库存里扣掉": [
+  "BrewMath.swift"
+ ],
+ "先放着养一养。": [
+  "DemoData.swift"
+ ],
+ "入口有点闷": [
+  "DemoData.swift"
+ ],
+ "全部恢复默认": [
+  "PhaseRulesView.swift"
+ ],
+ "关于": [
+  "MoreView.swift"
+ ],
+ "养豆": [
+  "BeanPhase.swift"
+ ],
+ "养豆完成": [
+  "ReminderKind.swift"
+ ],
+ "冲煮": [
+  "BrewHistoryView.swift",
+  "BrewPhaseApp.swift",
+  "BrewRow.swift",
+  "ExportView.swift"
+ ],
+ "冲煮时间还没填": [
+  "BrewMath.swift"
+ ],
+ "冲煮记录": [
+  "BeanDetailView.swift",
+  "ExportView.swift",
+  "Tasting.swift"
+ ],
+ "冷萃": [
+  "FlavorLibrary.swift"
+ ],
+ "刚开袋，酸质冲一点": [
+  "DemoData.swift"
+ ],
+ "删除": [
+  "BeanDetailView.swift"
+ ],
+ "删除这包豆子": [
+  "BeanDetailView.swift"
+ ],
+ "删除这包豆子后，它关联的 %@ 条冲煮记录和 %@ 条风味记录也会一起被删除，无法恢复。": [
+  "BeanDetailView.swift"
+ ],
+ "删除这包豆子？": [
+  "BeanDetailView.swift"
+ ],
+ "删除这条记录": [
+  "BrewHistoryView.swift",
+  "TastingTimelineView.swift"
+ ],
+ "剩余": [
+  "BeanDetailView.swift",
+  "TodayCard.swift"
+ ],
+ "剩余克数": [
+  "BeanDetailView.swift",
+  "BeanEditorView.swift"
+ ],
+ "剩余克数不能是负数": [
+  "BrewMath.swift"
+ ],
+ "剩余量按总克数算": [
+  "BeanEditorView.swift"
+ ],
+ "剩余量比总克数还多，保存时会按 %@ 调整总克数。": [
+  "BeanDetailView.swift"
+ ],
+ "剩余量比总克数还多，已把总克数调到 %@": [
+  "BrewMath.swift"
+ ],
+ "加一张包装照片": [
+  "PhotoFieldView.swift"
+ ],
+ "包含豆子、冲煮、风味、提醒和窗口规则": [
+  "ExportView.swift"
+ ],
+ "半日晒": [
+  "DemoData.swift"
+ ],
+ "厌氧日晒": [
+  "DemoData.swift"
+ ],
+ "去豆仓挑一包，冲完记下参数和味道，这里就会长起来。": [
+  "BrewHistoryView.swift"
+ ],
+ "参数": [
+  "BrewEditorView.swift"
+ ],
+ "取消": [
+  "BeanDetailView.swift",
+  "BeanEditorView.swift",
+  "BrewEditorView.swift",
+  "PhaseRulesView.swift",
+  "TastingEditorView.swift"
+ ],
+ "只剩 %@ 次的量": [
+  "PriorityEngine.swift"
+ ],
+ "可以以后再补": [
+  "BeanEditorView.swift",
+  "BrewEditorView.swift",
+  "TastingEditorView.swift"
+ ],
+ "可以用 Excel 打开": [
+  "ExportView.swift"
+ ],
+ "可以等": [
+  "BeanPhase.swift"
+ ],
+ "可留空": [
+  "BrewEditorView.swift"
+ ],
+ "司令官 C40": [
+  "DemoData.swift",
+  "FlavorLibrary.swift"
+ ],
+ "启程咖啡": [
+  "DemoData.swift"
+ ],
+ "味觉细项": [
+  "BrewEditorView.swift"
+ ],
+ "哥伦比亚 · 慧兰": [
+  "DemoData.swift"
+ ],
+ "器具": [
+  "BrewEditorView.swift",
+  "MoreView.swift"
+ ],
+ "图片": [
+  "MoreView.swift"
+ ],
+ "在哪里买的": [
+  "BeanEditorView.swift"
+ ],
+ "在喝": [
+  "RoastLevel.swift"
+ ],
+ "埃塞俄比亚 · Guji": [
+  "DemoData.swift"
+ ],
+ "基于默认风味窗口估算": [
+  "PhaseRuleData.swift"
+ ],
+ "填上烘焙日期就能看到阶段": [
+  "PhaseCard.swift"
+ ],
+ "填上烘焙日期，就能看到它现在处在哪个阶段": [
+  "PhaseEngine.swift"
+ ],
+ "处理法": [
+  "BeanEditorView.swift"
+ ],
+ "备注": [
+  "BeanDetailView.swift",
+  "BeanEditorView.swift"
+ ],
+ "复制": [
+  "BrewEditorView.swift"
+ ],
+ "复制上次冲煮": [
+  "BrewEditorView.swift"
+ ],
+ "复制参数再来一次": [
+  "BeanDetailView.swift"
+ ],
+ "太新": [
+  "BeanPhase.swift",
+  "Chips.swift"
+ ],
+ "完整备份": [
+  "ExportView.swift"
+ ],
+ "导出": [
+  "ExportView.swift",
+  "MoreView.swift"
+ ],
+ "导出 JSON": [
+  "ExportView.swift"
+ ],
+ "导出时出了一点问题，请再试一次": [
+  "ExportManager.swift",
+  "ExportView.swift"
+ ],
+ "导出的 JSON 可以完整还原你的记录。CSV 只包含豆子、冲煮和风味三张表，方便做统计。": [
+  "ExportView.swift"
+ ],
+ "导出的文件只保存在这台设备上，通过系统分享面板发给你自己。BrewPhase 不会上传任何东西。": [
+  "ExportView.swift"
+ ],
+ "尽快喝完": [
+  "BeanPhase.swift",
+  "Chips.swift",
+  "PriorityEngine.swift"
+ ],
+ "巧克力": [
+  "FlavorLibrary.swift"
+ ],
+ "已喝完": [
+  "HomeView.swift",
+  "RoastLevel.swift"
+ ],
+ "已填入上次的参数": [
+  "BrewEditorView.swift"
+ ],
+ "已清理 %@ 个文件": [
+  "MoreView.swift"
+ ],
+ "已经喝完了": [
+  "PriorityEngine.swift"
+ ],
+ "已经开袋": [
+  "BeanEditorView.swift"
+ ],
+ "已经见底": [
+  "Formatting.swift"
+ ],
+ "已经进入窗口": [
+  "Formatting.swift"
+ ],
+ "已自定义": [
+  "PhaseRulesView.swift"
+ ],
+ "已自定义 %@ 项": [
+  "MoreView.swift"
+ ],
+ "已过窗口 %@ 天": [
+  "Formatting.swift"
+ ],
+ "已过窗口但还剩不少": [
+  "PriorityEngine.swift"
+ ],
+ "巴拿马 · Boquete": [
+  "DemoData.swift"
+ ],
+ "巴西 · Cerrado": [
+  "DemoData.swift"
+ ],
+ "平均 %@/次": [
+  "BeanDetailView.swift"
+ ],
+ "平均评分": [
+  "BrewHistoryView.swift"
+ ],
+ "库存": [
+  "BeanDetailView.swift"
+ ],
+ "建议优先": [
+  "BeanPhase.swift"
+ ],
+ "建议优先消耗": [
+  "Chips.swift"
+ ],
+ "建议优先饮用": [
+  "BeanPhase.swift",
+  "Chips.swift",
+  "PriorityEngine.swift",
+  "ReminderKind.swift"
+ ],
+ "开始冲煮": [
+  "TodayCard.swift"
+ ],
+ "开始衰退": [
+  "Chips.swift"
+ ],
+ "开始进入窗口": [
+  "BeanPhase.swift"
+ ],
+ "开封日期": [
+  "BeanEditorView.swift"
+ ],
+ "总克数": [
+  "BeanEditorView.swift"
+ ],
+ "总克数要大于 0": [
+  "BrewMath.swift"
+ ],
+ "总次数": [
+  "BrewHistoryView.swift"
+ ],
+ "恢复默认": [
+  "PhaseRulesView.swift"
+ ],
+ "恢复默认窗口？": [
+  "PhaseRulesView.swift"
+ ],
+ "想记的事情，比如冲煮建议": [
+  "BeanEditorView.swift"
+ ],
+ "意式拼配": [
+  "RoastLevel.swift"
+ ],
+ "意式浓缩": [
+  "DemoData.swift",
+  "FlavorLibrary.swift"
+ ],
+ "所有数据随时可以导出带走。": [
+  "MoreView.swift"
+ ],
+ "手冲首选，V60 闷蒸 30 秒。": [
+  "DemoData.swift"
+ ],
+ "把记录带走": [
+  "ExportView.swift"
+ ],
+ "拍照": [
+  "PhotoFieldView.swift"
+ ],
+ "拼配": [
+  "DemoData.swift"
+ ],
+ "按默认 %@/次 估算": [
+  "BeanDetailView.swift"
+ ],
+ "换一张": [
+  "PhotoFieldView.swift"
+ ],
+ "换语言不用重启，也不用改系统设置。选「跟随系统」就跟着手机走。": [
+  "MoreView.swift"
+ ],
+ "排气 %@–%@ · 窗口 %@–%@ · 衰退 %@": [
+  "PhaseRule.swift"
+ ],
+ "排气 %@–%@ 天 · 窗口 %@–%@ 天 · %@": [
+  "BeanEditorView.swift"
+ ],
+ "排气 %@–%@ 天 · 窗口第 %@–%@ 天 · 第 %@ 天开始衰退": [
+  "PhaseRulesView.swift"
+ ],
+ "排气开始": [
+  "PhaseRulesView.swift"
+ ],
+ "排气期约 %@–%@ 天": [
+  "PhaseCard.swift"
+ ],
+ "排气期结束，风味开始打开时提醒": [
+  "ReminderKind.swift"
+ ],
+ "排气结束": [
+  "PhaseRulesView.swift"
+ ],
+ "提醒": [
+  "MoreView.swift"
+ ],
+ "提醒会根据每包豆子的烘焙日期自动排好": [
+  "NotificationManager.swift"
+ ],
+ "提醒会根据烘焙日期一次排好，不需要 App 在后台运行。": [
+  "MoreView.swift"
+ ],
+ "摩卡壶": [
+  "FlavorLibrary.swift"
+ ],
+ "数据": [
+  "MoreView.swift"
+ ],
+ "新记录会从这里开始": [
+  "MoreView.swift"
+ ],
+ "日期": [
+  "BrewEditorView.swift",
+  "TastingEditorView.swift"
+ ],
+ "早上好": [
+  "HomeView.swift"
+ ],
+ "时间": [
+  "BrewEditorView.swift"
+ ],
+ "晚上好": [
+  "HomeView.swift"
+ ],
+ "更多": [
+  "BrewPhaseApp.swift",
+  "MoreView.swift"
+ ],
+ "更多信息": [
+  "BeanEditorView.swift"
+ ],
+ "最常用": [
+  "BrewHistoryView.swift"
+ ],
+ "有容": [
+  "DemoData.swift"
+ ],
+ "有点苦了": [
+  "DemoData.swift"
+ ],
+ "朋友送的": [
+  "DemoData.swift"
+ ],
+ "未命名": [
+  "BeanCard.swift",
+  "BeanDetailView.swift",
+  "BrewEditorView.swift",
+  "BrewRow.swift",
+  "TastingEditorView.swift",
+  "TodayCard.swift"
+ ],
+ "未填写": [
+  "FormComponents.swift"
+ ],
+ "来自冲煮记录": [
+  "TastingTimelineView.swift"
+ ],
+ "柑橘": [
+  "FlavorLibrary.swift"
+ ],
+ "查看全部 %@ 条": [
+  "BeanDetailView.swift"
+ ],
+ "标记为已喝完": [
+  "BeanDetailView.swift"
+ ],
+ "桃": [
+  "FlavorLibrary.swift"
+ ],
+ "橙花": [
+  "FlavorLibrary.swift"
+ ],
+ "正在养豆": [
+  "BeanPhase.swift",
+  "Chips.swift"
+ ],
+ "正在准备文件…": [
+  "ExportView.swift"
+ ],
+ "每天一杯奶咖的主力。": [
+  "DemoData.swift"
+ ],
+ "比如 22 格": [
+  "BrewEditorView.swift"
+ ],
+ "比如 Ethiopia Guji": [
+  "BeanEditorView.swift"
+ ],
+ "比如 司令官 C40": [
+  "BrewEditorView.swift"
+ ],
+ "比如 埃塞俄比亚 · Guji": [
+  "BeanEditorView.swift"
+ ],
+ "比如 甜感明显，下把可以再粗一点": [
+  "BrewEditorView.swift"
+ ],
+ "比如 甜感最明显，很干净": [
+  "TastingEditorView.swift"
+ ],
+ "水果": [
+  "FlavorLibrary.swift"
+ ],
+ "水洗": [
+  "DemoData.swift"
+ ],
+ "水洗 / 日晒 / 厌氧": [
+  "BeanEditorView.swift"
+ ],
+ "水温": [
+  "BrewEditorView.swift",
+  "MoreView.swift"
+ ],
+ "水温还没填": [
+  "BrewMath.swift"
+ ],
+ "水量": [
+  "BrewEditorView.swift",
+  "MoreView.swift"
+ ],
+ "水量还没填，粉水比会留空": [
+  "BrewMath.swift"
+ ],
+ "没有豆子可以展示": [
+  "BrewPhaseApp.swift"
+ ],
+ "没有账号，没有登录，没有服务器。": [
+  "MoreView.swift"
+ ],
+ "没有需要清理的图片": [
+  "MoreView.swift"
+ ],
+ "没能保存下来，请再试一次": [
+  "BeanEditorView.swift",
+  "BrewEditorView.swift"
+ ],
+ "法压壶": [
+  "FlavorLibrary.swift"
+ ],
+ "泰摩 栗子": [
+  "FlavorLibrary.swift"
+ ],
+ "浅烘": [
+  "RoastLevel.swift"
+ ],
+ "深一点，做奶咖不错。": [
+  "DemoData.swift"
+ ],
+ "深烘": [
+  "RoastLevel.swift"
+ ],
+ "添加第一包豆子，开始记录它从养豆到衰退的整个过程。": [
+  "HomeView.swift"
+ ],
+ "添加豆子": [
+  "BeanEditorView.swift",
+  "HomeView.swift"
+ ],
+ "清理 %@ 个无用的图片": [
+  "MoreView.swift"
+ ],
+ "渠道": [
+  "BeanEditorView.swift"
+ ],
+ "烘焙 %@": [
+  "BeanDetailView.swift"
+ ],
+ "烘焙与重量": [
+  "BeanEditorView.swift"
+ ],
+ "烘焙商": [
+  "BeanEditorView.swift"
+ ],
+ "烘焙度": [
+  "BeanEditorView.swift"
+ ],
+ "烘焙日期": [
+  "BeanEditorView.swift"
+ ],
+ "烘焙日期在未来": [
+  "PriorityEngine.swift"
+ ],
+ "烘焙日期在未来，请检查一下": [
+  "PhaseEngine.swift"
+ ],
+ "烘焙日期还没选，风味阶段要靠它来算": [
+  "BrewMath.swift"
+ ],
+ "焦糖": [
+  "FlavorLibrary.swift"
+ ],
+ "照常喝": [
+  "BeanPhase.swift"
+ ],
+ "照片": [
+  "BeanEditorView.swift"
+ ],
+ "爱乐压": [
+  "FlavorLibrary.swift"
+ ],
+ "玫瑰": [
+  "FlavorLibrary.swift"
+ ],
+ "现在喝": [
+  "BeanPhase.swift",
+  "Chips.swift"
+ ],
+ "现在正处于风味窗口": [
+  "PriorityEngine.swift"
+ ],
+ "现在还没有记录。空数据也可以导出，出来的是一份结构完整、内容为空的文件。": [
+  "ExportView.swift"
+ ],
+ "甜": [
+  "BrewEditorView.swift"
+ ],
+ "甜感": [
+  "FlavorLibrary.swift"
+ ],
+ "界面语言": [
+  "MoreView.swift"
+ ],
+ "目前最平衡的一杯": [
+  "DemoData.swift"
+ ],
+ "相册": [
+  "PhotoFieldView.swift"
+ ],
+ "研磨度": [
+  "BrewEditorView.swift"
+ ],
+ "磨豆机": [
+  "BrewEditorView.swift"
+ ],
+ "移除": [
+  "PhotoFieldView.swift"
+ ],
+ "窗口今天结束": [
+  "Formatting.swift"
+ ],
+ "窗口即将结束": [
+  "ReminderKind.swift"
+ ],
+ "窗口开始": [
+  "PhaseRulesView.swift"
+ ],
+ "窗口比你的消耗速度更短": [
+  "PriorityEngine.swift"
+ ],
+ "窗口结束": [
+  "PhaseRulesView.swift"
+ ],
+ "窗口结束前两天提醒": [
+  "ReminderKind.swift"
+ ],
+ "窗口走过一半时提醒": [
+  "ReminderKind.swift"
+ ],
+ "窗口过半": [
+  "ReminderKind.swift"
+ ],
+ "窗口这两天就结束了": [
+  "PriorityEngine.swift"
+ ],
+ "立即生效": [
+  "MoreView.swift"
+ ],
+ "简体中文": [
+  "LanguageManager.swift"
+ ],
+ "粉水比": [
+  "BrewEditorView.swift"
+ ],
+ "粉量": [
+  "BrewEditorView.swift",
+  "MoreView.swift"
+ ],
+ "系统通知权限已关闭，提醒不会送达。可以在「设置 › 通知 › BrewPhase」里重新打开。": [
+  "NotificationManager.swift"
+ ],
+ "红糖": [
+  "FlavorLibrary.swift"
+ ],
+ "约 %@ 天": [
+  "Formatting.swift"
+ ],
+ "约 %@ 次": [
+  "Formatting.swift"
+ ],
+ "线下门店": [
+  "DemoData.swift"
+ ],
+ "给它起个名字吧": [
+  "BrewMath.swift"
+ ],
+ "编辑冲煮": [
+  "BrewEditorView.swift"
+ ],
+ "编辑豆子": [
+  "BeanDetailView.swift",
+  "BeanEditorView.swift"
+ ],
+ "网店": [
+  "DemoData.swift"
+ ],
+ "聪明杯": [
+  "FlavorLibrary.swift"
+ ],
+ "肯尼亚 · Nyeri": [
+  "DemoData.swift"
+ ],
+ "自定义": [
+  "FlavorTagEditor.swift"
+ ],
+ "自己写一个": [
+  "FlavorTagEditor.swift"
+ ],
+ "花香": [
+  "FlavorLibrary.swift"
+ ],
+ "花香出来了，很干净": [
+  "DemoData.swift"
+ ],
+ "苦": [
+  "BrewEditorView.swift"
+ ],
+ "茉莉": [
+  "FlavorLibrary.swift"
+ ],
+ "草莓": [
+  "FlavorLibrary.swift"
+ ],
+ "葡萄": [
+  "FlavorLibrary.swift"
+ ],
+ "蓝莓": [
+  "FlavorLibrary.swift"
+ ],
+ "蜂蜜": [
+  "FlavorLibrary.swift"
+ ],
+ "补充产区、处理法、价格": [
+  "BeanEditorView.swift"
+ ],
+ "表格": [
+  "ExportView.swift"
+ ],
+ "衰退": [
+  "BeanPhase.swift"
+ ],
+ "衰退起点": [
+  "PhaseRulesView.swift"
+ ],
+ "袋子上的烘焙日期磨掉了，等确认一下。": [
+  "DemoData.swift"
+ ],
+ "规则": [
+  "ExportView.swift"
+ ],
+ "记一次冲煮": [
+  "BeanDetailView.swift",
+  "BrewEditorView.swift"
+ ],
+ "记一笔风味": [
+  "TastingEditorView.swift",
+  "TastingTimelineView.swift"
+ ],
+ "记录开封日期和剩余量": [
+  "BeanEditorView.swift"
+ ],
+ "语言": [
+  "MoreView.swift"
+ ],
+ "说明": [
+  "ExportView.swift"
+ ],
+ "谁烘的": [
+  "BeanEditorView.swift"
+ ],
+ "调整": [
+  "BeanDetailView.swift"
+ ],
+ "调整剩余量": [
+  "BeanDetailView.swift"
+ ],
+ "豆仓": [
+  "BrewPhaseApp.swift",
+  "HomeView.swift"
+ ],
+ "豆仓还是空的": [
+  "HomeView.swift"
+ ],
+ "豆名": [
+  "BeanEditorView.swift"
+ ],
+ "豆子": [
+  "ExportView.swift"
+ ],
+ "豆子清单": [
+  "ExportView.swift"
+ ],
+ "购买日期": [
+  "BeanEditorView.swift"
+ ],
+ "距离窗口结束约 %@ 天": [
+  "Formatting.swift"
+ ],
+ "跟随系统": [
+  "LanguageManager.swift"
+ ],
+ "还在养豆，风味还没打开": [
+  "PriorityEngine.swift"
+ ],
+ "还有约 %@ 天进入窗口": [
+  "Formatting.swift"
+ ],
+ "还没有冲煮记录": [
+  "BrewHistoryView.swift"
+ ],
+ "还没有冲煮记录\\n冲一次，然后记下今天这杯怎么样。": [
+  "BeanDetailView.swift"
+ ],
+ "还没有标签": [
+  "FlavorTagEditor.swift"
+ ],
+ "还没有烘焙日期": [
+  "PriorityEngine.swift"
+ ],
+ "还没有请求通知权限，添加第一包豆子时会问一次": [
+  "NotificationManager.swift"
+ ],
+ "还没有风味记录\\n冲一次，然后记下今天这杯怎么样。": [
+  "TastingTimelineView.swift"
+ ],
+ "还能冲": [
+  "TodayCard.swift"
+ ],
+ "这些数字只是「%@」，不是保质期，也不会说某包豆子过期了。": [
+  "MoreView.swift"
+ ],
+ "这些数字只是估算": [
+  "PhaseRulesView.swift"
+ ],
+ "这些是默认窗口，可以自己改": [
+  "PhaseCard.swift"
+ ],
+ "这包可能喝不完它的窗口时提醒": [
+  "ReminderKind.swift"
+ ],
+ "这包豆子": [
+  "BeanEditorView.swift",
+  "ReminderKind.swift"
+ ],
+ "这张图片没能保存下来，可以换一张试试": [
+  "ImageStore.swift"
+ ],
+ "这杯怎么样": [
+  "BrewEditorView.swift",
+  "TastingEditorView.swift"
+ ],
+ "进入最佳风味窗口时提醒": [
+  "ReminderKind.swift"
+ ],
+ "进入窗口": [
+  "BeanPhase.swift",
+  "Chips.swift"
+ ],
+ "进入风味窗口": [
+  "ReminderKind.swift"
+ ],
+ "都在本机": [
+  "MoreView.swift"
+ ],
+ "都是默认值": [
+  "MoreView.swift"
+ ],
+ "酸": [
+  "BrewEditorView.swift"
+ ],
+ "醇厚": [
+  "BrewEditorView.swift"
+ ],
+ "闻起来发酵感很足。": [
+  "DemoData.swift"
+ ],
+ "预计喝完": [
+  "TodayCard.swift"
+ ],
+ "预计还能喝 %@ 天": [
+  "Formatting.swift"
+ ],
+ "风味": [
+  "ExportView.swift"
+ ],
+ "风味变化": [
+  "BrewPhaseApp.swift",
+  "TastingTimelineView.swift"
+ ],
+ "风味已经开始衰退": [
+  "PriorityEngine.swift"
+ ],
+ "风味开始打开": [
+  "BeanPhase.swift",
+  "Chips.swift"
+ ],
+ "风味标签": [
+  "BeanEditorView.swift",
+  "BrewEditorView.swift",
+  "FlavorTagEditor.swift",
+  "TastingEditorView.swift"
+ ],
+ "风味正在打开": [
+  "PriorityEngine.swift"
+ ],
+ "风味窗口": [
+  "MoreView.swift",
+  "PhaseRulesView.swift"
+ ],
+ "风味窗口规则": [
+  "MoreView.swift"
+ ],
+ "风味衰退": [
+  "BeanPhase.swift"
+ ],
+ "风味记录": [
+  "ExportView.swift",
+  "Tasting.swift"
+ ],
+ "飞行模式下也能完整使用。": [
+  "MoreView.swift"
+ ],
+ "黄金窗口": [
+  "BeanPhase.swift",
+  "Chips.swift"
+ ],
+ "黄金风味窗口": [
+  "BeanPhase.swift"
+ ],
+ "默认值：浅烘 7–28 天 · 中烘 5–21 天 · 中深烘 / 深烘 3–14 天 · 意式拼配 7–21 天。": [
+  "PhaseRulesView.swift"
+ ],
+ "默认冲煮参数": [
+  "MoreView.swift"
+ ]
+}

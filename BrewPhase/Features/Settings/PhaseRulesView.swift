@@ -1,0 +1,216 @@
+import SwiftData
+import SwiftUI
+
+/// 风味窗口规则 (§18).
+///
+/// The windows the engine obeys, editable per roast level. Two things matter
+/// here: the numbers are shown as a range that reads like the loose guidance it
+/// is, and every change is previewed back as a phase track so the effect on a
+/// bag is obvious before you leave the screen.
+struct PhaseRulesView: View {
+
+    @Environment(\.modelContext) private var context
+    @Query private var rules: [PhaseRule]
+
+    @State private var revision = 0
+    @State private var isConfirmingReset = false
+
+    private var book: PhaseRuleBook { PhaseRuleBook.make(stored: rules) }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Metric.sectionGap) {
+                intro
+
+                ForEach(RoastLevel.pickerOrder) { level in
+                    levelCard(level)
+                }
+
+                resetSection
+            }
+            .padding(.horizontal, Metric.gutter)
+            .padding(.top, 8)
+            .padding(.bottom, 40)
+        }
+        .background(Palette.paper)
+        .navigationTitle("风味窗口")
+        .navigationBarTitleDisplayMode(.inline)
+        .id(revision)
+        .onDisappear {
+            // Reminders were planned from the old windows; re-plan them once,
+            // when the user has finished fiddling, rather than on every tap.
+            Task { await rescheduleAffectedBeans() }
+        }
+        .confirmationDialog("恢复默认窗口？", isPresented: $isConfirmingReset, titleVisibility: .visible) {
+            Button("恢复默认", role: .destructive) {
+                PhaseRuleBook.resetToDefaults(context: context)
+                revision += 1
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("会把你改过的所有烘焙度都改回默认值。")
+        }
+    }
+
+    private var intro: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("这些数字只是估算")
+                .font(TypeScale.title)
+                .foregroundStyle(Palette.ink)
+            Text(L("不同豆子、不同烘焙曲线都会不一样。下面是「%@」，改到符合你自己的经验就好。",
+                   DefaultPhaseRules.disclaimer))
+                .font(TypeScale.callout)
+                .foregroundStyle(Palette.inkSoft)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 4)
+    }
+
+    // MARK: - One level
+
+    private func levelCard(_ level: RoastLevel) -> some View {
+        let data = book.rule(for: level)
+        let isCustomized = !data.matchesDefaults()
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text(verbatim: level.label)
+                    .font(TypeScale.title)
+                    .foregroundStyle(Palette.ink)
+                if isCustomized {
+                    Chip(text: L("已自定义"), tint: Palette.roast, background: Palette.cream.opacity(0.6))
+                }
+                Spacer(minLength: 0)
+            }
+
+            Card(padding: 0) {
+                VStack(spacing: 0) {
+                    ruleStepper(level: level, data: data, label: "排气开始", keyPath: \.restMinDays, range: 0...60)
+                    ruleStepper(level: level, data: data, label: "排气结束", keyPath: \.restMaxDays, range: 0...60)
+                    ruleStepper(level: level, data: data, label: "窗口开始", keyPath: \.peakStartDay, range: 1...120)
+                    ruleStepper(level: level, data: data, label: "窗口结束", keyPath: \.peakEndDay, range: 2...180)
+                    ruleStepper(level: level, data: data, label: "衰退起点", keyPath: \.declineStartDay, range: 2...180,
+                                showsDivider: false)
+                }
+            }
+
+            preview(level: level, data: data)
+        }
+    }
+
+    /// Live feedback: the same track the home screen draws, for a typical bag of
+    /// this level sitting at the halfway point of its window.
+    private func preview(level: RoastLevel, data: PhaseRuleData) -> some View {
+        let normalized = data.normalized()
+        let bounds = PhaseEngine.boundaries(for: normalized)
+        let midpoint = (bounds.peakStart + bounds.peakEnd) / 2
+        let snapshot = BeanSnapshot(
+            name: level.label,
+            roastLevel: level,
+            roastDate: DateMath.add(days: -midpoint, to: Date()),
+            weightG: 200,
+            remainingG: 120
+        )
+        let reading = PhaseEngine.reading(for: snapshot, rule: normalized)
+
+        return VStack(alignment: .leading, spacing: 7) {
+            PhaseTrack(reading: reading, showsMarker: true, showsLegend: true)
+            Text(L("排气 %@–%@ 天 · 窗口第 %@–%@ 天 · 第 %@ 天开始衰退",
+                   String(normalized.restMinDays), String(normalized.restMaxDays),
+                   String(bounds.peakStart), String(bounds.peakEnd), String(bounds.peakEnd)))
+                .font(TypeScale.caption)
+                .foregroundStyle(Palette.inkFaint)
+        }
+        .padding(.horizontal, 4)
+    }
+
+    // MARK: - Stepper
+
+    private func ruleStepper(
+        level: RoastLevel,
+        data: PhaseRuleData,
+        label: LocalizedStringKey,
+        keyPath: WritableKeyPath<PhaseRuleData, Int>,
+        range: ClosedRange<Int>,
+        showsDivider: Bool = true
+    ) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Text(label)
+                    .font(TypeScale.body)
+                    .foregroundStyle(Palette.inkSoft)
+                Spacer(minLength: 8)
+
+                Text(L("%@ 天", String(data[keyPath: keyPath])))
+                    .font(TypeScale.numeral)
+                    .foregroundStyle(Palette.ink)
+                    .frame(minWidth: 56, alignment: .trailing)
+
+                HStack(spacing: 6) {
+                    stepButton(systemImage: "minus", isEnabled: data[keyPath: keyPath] > range.lowerBound) {
+                        var updated = data
+                        updated[keyPath: keyPath] = max(range.lowerBound, data[keyPath: keyPath] - 1)
+                        apply(updated, to: level)
+                    }
+                    stepButton(systemImage: "plus", isEnabled: data[keyPath: keyPath] < range.upperBound) {
+                        var updated = data
+                        updated[keyPath: keyPath] = min(range.upperBound, data[keyPath: keyPath] + 1)
+                        apply(updated, to: level)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .frame(minHeight: 50)
+
+            if showsDivider { CardDivider() }
+        }
+    }
+
+    private func stepButton(systemImage: String, isEnabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(isEnabled ? Palette.roast : Palette.inkFaint.opacity(0.5))
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(Palette.well))
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+    }
+
+    // MARK: - Reset
+
+    private var resetSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SecondaryButton(title: "全部恢复默认", systemImage: "arrow.counterclockwise") {
+                isConfirmingReset = true
+            }
+            Text("默认值：浅烘 7–28 天 · 中烘 5–21 天 · 中深烘 / 深烘 3–14 天 · 意式拼配 7–21 天。")
+                .font(TypeScale.caption)
+                .foregroundStyle(Palette.inkFaint)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4)
+        }
+    }
+
+    // MARK: - Writing
+
+    private func apply(_ data: PhaseRuleData, to level: RoastLevel) {
+        let normalized = data.normalized()
+        if let row = rules.first(where: { $0.roastLevel == level }) {
+            row.apply(normalized)
+        } else {
+            context.insert(PhaseRule(data: normalized))
+        }
+        try? context.save()
+        revision += 1
+    }
+
+    private func rescheduleAffectedBeans() async {
+        let beans = (try? context.fetch(FetchDescriptor<Bean>())) ?? []
+        let book = PhaseRuleBook.make(stored: rules)
+        await NotificationManager.shared.refreshAll(beans: beans, book: book, context: context)
+    }
+}
