@@ -1,0 +1,945 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-30",
+  "note": "Phase 10 Embedding 准备层（规格 §53–§55）。每个条目 = 一个明确主题，不是一篇长文。含双语正文（供界面语言切换时检索语言跟随）。sourceIds / authorityTier / applicability 为 app 解析层忽略的富元数据。所有正文为独立改写，未复制任何受限制来源的原文。",
+  "documents": [
+    {
+      "id": "kb.fundamentals.two-species",
+      "title": {
+        "zh-Hans": "咖啡的两个栽培种",
+        "en": "The two cultivated coffee species"
+      },
+      "category": "fundamentals",
+      "summary": {
+        "zh-Hans": "全球大规模栽培的咖啡来自 Arabica 与 Robusta 两个种。",
+        "en": "Globally cultivated coffee comes from two species: Arabica and Robusta."
+      },
+      "facts": [
+        "广泛栽培的咖啡来自 C. arabica 与 C. canephora（Robusta）两个种",
+        "Robusta 约占全球产量 40%",
+        "Arabica 原生于埃塞俄比亚；Robusta 起源于撒哈拉以南非洲西部森林",
+        "咖啡树寿命约 20–30 年"
+      ],
+      "content": {
+        "zh-Hans": "全球大规模栽培的咖啡来自两个种：Coffea arabica（阿拉比卡）与 Coffea canephora（罗布斯塔）。阿拉比卡原生于埃塞俄比亚，约十八世纪中期开始向全球扩散，历史上多数咖啡源自 Typica 与 Bourbon；罗布斯塔起源于撒哈拉以南非洲西部森林，约 1870 年在刚果开始商业栽培，目前约占全球产量的百分之四十。罗布斯塔的遗传多样性远大于阿拉比卡。咖啡树寿命约 20 到 30 年，所以品种选择的影响会延续到下一代。注意：把阿拉比卡一概说成更好是过度简化——罗布斯塔有独立的品质谱系。",
+        "en": "Globally cultivated coffee comes from two species: Coffea arabica and Coffea canephora (Robusta). Arabica originated in Ethiopia and began spreading worldwide in the mid-1700s; historically most coffee descended from Typica and Bourbon. Robusta originated in the forests of western sub-Saharan Africa, began commercial cultivation in Congo around 1870, and now accounts for roughly 40% of world production. Robusta's genetic diversity is much greater than Arabica's. A coffee tree lives about 20–30 years, so the choice of variety matters until the next generation. Note that treating Arabica as simply better is an oversimplification: Robusta has its own quality spectrum."
+      },
+      "keywords": [
+        "arabica",
+        "robusta",
+        "species",
+        "coffea"
+      ],
+      "entities": [
+        "Coffea arabica",
+        "Coffea canephora",
+        "Typica",
+        "Bourbon"
+      ],
+      "sourceIds": [
+        "wcr-varieties-catalog",
+        "wcr-varieties-catalog-fields"
+      ],
+      "authorityTier": 1,
+      "applicability": [
+        "generic",
+        "specific_species"
+      ],
+      "licenseNote": "WCR catalog 为 CC BY-NC-ND 4.0；本文为独立改写，未复制目录数据表。",
+      "updatedAt": "2026-09-30",
+      "scope": "generic"
+    },
+    {
+      "id": "kb.varieties.catalog",
+      "title": {
+        "zh-Hans": "品种目录与为什么没有绝对值",
+        "en": "The varieties catalog and why there are no absolute figures"
+      },
+      "category": "varieties",
+      "summary": {
+        "zh-Hans": "WCR 目录收录 55 个阿拉比卡与 47 个罗布斯塔品种，但明确表示某些指标无法给出绝对值。",
+        "en": "WCR's catalog covers 55 arabica and 47 robusta varieties but states that some figures simply cannot be given as absolutes."
+      },
+      "facts": [
+        "WCR 品种目录：55 个 Arabica + 47 个 Robusta，20+ 变量",
+        "WCR 明确某些变量无法给绝对值（如杯质、产量），改用参照品种（中美洲 Caturra、非洲 SL28）做相对比较",
+        "Robusta 需多于一个品种且同时开花才能成功授粉",
+        "目录是 living document，会持续增长",
+        "许可为 CC BY-NC-ND 4.0，不得改动数据、不得商用"
+      ],
+      "content": {
+        "zh-Hans": "世界咖啡研究（WCR）的咖啡品种目录收录 55 个阿拉比卡品种与 47 个罗布斯塔品种，用二十多个变量描述，包括期望产量、养分需求、最适海拔、抗病虫害、树形与豆型、血统等。WCR 明确说明：由于环境、海拔、土壤养分、天气、树龄与农场管理都会显著影响表现，某些变量无法给出绝对值，因此目录用常见参照品种（中美洲用 Caturra、非洲用 SL28）做相对比较。罗布斯塔需要多于一个品种且同时开花才能成功授粉，所以农户通常要种植互补的克隆组合。该目录是持续更新的 living document。许可为知识共享 署名-非商业性使用-禁止演绎 4.0，可以分享但不得改动数据、不得商用。",
+        "en": "World Coffee Research's varieties catalog profiles 55 arabica and 47 robusta varieties across 20+ variables, including expected yield, nutrition requirements, optimal altitude, pest and disease resistance, stature, bean size and lineage. WCR states plainly that because environment, altitude, soil nutrition, weather, tree age and farm management all have large effects, some variables cannot be given as absolutes; the catalog therefore compares varieties against a common reference (Caturra in Central America, SL28 in Africa). Robusta needs more than one variety flowering at the same time for pollination, so farmers usually plant complementary clone mixes. The catalog is a living document that keeps growing. It is licensed CC BY-NC-ND 4.0: shareable, but the data may not be altered and the catalog may not be sold."
+      },
+      "keywords": [
+        "varieties",
+        "wcr",
+        "catalog",
+        "agronomy"
+      ],
+      "entities": [
+        "World Coffee Research",
+        "Varieties Catalog",
+        "Caturra",
+        "SL28"
+      ],
+      "sourceIds": [
+        "wcr-varieties-catalog",
+        "wcr-varieties-catalog-fields"
+      ],
+      "authorityTier": 1,
+      "applicability": [
+        "generic",
+        "specific_species",
+        "specific_region"
+      ],
+      "licenseNote": "CC BY-NC-ND 4.0；独立改写，未复制表格。",
+      "updatedAt": "2026-09-30",
+      "scope": "variety"
+    },
+    {
+      "id": "kb.grinding.general",
+      "title": {
+        "zh-Hans": "研磨：为什么刻度不能跨磨豆机换算",
+        "en": "Grinding: why grind settings don't transfer between grinders"
+      },
+      "category": "grinding",
+      "summary": {
+        "zh-Hans": "研磨度是最直接的变量，但刻度只对同一台磨豆机有意义。",
+        "en": "Grind is the most direct lever, but a setting number only means something on one specific grinder."
+      },
+      "facts": [
+        "Baratza 明确手册不含针对冲煮方式的研磨刻度",
+        "AeroPress 官方配方用第三方磨豆机刻度作参照（ Baratza Encore 11–13）",
+        "Fellow 官方配方用自家磨豆机刻度并注明每台略有差异",
+        "清洁不足在 Baratza 属保修除外情形",
+        "Baratza 每型号提供部件爆炸图"
+      ],
+      "content": {
+        "zh-Hans": "研磨度决定水流穿过粉层的阻力，是最直接的萃取变量，但刻度本身没有普适意义。磨豆机厂商明确表示手册里不提供针对具体冲煮方式的研磨刻度，因为正确数值取决于你的豆子与器具。不同厂商的官方配方常借用别的磨豆机刻度作为参照，并注明每台机器略有差异。因此跨磨豆机比较时不要直接换算数字，而应以萃取结果（时间与风味）为准反推。颗粒分布往往比刻度更重要：细粉多的磨豆机会让同一配方喝起来更杂。维护方面，磨豆机需要定期清洁，清洁不足通常不在保修范围内；多数厂商为每个型号提供部件爆炸图，便于定位更换零件。",
+        "en": "Grind size sets the resistance water meets as it crosses the bed, making it the most direct extraction lever, but a setting number has no universal meaning. Grinder makers say plainly that their manuals do not contain grind settings for specific brew methods, because the right number depends on your beans and your brewer. Official recipes frequently borrow another grinder's scale as a reference and note that every unit differs slightly. So don't convert numbers across grinders; reverse-engineer from the result (time and taste). Particle distribution often matters more than the number: a grinder that produces many fines makes the same recipe taste muddier. On maintenance, grinders need regular cleaning, and inadequate cleaning is typically excluded from warranty; most makers publish exploded parts diagrams so you can identify components."
+      },
+      "keywords": [
+        "grind",
+        "burr",
+        "particle distribution",
+        "fines",
+        "retention"
+      ],
+      "entities": [
+        "Baratza",
+        "Fellow",
+        "Comandante",
+        "Encore",
+        "Ode"
+      ],
+      "sourceIds": [
+        "baratza-documents",
+        "aeropress-how-to-use",
+        "fellow-brew-talks",
+        "comandante-official"
+      ],
+      "authorityTier": 2,
+      "applicability": [
+        "generic",
+        "espresso",
+        "pour_over"
+      ],
+      "licenseNote": "厂商材料；独立改写。",
+      "updatedAt": "2026-09-30",
+      "scope": "generic"
+    },
+    {
+      "id": "kb.pourover.v60",
+      "title": {
+        "zh-Hans": "V60 手冲：官方配方的差异本身就是结论",
+        "en": "V60 pour-over: differing official recipes are themselves the point"
+      },
+      "category": "brewing",
+      "summary": {
+        "zh-Hans": "Hario 官方至少给出数套 V60 配方，彼此参数不同。",
+        "en": "Hario itself publishes several V60 recipes with different parameters."
+      },
+      "facts": [
+        "Hario Expert 指南：15g / 250g、中细、92–96°C、约 2.5 分钟",
+        "Hario 配方卡：18–20g / 300mL、93°C、2–3 分钟",
+        "署名专家配方：30g / 500mL、97°C、闷蒸 45 秒",
+        "冲洗滤纸是通用步骤（去纸味 + 预热）",
+        "官方调参方向：太淡→磨细；过慢→磨粗"
+      ],
+      "content": {
+        "zh-Hans": "V60 是锥形滤杯，六十度夹角、底部单孔，水流更依赖注水手法。Hario 官方给出的配方并不唯一：Expert 指南用 15 克粉配 250 克水、中细研磨、水温约 92 到 96 度、总时长约两分半；配方卡用 18 到 20 克粉配 300 毫升水、93 度、两到三分钟；托管在官方站的署名专家配方则用 30 克粉配 500 毫升水、97 度、闷蒸四十五秒。差异来自器具尺寸、目标浓度与目标风味。跨来源的通用步骤是先用热水冲洗滤纸，既去纸味又预热。官方给的调参方向很直接：太淡就磨细，水流过慢就磨粗。结论是：V60 不存在唯一正确配方，每条配方都应连同来源与语境一起使用。",
+        "en": "The V60 is a 60-degree cone dripper with a single hole, so flow depends more on pouring technique. Hario's own recipes are not singular: the Expert guide uses 15g to 250g at a medium-fine grind, roughly 92–96°C, finishing in about two and a half minutes; a recipe card uses 18–20g to 300mL at 93°C over two to three minutes; and a signed expert recipe hosted on Hario's site uses 30g to 500mL at 97°C with a 45-second bloom. The differences come from dripper size, target strength and target flavour. The step shared across sources is rinsing the paper filter, which removes papery taste and preheats. The official tuning direction is blunt: if the brew is too weak, grind finer; if it drains too slowly, grind coarser. The conclusion: there is no single correct V60 recipe, and every recipe should be used together with its source and context."
+      },
+      "keywords": [
+        "v60",
+        "pour over",
+        "hario",
+        "bloom",
+        "recipe"
+      ],
+      "entities": [
+        "Hario",
+        "V60",
+        "James Hoffmann"
+      ],
+      "sourceIds": [
+        "hario-v60-expert-guide",
+        "hario-recipe-cards",
+        "hario-v60-hoffmann"
+      ],
+      "authorityTier": 2,
+      "applicability": [
+        "pour_over",
+        "specific_model"
+      ],
+      "licenseNote": "厂商材料 + 署名专家内容；独立改写。",
+      "updatedAt": "2026-09-30",
+      "scope": "brew_method"
+    },
+    {
+      "id": "kb.pourover.kalita",
+      "title": {
+        "zh-Hans": "Kalita Wave：平底三孔的容错性",
+        "en": "Kalita Wave: the forgiveness of flat-bottom, three-hole geometry"
+      },
+      "category": "brewing",
+      "summary": {
+        "zh-Hans": "平底加三孔与波纹滤纸让水流更均匀，对注水技术要求低于锥形。",
+        "en": "A flat bottom, three holes and a wavy filter even out flow, demanding less pouring precision than a cone."
+      },
+      "facts": [
+        "Kalita Wave 为平底 + 三孔，配波纹滤纸形成空气层",
+        "关键手法是慢速螺旋注水",
+        "对注水技术要求低于锥形单孔器具",
+        "烘焙商指南给出 21g / 345g、约 205°F、2:45–3:00"
+      ],
+      "content": {
+        "zh-Hans": "Kalita Wave 外形近似锥形，但底部平坦并有三孔，孔位嵌在脊线内以避免滤纸贴底；波纹滤纸在粉层周围形成空气隔热层，让温度更稳定。这些设计的直接结果是水流更均匀、不易通道，因此它对注水技术的要求低于锥形单孔器具，适合家用。掌握它的关键是慢速螺旋注水：先把粉层润湿闷蒸，再在接近纸面顶部前及时补注、让它反复排空。烘焙商公开指南给出的起点是 21 克粉、345 克水、水温约 205 华氏度、两分四十五秒到三分钟完成。注意 Kalita 原厂的官方配方来源本轮未取得，现行知识来自烘焙商指南，属于专业实践而非厂商说明。",
+        "en": "The Kalita Wave looks cone-like but has a flat bottom with three holes, set inside a ridge so the paper cannot suction flat against the base; the wavy filter creates an insulating air layer around the slurry, which steadies temperature. The practical result is a more even flow and less channelling, so it asks less pouring precision than a single-hole cone and suits home use. The key technique is a slow spiral pour: saturate and bloom, then top up before the level nears the top of the filter and let it drain repeatedly. A roaster's published guide starts at 21g coffee to 345g water at about 205°F, finishing in 2:45–3:00. Note that Kalita's own official recipe source was not obtained in this round; the current knowledge comes from a roaster's guide, which is professional practice rather than a manufacturer instruction."
+      },
+      "keywords": [
+        "kalita",
+        "wave",
+        "pour over",
+        "flat bottom"
+      ],
+      "entities": [
+        "Kalita",
+        "Kalita Wave",
+        "Stumptown"
+      ],
+      "sourceIds": [
+        "stumptown-kalita-guide"
+      ],
+      "authorityTier": 3,
+      "applicability": [
+        "pour_over",
+        "specific_model"
+      ],
+      "licenseNote": "烘焙商指南；独立改写。Kalita 原厂来源待补。",
+      "updatedAt": "2026-09-30",
+      "scope": "brew_method"
+    },
+    {
+      "id": "kb.aeropress.basics",
+      "title": {
+        "zh-Hans": "爱乐压：官方基准与倒置法的争议",
+        "en": "AeroPress: the official baseline and the inverted-method dispute"
+      },
+      "category": "brewing",
+      "summary": {
+        "zh-Hans": "官方基准水温明显低于手冲，且官方说明书不推荐倒置法。",
+        "en": "The official baseline is noticeably cooler than pour-over, and the official manual does not recommend the inverted method."
+      },
+      "facts": [
+        "官方基准 185°F / 85°C、中细研磨、浸泡 30–60 秒",
+        "官方流程：注水至 #3 → 搅 3 秒 → 插杆止漏 → 静置 → 缓压至嘶声",
+        "crema 配方：15g 细磨深烘、近沸水、搅 20 次、1 分钟",
+        "日式冰咖啡：20g、100ml / 92°C、1 分钟、兑 100g 冰",
+        "官方说明书明确不推荐倒置法（稳定性与倾覆风险）"
+      ],
+      "content": {
+        "zh-Hans": "爱乐压把浸泡与加压结合起来，容错度高。官方基准是水温约 85 度、中细研磨、浸泡三十到六十秒，再缓慢恒压压出——比手冲常用的水温明显低，这是它的设计取向。官方流程为：注水到腔体第三刻度、轻搅三秒、插入压杆约半英寸并略微上提形成真空止漏、静置、缓压至听到嘶声。官方还给出 crema 风格（深烘细磨十五克、近沸水、搅拌二十次、静置一分钟）与日式冰咖啡（二十克、一百毫升九十二度水、一分钟后压出兑一百克冰）等配方。需要特别标注的一点：官方说明书明确不推荐倒置法，理由是稳定性差、容易倾覆烫伤；而社区实践广泛使用倒置法以获得更好的浸泡控制。这不是事实冲突，而是官方安全立场与实践取向的分层。",
+        "en": "The AeroPress combines immersion with pressure and forgives a lot. The official baseline is about 85°C, a medium-fine grind, a 30–60 second steep, then a slow, steady press — noticeably cooler than typical pour-over, which reflects its design intent. The official steps: fill to the #3 mark, stir gently for three seconds, insert the plunger about half an inch and pull up slightly to create a vacuum that stops drip-through, wait, then press until you hear the hiss. Official recipes also include a crema-style shot (15g fine-ground dark roast, near-boiling water, 20 vigorous stirs, one minute) and a Japanese-style iced coffee (20g, 100ml at 92°C, one minute, poured over 100g of ice). One point to flag clearly: the official manual does not recommend the inverted method, citing instability and tipping risk, while community practice uses it widely for better immersion control. That is not a factual conflict but a layering of an official safety stance and a practiced technique."
+      },
+      "keywords": [
+        "aeropress",
+        "immersion",
+        "inverted",
+        "recipe"
+      ],
+      "entities": [
+        "AeroPress",
+        "AeroPress Go",
+        "Flow Control Filter Cap"
+      ],
+      "sourceIds": [
+        "aeropress-how-to-use",
+        "aeropress-flow-control-recipes",
+        "aeropress-manual-inverted"
+      ],
+      "authorityTier": 2,
+      "applicability": [
+        "immersion",
+        "specific_model"
+      ],
+      "licenseNote": "厂商材料；独立改写。倒置法争议见 CONFLICTS.md。",
+      "updatedAt": "2026-09-30",
+      "scope": "brew_method"
+    },
+    {
+      "id": "kb.espresso.fundamentals",
+      "title": {
+        "zh-Hans": "意式浓缩：从官方参数到粉饼检查",
+        "en": "Espresso: from official parameters to puck checks"
+      },
+      "category": "espresso",
+      "summary": {
+        "zh-Hans": "厂商官方给出的是可操作口径：出液约粉重两倍、25–35 秒，以及可目视的粉饼检查法。",
+        "en": "Manufacturers give operational guidance: yield about twice the dose, 25–35 seconds, plus a visual puck check."
+      },
+      "facts": [
+        "La Marzocco 官方：萃取 25–35 秒，出液应为粉重两倍",
+        "Linea Micra 建议 14g 滤杯做意式、17/21g 做主流 espresso",
+        "锁上把手后可取下检查粉饼是否被分水网螺丝压出印痕",
+        "Fellow 官方：每杯 18g、双壁滤杯、90 度手臂角度填压",
+        "Fellow 配方示例 1:2（18g→36g）与 1:3（18g→55g）并存"
+      ],
+      "content": {
+        "zh-Hans": "意式浓缩是高压穿透粉饼的萃取。厂商官方给出的是可操作口径：萃取时间约二十五到三十五秒，出液重量约为粉重的两倍，流速过快或过慢就调整磨豆机粗细。滤杯选择也有官方建议：小滤杯做传统意式，大滤杯做主流的双份浓缩。粉饼可以目视检查——锁上把手之后可以再取下，看粉面是否因为碰到分水网螺丝而留下印痕；如果有，说明填压不足、研磨过粗或滤杯偏小。Fellow 官方建议每杯十八克粉、用双壁滤杯、以九十度手臂角度填压形成水平粉床。值得注意的是，官方配方中包含比例从一比二到一比三的不同取向，说明意式并不存在单一固定配方。",
+        "en": "Espresso is high-pressure extraction through a puck. Manufacturers give operational guidance: about 25–35 seconds of extraction, with a yield roughly twice the dose, and grind adjustments when the flow is too fast or too slow. Basket choice is also specified: a smaller basket for traditional Italian style, larger baskets for mainstream double shots. The puck can be checked visually — after locking the portafilter in, you can remove it again to see whether the shower screen screw has pressed a mark into the coffee surface; if so, tamping is light, the grind is coarse, or the basket is too small. Fellow recommends 18g per shot, a double-wall basket, and tamping with the arm at 90 degrees to form a level bed. Notably, official recipes span ratios from 1:2 to 1:3, which shows espresso has no single fixed recipe."
+      },
+      "keywords": [
+        "espresso",
+        "dose",
+        "yield",
+        "puck",
+        "tamping"
+      ],
+      "entities": [
+        "La Marzocco",
+        "Linea Micra",
+        "Fellow Series 1",
+        "Gaggia Classic"
+      ],
+      "sourceIds": [
+        "lamarzocco-linea-micra-zh",
+        "fellow-espresso-basics",
+        "fellow-brew-talks"
+      ],
+      "authorityTier": 2,
+      "applicability": [
+        "espresso",
+        "specific_model"
+      ],
+      "licenseNote": "厂商材料；独立改写。",
+      "updatedAt": "2026-09-30",
+      "scope": "brew_method"
+    },
+    {
+      "id": "kb.espresso.dialin",
+      "title": {
+        "zh-Hans": "意式调参：先调研磨的故障树",
+        "en": "Espresso dial-in: a troubleshooting tree that starts with grind"
+      },
+      "category": "espresso",
+      "summary": {
+        "zh-Hans": "多数厂商把「流速异常」与「酸苦」都先归到研磨这一档。",
+        "en": "Most manufacturers route both flow problems and sour/bitter complaints to grind first."
+      },
+      "facts": [
+        "流太快→磨细；流太慢→磨粗（Fellow、La Marzocco 一致）",
+        "发酸/咸/空洞→磨细；发苦/发涩→磨粗（Fellow）",
+        "微调研磨差异就很大",
+        "Gaggia 官方也把『不流出』归到粉太细或压太紧与分水网清洁"
+      ],
+      "content": {
+        "zh-Hans": "意式调参需要故障树而不是单一答案。厂商官方口径高度一致地把第一顺位指向研磨：流速太快就磨细，流速太慢就磨粗，而且强调微调研磨的影响就很大。Fellow 官方还把风味纳入同一逻辑：喝起来发酸、发咸或空洞，方向是磨细；发苦或发涩，方向是磨粗。Gaggia 的故障排除同样把『咖啡完全不流出』归因到粉太细或填压过紧造成的滤网堵塞，以及分水网需要清洁。要强调的是，这类映射是厂商层面的第一近似，不是完整因果模型：苦味同样可能来自豆子本身或深烘，酸感也可能是设计目标。因此实操时应一次只改一个变量并记录结果。",
+        "en": "Espresso dial-in needs a troubleshooting tree, not a single answer. Manufacturers are remarkably consistent in pointing to grind first: if the shot runs too fast, grind finer; if too slow, grind coarser, and they emphasise that small grind adjustments matter a lot. Fellow folds flavour into the same logic: a shot that tastes sour, salty or hollow moves finer; one that tastes bitter or astringent moves coarser. Gaggia's troubleshooting likewise attributes a complete failure to flow to a clogged basket from too-fine or over-tamped coffee, plus a shower screen needing cleaning. It is worth stressing that these mappings are a manufacturer's first approximation, not a complete causal model: bitterness can also come from the bean or a dark roast, and acidity can be a deliberate target. Change one variable at a time and record the result."
+      },
+      "keywords": [
+        "espresso",
+        "dial in",
+        "troubleshooting",
+        "grind"
+      ],
+      "entities": [
+        "Fellow",
+        "La Marzocco",
+        "Gaggia"
+      ],
+      "sourceIds": [
+        "fellow-espresso-basics",
+        "lamarzocco-linea-micra-zh",
+        "gaggia-classic-manual"
+      ],
+      "authorityTier": 2,
+      "applicability": [
+        "espresso"
+      ],
+      "licenseNote": "厂商材料；独立改写。",
+      "updatedAt": "2026-09-30",
+      "scope": "brew_method"
+    },
+    {
+      "id": "kb.water.two-questions",
+      "title": {
+        "zh-Hans": "咖啡水的两个问题：风味与机器安全",
+        "en": "Coffee water: two questions — taste and machine safety"
+      },
+      "category": "water",
+      "summary": {
+        "zh-Hans": "水的矿物质既影响萃取风味，也决定设备结垢与腐蚀，两者目标可能冲突。",
+        "en": "Minerals in water shape extraction flavour and also determine scale and corrosion — two goals that can conflict."
+      },
+      "facts": [
+        "硬水在设备内部形成矿物结垢，降低流量、温度、功率与风味",
+        "Sage 水滤芯每 3 个月或 40L（硬度 4；硬度 2 可 60L）",
+        "Sage 建议硬度 4 → 90 天除垢、硬度 6 → 60 天",
+        "Sage 不推荐高度过滤、去矿化或蒸馏水，除垢时不用瓶装水",
+        "Gaggia 明确禁止使用醋除垢",
+        "Rancilio 建议测试硬度与氯离子并安装适当过滤",
+        "Saeco AquaClean 宣称最长 5000 杯不需除垢"
+      ],
+      "content": {
+        "zh-Hans": "咖啡水要分开看两个问题。第一是风味：水里的矿物质参与萃取，影响喝到的味道。第二是机器安全：硬水会在锅炉与管路内形成矿物结垢，厂商一致指出这会降低冲煮流量、冲煮温度、机器功率，并影响意式风味。两者目标并不总一致——追求风味的矿物质与防止结垢所需的软水存在张力。厂商给出的具体口径差异很大：有的品牌用水滤芯并把更换周期与硬度等级绑定，有的品牌在特定滤芯下宣称可大幅延长除垢间隔。跨品牌的共同方向是：使用过滤水、按周期更换滤芯、不要用蒸馏或去矿化水、除垢只用厂商指定的产品而不是醋。因为这些数字随机型与水硬度变化，任何周期都必须绑定具体型号，不能通用。",
+        "en": "Coffee water has to be examined as two separate questions. The first is taste: minerals in water take part in extraction and shape what you drink. The second is machine safety: hard water deposits scale inside the boiler and water paths, and manufacturers consistently say this reduces brew flow, brew temperature, machine power and the taste of espresso. The two goals do not always align — the minerals that help flavour sit in tension with the soft water that prevents scale. Manufacturer specifics differ widely: some tie filter replacement to a water-hardness level, while others claim a specific filter can greatly extend the descaling interval. The cross-brand direction is the same: use filtered water, replace filters on schedule, avoid distilled or demineralised water, and descale only with the manufacturer's own product rather than vinegar. Because these numbers shift with model and water hardness, any interval must be tied to a specific model and never generalised."
+      },
+      "keywords": [
+        "water",
+        "hardness",
+        "scale",
+        "filtration",
+        "descaling"
+      ],
+      "entities": [
+        "Sage",
+        "Gaggia",
+        "Rancilio",
+        "Philips Saeco",
+        "AquaClean"
+      ],
+      "sourceIds": [
+        "sage-bes875-ug-i23",
+        "sage-bes875-manual-en",
+        "gaggia-classic-manual",
+        "rancilio-silvia-manual",
+        "philips-saeco-support"
+      ],
+      "authorityTier": 1,
+      "applicability": [
+        "generic",
+        "espresso",
+        "specific_model"
+      ],
+      "licenseNote": "标准 + 厂商材料；独立改写。具体水质目标区间待补（SCA Handbook 为付费）。",
+      "updatedAt": "2026-09-30",
+      "scope": "generic"
+    },
+    {
+      "id": "kb.cleaning.no-universal-cycle",
+      "title": {
+        "zh-Hans": "不存在通用的清洁与除垢周期",
+        "en": "There is no universal cleaning or descaling cycle"
+      },
+      "category": "cleaning",
+      "summary": {
+        "zh-Hans": "各大品牌的官方周期彼此不同，这本身就是结论。",
+        "en": "Official intervals differ across brands — and that difference is itself the finding."
+      },
+      "facts": [
+        "Sage BES875：清洗循环约 5 分钟；水滤芯 3 个月/40L；除垢硬度 4→90 天、硬度 6→60 天",
+        "Gaggia Classic：每 2 个月；只用专用除垢剂，禁用醋",
+        "Nespresso：每 600 粒或每 6 个月；Vertuo 建议每周清洁",
+        "Saeco AquaClean：最长 5000 杯不需除垢",
+        "JURA：逐型号提供除垢/换滤芯/清洗机身/清洗奶路 四份独立说明",
+        "清洗（backflush）与除垢是两件事"
+      ],
+      "content": {
+        "zh-Hans": "清洁与维护是独立知识域，最重要的一条纪律是：不存在一个通用的清洗或除垢周期可以套用所有品牌。各大官方周期彼此不同：有的品牌把清洗循环与除垢分开，清洗靠反冲洗、除垢按水硬度给天数；有的品牌直接给固定月数并限定只能用自家除垢剂；胶囊系统常用粒数或月数计；超级自动机在特定滤芯下宣称可大幅延长除垢间隔；还有品牌为每个型号分别提供除垢、换滤芯、清洗机身与清洗奶路的独立步骤。因此对用户提问「我的机器怎么清洁」，正确做法是先确定型号，再给该型号的官方步骤；在型号未知时，绝不能给通用周期。此外清洗与除垢是两件不同的事，周期与耗材都不一样。",
+        "en": "Cleaning and maintenance is its own knowledge domain, and the single most important rule is that no universal cleaning or descaling cycle applies across brands. Official intervals differ: some brands separate the cleaning cycle from descaling, using a backflush for cleaning and a hardness-based day count for descaling; some give a fixed number of months and restrict you to their own descaler; capsule systems count capsules or months; superautomatics with a specific filter claim a much longer descaling interval; and some brands publish separate step-by-step documents for descaling, filter changes, cleaning the machine and cleaning the milk path, per model. So when a user asks how to clean their machine, the right move is to establish the model first and then give that model's official steps. With the model unknown, never give a generic interval. Cleaning and descaling are also two different things, with different intervals and consumables."
+      },
+      "keywords": [
+        "cleaning",
+        "descaling",
+        "backflush",
+        "maintenance"
+      ],
+      "entities": [
+        "Sage",
+        "Gaggia",
+        "Nespresso",
+        "Philips Saeco",
+        "JURA",
+        "De'Longhi",
+        "La Marzocco",
+        "Baratza"
+      ],
+      "sourceIds": [
+        "sage-bes875-ug-i23",
+        "gaggia-classic-manual",
+        "nespresso-faq",
+        "philips-saeco-support",
+        "jura-product-support",
+        "lamarzocco-home-service",
+        "baratza-documents"
+      ],
+      "authorityTier": 2,
+      "applicability": [
+        "specific_model",
+        "specific_brand",
+        "generic"
+      ],
+      "licenseNote": "厂商材料；独立改写。参见 CONFLICTS.md 中的周期冲突登记。",
+      "updatedAt": "2026-09-30",
+      "scope": "equipment_model"
+    },
+    {
+      "id": "kb.freshness.resting",
+      "title": {
+        "zh-Hans": "新鲜度与养豆期：没有统一天数",
+        "en": "Freshness and resting: there is no single number of days"
+      },
+      "category": "freshness",
+      "summary": {
+        "zh-Hans": "厂商配方语境中的养豆期从几天到数周不等。",
+        "en": "Rest windows in manufacturer recipe context range from days to weeks."
+      },
+      "facts": [
+        "深烘肯尼亚批次：烘焙后 5–7 天达峰",
+        "浅烘/实验处理豆：烘焙后 4–6 周达峰",
+        "SCA 有专门的 Coffee Freshness Handbook（付费）",
+        "UC Davis 研究绿咖啡储存中的化学与生物退化",
+        "应区分烘焙日、开封日、保质期、峰值窗口与可饮用期"
+      ],
+      "content": {
+        "zh-Hans": "烘焙后的咖啡会持续排气，二氧化碳释放会干扰均匀萃取；排气减缓之后香气开始氧化流失。所以新鲜度是一条先升后降的曲线，峰值既不在烘焙当天，也不在无限远的将来。厂商配方语境里的实例说明天数并不统一：同一个品牌既标过深烘豆烘焙后五到七天达峰，也标过浅烘实验处理豆烘焙后四到六周达峰。因此对用户不应断言「第几天最好」，而应把烘焙日、开封日、商家保质期、峰值窗口与仍可饮用期分成几个不同概念；其中峰值窗口最应该由用户自己的评分记录来推断，而不是照搬一个通用天数。标准机构与科研机构都承认新鲜度与储存是独立课题，但具体结论多在其付费出版物或论文中。",
+        "en": "Roasted coffee keeps degassing, and the release of carbon dioxide interferes with even extraction; once degassing slows, aromatics begin to oxidise away. Freshness is therefore a curve that rises then falls, peaking neither on roast day nor indefinitely later. Examples in manufacturer recipe context show the number of days is not fixed: the same brand has marked a dark roasted coffee as peaking 5–7 days off roast and a light, experimentally processed coffee as peaking 4–6 weeks off roast. So rather than asserting a best day, split the ideas apart: roast date, open date, the retailer's best-before, the peak flavour window, and what remains practically drinkable. The peak window in particular is best inferred from the user's own scores rather than copied from a general number. Both standards bodies and research institutions treat freshness and storage as separate subjects, but the concrete conclusions mostly sit in their paid publications and papers."
+      },
+      "keywords": [
+        "freshness",
+        "resting",
+        "degassing",
+        "roast date"
+      ],
+      "entities": [
+        "Fellow",
+        "SCA",
+        "UC Davis"
+      ],
+      "sourceIds": [
+        "fellow-brew-talks",
+        "sca-digital-store",
+        "ucdavis-coffee-center"
+      ],
+      "authorityTier": 1,
+      "applicability": [
+        "generic",
+        "specific_roast",
+        "specific_bean"
+      ],
+      "licenseNote": "厂商 + 标准书目 + 研究；独立改写。",
+      "updatedAt": "2026-09-30",
+      "scope": "generic"
+    },
+    {
+      "id": "kb.coldbrew.variables",
+      "title": {
+        "zh-Hans": "冷萃：烘焙度比时间更重要",
+        "en": "Cold brew: roast level matters more than time"
+      },
+      "category": "brewing",
+      "summary": {
+        "zh-Hans": "一项 UC Davis 研究显示，全浸泡冷萃中烘焙度是最主要变量，时间最不重要。",
+        "en": "A UC Davis study found roast level was the dominant variable in full-immersion cold brew, with time least significant."
+      },
+      "facts": [
+        "全浸泡冷萃中感官差异：烘焙度 > 温度 > 时间",
+        "8 小时可能接近常用的 24 小时（在其实验条件下）",
+        "实验用 Agtron 41.8（浅）与 71.8（中深），4/22/92°C",
+        "深烘在低温萃取中苦与焦随时间变化显著；浅烘的酸与柑橘在低温下差异更明显",
+        "Hario Mizudashi 官方：70–80g / 1150mL、8–10 小时、2–3 天内喝完"
+      ],
+      "content": {
+        "zh-Hans": "冷萃是低温长时间浸泡。一项发表在 Scientific Reports 的研究给出了罕见的直接排序：在全浸泡条件下，烘焙度是感官差异的首要驱动，其次是温度，冲煮时间反而是最不显著的因子；研究还提示八小时的冷或室温萃取可能提供与常用二十四小时相近的风味。实验设置包含三种温度与五个时间点、两种烘焙度，豆源为萨尔瓦多与尼加拉瓜的阿拉比卡。研究也发现交互效应：深烘在冰箱与室温萃取中，苦与焦随时间变化显著，而热萃中相对稳定；浅烘的酸与柑橘在低温萃取中差异更明显。需要注意这些结论限定于该实验设计，不能外推成「所有冷萃八小时即可」。家用常规配方例如 Hario 官方冷萃壶，用七十到八十克粉配一千一百五十毫升水、冷藏八到十小时，建议两到三天内喝完。",
+        "en": "Cold brew is a long, cold immersion. A study published in Scientific Reports gives a rare direct ranking: in full-immersion brewing, roast level was the primary driver of sensory differences, followed by temperature, with brew time the least significant factor; the study also suggests eight hours of cold or room-temperature extraction may deliver flavour close to the commonly used twenty-four hours. The design spanned three temperatures and five time points across two roast levels, using Salvadoran and Nicaraguan arabica. The study also found interactions: for dark roasts, bitter and burnt notes changed noticeably over time in fridge and room-temperature brews while staying relatively stable in hot brews; for light roasts, sour and citrus notes differed more at lower temperatures. These conclusions are confined to that experimental design and should not be stretched into 'all cold brew is fine at eight hours'. A typical home recipe, Hario's official cold brew jug, uses 70–80g to 1150mL, refrigerated for 8–10 hours, to be consumed within two to three days."
+      },
+      "keywords": [
+        "cold brew",
+        "immersion",
+        "roast level",
+        "brew time"
+      ],
+      "entities": [
+        "UC Davis Coffee Center",
+        "Hario Mizudashi"
+      ],
+      "sourceIds": [
+        "ucdavis-coldbrew-2025",
+        "hario-recipe-cards",
+        "ucdavis-coffee-center"
+      ],
+      "authorityTier": 1,
+      "applicability": [
+        "immersion",
+        "generic"
+      ],
+      "licenseNote": "研究 + 厂商配方；独立改写。",
+      "updatedAt": "2026-09-30",
+      "scope": "brew_method"
+    },
+    {
+      "id": "kb.sensory.cva",
+      "title": {
+        "zh-Hans": "感官评价：描述、强度、质量与偏好是四件事",
+        "en": "Sensory evaluation: description, intensity, quality and preference are four different things"
+      },
+      "category": "sensory",
+      "summary": {
+        "zh-Hans": "SCA 的 CVA 把评价拆为物理、描述、情感与外在四类，「我喜欢」不等于客观质量。",
+        "en": "SCA's CVA splits evaluation into physical, descriptive, affective and extrinsic — liking is not objective quality."
+      },
+      "facts": [
+        "CVA 四部分：SCA-102/103/104/105 与 SCA-710",
+        "2024 起 CVA 取代 2004 Cupping Protocol 成为 SCA 官方杯测标准",
+        "CQI 继续使用 2004 cupping form",
+        "WCR Sensory Lexicon 识别 110 个风味/香气/质地属性，并提供参考样品",
+        "2016 版风味轮内圈 9 类，许可为 CC BY-NC-ND 4.0"
+      ],
+      "content": {
+        "zh-Hans": "描述一杯咖啡时要把四件事分清：描述词、强度、质量与偏好。描述词是联想（例如莓果、柑橘），强度是强弱，质量需要标准与校准，偏好则属于主观喜好——「我喜欢」不等于客观质量。SCA 的咖啡价值评估（CVA）正是按这个逻辑拆分的：物理、描述、情感与外在信息四类，其中描述与情感已取代 2004 年的杯测协议，成为官方标准，但咖啡品质研究院仍继续使用 2004 表格，所以问「杯测标准是什么」时答案取决于用哪一套。风味词的基础是 WCR 的感官词典，它识别一百一十个风味、香气与质地属性，并为每个属性提供参考样品用于标定强度。需要提醒的是，风味描述指的是感知相似性，不是说咖啡里真的加入了那种食材。风味轮的许可为署名-非商业性使用-禁止演绎，可以展示分享，但不能改编或商用。",
+        "en": "Describing a cup means keeping four things apart: descriptors, intensity, quality and preference. Descriptors are associations (berry, citrus), intensity is how strong, quality requires standards and calibration, and preference is subjective — liking is not objective quality. SCA's Coffee Value Assessment splits exactly along this logic into physical, descriptive, affective and extrinsic components; the descriptive and affective parts have replaced the 2004 cupping protocol as the official standard, while the Coffee Quality Institute continues to use the 2004 form, so the answer to 'what is the cupping standard' depends on which system you mean. The vocabulary rests on WCR's sensory lexicon, which identifies 110 flavour, aroma and texture attributes and provides reference samples to calibrate intensity. Remember that a flavour descriptor denotes perceptual similarity — not that the ingredient is actually in the coffee. The flavour wheel is licensed Attribution-NonCommercial-NoDerivatives: it can be displayed and shared but not adapted or used commercially."
+      },
+      "keywords": [
+        "sensory",
+        "cva",
+        "flavor wheel",
+        "cupping"
+      ],
+      "entities": [
+        "SCA",
+        "CVA",
+        "CQI",
+        "WCR",
+        "Flavor Wheel"
+      ],
+      "sourceIds": [
+        "sca-coffee-standards",
+        "sca-cva",
+        "sca-flavor-wheel-2016",
+        "cqi-q-grader-faq"
+      ],
+      "authorityTier": 1,
+      "applicability": [
+        "generic"
+      ],
+      "licenseNote": "标准 + CC BY-NC-ND 4.0（风味轮）；独立改写，未复制轮盘文件。",
+      "updatedAt": "2026-09-30",
+      "scope": "generic"
+    },
+    {
+      "id": "kb.health.caffeine",
+      "title": {
+        "zh-Hans": "咖啡因：官方给的参考数值与适用人群",
+        "en": "Caffeine: official reference figures and who they apply to"
+      },
+      "category": "health",
+      "summary": {
+        "zh-Hans": "FDA 与 EFSA 都给出 400 mg/天（成人）的口径，且都强调个体差异。",
+        "en": "Both the FDA and EFSA cite 400 mg/day for adults, and both stress individual variation."
+      },
+      "facts": [
+        "FDA：多数成人 400 mg/天一般不与负面影响相关",
+        "FDA：快速摄入约 1200 mg 可致癫痫等毒性作用",
+        "EFSA：单次 ≤200 mg、每日 ≤400 mg 对非孕成人不引起安全担忧",
+        "EFSA：孕期/哺乳 ≤200 mg/天",
+        "EFSA：儿童青少年习惯性摄入 3 mg/kg bw/天",
+        "EFSA：单次 100 mg 可能影响部分成人睡眠",
+        "脱因咖啡仍含咖啡因（约 2–15 mg/8 oz）"
+      ],
+      "content": {
+        "zh-Hans": "咖啡因是健康敏感话题，应只用监管机构与系统综述的结论。美国 FDA 引用的口径是：对多数成人，每天四百毫克（约两到三杯十二盎司咖啡）一般不与负面影响相关，但个体对咖啡因的敏感性与代谢速度差异很大；它还估计快速摄入约一千二百毫克可导致癫痫等毒性作用。欧洲食品安全局的口径相近：非孕成人单次不超过二百毫克、每日不超过四百毫克不引起安全担忧；孕期与哺乳期每日不超过二百毫克；儿童青少年按每公斤体重三毫克推算。此外，睡前一小时内单次一百毫克可能影响部分成人的睡眠；脱因咖啡仍然含有少量咖啡因，每八盎司大约二到十五毫克。这些只是风险参考，不构成医疗建议，涉及孕期、儿童、用药或疾病时应咨询医疗人员。",
+        "en": "Caffeine is a sensitive health topic and should be answered only from regulator and systematic-review sources. The FDA cites 400 milligrams a day — about two to three 12-ounce cups of coffee — as an amount not generally associated with negative effects for most adults, while stressing that sensitivity and elimination speed vary widely; it also estimates that rapid intake of about 1,200 milligrams can cause toxic effects such as seizures. The EFSA's guidance is similar: single doses up to 200mg and daily intake up to 400mg raise no safety concerns for non-pregnant adults; up to 200mg a day for pregnant and breastfeeding women; and 3mg per kilogram of body weight for children and adolescents. It also notes that a single 100mg dose may affect sleep in some adults, particularly close to bedtime, and that decaffeinated coffee still contains some caffeine, roughly 2–15mg per 8 ounces. These are risk references, not medical advice; pregnancy, children, medication or medical conditions should be discussed with a clinician."
+      },
+      "keywords": [
+        "caffeine",
+        "health",
+        "fda",
+        "efsa",
+        "pregnancy"
+      ],
+      "entities": [
+        "FDA",
+        "EFSA"
+      ],
+      "sourceIds": [
+        "fda-caffeine",
+        "efsa-caffeine-opinion",
+        "efsa-caffeine-topic"
+      ],
+      "authorityTier": 1,
+      "applicability": [
+        "generic"
+      ],
+      "licenseNote": "FDA 为公有领域；EFSA 需署名。独立改写，未复制正文。不做诊断。",
+      "updatedAt": "2026-09-30",
+      "scope": "generic"
+    },
+    {
+      "id": "kb.terminology.core",
+      "title": {
+        "zh-Hans": "核心术语：闷蒸、粉水比、通道效应、养豆",
+        "en": "Core terminology: bloom, ratio, channelling, resting"
+      },
+      "category": "terminology",
+      "summary": {
+        "zh-Hans": "冲煮与意式的常用词及其来源。",
+        "en": "Common brewing and espresso terms and their sources."
+      },
+      "facts": [
+        "闷蒸 bloom：官方 V60 约 30 秒；AeroPress 30–60 秒",
+        "粉水比 ratio：官方 V60 约 1:16.7",
+        "通道效应 channeling：水在粉饼中形成优先通道",
+        "养豆 resting：厂商语境从 5–7 天到 4–6 周"
+      ],
+      "content": {
+        "zh-Hans": "几个高频术语。闷蒸是手冲开头用少量热水润湿咖啡粉、让它排气并膨胀的步骤，官方 V60 指南给约三十秒，爱乐压官方给三十到六十秒。粉水比是咖啡粉与水的重量比，官方 V60 配方约为十五克比二百五十克。通道效应指水在粉饼中形成优先通道，造成局部过萃与整体不均。养豆期指烘焙后到风味峰值之间的静置期，厂商配方语境的实例从深烘的五到七天到浅烘实验处理豆的四到六周不等。杯测是标准化评价咖啡的协议，当前 SCA 使用价值评估体系，而咖啡品质研究院继续使用二零零四年的表格。术语的中英日三语对照见术语表文件。",
+        "en": "A few high-frequency terms. Bloom is the opening step of a pour-over where a little hot water wets the grounds so they degas and expand — Hario's official V60 guide uses about thirty seconds, AeroPress's official guide thirty to sixty. Brew ratio is the weight ratio of coffee to water; Hario's official V60 recipe is about 15 grams to 250 grams. Channelling is water forming preferential paths through the puck, causing local over-extraction and overall unevenness. Resting is the interval between roast day and peak flavour — in manufacturer recipe context, examples range from five to seven days for a dark roast to four to six weeks for a light, experimentally processed coffee. Cupping is the standardised protocol for evaluating coffee; SCA now uses its Coffee Value Assessment while the Coffee Quality Institute continues to use the 2004 form. See the terminology file for the Chinese, English and Japanese equivalents."
+      },
+      "keywords": [
+        "terminology",
+        "bloom",
+        "ratio",
+        "channeling",
+        "resting"
+      ],
+      "entities": [
+        "V60",
+        "AeroPress",
+        "SCA",
+        "CQI"
+      ],
+      "sourceIds": [
+        "hario-v60-expert-guide",
+        "aeropress-how-to-use",
+        "fellow-brew-talks",
+        "sca-cva"
+      ],
+      "authorityTier": 2,
+      "applicability": [
+        "generic"
+      ],
+      "licenseNote": "厂商 + 标准；独立改写。",
+      "updatedAt": "2026-09-30",
+      "entityIds": [
+        "topic.terminology"
+      ],
+      "scope": "generic"
+    },
+    {
+      "id": "kb.origin.layered-model",
+      "title": {
+        "zh-Hans": "产地的层级模型：为什么本知识库不承诺国家级风味",
+        "en": "The layered model of origin: why this knowledge base does not promise national flavour profiles"
+      },
+      "category": "origins",
+      "summary": {
+        "zh-Hans": "产地要从国家往下一层层看，且环境与农场管理的影响可能大于国家标签。",
+        "en": "Origin has to be read layer by layer, and environment and farm management can outweigh the country label."
+      },
+      "facts": [
+        "层级：Origin → Country → Region → Sub-region → Farm → Elevation → Climate → Soil → Processing Infrastructure → Harvest Season",
+        "WCR 明确：环境、海拔、土壤养分、天气、树龄与农场管理都会显著影响产量、品质与健康",
+        "Arabica 是中美洲、南美与东非大部分地区的主导种",
+        "Robusta 商业栽培约 1870 年始于刚果，1950 年前后产量快速扩张，主要在巴西与越南"
+      ],
+      "content": {
+        "zh-Hans": "看产地不能只看国家。合理的层级是从产地往下逐层展开：国家、产区、子产区、庄园、海拔、气候、土壤、处理设施与采收季。因为海拔、土壤养分、天气、树龄与农场管理都会显著影响一包豆子的产量与品质，所以一个国家的名字并不足以决定杯中的味道。这也是本知识库不为任何国家承诺风味标签的原因：把「埃塞俄比亚等于花香」写成事实，混淆的是泛化印象与具体这一包豆子。全球大规模栽培的阿拉比卡集中在中美洲、南美与东非大部分地区；罗布斯塔的商业栽培约从一八七零年的刚果开始，二十世纪中期产量快速扩张，主要集中在巴西与越南。当某一产区缺少具体资料时，正确的做法是回退到更上层的产地知识并明确说明，而不是编造该产区的细节。",
+        "en": "Origin is not just a country name. A sensible hierarchy runs from origin down through country, region, sub-region, farm, elevation, climate, soil, processing infrastructure and harvest season. Because altitude, soil nutrition, weather, tree age and farm management all have large effects on yield and quality, a country name alone does not determine what is in the cup. This is also why this knowledge base promises no national flavour profile: writing 'Ethiopia equals floral' as fact confuses a general impression with this particular bag. Globally, arabica is concentrated in Central America, South America and much of East Africa; robusta's commercial cultivation began around 1870 in Congo and expanded rapidly from the mid-twentieth century, mostly in Brazil and Vietnam. When a specific region lacks material, the right move is to fall back to broader origin knowledge and say so, rather than invent regional detail."
+      },
+      "keywords": [
+        "origin",
+        "region",
+        "elevation",
+        "terroir",
+        "harvest season"
+      ],
+      "entities": [
+        "Ethiopia",
+        "Africa",
+        "Arabica",
+        "Robusta"
+      ],
+      "sourceIds": [
+        "wcr-varieties-catalog",
+        "wcr-varieties-catalog-fields",
+        "sca-cva"
+      ],
+      "authorityTier": 1,
+      "applicability": [
+        "generic",
+        "specific_region",
+        "specific_species"
+      ],
+      "licenseNote": "WCR 目录为 CC BY-NC-ND 4.0；本文为独立改写，未复制目录数据。",
+      "updatedAt": "2026-09-30",
+      "entityIds": [
+        "topic.origin"
+      ],
+      "scope": "generic"
+    },
+    {
+      "id": "kb.variety.catalog-approach",
+      "title": {
+        "zh-Hans": "品种知识怎么用：相对比较，而非绝对值",
+        "en": "How to use variety knowledge: relative comparison, not absolutes"
+      },
+      "category": "varieties",
+      "summary": {
+        "zh-Hans": "品种目录以参照品种做相对比较，因为部分指标无法给出绝对值。",
+        "en": "The varieties catalog compares against a reference variety because some figures cannot be absolute."
+      },
+      "facts": [
+        "WCR 目录收录 55 个 Arabica 与 47 个 Robusta 品种，按 20+ 变量描述",
+        "WCR 明确某些变量（杯质、产量）无法给绝对值，改用参照品种（中美洲 Caturra、非洲 SL28）",
+        "血统分组：Bourbon-Typica、Catimor、Ethiopian landrace、Introgressed w/ Congensis、F1 hybrid",
+        "Robusta 需多于一个品种且同时开花才能成功授粉"
+      ],
+      "content": {
+        "zh-Hans": "品种知识要以相对比较的方式使用。世界咖啡研究的品种目录收录五十五个阿拉比卡与四十七个罗布斯塔品种，用二十多个变量描述，包括产量、养分需求、最适海拔、抗病虫害与血统。因为环境与管理的影响太大，目录明确表示某些指标无法给出绝对值，因此用常见参照品种（中美洲用卡杜拉、非洲用 SL28）做相对比较。血统上，目录把品种归入波旁-铁皮卡系、卡蒂姆系、埃塞地方品种、渐渗系与 F1 杂交种等组；瑰夏与原生种属于埃塞地方品种这一支。另外，罗布斯塔需要多于一个品种且同时开花才能成功授粉，所以种植上依赖互补的克隆组合。对用户而言，品种是解释「这包豆子大概在什么谱系里」的信息，不是风味的保证。",
+        "en": "Variety knowledge is best used as relative comparison. World Coffee Research's catalog profiles 55 arabica and 47 robusta varieties across 20+ variables including yield, nutrition needs, optimal altitude, pest and disease resistance, and lineage. Because environment and management matter so much, the catalog states that some figures cannot be absolute, so it compares against a common reference variety (Caturra in Central America, SL28 in Africa). By lineage, varieties fall into groups such as Bourbon-Typica, Catimor, Ethiopian landrace, introgressed with Congensis, and F1 hybrids; Gesha and Heirloom sit in the Ethiopian landrace branch. Separately, robusta needs more than one variety flowering at once for pollination, so planting relies on complementary clone mixes. For a user, variety explains roughly which lineage a bag comes from — it is not a promise about flavour."
+      },
+      "keywords": [
+        "variety",
+        "lineage",
+        "catalog",
+        "gesha",
+        "heirloom"
+      ],
+      "entities": [
+        "Gesha",
+        "Heirloom",
+        "SL28",
+        "Bourbon",
+        "Typica",
+        "Caturra"
+      ],
+      "sourceIds": [
+        "wcr-varieties-catalog",
+        "wcr-varieties-catalog-fields"
+      ],
+      "authorityTier": 1,
+      "applicability": [
+        "generic",
+        "specific_species"
+      ],
+      "licenseNote": "CC BY-NC-ND 4.0；独立改写，未复制目录表格。",
+      "updatedAt": "2026-09-30",
+      "entityIds": [
+        "topic.variety"
+      ],
+      "scope": "variety"
+    },
+    {
+      "id": "kb.process.families",
+      "title": {
+        "zh-Hans": "处理法：方法族与两个常见混淆",
+        "en": "Processing: the method families and two common confusions"
+      },
+      "category": "processing",
+      "summary": {
+        "zh-Hans": "处理法分水洗、日晒、蜜处理、厌氧与湿刨等族；处理法本身不等于风味保证。",
+        "en": "Processing splits into washed, natural, honey, anaerobic and wet-hulled families; the method itself is not a flavour promise."
+      },
+      "facts": [
+        "CQI 的 Post-Harvest Processing 体系覆盖 natural / honey / washed / wet hulled 与发酵",
+        "处理法被 CQI 视为可决定商业咖与精品咖分野、并可用于定向创造风味的环节",
+        "必须区分处理法本身与市场营销叙述",
+        "湿刨法为印尼式，在果胶仍在时脱壳"
+      ],
+      "content": {
+        "zh-Hans": "处理法是把咖啡果实变成待烘种子的过程，主要族包括水洗、日晒、蜜处理、厌氧发酵与印尼的湿刨法。咖啡品质研究院的处理教育把这一环节视为可以决定商业咖与精品咖分野、也可以用来定向创造风味的关键。使用这类知识时有一个必须守住的区分：处理法本身和市场营销叙述是两回事。把「日晒必然带来草莓味」写成事实，是把倾向当成了定律。更可靠的表述是「在常见条件下，某处理法常与某类感官描述相关联」，并且同时说明产地、品种、烘焙与冲煮都在介入。湿刨法是印尼的处理方式，特点是在果胶还在时就脱去羊皮纸层；厌氧发酵则在缺氧环境中进行，具体机制需要更严谨的来源支持，本知识库对细节保持克制。",
+        "en": "Processing turns coffee fruit into dried seed, and the main families are washed, natural, honey, anaerobic fermentation and Indonesia's wet-hulled method. The Coffee Quality Institute's post-harvest education treats this stage as one that can separate commercial from specialty coffee and can also be used to deliberately create flavour. One distinction must hold when using this knowledge: the method itself is not the same as the marketing story. Writing 'natural always gives strawberry' as fact mistakes a tendency for a law. A safer formulation is 'under common conditions this method is often associated with this family of sensory descriptors', while noting that origin, variety, roasting and brewing all intervene. Wet hulling is Indonesian and removes the parchment while mucilage is still present; anaerobic fermentation takes place in a low-oxygen environment, and because the detailed mechanisms need firmer sources, this knowledge base stays deliberately restrained about them."
+      },
+      "keywords": [
+        "processing",
+        "washed",
+        "natural",
+        "honey",
+        "anaerobic",
+        "wet hulled"
+      ],
+      "entities": [
+        "Washed",
+        "Natural",
+        "Honey",
+        "Anaerobic"
+      ],
+      "sourceIds": [
+        "cqi-php",
+        "cqi-home"
+      ],
+      "authorityTier": 1,
+      "applicability": [
+        "generic"
+      ],
+      "licenseNote": "CQI 材料 see-source-terms；独立改写。",
+      "updatedAt": "2026-09-30",
+      "entityIds": [
+        "topic.process"
+      ],
+      "scope": "process"
+    },
+    {
+      "id": "kb.roast.level-and-extraction",
+      "title": {
+        "zh-Hans": "烘焙度不是酸苦的唯一开关",
+        "en": "Roast level is not the only switch for sourness and bitterness"
+      },
+      "category": "roast",
+      "summary": {
+        "zh-Hans": "研究显示烘焙度的影响往往大于其它变量，但它仍不是唯一的决定因素。",
+        "en": "Research shows roast level often outweighs other variables, but it is still not the only determinant."
+      },
+      "facts": [
+        "UC Davis 研究：全浸泡冷萃中烘焙度是感官差异的首要驱动，其次是温度，时间最不显著",
+        "同一研究提示交互效应：深烘的苦与焦随时间变化显著，浅烘的酸与柑橘在低温下差异更明显",
+        "UC Davis 有研究分析烘焙技术对咖啡豆酸质的影响",
+        "SCA-131 Coffee Roast Level: Test Method 仍在制定中"
+      ],
+      "content": {
+        "zh-Hans": "把「浅烘等于酸、深烘等于苦」当作全部规律是不准确的。加州大学戴维斯分校的一项研究在全浸泡冷萃条件下给出了明确的变量排序：烘焙度是感官差异的首要驱动，其次是温度，而冲煮时间反而是最不显著的因子。这提醒我们，烘焙度确实重要，但它是在与产地、处理法、研磨、水温与冲煮方式共同作用。研究还发现交互效应：深烘豆在冰箱与室温萃取中，苦与焦随时间变化显著，而热萃中相对稳定；浅烘豆的酸与柑橘在低温萃取中差异更明显。另外，烘焙度的测量方法本身尚未固化——SCA 的烘焙度测试方法标准仍在制定中。因此描述烘焙度时应说「它把可萃取性与风味取向推向某个方向」，而不是断言某个味道必然出现。",
+        "en": "Treating 'light equals sour, dark equals bitter' as the whole law is inaccurate. A UC Davis study under full-immersion cold brew conditions gave a clear ordering of variables: roast level was the primary driver of sensory differences, followed by temperature, with brew time the least significant factor. That is a reminder that roast level matters but acts together with origin, processing, grind, water temperature and brew method. The study also found interactions: for dark roasts, bitter and burnt notes changed noticeably over time in fridge and room-temperature brews while staying relatively stable in hot brews; for light roasts, sour and citrus notes differed more at lower temperatures. On top of that, the measurement itself is not settled — SCA's roast level test method is still in development. So describe roast level as pushing extractability and flavour direction, not as guaranteeing a particular taste."
+      },
+      "keywords": [
+        "roast",
+        "roast level",
+        "sourness",
+        "bitterness",
+        "extraction"
+      ],
+      "entities": [
+        "Light",
+        "Dark",
+        "Espresso"
+      ],
+      "sourceIds": [
+        "ucdavis-coldbrew-2025",
+        "ucdavis-research-index",
+        "sca-coffee-standards"
+      ],
+      "authorityTier": 1,
+      "applicability": [
+        "generic",
+        "specific_roast"
+      ],
+      "licenseNote": "研究 + 标准；独立改写。",
+      "updatedAt": "2026-09-30",
+      "entityIds": [
+        "topic.roast"
+      ],
+      "scope": "roast"
+    }
+  ]
+}

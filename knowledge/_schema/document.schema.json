@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "brewphase.knowledge/document.schema.json",
+  "title": "KnowledgeDocument",
+  "description": "最终可 Embedding 的文档（规格 §53、§54、§55）。一个 document = 一个明确主题，不是一篇长文。",
+  "type": "object",
+  "required": ["id", "title", "category", "content", "sourceIds", "authorityTier", "updatedAt"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "pattern": "^kb\\.[a-z0-9.-]+$" },
+    "title": { "type": "string" },
+    "category": { "type": "string" },
+    "subcategory": { "type": ["string", "null"] },
+    "summary": { "type": ["string", "null"], "description": "§55：一段话概括，供召回后快速判断相关性。" },
+    "facts": { "type": "array", "items": { "type": "string" }, "description": "§55：事实点，每条对应一个 claim id 或可溯源陈述。" },
+    "variables": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "required": ["name", "direction"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "direction": { "type": "string", "description": "例如：更细研磨 → 在其它条件不变时通常延长接触时间。" },
+          "tradeoff": { "type": ["string", "null"] },
+          "exceptions": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "content": {
+      "type": "object",
+      "description": "自然语言正文，喂给 embedding。至少含 zh-Hans；建议同时含 en，供界面语言切换时检索语言跟随。",
+      "minProperties": 1,
+      "additionalProperties": { "type": "string" }
+    },
+    "keywords": { "type": "array", "items": { "type": "string" } },
+    "entities": {
+      "type": "array",
+      "description": "可用于实体检测的规范名（品牌/型号/器具/术语）。",
+      "items": { "type": "string" }
+    },
+    "sourceIds": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "claimIds": { "type": "array", "items": { "type": "string" } },
+    "authorityTier": { "type": "integer", "minimum": 1, "maximum": 4 },
+    "applicability": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "licenseNote": { "type": ["string", "null"], "description": "本条目如何遵守上游许可（独立改写 / 仅元数据 / 已授权）。" },
+    "updatedAt": { "type": "string" }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "brewphase.knowledge/terminology.schema.json",
+  "title": "Term",
+  "description": "术语词条（规格 §47）。支持中/英/日，供用户搜索、语义检索、UI tooltip 使用。",
+  "type": "object",
+  "required": ["id", "en", "zhHans", "category", "definition"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "pattern": "^term\\.[a-z0-9.-]+$" },
+    "en": { "type": "string" },
+    "zhHans": { "type": "string" },
+    "ja": { "type": ["string", "null"] },
+    "aliases": { "type": "array", "items": { "type": "string" }, "description": "同义词/常见误写，用于查询归一化。" },
+    "category": { "type": "string" },
+    "definition": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "type": "string" },
+      "description": "定义文本，至少含 zh-Hans 与 en。"
+    },
+    "relatedTopics": { "type": "array", "items": { "type": "string" } },
+    "sourceIds": { "type": "array", "items": { "type": "string" }, "description": "定义所依据的来源；标准术语可留空表示通用行业用法。" }
+  }
+}

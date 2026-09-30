@@ -126,7 +126,8 @@ enum DocumentBuilder {
                 origin: bean.origin.nonEmpty,
                 process: bean.process.nonEmpty,
                 roaster: bean.roaster.nonEmpty,
-                roastLevel: bean.roastLevel.rawValue
+                roastLevel: bean.roastLevel.rawValue,
+                entityIds: entityIDs(for: bean, now: now)
             ),
             updatedAt: bean.updatedAt
         )
@@ -196,6 +197,7 @@ enum DocumentBuilder {
                 process: bean?.process.nonEmpty,
                 roaster: bean?.roaster.nonEmpty,
                 roastLevel: bean?.roastLevel.rawValue,
+                entityIds: entityIDs(for: bean, method: brew.method.nonEmpty, now: now),
                 note: brew.notes.nonEmpty
             ),
             updatedAt: brew.createdAt
@@ -268,6 +270,7 @@ enum DocumentBuilder {
                 process: bean?.process.nonEmpty,
                 roaster: bean?.roaster.nonEmpty,
                 roastLevel: bean?.roastLevel.rawValue,
+                entityIds: entityIDs(for: bean, now: now),
                 note: tasting.notes.nonEmpty
             ),
             updatedAt: tasting.createdAt
@@ -353,6 +356,20 @@ enum DocumentBuilder {
     }
 
     // MARK: - 小工具
+
+    /// 从豆子（可选带上这次冲煮的方式）解析出知识实体 id，挂到资料上。
+    ///
+    /// 用户自己的记录也要带实体：这样「同一产区 / 同一处理法 / 同一烘焙度的往次
+    /// 记录」可以被**实体过滤**直接捞出来，而不是靠语义相似度碰运气——后者在
+    /// 「换一种说法描述同一件事」时会漏。
+    ///
+    /// 用的是同一套 `BeanContextResolver`，所以详情页、冲煮页、检索层看到的
+    /// 「这包豆关联了什么」永远是同一个答案。
+    private static func entityIDs(for bean: Bean?, method: String? = nil, now: Date) -> [String]? {
+        guard let bean else { return nil }
+        let context = BeanContextResolver().context(for: bean, method: method, today: now)
+        return context.entityIDs.isEmpty ? nil : context.entityIDs
+    }
 
     /// 出现次数排序后的前几名。空格与空串先剔掉。
     private static func topCounts(_ values: [String], limit: Int = 4) -> [(key: String, value: Int)]? {

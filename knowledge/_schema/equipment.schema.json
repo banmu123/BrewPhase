@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "brewphase.knowledge/equipment.schema.json",
+  "title": "Equipment",
+  "description": "设备型号记录（规格 §49、§50）。目标是 Brand → Product Line → Model → Generation → Exact Manual。",
+  "type": "object",
+  "required": ["id", "brand", "category", "type"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "pattern": "^equip\\.[a-z0-9.-]+$" },
+    "brand": { "type": "string" },
+    "productLine": { "type": ["string", "null"] },
+    "model": { "type": ["string", "null"] },
+    "generation": { "type": ["string", "null"] },
+    "category": {
+      "type": "string",
+      "enum": ["espresso_machine", "grinder", "dripper", "kettle", "scale", "filter", "water_filter", "milk_pitcher", "capsule_system", "brewer", "other"]
+    },
+    "type": { "type": "string", "description": "single_boiler / dual_boiler / heat_exchanger / thermoblock / superautomatic / conical_burr / flat_burr ..." },
+    "releaseRegion": { "type": ["string", "null"], "description": "发行区域/命名差异，例如 Breville(AU/US) = Sage(EU)。" },
+    "manualUrl": { "type": ["string", "null"], "format": "uri" },
+    "supportUrl": { "type": ["string", "null"], "format": "uri" },
+    "sourceId": { "type": "string" },
+    "knowledgeIds": { "type": "array", "items": { "type": "string" }, "description": "关联的 setup/operation/cleaning/troubleshooting 文档 id。" },
+    "lastChecked": { "type": ["string", "null"] },
+    "notes": { "type": ["string", "null"] }
+  }
+}

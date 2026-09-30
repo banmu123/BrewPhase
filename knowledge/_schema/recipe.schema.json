@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "brewphase.knowledge/recipe.schema.json",
+  "title": "Recipe",
+  "description": "配方记录（规格 §48）。参数不是唯一正确答案，必须带 source/author/equipment/context/roast。",
+  "type": "object",
+  "required": ["recipeId", "name", "method", "sourceId"],
+  "additionalProperties": false,
+  "properties": {
+    "recipeId": { "type": "string", "pattern": "^recipe\\.[a-z0-9.-]+$" },
+    "name": { "type": "string" },
+    "method": { "type": "string" },
+    "equipment": { "type": ["string", "null"], "description": "器具/机型；未指定写 null。" },
+    "dose": { "type": ["number", "null"], "description": "克。" },
+    "water": { "type": ["number", "null"], "description": "克。" },
+    "ratio": { "type": ["string", "null"] },
+    "yield": { "type": ["number", "null"], "description": "意式出品克重。" },
+    "temperatureC": { "type": ["number", "null"] },
+    "grind": { "type": ["string", "null"] },
+    "brewTime": { "type": ["string", "null"] },
+    "pourSchedule": { "type": ["string", "null"] },
+    "agitation": { "type": ["string", "null"] },
+    "filter": { "type": ["string", "null"] },
+    "sourceId": { "type": "string" },
+    "author": { "type": ["string", "null"] },
+    "date": { "type": ["string", "null"] },
+    "context": { "type": ["string", "null"], "description": "烘焙度 / 豆子 / 目标风味。" },
+    "notes": { "type": ["string", "null"] }
+  }
+}

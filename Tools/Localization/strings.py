@@ -759,4 +759,86 @@ EN: dict[str, str] = {
     "%@ 条里有 %@ 次都用的是 %@。": "%@ of the %@ records used %@.",
     "这些记录的平均评分是 %@ 分。": "These records average %@.",
     "「%@」": "\u201c%@\u201d",
+
+    # MARK: Bean → Knowledge Linking（实体类型 / 范围 / 命中方式 / 关系）
+    "主题": "Topic",
+    "品种谱系": "Variety group",
+    "冲煮家族": "Brew family",
+    "感官": "Sensory",
+    "水质": "Water",
+    "故障": "Troubleshooting",
+    "维护": "Maintenance",
+    "设备": "Equipment",
+    "通用": "Generic",
+    "国家级": "Country level",
+    "产区级": "Region level",
+    "品种级": "Variety level",
+    "处理法级": "Process level",
+    "烘焙级": "Roast level",
+    "冲煮方式级": "Brew-method level",
+    "品牌级": "Brand level",
+    "型号级": "Model level",
+    "完全匹配": "Exact match",
+    "规范匹配": "Canonical match",
+    "别名匹配": "Alias match",
+    "层级匹配": "Hierarchy match",
+    "推断匹配": "Inferred match",
+    "你指定的": "You chose this",
+    "背景关联": "Background link",
+    "推荐冲煮": "Suggested brewing",
+    "背景知识": "Background",
+
+    # MARK: Bean → Knowledge Linking（证据归属 / 结果类型）
+    "你的记录": "Your records",
+    "知识库": "Knowledge base",
+    "分析": "Analysis",
+    "这包豆的状态": "This bag's status",
+    "你的最佳参数": "Your best parameters",
+    "参数偏离": "Parameter drift",
+    "相关知识": "Related knowledge",
+    "故障排查": "Troubleshooting",
+    "设备指引": "Equipment guidance",
+
+    # MARK: Bean → Knowledge Linking（卡片文案）
+    "关于这包豆": "About this bean",
+    "与本杯相关": "Relevant to this brew",
+    "正在关联知识…": "Linking knowledge…",
+    "正在找相关知识与记录…": "Looking for related knowledge and records…",
+    "这包豆子还没填产地、处理法或风味，暂时无法关联知识。":
+        "This bag has no origin, process or flavour notes yet, so nothing can be linked.",
+    "暂时没有这包豆子的专属资料，下面显示的是更上层的通用知识。":
+        "Nothing specific to this bag yet; what follows is broader, generic knowledge.",
+    "已关联 %@ 条与这包豆子直接相关的知识。":
+        "Linked %@ entries of knowledge directly relevant to this bag.",
+    "这次用的是 %@，暂时没有与之直接相关的知识。":
+        "This brew used %@; nothing directly relevant found yet.",
+    "这次用的是 %@，找到 %@ 条相关知识与记录。":
+        "This brew used %@; found %@ entries of related knowledge and records.",
+    "这次冲煮": "this brew",
+    "还没有填：%@。填上之后关联会更准。":
+        "Not filled in yet: %@. Filling these in makes the linking more accurate.",
+    "知识是通用起点，不是这包豆子唯一正确的参数。":
+        "This is a general starting point, not the one correct recipe for this bag.",
+    "一次只改一个变量，否则事后不知道是哪一项起的作用。":
+        "Change one variable at a time, or you will not know which one did the work.",
+    "这包豆有 %@ 次带评分的冲煮记录。": "This bag has %@ scored brews.",
+    "这包豆目前只有 %@ 次带评分的记录，还形不成区间。":
+        "This bag has only %@ scored brews so far — not enough to form a range.",
+    "个人最佳参数还不可用：至少需要 %@ 条带评分的记录。":
+        "Personal best is not available yet: at least %@ scored brews are needed.",
+    "带评分的记录还不够 %@ 条，所以这次不给个人化结论。":
+        "Fewer than %@ scored brews so far, so no personalised conclusion this time.",
+    "你的高评分记录集中在 %@ 到 %@°C。":
+        "Your high-scoring brews cluster between %@ and %@°C.",
+    "先从你自己的高评分区间试：%@。":
+        "Start from your own high-scoring range: %@.",
+    "这是从 %@ 次高评分记录里算出来的区间，不是通用建议。":
+        "This range comes from your %@ high-scoring brews, not from general advice.",
+    "水温 %@–%@°C": "Water %@–%@°C",
+    "时间 %@–%@": "Time %@–%@",
+    "内置知识库": "Built-in knowledge base",
+    "咖啡基础": "Coffee basics",
+    "咖啡与健康": "Coffee and health",
+    "清洁维护": "Cleaning and care",
+    "术语": "Terminology",
 }

@@ -64,6 +64,17 @@ struct DocumentMetadata: Codable, Equatable, Sendable {
     /// 知识库专用：分类与出处。协议要求 source 必须能记录来源。
     var category: String?
     var reference: String?
+    /// 知识实体 id（规格 §十一/§十三）。
+    ///
+    /// 这是 Bean↔Knowledge Linking 的落点：知识文档带 `entityIds`，检索时按「豆子
+    /// 解析出的实体」做交集过滤，而不是靠相似度碰运气。用户自己的记录也会带
+    /// （`DocumentBuilder` 从豆子解析），这样「同一产区/处理法的往次记录」也能筛。
+    var entityIds: [String]?
+    /// 知识的适用范围（规格 §十三）：generic / country / region / variety / process /
+    /// roast / brew_method / equipment_brand / equipment_model。排序时越具体越靠前。
+    var scope: String?
+    /// 权威等级 1–4（来源分级）。知识文档才有，用户记录为 nil。
+    var authorityTier: Int?
     /// 用户写下的原话（冲煮/风味记录的备注）。
     ///
     /// 相似冲煮的证据行要展示「为什么这条算相似」——那就是用户的原话。正文里
@@ -87,6 +98,9 @@ struct DocumentMetadata: Codable, Equatable, Sendable {
         roastLevel: String? = nil,
         category: String? = nil,
         reference: String? = nil,
+        entityIds: [String]? = nil,
+        scope: String? = nil,
+        authorityTier: Int? = nil,
         note: String? = nil
     ) {
         self.beanID = beanID
@@ -103,6 +117,9 @@ struct DocumentMetadata: Codable, Equatable, Sendable {
         self.roastLevel = roastLevel
         self.category = category
         self.reference = reference
+        self.entityIds = entityIds
+        self.scope = scope
+        self.authorityTier = authorityTier
         self.note = note
     }
 }
@@ -138,10 +155,17 @@ struct CoffeeKnowledgeDocument: Identifiable, Equatable, Sendable {
     /// 只覆盖会影响嵌入结果的字段：正文和标题。`updatedAt` 不参与——一包豆子
     /// 的剩余量变了会改 `updatedAt`，但正文里那句话也变了，所以正文指纹自然
     /// 会变；反过来若只有元数据变了，就不值得重算向量。
+    ///
+    /// **这里不能用 Swift `Hasher`。** `Hasher` 每进程随机播种，同一段文本在两
+    /// 次启动里会得到不同的值，而这个指纹是要落进 `EmbeddingRecord.contentHash`
+    /// 并跨启动比较的——那样每次冷启动都会判定「全部变了」，增量索引退化成全量
+    /// 重算（功能还对，但白算几百条向量）。所以用 FNV-1a 64。
     var contentHash: String {
-        var hasher = Hasher()
-        hasher.combine(title)
-        hasher.combine(content)
-        return String(UInt64(bitPattern: Int64(hasher.finalize())), radix: 16)
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in (title + "\u{1F}" + content).utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        return String(hash, radix: 16)
     }
 }

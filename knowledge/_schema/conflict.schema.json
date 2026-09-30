@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "brewphase.knowledge/conflict.schema.json",
+  "title": "ConflictRecord",
+  "description": "来源冲突登记（规格 §四、§77）。冲突不得被抹平，必须保留并解释适用范围。",
+  "type": "object",
+  "required": ["id", "topic", "claim", "positions", "resolution"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "pattern": "^conflict\\.[a-z0-9.-]+$" },
+    "topic": { "type": "string" },
+    "claim": { "type": "string", "description": "被争议的具体命题。" },
+    "positions": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["sourceId", "position", "authorityTier"],
+        "additionalProperties": false,
+        "properties": {
+          "sourceId": { "type": "string" },
+          "position": { "type": "string" },
+          "authorityTier": { "type": "integer" },
+          "scope": { "type": ["string", "null"], "description": "该立场在什么设备/烘焙/配方条件下成立。" }
+        }
+      }
+    },
+    "resolution": {
+      "type": "string",
+      "description": "如何共处：适用范围差异 / 代际差异 / 主观偏好。禁止写成「正确答案就是 X」。"
+    },
+    "status": { "type": "string", "enum": ["open", "explained", "resolved-by-scope"] }
+  }
+}

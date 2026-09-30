@@ -28,6 +28,14 @@ struct MetadataFilter: Equatable, Sendable {
     /// 这一项不是从词典来的，而是**从用户自己的豆子列表里反推**的（见
     /// `RuleQueryAnalyzer`）——没有外部产区表可用，也不该为了这个引一张进来。
     var origins: [String] = []
+    /// 知识实体筛选（规格 §十五）。命中任一即算——和上面几项同一个「或」语义。
+    ///
+    /// 它比 `origins` 那类**子串匹配**强一个量级：`origins` 比的是自由文本，
+    /// 「埃塞俄比亚 · Guji」和「Ethiopia Guji」只能靠字面沾边；实体 id 是归一过的
+    /// 稳定标识，`origin.ethiopia` 就是它自己。Bean→Knowledge Linking 走这条。
+    var entityIDs: [String] = []
+    /// 适用范围筛选（规格 §十三）。空表示不筛。
+    var scopes: [String] = []
     var dateRange: ClosedRange<Date>?
     var dayAfterRoast: ClosedRange<Int>?
     var minimumScore: Int?
@@ -53,6 +61,16 @@ struct MetadataFilter: Equatable, Sendable {
            !processes.contains(where: { MetadataFilter.text(metadata.process, contains: $0) }) { return false }
         if !origins.isEmpty,
            !origins.contains(where: { MetadataFilter.text(metadata.origin, contains: $0) }) { return false }
+
+        // 实体筛选是**集合相交**，不是子串：文档带的是 `entityIds`（可能多个），
+        // 过滤条件是「豆子解析出的实体」（也可能多个），任一对上就算命中。
+        if !entityIDs.isEmpty {
+            let owned = Set(metadata.entityIds ?? [])
+            if owned.isDisjoint(with: entityIDs) { return false }
+        }
+        if !scopes.isEmpty {
+            guard let scope = metadata.scope, scopes.contains(scope) else { return false }
+        }
 
         if let dateRange {
             guard let date = metadata.docDate, dateRange.contains(date) else { return false }

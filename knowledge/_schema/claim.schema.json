@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "brewphase.knowledge/claim.schema.json",
+  "title": "KnowledgeClaim",
+  "description": "一条可溯源的事实/规律（规格 §52、§56、§57、§58、§68）。没有 sourceId 的内容不得写成 claim。",
+  "type": "object",
+  "required": ["id", "topic", "claim", "sourceIds", "authorityTier", "evidenceType", "confidence", "applicability"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "pattern": "^claim\\.[a-z0-9.-]+$" },
+    "topic": { "type": "string", "description": "领域 slug，对应 knowledge/ 下的目录名。" },
+    "claim": {
+      "type": "string",
+      "description": "一句话事实。必须可判定真假，不含营销辞令。范围限定词（通常/可能/在……条件下）必须保留。"
+    },
+    "context": { "type": ["string", "null"] },
+    "evidence": {
+      "type": ["string", "null"],
+      "description": "证据本体或来源中的原话摘要（独立改写，不整段复制）。"
+    },
+    "sourceIds": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+    "authorityTier": { "type": "integer", "minimum": 1, "maximum": 4 },
+    "evidenceType": {
+      "type": "string",
+      "enum": ["standard", "manufacturer", "academic", "research", "expert_education", "professional_practice", "community", "anecdotal"]
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low", "unknown"]
+    },
+    "applicability": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": ["generic", "espresso", "pour_over", "immersion", "specific_brand", "specific_model", "specific_bean", "specific_roast", "specific_water", "specific_region", "specific_species"]
+      }
+    },
+    "appliesTo": { "type": ["string", "null"] },
+    "doesNotApplyTo": { "type": ["string", "null"] },
+    "limitations": { "type": ["string", "null"] },
+    "exceptions": { "type": ["string", "null"] },
+    "conflictId": { "type": ["string", "null"], "description": "若存在来源冲突，指向 CONFLICTS.md 中的条目。" },
+    "qualityScore": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "§56：基于来源等级/证据强度/时效/具体性/一致性综合，不是模型主观感觉。"
+    },
+    "lastVerified": { "type": ["string", "null"] }
+  }
+}

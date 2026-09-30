@@ -25,14 +25,47 @@ struct LocalizedText: Equatable, Sendable {
 }
 
 /// 一条本地静态知识文档（协议 §6）。
+///
+/// v2 起它同时携带**可链接的元数据**：`entityIds` / `scope` / `authorityTier`。
+/// 这些字段在 v1 的 JSON 里不存在，解析时统统为 nil，所以老文件仍然可用。
 struct KnowledgeDocument: Equatable, Sendable {
     let id: String
     let category: String
-    /// 出处。协议要求 `source` 必须能记录来源——这一版全部是 App 自制内容，
-    /// 所以在 JSON 里写明了，界面上也会显示，免得被当成外部权威资料。
+    /// 出处。协议要求 `source` 必须能记录来源——界面上也会显示，免得被当成
+    /// App 自制的经验之谈（v2 的来源是真实出版方，见 `knowledge/SOURCE_REGISTRY.json`）。
     let source: String
     let title: LocalizedText
     let content: LocalizedText
+    /// 溯源用的来源 id 列表（对应 Source Registry）。
+    let sourceIds: [String]
+    /// 1–4 的权威等级。排序用。
+    let authorityTier: Int?
+    /// 适用范围（规格 §十三）。
+    let scope: String?
+    /// 这条知识挂在哪几个知识实体上（规格 §十一）。
+    let entityIds: [String]
+
+    init(
+        id: String,
+        category: String,
+        source: String,
+        title: LocalizedText,
+        content: LocalizedText,
+        sourceIds: [String] = [],
+        authorityTier: Int? = nil,
+        scope: String? = nil,
+        entityIds: [String] = []
+    ) {
+        self.id = id
+        self.category = category
+        self.source = source
+        self.title = title
+        self.content = content
+        self.sourceIds = sourceIds
+        self.authorityTier = authorityTier
+        self.scope = scope
+        self.entityIds = entityIds
+    }
 }
 
 /// `knowledge_base.json` —— BrewPhase 的最小本地知识库。
@@ -92,7 +125,11 @@ enum KnowledgeBase {
                     category: category,
                     source: source,
                     title: LocalizedText(title),
-                    content: LocalizedText(content)
+                    content: LocalizedText(content),
+                    sourceIds: (entry["sourceIds"] as? [String]) ?? [],
+                    authorityTier: entry["authorityTier"] as? Int,
+                    scope: entry["scope"] as? String,
+                    entityIds: (entry["entityIds"] as? [String]) ?? []
                 )
             }
         }
@@ -116,7 +153,10 @@ enum KnowledgeBase {
                 metadata: DocumentMetadata(
                     docDate: updatedAt,
                     category: document.category,
-                    reference: document.source
+                    reference: document.source,
+                    entityIds: document.entityIds.isEmpty ? nil : document.entityIds,
+                    scope: document.scope,
+                    authorityTier: document.authorityTier
                 ),
                 updatedAt: updatedAt
             )
@@ -135,6 +175,16 @@ enum KnowledgeBase {
         case "roast": return L("烘焙")
         case "freshness": return L("新鲜度")
         case "tasting": return L("品鉴")
+        // v2 新增的分类
+        case "fundamentals": return L("咖啡基础")
+        case "origins": return L("产地")
+        case "varieties": return L("品种")
+        case "processing": return L("处理法")
+        case "espresso": return L("意式浓缩")
+        case "cleaning": return L("清洁维护")
+        case "sensory": return L("感官")
+        case "health": return L("咖啡与健康")
+        case "terminology": return L("术语")
         default: return category
         }
     }

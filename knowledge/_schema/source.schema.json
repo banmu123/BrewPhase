@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "brewphase.knowledge/source.schema.json",
+  "title": "Source",
+  "description": "知识来源登记条目（规格 §51）。Source Registry 的每一行都必须真实存在、可访问，禁止虚构 URL 或 license。",
+  "type": "object",
+  "required": ["sourceId", "title", "publisher", "authorityTier", "evidenceType", "status", "lastVerified"],
+  "additionalProperties": false,
+  "properties": {
+    "sourceId": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "稳定 slug，引用方只用它。例如 sca-coffee-standards、wcr-varieties-catalog。"
+    },
+    "title": { "type": "string" },
+    "publisher": { "type": "string" },
+    "url": {
+      "type": ["string", "null"],
+      "format": "uri",
+      "description": "null 表示尚未取得官方可访问 URL —— 此时 status 必为 unknown，不得猜。"
+    },
+    "author": { "type": ["string", "null"] },
+    "publishedAt": { "type": ["string", "null"], "description": "ISO 日期；未知则 null，不要编造。" },
+    "updatedAt": { "type": ["string", "null"] },
+    "accessedAt": { "type": "string", "description": "本知识库实际抓取/核验该来源的日期（ISO）。" },
+    "authorityTier": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4,
+      "description": "1=官方/标准/学术；2=设备厂商官方；3=专业教育机构；4=社区/博客。"
+    },
+    "evidenceType": {
+      "type": "string",
+      "enum": ["standard", "manufacturer", "academic", "research", "expert_education", "professional_practice", "community", "anecdotal"]
+    },
+    "license": {
+      "type": "object",
+      "required": ["status"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["open", "cc-by", "cc-by-nc-nd", "cc-by-nc", "public-domain", "proprietary-paywalled", "proprietary-free", "see-source-terms", "unknown"],
+          "description": "只写来源自述的许可；来源没写就用 unknown，不要默认可复制。"
+        },
+        "name": { "type": ["string", "null"], "description": "许可全名，例如 Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International。" },
+        "commercialUse": { "type": ["string", "null"], "enum": ["allowed", "not-allowed", "unclear", null] },
+        "derivatives": { "type": ["string", "null"], "enum": ["allowed", "not-allowed", "unclear", null] },
+        "note": { "type": ["string", "null"] }
+      }
+    },
+    "language": { "type": "string", "description": "来源主语言，BCP-47 或简单标签（en / zh-Hans / multi）。" },
+    "country": { "type": ["string", "null"] },
+    "topics": { "type": "array", "items": { "type": "string" } },
+    "modelScope": {
+      "type": ["string", "null"],
+      "description": "若来源只适用于某些型号，写型号；通用来源写 null 或 generic。"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "deprecated", "broken", "paywalled", "restricted", "partial", "pending-verification", "unknown"]
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "method": { "type": "string", "enum": ["fetched", "search-result-only", "domain-inferred"] },
+        "note": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

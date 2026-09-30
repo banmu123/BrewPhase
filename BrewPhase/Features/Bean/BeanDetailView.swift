@@ -32,6 +32,9 @@ struct BeanDetailView: View {
 
     private var rule: PhaseRuleData { book.rule(for: bean.roastLevel) }
 
+    /// 知识区块的文案与检索都跟着当前界面语言走。
+    private var languageCode: String { LanguageManager.shared.current.resolvedCode }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Metric.sectionGap) {
@@ -40,6 +43,7 @@ struct BeanDetailView: View {
                 FlavorWindowCard(bean: bean,
                                  defaults: BrewDefaults.current(),
                                  todayDay: bean.currentDayAfterRoast)
+                BeanKnowledgeSection(bean: bean, languageCode: languageCode)
                 stockSection
                 if asksAboutThisBag {
                     askSection

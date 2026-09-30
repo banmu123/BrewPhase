@@ -35,6 +35,9 @@ struct BrewEditorView: View {
     @State private var copiedLast = false
     @State private var errorMessage: String?
 
+    /// 相关知识区块的文案与检索都跟着当前界面语言走。
+    private var languageCode: String { LanguageManager.shared.current.resolvedCode }
+
     init(bean: Bean, existing: Brew? = nil, autoCopyLast: Bool = false) {
         self.bean = bean
         self.existing = existing
@@ -104,6 +107,12 @@ struct BrewEditorView: View {
                     }
 
                     recipeSection
+
+                    RelevantKnowledgeSection(
+                        bean: bean,
+                        method: recipe.method,
+                        languageCode: languageCode
+                    )
 
                     VStack(alignment: .leading, spacing: 10) {
                         SectionHeader(title: "这杯怎么样")
