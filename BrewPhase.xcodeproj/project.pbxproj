@@ -339,6 +339,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "BrewPhase uses the camera to photograph your coffee bag.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "BrewPhase picks a photo of your coffee bag from your library.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "BrewPhase uses your location once to fetch the local weather, so suggestions can match the season. Your location is never stored or shared.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -377,6 +378,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "BrewPhase uses the camera to photograph your coffee bag.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "BrewPhase picks a photo of your coffee bag from your library.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "BrewPhase uses your location once to fetch the local weather, so suggestions can match the season. Your location is never stored or shared.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

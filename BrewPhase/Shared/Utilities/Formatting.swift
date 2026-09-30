@@ -24,6 +24,19 @@ enum Fmt {
         value.rounded() == value ? "\(Int(value))g" : String(format: "%.1fg", value)
     }
 
+    // MARK: - Bare numbers
+
+    /// `92`, `16.7`, `4.8` — a number with no unit attached.
+    ///
+    /// The one place a raw decimal reaches the screen: temperatures, sub-scores
+    /// and averages. Those sit inside a sentence built elsewhere, so they cannot
+    /// carry their own unit, and `92.0°C` reads like a measurement where `92°C`
+    /// reads like a setting.
+    static func number(_ value: Double) -> String {
+        let rounded = value.tidy
+        return rounded == rounded.rounded() ? "\(Int(rounded))" : String(format: "%.1f", rounded)
+    }
+
     // MARK: - Day after roast
 
     /// `Day 16`, or an em dash when the roast date is unknown.
@@ -131,7 +144,11 @@ enum Fmt {
 private enum DateFormatterCache {
 
     private static let lock = NSLock()
-    private static var cache: [String: DateFormatter] = [:]
+    /// `nonisolated(unsafe)` because this is mutable static state, which Swift 6
+    /// refuses by default. It is safe for a reason the compiler cannot see: the
+    /// only function below takes `lock` before touching it and releases it with
+    /// `defer`, so there is no path in or out that skips the lock.
+    nonisolated(unsafe) private static var cache: [String: DateFormatter] = [:]
 
     static func formatter(template: String, localeCode: String, calendar: Calendar) -> DateFormatter {
         let key = "\(localeCode)|\(template)|\(calendar.identifier)|\(calendar.timeZone.identifier)"

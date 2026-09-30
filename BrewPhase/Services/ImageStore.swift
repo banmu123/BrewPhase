@@ -6,7 +6,21 @@ import UIKit
 /// they touch the disk, so a 12-megapixel bag shot never ends up in the sandbox
 /// at full size. The store only ever records the *file name*; this type is the
 /// only thing that knows where files live.
-final class ImageStore {
+///
+/// **Why `@unchecked Sendable`.** It is a shared singleton reached from SwiftUI
+/// view bodies, so Swift 6 asks it to be `Sendable`. What has to be checked is
+/// whether it owns mutable state, and it does not: every stored property below is
+/// a `let`, so there is no unsynchronised mutation to race on. The two reference
+/// members are both safe by contract —
+///
+/// * `fileManager`: `FileManager` is documented as safe to use from multiple
+///   threads, and only the instance methods that are thread-safe are called;
+/// * `cache`: `NSCache` is documented as thread-safe for concurrent access, and
+///   the `UIImage`s put in it are immutable once created.
+///
+/// If a mutable stored property is ever added here, this conformance has to be
+/// revisited — the annotation is a statement about *these* three properties.
+final class ImageStore: @unchecked Sendable {
 
     static let shared = ImageStore()
 

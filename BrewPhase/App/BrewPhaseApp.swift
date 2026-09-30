@@ -25,6 +25,11 @@ struct BrewPhaseApp: App {
             Tasting.self,
             PhaseReminder.self,
             PhaseRule.self,
+            // 本地问答用的向量索引。它是**派生数据**：全部内容都能从上面几张表重算，
+            // 所以清掉它不丢信息，只是下次提问要多花一次建索引的时间。加进 schema
+            // 意味着新增一张表，SwiftData 对这种「只加实体」的变更是轻量迁移，
+            // 老数据不需要转换。
+            EmbeddingRecord.self,
         ])
 
         do {
@@ -196,6 +201,12 @@ struct RootView: View {
                 .navigationTitle("语言")
                 .navigationBarTitleDisplayMode(.inline)
             }
+        case .ask:
+            // 带上当前最该关注的那包豆子，这样截图时能同时看到「正在问某包豆」
+            // 这条路径——不聚焦豆子的版本是同一个视图的另一半分支。
+            NavigationStack { AskView(focusBean: spotlightBean) }
+        case .insights:
+            NavigationStack { InsightsView() }
         }
     }
 

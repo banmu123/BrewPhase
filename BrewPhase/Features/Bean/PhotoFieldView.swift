@@ -41,7 +41,7 @@ struct PhotoFieldView: View {
                     }
 
                     PhotosPicker(selection: $pickerItem, matching: .images, photoLibrary: .shared()) {
-                        label("相册", systemImage: "photo")
+                        Self.actionLabel("相册", systemImage: "photo")
                     }
                     .buttonStyle(.plain)
                 }
@@ -116,11 +116,24 @@ struct PhotoFieldView: View {
     }
 
     private func actionButton(_ title: LocalizedStringKey, systemImage: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { label(title, systemImage: systemImage) }
+        Button(action: action) { Self.actionLabel(title, systemImage: systemImage) }
             .buttonStyle(.plain)
     }
 
-    private func label(_ title: LocalizedStringKey, systemImage: String) -> some View {
+    /// The capsule both buttons wear.
+    ///
+    /// `nonisolated static` rather than a method on the view, and the reason is not
+    /// style. `View` is a `@MainActor` protocol, so **every** member of a type that
+    /// conforms to it is inferred to be main-actor isolated — including this one.
+    /// `PhotosPicker`'s `label:` parameter, on the other hand, is
+    /// `@Sendable () -> Label`, which does not inherit the enclosing actor, so the
+    /// closure is a nonisolated context and cannot call into this view at all.
+    ///
+    /// `nonisolated` opts the function back out, and `static` keeps it from
+    /// capturing `self` — which a `@Sendable` closure could not have done anyway.
+    /// Nothing here needs the actor: it only builds `Text`, `Image` and `Capsule`,
+    /// whose own initialisers are not isolated.
+    nonisolated static func actionLabel(_ title: LocalizedStringKey, systemImage: String) -> some View {
         HStack(spacing: 5) {
             Image(systemName: systemImage)
                 .font(.system(size: 12, weight: .semibold))

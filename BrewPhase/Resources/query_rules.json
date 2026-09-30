@@ -1,0 +1,97 @@
+{
+  "revision": 1,
+  "note": {
+    "zh-Hans": "问题分析器用的关键词表。放 JSON 而不是 Swift 字面量：这些词是匹配用的数据，不是界面文案，写进源码会被本地化流水线收成待翻译的键。中英两套词都在这里，因为用户的提问语言和他的记录语言不一定是同一个。",
+    "en": "Keyword tables for the question analyser. Kept in JSON rather than Swift literals: these are matching data, not interface copy, and as source literals they would be collected by the localisation pipeline as keys needing translation. Both languages live here because the language of a question and the language of the records need not match."
+  },
+  "intents": {
+    "inventory": [
+      "还有哪些", "有哪些豆子", "有几包", "剩多少", "还剩", "库存", "豆仓", "还有几包",
+      "喝哪包", "今天喝什么", "该喝哪", "手上有哪些", "现在有哪些",
+      "what do i have", "how many bags", "how many beans", "inventory", "what is left",
+      "whats left", "remaining", "what should i drink", "which bag"
+    ],
+    "recipe": [
+      "怎么冲", "怎么做的", "冲煮参数", "参数", "配方", "粉水比", "水温", "粉量", "水量",
+      "研磨度", "研磨", "注水", "闷蒸", "焖蒸", "比例", "冲多久", "几分钟", "克数",
+      "how did i brew", "recipe", "ratio", "dose", "grind", "water temperature",
+      "water temp", "pouring", "how to brew", "parameters", "how long did"
+    ],
+    "timing": [
+      "什么时候", "哪天", "开封", "开袋", "烘焙日期", "第几天", "多久了", "多少天了",
+      "什么时候烘", "什么时候买", "买了多久", "放了多久", "开封多久",
+      "when did i", "when was", "opened", "open date", "roast date", "which day",
+      "how old", "how many days", "what day"
+    ],
+    "rating": [
+      "评分", "几分", "几星", "打分", "最好", "最好喝", "最高分", "评价", "满意度",
+      "最满意", "表现最好",
+      "score", "rating", "best", "highest", "how many stars", "how did i rate",
+      "top rated"
+    ],
+    "status": [
+      "能喝吗", "还能喝", "现在状态", "现在的状态", "是不是该喝", "养好了没",
+      "养的怎么样", "可以喝了吗", "现在怎么样", "过了吗", "还行吗",
+      "ready to drink", "can i drink", "drink now", "how is it now", "still good",
+      "past its best", "is it still"
+    ],
+    "preference": [
+      "我喜欢", "喜欢", "我的口味", "偏好", "喜欢什么", "爱喝", "口味偏好", "我更偏好",
+      "我常喝", "我平时喝",
+      "what do i like", "my taste", "my preference", "do i prefer", "what kind do i like",
+      "i usually drink"
+    ],
+    "similarity": [
+      "类似", "相似", "差不多", "相近", "遇到过", "出现过", "有没有过", "像这次",
+      "和这次", "跟这次", "一样的",
+      "similar", "like this", "close to", "has this happened", "do i ever", "comparable",
+      "same as"
+    ],
+    "knowledge": [
+      "为什么", "怎么办", "是不是", "应该", "原理", "是什么", "建议", "正常吗",
+      "有什么讲究", "一般用", "一般要", "通常",
+      "why", "how should", "what is", "should i", "is it normal", "what does",
+      "how do i", "generally", "what causes"
+    ]
+  },
+  "bagReferences": [
+    "这包", "这支", "这袋", "这个豆", "它", "该豆", "这豆子", "这包豆子", "这款",
+    "this bag", "this coffee", "this one", "this bean", "this lot"
+  ],
+  "methods": [
+    ["V60", "v60", "锥形", "cone"],
+    ["爱乐压", "aeropress", "爱乐"],
+    ["聪明杯", "clever"],
+    ["法压壶", "法压", "french press"],
+    ["意式浓缩", "意式", "espresso"],
+    ["摩卡壶", "摩卡", "moka"],
+    ["冷萃", "cold brew"]
+  ],
+  "devices": [
+    ["C40", "c40", "司令官", "comandante"],
+    ["1Zpresso", "1zpresso", "k-ultra", "kultra"],
+    ["栗子", "泰摩", "timemore", "chestnut"],
+    ["Encore", "encore", "baratza"],
+    ["Eureka", "eureka", "mignon"]
+  ],
+  "processes": [
+    ["水洗", "washed"],
+    ["日晒", "natural"],
+    ["蜜处理", "honey"],
+    ["厌氧", "anaerobic"],
+    ["湿刨", "wet hulled"],
+    ["半日晒", "semi washed", "pulped natural"]
+  ],
+  "numerals": {
+    "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10
+  },
+  "countUnits": ["次", "杯", "条", "包", "款", "个", "回", "brew", "brews", "cup", "cups"],
+  "relative": {
+    "anchors": ["最近", "last ", "past ", "previous "],
+    "units": {
+      "天": 1, "日": 1, "周": 7, "月": 30,
+      "day": 1, "days": 1, "week": 7, "weeks": 7, "month": 30, "months": 30
+    }
+  }
+}

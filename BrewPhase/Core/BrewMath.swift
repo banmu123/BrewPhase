@@ -192,4 +192,14 @@ struct BeanValidation: Equatable, Sendable {
 
 extension String {
     var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// 去掉首尾空白后的自身，全是空白则返回 nil。
+    ///
+    /// 和 `trimmed` 放在一起，因为它们是同一件事的两种答案：界面想显示「（空）」时
+    /// 用 `trimmed`，而想把空字段整句略过时用这个。数据库里存的是 `""` 而不是
+    /// `nil`，所以「有没有填」只能这么问出来。
+    var nonEmpty: String? {
+        let trimmed = self.trimmed
+        return trimmed.isEmpty ? nil : trimmed
+    }
 }

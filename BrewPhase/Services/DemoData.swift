@@ -75,9 +75,13 @@ enum DemoData {
                             acidity: score - 1, sweetness: score,
                             flavorTags: tags, notes: L(note), bean: guji)
             context.insert(brew)
+            // `brewID` 不能省：`Tasting.source == .brew` 是在说「这条是某次冲煮的
+            // 附笔」，而不带着是哪一次的话，这个说法就没法兑现——删掉那次冲煮时
+            // 这条风味记录不会被一起带走，检索也会把它当成一件独立发生过的事。
+            // `Brew.makeTasting()` 一直是这么做的，这两条手工数据漏了。
             let tasting = Tasting(date: brewDay(offset), dayAfterRoast: 16 - offset,
                                   flavorTags: tags, score: score, notes: L(note),
-                                  source: .brew, bean: guji)
+                                  source: .brew, brewID: brew.id, bean: guji)
             context.insert(tasting)
         }
 
@@ -141,7 +145,8 @@ enum DemoData {
                               bean: brazil)
         context.insert(brazilBrew)
         context.insert(Tasting(date: brewDay(12), dayAfterRoast: 18, flavorTags: ["Chocolate"],
-                               score: 2, notes: L("入口有点闷"), source: .brew, bean: brazil))
+                               score: 2, notes: L("入口有点闷"), source: .brew,
+                               brewID: brazilBrew.id, bean: brazil))
 
         // 5 — an espresso blend, which has a different window entirely.
         let house = Bean(

@@ -15,6 +15,7 @@ struct MoreView: View {
     @AppStorage(PrefKey.defaultDoseG) private var defaultDoseG: Double = 15
     @AppStorage(PrefKey.defaultWaterG) private var defaultWaterG: Double = 240
     @AppStorage(PrefKey.defaultWaterTemp) private var defaultWaterTemp: Double = 92
+    @AppStorage(PrefKey.experimentalFlavorPrediction) private var predictsFlavorWindow: Bool = true
 
     @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
     @State private var pendingReminderCount = 0
@@ -34,6 +35,7 @@ struct MoreView: View {
                 VStack(alignment: .leading, spacing: Metric.sectionGap) {
                     reminderSection
                     defaultsSection
+                    askSection
                     languageSection
                     dataSection
                     rulesSection
@@ -137,6 +139,14 @@ struct MoreView: View {
         LanguageSection(language: language)
     }
 
+    // MARK: - Ask
+
+    /// 本地问答。独立成一个视图，因为它的设置项和控制流都够一屏了，塞进这里
+    /// 会让这个文件变成一个什么都在的地方。
+    private var askSection: some View {
+        AskSettingsSection()
+    }
+
     // MARK: - Data
 
     private var dataSection: some View {
@@ -227,6 +237,27 @@ struct MoreView: View {
                 }
             }
             .buttonStyle(.plain)
+
+            Card(padding: 0) {
+                EditorToggleRow(
+                    title: "实验性风味预测",
+                    detail: "用合成数据训练的模型估算每包豆子的最佳风味窗口",
+                    isOn: Binding(
+                        get: { predictsFlavorWindow },
+                        set: { newValue in
+                            predictsFlavorWindow = newValue
+                            // 打开时顺手把模型捂热：小树模型加载只要几十毫秒，
+                            // 但没必要让用户第一次打开详情页时等它。
+                            if newValue { FlavorWindowPredictor.shared.warmUp() }
+                        }
+                    ),
+                    showsDivider: false
+                )
+            }
+
+            Text(predictsFlavorWindow
+                 ? LocalizedStringKey("预计风味窗口是实验功能，和上面这套窗口规则是两回事：一个是模型估计，一个是你自己定的规则。")
+                 : LocalizedStringKey("预计风味窗口已经关掉，详情页不会显示它。"))
 
             Text(L("这些数字只是「%@」，不是保质期，也不会说某包豆子过期了。", DefaultPhaseRules.disclaimer))
                 .font(TypeScale.caption)

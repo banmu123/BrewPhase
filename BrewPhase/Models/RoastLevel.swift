@@ -3,7 +3,7 @@ import Foundation
 /// Roast level. Five cases rather than the four rows of the default rule table,
 /// because "中深烘" and "深烘" are different beans to a drinker even though the
 /// default window for both is the same. Each case gets its own editable rule.
-enum RoastLevel: String, Codable, CaseIterable, Identifiable, Sendable {
+enum RoastLevel: String, Codable, CaseIterable, Identifiable, Hashable, Sendable {
     case light
     case medium
     case mediumDark

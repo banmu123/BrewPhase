@@ -22,6 +22,10 @@ enum DebugScreen: String, CaseIterable, Identifiable {
     /// The language row, which sits below the fold on the More screen and so
     /// cannot be screenshotted in place.
     case language
+    /// 本地问答页。和 `language` 一样，它在更多页的折叠线以下，截不到。
+    case ask
+    /// 洞察页——V1 智能层的主界面，四张卡片各占一屏的一部分。
+    case insights
 
     var id: String { rawValue }
 }
@@ -49,5 +53,14 @@ enum DebugLaunch {
         case "more": return .more
         default: return nil
         }
+    }
+
+    /// `-BrewPhaseAsk "这包豆什么时候开封的？"`
+    ///
+    /// 让问答页一打开就自动问这一句。存在的原因和 `screen` 一样：`simctl launch`
+    /// 不能点击，而整条检索与生成链路只有在真的问过一次之后才有东西可看。
+    /// 它也让「换一个 LLM provider 之后回答变成什么样」可以截图对比。
+    static var askQuestion: String? {
+        value(for: "-BrewPhaseAsk")
     }
 }

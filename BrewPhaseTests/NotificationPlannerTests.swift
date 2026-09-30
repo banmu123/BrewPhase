@@ -235,7 +235,7 @@ final class NotificationPlannerTests: XCTestCase {
         XCTAssertEqual(onTime.map(\.fireDate), noOpenDate.map(\.fireDate))
     }
 
-    func testABagOpenedLateGetsItsWindowRemindersPushedBack() {
+    func testABagOpenedLateGetsItsWindowRemindersPushedBack() throws {
         // Roasted 20 days ago, opened 2 days ago. Every reminder about the end of
         // the window has to move with the phase clock, or the notification would
         // arrive while the app still says the bag is in its window.
@@ -247,9 +247,17 @@ final class NotificationPlannerTests: XCTestCase {
         XCTAssertEqual(late[0].fireDate, DateMath.day(roast, plusDays: 23, atHour: 9))
         XCTAssertEqual(late[1].fireDate, DateMath.day(roast, plusDays: 32, atHour: 9))
 
-        // And the same bag on time fires earlier, which is the whole point.
-        XCTAssertEqual(onTime.map(\.kind), [.windowEnding])
-        XCTAssertEqual(onTime[0].fireDate, DateMath.day(roast, plusDays: 26, atHour: 9))
+        // And the same bag on time closes earlier, which is the whole point.
+        //
+        // The closing reminder is picked out by kind rather than by position. A
+        // bag this old with this much left also earns the priority nudge (see
+        // `testThePriorityNudgeAppearsWhenTheBagCannotBeFinishedInTime`, which
+        // asks for exactly that with these very inputs), so `onTime[0]` is the
+        // nudge, not the closing reminder. `late`'s two kinds are pinned above,
+        // so `late[1]` is still safe to index.
+        let onTimeClosing = try XCTUnwrap(onTime.first { $0.kind == .windowEnding })
+        XCTAssertEqual(onTimeClosing.fireDate, DateMath.day(roast, plusDays: 26, atHour: 9))
+        XCTAssertLessThan(onTimeClosing.fireDate, late[1].fireDate)
     }
 
     func testTheWindowStillOpensOnTheRoastSchedule() {

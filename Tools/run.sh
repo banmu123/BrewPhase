@@ -2,25 +2,33 @@
 # Build, install and screenshot BrewPhase on the iOS simulator.
 #
 #   Tools/run.sh [--demo] [--screen <name>] [--tab <cellar|brews|more>]
-#                [--lang <system|zh-Hans|en>]
+#                [--lang <system|zh-Hans|en>] [--ask "<question>"]
+#                [--pref "key=value"]...
 #                [--udid <udid>] [--shots "2 4 6"]
 #
 # --demo    seeds six sample bags (only when the store is empty)
 # --screen  opens a specific screen for inspection, so the deeper pages can be
 #           screenshotted without a UI-test harness. One of:
 #           beanDetail | beanEditor | brewEditor | tasting | tastingTimeline |
-#           rules | export
+#           rules | export | language | ask | insights
 # --tab     which tab to start on
 # --lang    writes the app's own language preference before launching, so the
 #           English interface can be checked without touching the device
 #           language. "system" removes the preference, which is how "follow the
 #           system" is verified. Compare the two on a Chinese simulator: that
 #           difference is the only real proof the switch works.
+# --ask     opens the ask screen and submits this question on arrival. A
+#           simulator cannot tap, so without it the local RAG chain never runs
+#           and there is nothing to look at.
+# --pref    writes one string preference before launching. Repeatable. Used to
+#           point the app at a local Ollama, e.g.
+#             --pref brewphase.rag.answerEngine=ollama
+#             --pref brewphase.rag.ollama.baseURL=http://127.0.0.1:11500
 #
 # Leaves screenshots in /tmp/bp-shots and an OSLog capture in /tmp/bp-app.log.
 #
-# NOTE: the install step wipes the app's preferences, which is why --lang is
-# applied after installing and before launching.
+# NOTE: the install step wipes the app's preferences, which is why --lang and
+# --pref are applied after installing and before launching.
 #
 # NOTE: this machine's `xcode-select -p` points at CommandLineTools, so
 # DEVELOPER_DIR must be exported or xcodebuild/simctl are not found. A concrete
@@ -35,13 +43,16 @@ UDID=810C6408-DCAB-469B-8D4B-5018BCC9C0FD
 DEMO_ARGS=()
 SHOTS="2 5"
 LANG_SETTING=""
+PREFS=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --demo)   DEMO_ARGS+=(-BrewPhaseDemo yes); shift ;;
     --screen) DEMO_ARGS+=(-BrewPhaseScreen "$2"); shift 2 ;;
     --tab)    DEMO_ARGS+=(-BrewPhaseTab "$2"); shift 2 ;;
+    --ask)    DEMO_ARGS+=(-BrewPhaseAsk "$2"); shift 2 ;;
     --lang)   LANG_SETTING="$2"; shift 2 ;;
+    --pref)   PREFS+=("$2"); shift 2 ;;
     --udid)   UDID="$2"; shift 2 ;;
     --shots)  SHOTS="$2"; shift 2 ;;
     *)        echo "unknown option: $1"; exit 2 ;;
@@ -74,6 +85,14 @@ if [ -n "$LANG_SETTING" ]; then
   fi
   echo "   stored: $(xcrun simctl spawn "$UDID" defaults read $BUNDLE BrewPhase.AppLanguage 2>&1 | head -1)"
 fi
+
+for pref in "${PREFS[@]:-}"; do
+  [ -z "$pref" ] && continue
+  key="${pref%%=*}"
+  value="${pref#*=}"
+  echo "== pref: $key = $value =="
+  xcrun simctl spawn "$UDID" defaults write $BUNDLE "$key" -string "$value"
+done
 
 rm -rf /tmp/bp-shots; mkdir -p /tmp/bp-shots
 rm -f /tmp/bp-app.log

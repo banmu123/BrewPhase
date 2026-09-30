@@ -1,0 +1,9 @@
+{
+  "revision": 1,
+  "note": "冲煮方法 -> 家族分类。App 的做法字段是自由文本，同一件事有多种写法；这个对照表用于按家族统计评分。命中按「包含」匹配（不区分大小写）。",
+  "families": {
+    "filter": ["V60", "v60", "锥形", "手冲", "pour over", "pourover", "chemex", "origami", "折纸", "kalita", "蛋糕杯", "聪明杯", "clever", "爱乐压", "aeropress", "滤杯", "配套壶"],
+    "espresso": ["意式浓缩", "意式", "浓缩", "espresso", "美式", "americano", "拿铁", "latte", "卡布奇诺", "cappuccino", "flat white", "澳白", "馥芮白", "摩卡壶", "moka", "玛奇朵", "macchiato"],
+    "cold": ["冷萃", "cold brew", "冰滴", "冰镇", "冰手冲", "ice", "ColdBrew"]
+  }
+}

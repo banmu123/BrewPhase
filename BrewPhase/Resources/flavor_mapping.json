@@ -1,0 +1,141 @@
+{
+  "schemaVersion": 1,
+  "targetsSchema": "Feature Schema v1 (frozen)",
+  "note": "App 的域模型与模型 85 维特征之间的翻译表。放在数据文件而不是 Swift 里，原因有二：这类「别名 -> 类别」的对应关系是数据不是文案，改了不该重新编译；而且 App 的产区/处理法是中英混写的自由文本，别名表会持续增长。",
+  "rules": [
+    "类别值必须逐字匹配 feature_schema.json 的 onehot_categories，大小写敏感。",
+    "别名匹配前先做归一化：去首尾空白、转小写、全角转半角。",
+    "匹配不上就整组填 0.0 —— 不猜、不取近似、不默认填某个「最像」的值。",
+    "数值特征没有「缺失」这个取值，只能填一个数。这里填的是训练分布的边际均值，见 numericDefaults 的 derivation。"
+  ],
+
+  "aliases": {
+    "roast_level": {
+      "Light": ["light", "浅烘", "浅烘焙", "浅中烘", "肉桂烘"],
+      "Medium-Light": ["medium-light", "中浅烘", "中浅烘焙", "中浅"],
+      "Medium": ["medium", "中烘", "中烘焙", "中"],
+      "Medium-Dark": ["medium-dark", "中深烘", "中深烘焙", "中深"],
+      "Dark": ["dark", "深烘", "深烘焙", "重烘", "法式烘", "意式烘", "二爆"]
+    },
+    "origin_country": {
+      "Ethiopia": ["ethiopia", "埃塞俄比亚", "埃塞", "衣索比亚"],
+      "Colombia": ["colombia", "哥伦比亚"],
+      "Kenya": ["kenya", "肯尼亚", "肯亞"],
+      "Brazil": ["brazil", "巴西"],
+      "Guatemala": ["guatemala", "危地马拉", "瓜地马拉"],
+      "Yunnan": ["yunnan", "云南", "雲南"]
+    },
+    "origin_region": {
+      "Yirgacheffe": ["yirgacheffe", "耶加雪菲", "耶加雪啡"],
+      "Sidamo": ["sidamo", "西达摩", "西达莫"],
+      "Guji": ["guji", "古吉"],
+      "Huila": ["huila", "慧兰", "惠兰", "乌伊拉"],
+      "Nariño": ["nariño", "narino", "娜玲珑", "纳里尼奥"],
+      "Cauca": ["cauca", "考卡"],
+      "Nyeri": ["nyeri", "涅里", "尼耶里"],
+      "Kirinyaga": ["kirinyaga", "基里尼亚加", "绮丽尼雅加"],
+      "Kiambu": ["kiambu", "基安布"],
+      "Cerrado": ["cerrado", "喜拉多", "塞拉多"],
+      "Sul de Minas": ["sul de minas", "suldeminas", "南米纳斯", "米纳斯"],
+      "Mogiana": ["mogiana", "莫吉安娜", "莫吉亚纳"],
+      "Antigua": ["antigua", "安提瓜"],
+      "Huehuetenango": ["huehuetenango", "薇薇特南果", "韦韦特南戈"],
+      "Coban": ["coban", "科班", "柯班"],
+      "Pu'er": ["pu'er", "puer", "普洱"],
+      "Baoshan": ["baoshan", "保山"],
+      "Lincang": ["lincang", "临沧", "臨滄"]
+    },
+    "variety": {
+      "Heirloom": ["heirloom", "原生种", "传家宝", "原种"],
+      "Typica": ["typica", "铁皮卡", "鐵皮卡"],
+      "Bourbon": ["bourbon", "波旁", "波本"],
+      "Caturra": ["caturra", "卡杜拉"],
+      "Gesha": ["gesha", "geisha", "瑰夏", "艺伎"],
+      "SL28": ["sl28", "sl-28"],
+      "Catuai": ["catuai", "卡杜艾"]
+    },
+    "processing_method": {
+      "Washed": ["washed", "wash", "水洗", "水洗处理", "湿法"],
+      "Natural": ["natural", "日晒", "日曬", "自然日晒", "晒干", "太阳晒", "干燥"],
+      "Honey": ["honey", "蜜处理", "蜜處理", "半日晒", "半曬", "半水洗", "果胶日晒", "pulped natural"],
+      "Anaerobic": ["anaerobic", "厌氧", "厭氧", "厌氧发酵", "厌氧处理", "双重厌氧", "二氧化碳浸渍"]
+    },
+    "roaster": {
+      "Roaster_01": ["roaster_01"],
+      "Roaster_02": ["roaster_02"],
+      "Roaster_03": ["roaster_03"],
+      "Roaster_04": ["roaster_04"],
+      "Roaster_05": ["roaster_05"],
+      "Roaster_06": ["roaster_06"],
+      "Roaster_07": ["roaster_07"],
+      "Roaster_08": ["roaster_08"],
+      "Roaster_09": ["roaster_09"],
+      "Roaster_10": ["roaster_10"],
+      "Roaster_11": ["roaster_11"],
+      "Roaster_12": ["roaster_12"],
+      "Roaster_13": ["roaster_13"],
+      "Roaster_14": ["roaster_14"],
+      "Roaster_15": ["roaster_15"],
+      "Roaster_16": ["roaster_16"],
+      "Roaster_17": ["roaster_17"],
+      "Roaster_18": ["roaster_18"],
+      "Roaster_19": ["roaster_19"],
+      "Roaster_20": ["roaster_20"]
+    },
+    "packaging_type": {
+      "Bag": ["bag", "袋", "袋子", "袋装", "牛皮纸袋"],
+      "Box": ["box", "盒", "盒装"],
+      "Tin": ["tin", "罐", "罐装", "铁罐", "馬口鐵罐"]
+    },
+    "storage_method": {
+      "Room": ["room", "常温", "室溫", "室温", "常温存放"],
+      "Cool": ["cool", "冷藏", "阴凉", "涼爽", "凉爽处"],
+      "Freezer": ["freezer", "冷冻", "冷凍", "冰柜", "冻起来"]
+    },
+    "brew_method": {
+      "V60": ["v60", "hario v60", "锥形滤杯", "v型滤杯"],
+      "Kalita": ["kalita", "kalita wave", "卡丽塔", "蛋糕杯", "梯形滤杯"],
+      "Espresso": ["espresso", "意式浓缩", "意式", "浓缩", "espresso machine", "意式机"],
+      "French Press": ["french press", "法压壶", "法式压滤", "法压"],
+      "Aeropress": ["aeropress", "aero press", "爱乐压", "愛樂壓"],
+      "Chemex": ["chemex", "化学壶", "chemex壶"]
+    }
+  },
+
+  "numericDefaults": {
+    "altitude": { "value": 1600.0, "derivation": "生成器 altitude ~ N(1600, 450) 截断到 [800, 2400]，均值即 1600" },
+    "development_time": { "value": 100.0, "derivation": "生成器 development_time ~ N(100, 25) 截断到 [45, 180]，均值即 100" },
+    "storage_temperature": { "value": 15.6, "derivation": "生成器的储存温度先按方式取值：Room N(24,2) 占 55%、Cool N(16,2) 占 30%、Freezer N(-16,3) 占 15%；不知道储存方式时取三者混合均值 0.55×24 + 0.30×16 + 0.15×(-16) = 15.6" },
+    "dose": { "value": 16.0, "derivation": "生成器 dose ~ N(16, 2.5)" },
+    "water_temperature": { "value": 92.0, "derivation": "生成器 water_temperature ~ N(92, 2.5)" },
+    "water_weight": { "value": 250.0, "derivation": "生成器 water_weight ~ N(250, 20)" },
+    "beverage_weight": { "value": 250.0, "derivation": "生成器 beverage_weight ~ N(250, 25)；同时这也是参考示例里 water_weight = beverage_weight 的取法" },
+    "brew_time": { "value": 170.0, "derivation": "生成器 brew_time ~ N(170, 35)" },
+    "grind_size": { "value": 5.5, "derivation": "生成器 grind_size ~ N(5.5, 1.5) 截断到 [1, 10]，均值即 5.5" }
+  },
+
+  "binaryDefaults": {
+    "one_way_valve": { "value": 0.0, "derivation": "App 没有这个字段。0 表示「不知道」，不假设袋子一定有单向阀。" }
+  },
+
+  "outputCorrection": {
+    "offset": 2.1580412,
+    "derivation": "brewphase_xgb.json 里 learner.learner_model_param.base_score = 2.6580412，而 brewphase_xgb.mlpackage 丢掉了这个偏置——Core ML 的 XGBoost 转换器把它写成了旧默认值 0.5。两者相差 2.6580412 − 0.5 = 2.1580412，所以 .mlpackage 的原始输出整体偏低这个常数（低到出现负分，而模型文档写明输出范围是 1–5）。补回这个常数后，30 天里 29 天与 reports/metrics.json 的基准曲线在 2e-6 以内一致。",
+    "residual": "第 10 天仍有 0.0126 的残差，只在这一天出现，前后两天的差值又完全对得上——这是转换器的第二处保真问题（某棵树的判定条件在临界值上取值不同，最可能落在 days_since_roast = 10 或 days_since_open = 7 这个整点上）。这一处无法在 App 侧干净地补，只能靠重新转换模型。",
+    "removeWhen": "在 src/convert_coreml.py 里把 base_score 正确传给转换器（或在转换后对输出做同样的补偿）并重新导出 .mlpackage 之后，删掉这一节；届时模型原始输出即为最终分，不需要任何修正。"
+  },
+
+  "expectedUnmatched": {
+    "roaster": "模型的 roaster 取值是 Roaster_01…20 这种合成占位名，真实烘焙商名必然对不上——协议 §5 写明这是设计好的行为。既然每包豆子都会这样，就不该在界面上把它当成「资料缺失」报出来，那只会稀释真正的缺失提示。"
+  },
+
+  "cannotMap": {    "厌氧日晒": {
+      "groups": ["processing_method"],
+      "reason": "这个说法同时包含厌氧发酵与日晒两个概念，而模型的 processing_method 只能取 Anaerobic / Natural / Honey / Washed 之一（一组必须恰好一个 1.0）。按「不猜测」原则整组留 0。要让它参与预测，需要先决定它该归到哪一类。"
+    },
+    "拼配": {
+      "groups": ["origin_country", "origin_region", "processing_method"],
+      "reason": "拼配没有单一产地和单一处理法，模型 categories 里也没有「拼配」这个取值，整组留 0。"
+    }
+  }
+}

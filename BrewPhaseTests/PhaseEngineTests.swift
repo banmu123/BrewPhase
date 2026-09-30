@@ -236,11 +236,31 @@ final class PhaseEngineTests: XCTestCase {
         // The ordinary case: you opened the bag during (or before) the exhaust
         // period, so the roast date remains the only clock. Light roasts open on
         // day 7, so anything at or before that must be a no-op.
-        for opened in [0, 2, 5, 7] {
-            let r = reading(level: .light, roastedDaysAgo: 20, openedDaysAgo: opened, today: today)
-            XCTAssertEqual(r.sealedShiftDays, 0, "opening on day \(opened) should not shift anything")
+        //
+        // `openedDaysAgo` counts back from *today*; this test thinks in "which day
+        // after roast was it opened". A bag roasted 20 days ago and opened on day
+        // N was therefore opened `20 - N` days ago. Passing the day number
+        // straight into `openedDaysAgo` asks about a bag opened on day 20/18/15/13
+        // — all of which sit *past* the window opening, and are supposed to shift.
+        func readingOpened(onDay openedOnDay: Int) -> PhaseReading {
+            reading(level: .light, roastedDaysAgo: 20,
+                    openedDaysAgo: 20 - openedOnDay, today: today)
+        }
+
+        for openedOnDay in [0, 2, 5, 7] {
+            let r = readingOpened(onDay: openedOnDay)
+            XCTAssertEqual(r.sealedShiftDays, 0,
+                           "opening on day \(openedOnDay) should not shift anything")
             XCTAssertEqual(r.effectiveDay, 20)
         }
+
+        // And the boundary is real, not a comfortable margin: the very next day
+        // already costs a sealed half-day, which is what "at or before day 7"
+        // means. Without this the test would also pass if the discount never
+        // started at all.
+        let justLate = readingOpened(onDay: 8)
+        XCTAssertEqual(justLate.sealedShiftDays, 1, "opening on day 8 should already cost a day")
+        XCTAssertEqual(justLate.effectiveDay, 19)
     }
 
     func testOpeningLateKeepsABagInItsWindow() {

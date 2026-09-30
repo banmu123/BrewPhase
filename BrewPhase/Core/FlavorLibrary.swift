@@ -121,6 +121,36 @@ enum PrefKey {
 
     static let seededPhaseRules = "brewphase.seeded.phaseRules"
     static let askedForNotifications = "brewphase.notifications.asked"
+
+    /// 实验性的预计风味窗口。默认开着，但要知道这是合成数据训练的模型，
+    /// 用户得有一个地方能把它关掉。
+    static let experimentalFlavorPrediction = "brewphase.flavor.prediction.enabled"
+
+    // MARK: 本地问答（RAG）
+
+    /// 总开关。关掉之后索引也不再维护。
+    static let askEnabled = "brewphase.rag.enabled"
+    /// 用哪一种 embedding 后端（`EmbeddingBackend.rawValue`）。
+    static let askEmbeddingBackend = "brewphase.rag.embeddingBackend"
+    /// 优先用哪一种回答引擎（`AnswerEngine.rawValue`）。
+    static let askAnswerEngine = "brewphase.rag.answerEngine"
+    /// 优先取多少条资料进上下文。
+    static let askPassageLimit = "brewphase.rag.passageLimit"
+
+    /// Ollama 的地址与模型名。放在同一组里，方便设置页一次性读写。
+    static let ollamaBaseURL = "brewphase.rag.ollama.baseURL"
+    static let ollamaEmbeddingModel = "brewphase.rag.ollama.embeddingModel"
+    static let ollamaChatModel = "brewphase.rag.ollama.chatModel"
+
+    // MARK: 天气（洞察页的场景来源）
+
+    /// 「auto」（位置 + WeatherKit）或「manual」（用户手选场景）。默认 manual：
+    /// 天气是增益不是依赖，没授权也能用。
+    static let weatherMode = "brewphase.weather.mode"
+    /// 手动选择的场景（`WeatherScene.rawValue`）。
+    static let weatherManualScene = "brewphase.weather.manualScene"
+    /// 自动模式的结果缓存（JSON：场景 + 温度 + 时间戳），一小时有效。
+    static let weatherCache = "brewphase.weather.cache"
 }
 
 /// The default recipe a new brew starts from (§18).

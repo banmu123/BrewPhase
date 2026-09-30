@@ -1,0 +1,169 @@
+{
+  "revision": 1,
+  "provenance": {
+    "zh-Hans": "BrewPhase 内置知识库：由 BrewPhase 自己整理的咖啡冲煮常识摘要，不是从网上抓取的内容，也不针对某一支具体豆子。它是通用背景知识，和用户自己的记录是两回事。",
+    "en": "The BrewPhase built-in knowledge base: short notes on coffee brewing written for this app. Nothing here was scraped from the web, and none of it is about any particular bag. It is general background, separate from the user's own records."
+  },
+  "documents": [
+    {
+      "id": "kb.pourover.v60",
+      "category": "brewing",
+      "source": "BrewPhase 知识库 · 冲煮基础",
+      "title": { "zh-Hans": "V60 手冲", "en": "V60 pour-over" },
+      "content": {
+        "zh-Hans": "V60 是锥形滤杯，60 度夹角、底部一个大孔。锥形加导流肋让水流向中心汇聚，所以流速比平底滤杯更依赖注水手法。常见做法：粉量 15–18g，中细研磨，水温 90–93°C，粉水比 1:15–1:17，总时间 2:00–3:00。先闷蒸 30 秒，注水量约为粉量的两倍，再分 2–3 次注水。注水越急、水位越高，流过粉层的速度越快，越容易偏薄。",
+        "en": "The V60 is a cone-shaped dripper with a 60-degree wall and a single large hole. The cone and the spiral ribs funnel water toward the centre, so the flow rate depends more on pouring technique than a flat-bottom dripper does. A common recipe: 15–18g of coffee, medium-fine grind, 90–93°C, a 1:15 to 1:17 ratio, finishing in 2:00–3:00. Bloom for 30 seconds with about twice the coffee's weight in water, then pour in two or three stages. The faster and higher you pour, the quicker it runs through, and the thinner the cup tends to taste."
+      }
+    },
+    {
+      "id": "kb.pourover.basics",
+      "category": "brewing",
+      "source": "BrewPhase 知识库 · 冲煮基础",
+      "title": { "zh-Hans": "手冲基础", "en": "Pour-over basics" },
+      "content": {
+        "zh-Hans": "手冲有四个可调的变量：研磨度、水温、粉水比、注水节奏。味道偏酸、偏薄，通常是萃取不足，可以调细研磨、提高水温或拉长总时间；发苦、发涩、口感发干，通常是萃取过度，往相反方向调。一次只改一个变量，否则事后不知道是哪一项起的作用。杯子本身也重要：同一支豆子换一个滤杯，结果会明显不同。",
+        "en": "Pour-over gives you four dials: grind, water temperature, ratio, and pouring rhythm. A cup that tastes sour or thin is usually under-extracted — grind finer, raise the temperature, or stretch the total time. A cup that is bitter, astringent or drying is usually over-extracted — adjust the other way. Change one dial at a time, or you will not know which one did the work. The dripper matters too: the same beans through a different dripper will taste noticeably different."
+      }
+    },
+    {
+      "id": "kb.grind",
+      "category": "grind",
+      "source": "BrewPhase 知识库 · 研磨",
+      "title": { "zh-Hans": "研磨度", "en": "Grind size" },
+      "content": {
+        "zh-Hans": "研磨度决定水流穿过粉层的阻力，是影响萃取最直接的变量。手冲一般用中细到中粗（手感接近白砂糖到粗砂糖），法压壶更粗，意式浓缩最细，冷萃居中偏粗。磨豆机比参数更重要：细粉少、颗粒均匀的磨豆机，能让同一份配方干净很多。如果同一台磨豆机上某支豆子总是又酸又苦，往往是颗粒分布不均，而不是配方错了。",
+        "en": "Grind size sets the resistance water meets as it crosses the bed, which makes it the most direct lever you have. Pour-over usually wants medium-fine to medium-coarse — roughly the feel of table sugar to coarse sugar. French press is coarser, espresso is much finer, cold brew sits in between. The grinder matters more than the number: fewer fines and more even particles make the same recipe taste far cleaner. If one bag always comes out both sour and bitter on the same grinder, the spread of particle sizes is usually the culprit, not the recipe."
+      }
+    },
+    {
+      "id": "kb.water.temperature",
+      "category": "water",
+      "source": "BrewPhase 知识库 · 水温",
+      "title": { "zh-Hans": "水温", "en": "Water temperature" },
+      "content": {
+        "zh-Hans": "手冲常用 88–94°C。浅烘豆结构致密、比较难萃取，用 92–94°C；深烘豆很容易萃取过度，用 85–90°C。刚烧开的沸水会把苦味和涩感一起带出来，通常不建议直接冲。水温是线性变量：降 2°C 大致相当于把总时间缩短一点，所以想微调的时候调水温往往比改手法可控。水温越低，甜感和香气越难出来。",
+        "en": "Pour-over usually sits between 88 and 94°C. Light roasts are dense and harder to extract, so they take 92–94°C; dark roasts extract easily and are better at 85–90°C. Water straight off the boil pulls bitterness and astringency along with everything else, so it is rarely a good idea. Temperature is a linear dial: dropping 2°C is roughly like shortening the brew a little, which makes it a more controllable adjustment than changing your pouring."
+      }
+    },
+    {
+      "id": "kb.ratio",
+      "category": "ratio",
+      "source": "BrewPhase 知识库 · 粉水比",
+      "title": { "zh-Hans": "粉水比", "en": "Brew ratio" },
+      "content": {
+        "zh-Hans": "粉水比是咖啡粉与水的重量比。手冲常见 1:15 到 1:17。比例越小（水越少）越浓、口感越厚重；比例越大越清淡、香气更突出。18g 粉配 300g 水就是 1:16.7。需要留意的是水量不等于杯中液重——咖啡粉会吸水，每克粉大约带走两克水，所以 18g 粉配 300g 水，杯里大致只剩 264g。想比较两支豆子时，先把粉水比固定住。",
+        "en": "The brew ratio is the weight of coffee to the weight of water. Pour-over commonly runs from 1:15 to 1:17. A smaller ratio — less water — gives a stronger, heavier cup; a larger one is lighter and lets the aromatics lead. 18g of coffee to 300g of water is 1:16.7. One thing to keep in mind: the water you pour is not the liquid you get. Grounds hold on to roughly twice their weight in water, so 18g of coffee in 300g of water leaves about 264g in the cup. When comparing two bags, hold the ratio fixed first."
+      }
+    },
+    {
+      "id": "kb.extraction.time",
+      "category": "time",
+      "source": "BrewPhase 知识库 · 萃取时间",
+      "title": { "zh-Hans": "萃取时间", "en": "Extraction time" },
+      "content": {
+        "zh-Hans": "手冲总时间通常在 2:00–3:00。时间更像结果而不是目标：它变长，多半是因为研磨变细或细粉变多，而不是因为你做错了什么。如果味道没问题，不必为了凑时间改手法。一个更好用的锚点是闷蒸结束后的滴滤速度——30 秒里滴出约 60g，一般说明研磨落在合理区间。时间明显拖长而味道发苦，先检查是不是细粉堵住了滤纸。",
+        "en": "A pour-over usually finishes in 2:00–3:00. Time is more of an outcome than a target: when it lengthens, the usual cause is a finer grind or more fines, not a mistake on your part. If the cup tastes right, there is no reason to chase a number. A more useful anchor is the drip rate right after the bloom — about 60g in 30 seconds generally means the grind is in a sensible range. If the drawdown drags and the cup is bitter, check whether fines have clogged the paper."
+      }
+    },
+    {
+      "id": "kb.process",
+      "category": "process",
+      "source": "BrewPhase 知识库 · 处理法",
+      "title": { "zh-Hans": "处理法", "en": "Processing method" },
+      "content": {
+        "zh-Hans": "处理法决定果肉与种子接触多久，对风味的影响常常比产地更大。水洗去果肉后发酵，风味干净、酸质明亮；日晒整颗果实干燥，甜感和果香更浓，发酵感更重；蜜处理保留部分果胶，介于两者之间；厌氧发酵在缺氧环境里进行，风味强烈，常带酒香与热带水果。印尼的湿刨法在果胶还在时就脱壳，得到低酸、厚重、带草本与泥土调的豆子。",
+        "en": "Processing decides how long the fruit stays in contact with the seed, and it often shapes the cup more than origin does. Washed coffee is fermented after the fruit is removed: clean, with bright acidity. Natural coffee is dried as whole fruit: sweeter, fruitier, with more fermented character. Honey processing keeps some of the mucilage and lands in between. Anaerobic fermentation happens without oxygen and produces intense, often boozy, tropical flavours. Indonesia's wet-hulled method removes the parchment while the mucilage is still wet, giving low acidity and a heavy, herbal, earthy cup."
+      }
+    },
+    {
+      "id": "kb.roast.level",
+      "category": "roast",
+      "source": "BrewPhase 知识库 · 烘焙度",
+      "title": { "zh-Hans": "烘焙度", "en": "Roast level" },
+      "content": {
+        "zh-Hans": "浅烘保留最多产地风味，酸质明亮、香气偏花果，代价是结构致密、排气慢，需要更长的休息期；中烘在酸与甜之间取平衡；中深烘和深烘的焦糖化更充分，苦甜感与醇厚度上升，产地特征变弱，做奶咖更容易稳定。要注意的是同样标成浅烘，两家烘焙商的曲线不同，最佳饮用时间可能相差一周以上，所以别只看标签。",
+        "en": "Light roasts keep the most origin character: bright acidity, floral and fruity aromatics — at the cost of a dense bean, slow degassing and a longer rest. Medium sits between acidity and sweetness. Medium-dark and dark roast carry caramelisation further, lifting bittersweet notes and body while the origin fades, which makes them easier to keep consistent in milk drinks. Worth remembering: two roasters both labelling a coffee light may differ by more than a week in when it peaks, so the label alone will not tell you when to open the bag."
+      }
+    },
+    {
+      "id": "kb.freshness",
+      "category": "freshness",
+      "source": "BrewPhase 知识库 · 新鲜度",
+      "title": { "zh-Hans": "新鲜度与排气", "en": "Freshness and degassing" },
+      "content": {
+        "zh-Hans": "咖啡豆烘焙后会持续释放二氧化碳，这个过程叫排气。排气最旺的头几天，注水时粉层剧烈鼓泡、水流被顶开，萃取很难均匀，所以刚烘好的豆子通常不好喝。放几天让排气缓下来，风味才打开。排气结束之后，香气反过来开始氧化流失，出现纸板味、油味。所以新鲜度是一条先升后降的曲线，峰值不在烘焙当天，也不在无限远的将来。",
+        "en": "Roasted coffee keeps releasing carbon dioxide; that process is called degassing. In the first days it is at its strongest — the bed foams up and pushes water around, making an even extraction nearly impossible, which is why coffee straight off the roast usually tastes flat. Give it a few days for the degassing to settle and the flavours open up. After that, aromatics begin to oxidise instead, and cardboard and stale oil notes creep in. Freshness is therefore a curve that rises and then falls: it peaks neither on roast day nor indefinitely later."
+      }
+    },
+    {
+      "id": "kb.resting",
+      "category": "freshness",
+      "source": "BrewPhase 知识库 · 休息期",
+      "title": { "zh-Hans": "休息期", "en": "Resting period" },
+      "content": {
+        "zh-Hans": "休息期指烘焙之后到开始好喝之间的那几天。浅烘通常要 7–14 天，中烘 4–10 天，深烘和意式拼配更短，3–7 天。判断依据应该是味道而不是日历：冲出来发酸、发涩、香气沉闷，说明还没养好；香气散掉、出现纸板味，说明已经过了。开封会让这个过程变快，所以开封之后的豆子建议排进优先消耗。",
+        "en": "The resting period is the stretch between roast day and the day the coffee starts to taste good. Light roasts usually need 7–14 days, medium 4–10, and dark roasts or espresso blends less — around 3–7. Judge it by taste rather than by the calendar: sour, astringent, muted coffee is still resting; faded aromatics and cardboard notes mean it has gone past. Opening the bag speeds the process up, which is why an opened bag is worth drinking through sooner."
+      }
+    },
+    {
+      "id": "kb.espresso",
+      "category": "brewing",
+      "source": "BrewPhase 知识库 · 意式浓缩",
+      "title": { "zh-Hans": "意式浓缩", "en": "Espresso" },
+      "content": {
+        "zh-Hans": "意式浓缩用大约 9 bar 的压力，在 25–30 秒里萃取出约两倍于粉重的液体：常见配方是 18g 粉进、36g 液出，比例 1:2。最主要的变量是研磨度——偏细则流速慢、容易过萃发苦，偏粗则流速快、发酸发薄。粉层分布和压粉是否均匀对结果影响很大，通道效应会让同一杯里酸苦并存。粉量、水温、压力都在起作用，但先调研磨通常是收效最快的。",
+        "en": "Espresso pushes roughly 9 bar of pressure through the puck and pulls about twice the coffee's weight in liquid in 25–30 seconds — a common recipe is 18g in, 36g out, a 1:2 ratio. Grind is the lever that matters most: finer slows the flow and risks bitterness, coarser speeds it up and gives a thin, sour shot. How evenly the grounds are distributed and tamped matters a great deal, and channelling will put sour and bitter notes in the same cup. Dose, temperature and pressure all play a part, but adjusting the grind is usually where you get the fastest result."
+      }
+    },
+    {
+      "id": "kb.moka",
+      "category": "brewing",
+      "source": "BrewPhase 知识库 · 摩卡壶",
+      "title": { "zh-Hans": "摩卡壶", "en": "Moka pot" },
+      "content": {
+        "zh-Hans": "摩卡壶靠蒸汽压力把水从下壶推过粉层，实际压力大约 1–2 bar，远低于意式浓缩。用中细研磨——比手冲细一点，比意式粗。粉装满粉碗但不要压实，压实会让压力过高。下壶装热水可以避免粉在升温过程中被慢慢烫到，出来的味道更干净。听到明显的咕噜声就离开火源，继续煮会把苦味带出来。",
+        "en": "A moka pot uses steam pressure to push water from the lower chamber up through the coffee — around 1–2 bar in practice, far below espresso. Use a medium-fine grind: finer than pour-over, coarser than espresso. Fill the basket without tamping; tamping raises the pressure too far. Starting with hot water in the base keeps the grounds from being slowly cooked as the pot heats, which tastes cleaner. The moment it starts gurgling, take it off the heat — leaving it on pulls out bitterness."
+      }
+    },
+    {
+      "id": "kb.aeropress",
+      "category": "brewing",
+      "source": "BrewPhase 知识库 · 爱乐压",
+      "title": { "zh-Hans": "爱乐压", "en": "AeroPress" },
+      "content": {
+        "zh-Hans": "爱乐压是浸泡加按压的组合，容错率很高。常见做法：15–18g 中细研磨，水温 80–92°C，注入 200–250g 水，浸泡 1–2 分钟后缓慢压出。浸泡时间与温度都能自由控制，所以它很适合用来试一支豆子在某个参数下到底是什么表现——把变量拉满，再挪回手冲上验证。压得太快容易出细粉和涩感，慢一点更稳。",
+        "en": "The AeroPress combines immersion with pressure and forgives a lot. A common approach: 15–18g at a medium-fine grind, 80–92°C, 200–250g of water, steep for one to two minutes, then press slowly. Because steep time and temperature are both free variables, it is a good tool for finding out what a bag does under a given setting — push a parameter to its limit here, then verify on pour-over. Pressing too fast drags fines through and adds astringency; slower is steadier."
+      }
+    },
+    {
+      "id": "kb.coldbrew",
+      "category": "brewing",
+      "source": "BrewPhase 知识库 · 冷萃",
+      "title": { "zh-Hans": "冷萃", "en": "Cold brew" },
+      "content": {
+        "zh-Hans": "冷萃用冷水长时间浸泡，常见粉水比 1:8 到 1:15，中粗研磨，冷藏 12–18 小时。低温下酸质和苦味都萃取得更少，口感圆润、甜感突出，但香气不如热萃奔放。做浓度高的浓缩液再兑水或牛奶是常见做法。浓缩液密封冷藏大约能放一周。想要更干净的口感，浸泡结束后过滤两遍。",
+        "en": "Cold brew steeps in cold water for a long time — commonly a 1:8 to 1:15 ratio, medium-coarse grind, 12–18 hours in the fridge. The cold extracts less acidity and less bitterness, giving a round, sweet cup, though the aromatics stay quieter than in a hot brew. Making a strong concentrate and diluting with water or milk is the usual approach. Sealed and refrigerated, the concentrate keeps about a week. For a cleaner cup, filter it twice after steeping."
+      }
+    },
+    {
+      "id": "kb.frenchpress",
+      "category": "brewing",
+      "source": "BrewPhase 知识库 · 法压壶",
+      "title": { "zh-Hans": "法压壶", "en": "French press" },
+      "content": {
+        "zh-Hans": "法压壶是全浸泡式，金属滤网会保留咖啡油脂和一部分细粉，所以口感厚重、透明度低。用粗研磨，水温 92–96°C，浸泡 4 分钟左右再压下滤网。压下去之后要立刻倒出来——咖啡渣继续泡在液里会不断萃取，几分钟就能把一杯好咖啡变成一杯苦水。它容错、便宜、稳定，很适合当日常口粮工具。",
+        "en": "A French press is full immersion, and the metal mesh lets oils and some fines through, which is where its heavy, opaque body comes from. Use a coarse grind, 92–96°C, steep for about four minutes and then press. Once pressed, pour it out straight away: grounds left in the liquid keep extracting, and a few minutes will turn a good cup bitter. It is forgiving, cheap and consistent, which makes it a fine everyday tool."
+      }
+    },
+    {
+      "id": "kb.tasting.vocabulary",
+      "category": "tasting",
+      "source": "BrewPhase 知识库 · 品鉴",
+      "title": { "zh-Hans": "怎么描述一杯咖啡", "en": "Describing a cup" },
+      "content": {
+        "zh-Hans": "描述一杯咖啡通常从几个维度入手：甜感、酸质、苦感、醇厚度、余韵，以及整体的平衡感——而不是只说好喝或不好喝。同一个风味在不同人口中的名字可能不同，这很正常，风味记忆依赖个人经历。记录时写下具体的联想（柑橘、红糖、茉莉）比写「很香」有用得多，因为只有这样回头才能比较两支豆子。如果一杯同时喝到酸和苦，通常是萃取不均匀，而不是豆子本身复杂。",
+        "en": "Describing a cup usually means working through a few dimensions — sweetness, acidity, bitterness, body, aftertaste and overall balance — rather than landing on good or bad. The same flavour wears different names in different mouths, and that is normal: flavour memory leans on personal experience. When you write notes, concrete associations (mandarin, brown sugar, jasmine) are far more useful than very aromatic, because only those let you compare two bags later. A cup that tastes sour and bitter at once is usually extracting unevenly rather than being complex."
+      }
+    }
+  ]
+}

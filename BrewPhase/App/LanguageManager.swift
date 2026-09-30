@@ -49,9 +49,17 @@ enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
 /// `L()` is reached from non-main contexts too — notification scheduling and
 /// export both build user-facing strings off the main actor — and reading a
 /// `@MainActor` object from there would not compile.
+///
+/// `nonisolated(unsafe)` is the honest annotation for both: they are mutable
+/// global state, which Swift 6 refuses by default, and the compiler cannot see
+/// that `languageLock` is what makes them safe. Every read and every write below
+/// goes through `currentLocalizedBundle()`, `currentLocaleCode()` or
+/// `adoptBundle(for:)`, and all three hold the lock across the access — so this
+/// is an assertion that can be checked by reading this file, not a way of
+/// silencing the diagnostic.
 private let languageLock = NSLock()
-private var languageBundle: Bundle = .main
-private var languageCode: String = AppLanguage.system.resolvedCode
+nonisolated(unsafe) private var languageBundle: Bundle = .main
+nonisolated(unsafe) private var languageCode: String = AppLanguage.system.resolvedCode
 
 func currentLocalizedBundle() -> Bundle {
     languageLock.lock()
@@ -132,7 +140,15 @@ extension LocalizedStringKey {
 final class LanguageManager: ObservableObject {
 
     static let shared = LanguageManager()
-    static let storageKey = "BrewPhase.AppLanguage"
+
+    /// The `UserDefaults` key the chosen language is stored under.
+    ///
+    /// `nonisolated` because `pinForTesting` is, and it needs this key: the unit
+    /// tests pin a language from `setUp`, which is not main-actor isolated. The
+    /// value is an immutable `String`, so there is nothing here for the actor to
+    /// protect — and leaving it isolated is a hard error in the Swift 6 language
+    /// mode, not just a warning.
+    nonisolated static let storageKey = "BrewPhase.AppLanguage"
 
     @Published private(set) var current: AppLanguage
 

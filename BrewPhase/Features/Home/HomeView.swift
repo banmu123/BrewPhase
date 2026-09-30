@@ -86,14 +86,28 @@ struct HomeView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        isAddingBean = true
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Palette.roast)
+                    HStack(spacing: 18) {
+                        // 洞察放在添加豆旁边：问「最近适合喝哪包」「今天做手冲
+                        // 还是意式」是和「加一包豆」同级别的日常动作，不该藏在
+                        // 更多页的折叠线下面。
+                        NavigationLink {
+                            InsightsView()
+                        } label: {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(Palette.roast)
+                        }
+                        .accessibilityLabel("洞察")
+
+                        Button {
+                            isAddingBean = true
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(Palette.roast)
+                        }
+                        .accessibilityLabel("添加豆子")
                     }
-                    .accessibilityLabel("添加豆子")
                 }
             }
             .sheet(isPresented: $isAddingBean) {

@@ -20,6 +20,10 @@ struct BeanDetailView: View {
     /// Drives the "copy the last recipe, then adjust" path into the brew editor.
     @State private var isCopyingLastBrew = false
 
+    /// 本地问答的总开关。跟着设置走，关掉时这里不显示入口——留一个点了没有反应的
+    /// 按钮比不显示更糟。
+    @AppStorage(PrefKey.askEnabled) private var asksAboutThisBag: Bool = true
+
     private var book: PhaseRuleBook { PhaseRuleBook.make(stored: rules) }
 
     private var insight: BeanInsight {
@@ -33,7 +37,13 @@ struct BeanDetailView: View {
             VStack(alignment: .leading, spacing: Metric.sectionGap) {
                 hero
                 PhaseCard(insight: insight) { isEditing = true }
+                FlavorWindowCard(bean: bean,
+                                 defaults: BrewDefaults.current(),
+                                 todayDay: bean.currentDayAfterRoast)
                 stockSection
+                if asksAboutThisBag {
+                    askSection
+                }
                 brewsSection
                 TastingTimelineView(
                     tastings: bean.tastingsOldestFirst,
@@ -160,6 +170,40 @@ struct BeanDetailView: View {
         if !bean.process.isEmpty { chips.append(bean.process) }
         if let roastDate = bean.roastDate { chips.append(L("烘焙 %@", Fmt.short(roastDate))) }
         return chips
+    }
+
+    // MARK: - Ask
+
+    /// 就这包豆子提问。
+    ///
+    /// 放在存量之后：看完「还剩多少」，最自然的下一个问题就是「那我该怎么喝」。
+    /// 入口带着这包豆子进去，所以用户不必在问题里念一遍名字。
+    private var askSection: some View {
+        NavigationLink {
+            AskView(focusBean: bean)
+        } label: {
+            Card {
+                HStack(spacing: 12) {
+                    Image(systemName: "text.magnifyingglass")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(Palette.roast)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("就这包豆子提问")
+                            .font(TypeScale.body)
+                            .foregroundStyle(Palette.ink)
+                        Text("从你自己的记录里找答案：什么时候开封的、哪次冲得最好")
+                            .font(TypeScale.caption)
+                            .foregroundStyle(Palette.inkFaint)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 6)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Palette.inkFaint)
+                }
+            }
+        }
+        .buttonStyle(CardButtonStyle())
     }
 
     // MARK: - Stock
