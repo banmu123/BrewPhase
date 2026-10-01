@@ -219,6 +219,17 @@ final class AnswerMarkupTests: XCTestCase {
                        ["Brewed with a V60.", " 18g coffee."], "英文句号后面要留空格，否则两个词会粘在一起")
     }
 
+    func testTheStopAddedBetweenLinesSpeaksTheInterfaceLanguage() {
+        LanguageManager.pinForTesting(.english)
+        defer { LanguageManager.pinForTesting(.simplifiedChinese) }
+
+        // 两行都没标点收尾时要在中间补一个句号——补的必须是英文句号，
+        // 否则英文正文里会冒出一个中文的「。」
+        XCTAssertEqual(ExtractiveLLMProvider.split("Grind size sets the resistance\nIt raises extraction"),
+                       ["Grind size sets the resistance.", " It raises extraction"])
+        XCTAssertFalse(ExtractiveLLMProvider.split("one\ntwo").joined().contains("。"))
+    }
+
     func testAnEnglishDocumentIsNoLongerPastedWhole() {        let sentences = (1...6).map { "Sentence number \($0) mentions extraction and grind." }
         let content = sentences.joined(separator: " ")
 

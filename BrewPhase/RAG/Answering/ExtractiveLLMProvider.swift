@@ -193,7 +193,9 @@ struct ExtractiveLLMProvider: LLMProvider {
         guard let last = text.last else { return "" }
         if "。！？：；，、".contains(last) { return "" }
         if ".!?:;,".contains(last) { return " " }
-        return "。"
+        // 上一行没有标点收尾，那就在两行之间补一个句号——补哪个语言的句号由文案表
+        // 决定：中文补「。」，英文补 ". "（英文少了这个句号，两句话会粘成一句）。
+        return L("。")
     }
 
     /// 这个句号是不是句末。
