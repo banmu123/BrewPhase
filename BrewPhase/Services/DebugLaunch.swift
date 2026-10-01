@@ -26,6 +26,11 @@ enum DebugScreen: String, CaseIterable, Identifiable {
     case ask
     /// 洞察页——V1 智能层的主界面，四张卡片各占一屏的一部分。
     case insights
+    /// 30 秒快记。它是新闭环的入口，但入口在首页工具栏里，一屏截不全整个表单。
+    case quickLog
+    /// 诊断卡单独一屏。和 `tastingTimeline` 同一个理由：它在豆子页上位于折叠线以下，
+    /// 而这张卡是这一次交付最需要看清楚的一块界面。
+    case brewDiagnosis
 
     var id: String { rawValue }
 }
@@ -81,5 +86,15 @@ enum DebugLaunch {
             questions.append(value)
         }
         return questions
+    }
+
+    /// `-BrewPhaseQuickLogDemo yes`
+    ///
+    /// 让 30 秒快记一打开就记下「一杯不太好的咖啡」（酸高、甜低、口感薄）并直接
+    /// 停在结果页。存在的理由和 `-BrewPhaseAsk` 一样：`simctl launch` 不能点击，
+    /// 而「记完立刻看到本次分析与下一杯建议」这条路只有真记下一杯才有东西可看。
+    /// 它只在演示库里写一条记录，正常使用里是 nil。
+    static var quickLogDemo: Bool {
+        value(for: "-BrewPhaseQuickLogDemo") == "yes"
     }
 }

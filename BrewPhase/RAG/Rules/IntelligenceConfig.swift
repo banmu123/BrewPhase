@@ -131,4 +131,28 @@ enum IntelligenceConfig {
     ///
     /// 太多会把问题淹没：扩写是给省略句补主体，不是把整包豆子的档案塞进查询。
     static let conversationContextTermLimit = 6
+
+    // MARK: 冲煮诊断的阈值
+    //
+    // 与上面的容差同一性质：这些不是咖啡科学标准，而是「差多少才算差」的判据。
+    // 集中在这里，是因为诊断的每一条判据都要能一眼看见、能一处改掉。
+
+    /// 诊断需要几条高评分参考记录才算「有依据」。
+    ///
+    /// 取 1：只有一次较好记录时，「这一杯比那次快 24 秒」仍然是一个**事实**，
+    /// 不是编出来的基线。但它与「个人最佳参数」的 3 条要求
+    /// （`minimumSamplesForComparison`）并不冲突——后者说的是「你的最佳参数是什么」，
+    /// 口气完全不同。参考记录越少，诊断的置信度上限越低
+    /// （见 `PersonalBaseline.confidenceCeiling`）。
+    static let diagnosticMinimumReferenceRecords = 1
+
+    /// 时间差多少秒算「明显偏离」。
+    ///
+    /// 比展示容差（`timeTolerance` 15s）更严：这里要说的是「显著」，不是「不一样」。
+    static let diagnosticTimeMarginSeconds = 10.0
+
+    /// 没有个人味觉基线时，判断「这条轴偏高」的兜底阈值。
+    static let diagnosticHighAxisThreshold = 4
+    /// 没有个人味觉基线时，判断「这条轴偏低」的兜底阈值。
+    static let diagnosticLowAxisThreshold = 2
 }

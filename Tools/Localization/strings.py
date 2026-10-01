@@ -875,4 +875,162 @@ EN: dict[str, str] = {
     "「%@」我还不确定指的是哪一个。先说说这包豆子的产区或处理法，我就能接上。":
         "\"%@\": I cannot tell which one you mean. Tell me the origin or the process of the bag and "
         "I will pick it up.",
+
+    # MARK: Quick brew log and diagnosis
+    "记一杯": "Log a cup",
+    "记下了": "Logged",
+    "记下这一杯": "Log this cup",
+    "再记一杯": "Log another",
+    "完成": "Done",
+    "完整表单": "Full form",
+    "哪包豆": "Which bag",
+    "选一包豆": "Pick a bag",
+    "怎么冲的": "How you brewed",
+    "可以不填": "optional",
+    "更多参数": "More parameters",
+    "这次改了": "Changed this time",
+    "沿用这包豆上一次的参数": "Reusing the last brew of this bag",
+    "沿用你上一次冲的参数": "Reusing your last brew",
+    "用你设的默认参数": "Using your default parameters",
+    "先加一包豆，再记这一杯。": "Add a bag first, then log this cup.",
+    "这次记录还差一点信息": "This record is missing something",
+    "本次表现": "This cup",
+    "下一杯建议": "Next cup",
+    "只改一件事": "one change only",
+    "优先调整": "Change first",
+    "保持不变": "Keep unchanged",
+    "下一杯留意": "Watch next time",
+    "依据": "Evidence",
+    "另外还看到": "Also seen",
+    "知识库怎么说": "What the knowledge base says",
+    "冲煮诊断": "Brew diagnosis",
+    "可能萃取不足": "Possibly under-extracted",
+    "可能过萃": "Possibly over-extracted",
+    "冲得偏快": "Running fast",
+    "冲得偏慢": "Running slow",
+    "甜感偏低": "Low sweetness",
+    "苦味偏重": "High bitterness",
+    "口感偏薄": "Thin body",
+    "参数偏离你的较好记录": "Parameters away from your better brews",
+    "证据较足": "Solid evidence",
+    "可以参考": "worth trying",
+    "只是方向": "directional",
+    "证据不足": "Not enough evidence",
+    "水量不变、多加一点粉，浓度和口感都会厚起来。":
+        "Same water, a little more coffee: stronger and fuller.",
+    "口感更饱满，风味更集中。": "Fuller body, more concentrated flavour.",
+    "多加一点粉": "a little more coffee",
+    "少一点粉": "a little less coffee",
+    "细一档": "one step finer",
+    "粗一档": "one step coarser",
+    "稍微延长": "a little longer",
+    "稍微缩短": "a little shorter",
+    "调高一点": "a little warmer",
+    "调低一点": "a little cooler",
+    "回到你常用的粉量，浓度更接近你的记录。":
+        "Back to your usual dose brings the strength closer to your own records.",
+    "回到你自己表现更好的温度区间。":
+        "Back into the temperature range that works better for you.",
+    "甜感和香气更容易出来。": "Sweetness and aroma come out more easily.",
+    "时间不短但甜感没上来时，升温通常比磨细更有效。":
+        "When the time is fine but sweetness is missing, a warmer brew usually helps more than a "
+        "finer grind.",
+    "萃取更充分：甜感上来，酸质变柔和。":
+        "More complete extraction: more sweetness, softer acidity.",
+    "时间偏短是萃取不足最常见的信号，磨细是最直接的补救。":
+        "A short brew is the most common under-extraction signal; going finer is the direct fix.",
+    "先把流速拉回你自己的区间，再谈别的。":
+        "Get the flow back into your own range first.",
+    "水流慢一点，萃取更完整。": "Slower flow, more complete extraction.",
+    "总时间缩短，风味更干净。": "Shorter total time, cleaner cup.",
+    "时间偏长，又有苦或干涩，通常是磨得太细。":
+        "A long brew plus bitterness or dryness usually means the grind is too fine.",
+    "少萃一点：苦和干涩会退下去。":
+        "Extract a little less: bitterness and dryness should recede.",
+    "苦味明显高于你自己的记录，先往粗的方向试。":
+        "Bitterness is clearly above your own records; try coarser first.",
+    "苦味变轻，甜感更容易露出来。": "Less bitterness, sweetness shows through.",
+    "让水流快一点，回到你自己的区间。":
+        "Speed the flow back up into your own range.",
+    "这一杯和你自己表现较好的记录差得比较远。":
+        "This cup sits well away from your better brews.",
+    "这一杯和你自己评价较高的那几次差得比较远。":
+        "This cup sits well away from the brews you rated higher.",
+    "水流过快、萃取不够，常见的表现是酸高、甜少、口感偏薄。":
+        "Too fast a flow under-extracts: usually high acidity, little sweetness and a thin body.",
+    "萃得太久或太细，常见的表现是苦、干、余韵拖得长。":
+        "Too long or too fine over-extracts: usually bitter, drying and a long finish.",
+    "这一杯比你自己的记录快，通常意味着通道或研磨偏粗。":
+        "This cup ran faster than your own records — usually channelling or too coarse a grind.",
+    "这一杯比你自己的记录慢，通常是研磨偏细或细粉堵住了。":
+        "This cup ran slower than your own records — usually too fine a grind or fines clogging "
+        "the filter.",
+    "甜感低于你自己好喝的那几杯。": "Less sweet than your own better cups.",
+    "苦味高于你自己好喝的那几杯。": "More bitter than your own better cups.",
+    "口感比你自己好喝的那几杯更薄。": "Thinner than your own better cups.",
+    "这一杯在你自己的记录里没有明显异常。":
+        "This cup shows nothing unusual against your own records.",
+    "最近这一杯在你自己的记录里没有明显异常。":
+        "The latest cup shows nothing unusual against your own records.",
+    "目前数据还不足以建立个人基线。":
+        "There is not enough data yet to build a personal baseline.",
+    "目前「%@」有 %@ 次带评分的记录，还差 %@ 次才能形成稳定的个人基线。":
+        "\"%@\" has %@ scored brews so far; %@ more and a stable personal baseline forms.",
+    "继续记几杯，BrewPhase 会用你自己的数据给出建议。":
+        "Keep logging a few more cups; BrewPhase will advise from your own data.",
+    "参考记录还只有 %@ 次，判定只是方向性的。":
+        "Only %@ reference brews so far — this reading is directional.",
+    "这杯没有填味觉细项，判断主要依据时间和参数。":
+        "No taste detail was filled in for this cup; the reading leans on time and parameters.",
+    "这杯没有填醇厚": "Body was left blank for this cup",
+    "这杯的 %@ 是 %@/5": "%@ for this cup: %@/5",
+    "这杯的 %@ 是 %@/5，你较好记录里最高 %@":
+        "%@ for this cup: %@/5; highest among your better brews: %@",
+    "这杯的 %@ 是 %@/5，你较好记录里最低 %@":
+        "%@ for this cup: %@/5; lowest among your better brews: %@",
+    "这杯的醇厚是 %@/5": "Body for this cup: %@/5",
+    "备注里出现了干涩这类感觉：%@": "The note mentions dryness: %@",
+    "备注里出现了水感/寡淡这类感觉：%@": "The note mentions wateriness or flatness: %@",
+    "本次 %@，你的较好记录在 %@（快 %@）":
+        "This cup %@; your better brews %@ — faster by %@",
+    "本次 %@，你的较好记录在 %@（慢 %@）":
+        "This cup %@; your better brews %@ — slower by %@",
+    "%@ 本次 %@，你的较好记录在 %@–%@": "%@: this cup %@, your better brews %@–%@",
+    "你的较好记录集中在 %@–%@": "Your better brews cluster around %@–%@",
+    "你较好的记录在 %@–%@": "Your better brews sit at %@–%@",
+    "依据：%@ 的 %@ 次高评分记录。": "Based on %@: %@ high-rated brews.",
+    "判断依据：%@": "Evidence: %@",
+    "这包豆": "this bag",
+    "这包豆 + %@": "this bag + %@",
+    "%@ 的做法": "your %@ brews",
+    "下一杯建议：%@。": "Next cup: %@.",
+    "下一杯留意：%@。": "Watch next time: %@.",
+    "保持不变：%@。": "Keep unchanged: %@.",
+    "原因：%@": "Reason: %@",
+    "另外还看到：%@。": "Also seen: %@.",
+    "最近这一杯更接近「%@」（%@）。": "The latest cup is closer to \"%@\" (%@).",
+    "「%@」最近这杯的分析": "Analysis of the latest cup of \"%@\"",
+    "知识库里的说法：%@——%@": "From the knowledge base: %@ — %@",
+    "知识库说的是通常情况，你的记录说的是这包豆的实际情况；两者不一致时以你的记录为准。":
+        "The knowledge base describes the general case; your records describe this bag. When they "
+        "disagree, your records win.",
+    "这一轮没有足够把握给出单向的调整建议。":
+        "Not enough confidence this time to point at a single adjustment.",
+    "上一轮的建议：%@": "Previous suggestion: %@",
+    "总时间": "Total time",
+    "酸质": "Acidity",
+    "醇感": "Body",
+    "苦味": "Bitterness",
+    "香气": "Aroma",
+    "干涩": "Dryness",
+    "升温": "warmer",
+    "降温": "cooler",
+    "延长": "longer",
+    "缩短": "shorter",
+    "变淡": "weaker",
+    "变浓": "stronger",
+    "加粉": "more coffee",
+    "减粉": "less coffee",
+    "器具 %@": "Brewer %@",
+    "水温 %@": "Water %@",
 }

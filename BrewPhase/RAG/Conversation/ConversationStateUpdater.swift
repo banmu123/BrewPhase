@@ -50,6 +50,8 @@ enum ConversationStateUpdater {
             next.activeParameter = nil
             next.lastDirection = nil
             next.recentEvidence = []
+            // 换豆子时上一轮的建议也作废：那是针对上一包豆子说的。
+            next.activeSuggestion = nil
             next.activeTopic = .bean
         }
 
@@ -80,6 +82,11 @@ enum ConversationStateUpdater {
         }
         if let topic = resolution.topic {
             next.activeTopic = topic
+        }
+        // 这一轮给出的调整建议带进下一轮：这样「那下一杯呢」「水温要不要一起动」
+        // 都接得上，而状态里只有「哪个旋钮、往哪边」两件事（规格 §二十一）。
+        if let suggestion = plan.suggestion {
+            next.activeSuggestion = suggestion
         }
         if !plan.intents.isEmpty {
             next.activeIntent = primaryIntent(of: plan.intents)
@@ -128,6 +135,6 @@ enum ConversationStateUpdater {
     }
 
     private static let primaryOrder: [QueryIntent] = [
-        .inventory, .similarity, .preference, .rating, .recipe, .timing, .status, .knowledge,
+        .inventory, .diagnosis, .similarity, .preference, .rating, .recipe, .timing, .status, .knowledge,
     ]
 }

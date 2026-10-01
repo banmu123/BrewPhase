@@ -85,6 +85,26 @@ enum DemoData {
             context.insert(tasting)
         }
 
+        // 1.5 — 一杯「不太满意」的最近记录。
+        //
+        // 刻意让最新那一杯比前面三次短（2:08 对 2:28–2:35）、酸高甜低、口感偏薄：
+        // 这样豆子详情页上的「本次表现 / 下一杯建议」和「问一问」里的诊断都真的
+        // 有东西可说（可能萃取不足 → 磨细一档），而不是只能看到「没有明显异常」。
+        // 演示数据要能示范功能，否则第一次打开 App 的人根本不知道它做得到这件事。
+        let roughCup = Brew(
+            date: brewDay(0), method: "V60", grinder: L("司令官 C40"),
+            grindSize: L("22 格"), waterTemp: 92, coffeeG: 18, waterG: 300,
+            timeSeconds: 128, score: 3,
+            acidity: 5, sweetness: 2, bitterness: 2, body: 2,
+            flavorTags: ["Mandarin"], notes: L("有点酸，尾段薄"), bean: guji
+        )
+        context.insert(roughCup)
+        context.insert(Tasting(
+            date: brewDay(0), dayAfterRoast: 16, flavorTags: ["Mandarin"],
+            score: 3, notes: L("有点酸，尾段薄"),
+            source: .brew, brewID: roughCup.id, bean: guji
+        ))
+
         // 2 — just out of the exhaust window, so the vocabulary's middle state is
         // on screen too: for a light roast the Opening days are 3–6.
         let colombia = Bean(

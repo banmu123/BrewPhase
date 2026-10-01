@@ -398,121 +398,39 @@ struct BrewEditorView: View {
 
     // MARK: - Saving
 
+    /// 写入只走 `BrewRecorder`：校验、库存、风味时间线、提醒，一处说了算。
+    /// 30 秒快记走的是同一个函数，因此两条入口落库的结果不可能不一致。
     private func save() {
         errorMessage = nil
 
-        var draft = recipe
-        draft.timeSeconds = BrewMath.parseTime(timeText) ?? 0
-
-        let result = BrewMath.validate(draft)
-        guard result.canSave else {
-            errorMessage = result.blocking.first
-            return
-        }
-
-        let parsedTime = draft.timeSeconds
-
-        if let existing {
-            // Editing: adjust stock by the difference, so correcting a typo does
-            // not silently double-deduct.
-            let delta = draft.coffeeG - existing.coffeeG
-            existing.date = date
-            existing.method = draft.method.trimmed
-            existing.grinder = draft.grinder.trimmed
-            existing.grindSize = draft.grindSize.trimmed
-            existing.waterTemp = draft.waterTemp
-            existing.coffeeG = draft.coffeeG
-            existing.waterG = draft.waterG
-            existing.timeSeconds = parsedTime
-            existing.score = BrewMath.clampScore(score)
-            existing.acidity = acidity
-            existing.sweetness = sweetness
-            existing.bitterness = bitterness
-            existing.body = body_
-            existing.aftertaste = aftertaste
-            existing.flavorTags = flavorTags
-            existing.notes = notes.trimmed
-
-            if delta != 0 { bean.consume(delta) }
-            updateLinkedTasting(for: existing)
-        } else {
-            let brew = Brew(
-                date: date,
-                method: draft.method.trimmed,
-                grinder: draft.grinder.trimmed,
-                grindSize: draft.grindSize.trimmed,
-                waterTemp: draft.waterTemp,
-                coffeeG: draft.coffeeG,
-                waterG: draft.waterG,
-                timeSeconds: parsedTime,
-                score: BrewMath.clampScore(score),
-                acidity: acidity,
-                sweetness: sweetness,
-                bitterness: bitterness,
-                body: body_,
-                aftertaste: aftertaste,
-                flavorTags: flavorTags,
-                notes: notes.trimmed,
-                bean: bean
-            )
-            context.insert(brew)
-            bean.consume(draft.coffeeG)
-
-            // §40: recording a brew also leaves a mark on the flavour timeline,
-            // but only when there is something to say.
-            if brew.hasTimelineMaterial {
-                let tasting = brew.makeTasting()
-                tasting.bean = bean
-                context.insert(tasting)
-            }
-        }
-
-        bean.touch()
+        let draft = BrewRecorder.Draft(
+            recipe: recipe,
+            timeText: timeText,
+            date: date,
+            score: score,
+            acidity: acidity,
+            sweetness: sweetness,
+            bitterness: bitterness,
+            body: body_,
+            aftertaste: aftertaste,
+            flavorTags: flavorTags,
+            notes: notes
+        )
 
         do {
-            try context.save()
+            _ = try BrewRecorder.save(draft, bean: bean, existing: existing, in: context)
+        } catch let failure as BrewRecorder.Failure {
+            switch failure {
+            case .invalid(let message), .saveFailed(let message):
+                errorMessage = message
+            }
+            return
         } catch {
             errorMessage = L("没能保存下来，请再试一次")
-            AppLog.store.error("brew save failed: \(error.localizedDescription, privacy: .public)")
             return
         }
 
-        Task { await rescheduleReminders() }
+        Task { await BrewRecorder.rescheduleReminders(for: bean, in: context) }
         dismiss()
-    }
-
-    /// Keeps the auto-generated note in step with its brew, or removes it when the
-    /// brew no longer says anything.
-    private func updateLinkedTasting(for brew: Brew) {
-        let linked = (bean.tastings ?? []).first { $0.brewID == brew.id }
-        if brew.hasTimelineMaterial {
-            if let linked {
-                linked.date = brew.date
-                linked.dayAfterRoast = brew.dayAfterRoast ?? 0
-                linked.score = brew.score
-                linked.flavorTags = brew.flavorTags
-                linked.notes = brew.notes
-            } else {
-                let tasting = brew.makeTasting()
-                tasting.bean = bean
-                context.insert(tasting)
-            }
-        } else if let linked {
-            context.delete(linked)
-        }
-    }
-
-    /// The stock changed, so the consumption estimate — and therefore the
-    /// priority nudge — may have moved too.
-    private func rescheduleReminders() async {
-        let stored = (try? context.fetch(FetchDescriptor<PhaseRule>())) ?? []
-        let book = PhaseRuleBook.make(stored: stored)
-        let insight = InsightFactory.insight(for: bean, book: book)
-        await NotificationManager.shared.sync(
-            bean: bean,
-            rule: book.rule(for: bean.roastLevel),
-            estimate: insight.estimate,
-            context: context
-        )
     }
 }

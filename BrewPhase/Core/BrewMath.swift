@@ -35,6 +35,14 @@ struct BrewRecipe: Equatable, Sendable {
         if timeSeconds > 0 { parts.append(timeText) }
         return parts
     }
+
+    /// 粉水比的数值形式（1:16.7 → 16.7）。两边都有值时才成立，否则是 0。
+    ///
+    /// 与 `Brew.ratio` 同一套算法：一个数字，不是字符串——差异比较与个人区间
+    /// 都要拿它算。
+    var ratioValue: Double {
+        BrewMath.ratioValue(coffeeG: coffeeG, waterG: waterG)
+    }
 }
 
 /// All the arithmetic a brew needs. Pure, so the ratio, the time parsing and the

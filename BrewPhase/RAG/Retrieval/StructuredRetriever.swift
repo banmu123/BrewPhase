@@ -17,12 +17,21 @@ enum StructuredRetriever {
         brews: [Brew],
         tastings: [Tasting],
         book: PhaseRuleBook?,
+        diagnosis: BrewDiagnosis? = nil,
         now: Date = Date(),
         calendar: Calendar = DateMath.calendar
     ) -> [RetrievedPassage] {
         var passages: [RetrievedPassage] = []
 
         let focusBean = plan.focusBeanID.flatMap { id in beans.first { $0.id == id } }
+
+        // 「为什么这杯分低」「下一杯怎么改」——诊断是最贴题的结论，排在第一位。
+        // 诊断本身是确定性规则算出来的（`BrewDiagnosticEngine`），这里只负责把它的
+        // 结论、证据与建议变成一条可引用的结构化事实。
+        if plan.intents.contains(.diagnosis), let focusBean, let diagnosis,
+           let fact = diagnosticFact(bean: focusBean, diagnosis: diagnosis, calendar: calendar) {
+            passages.append(fact)
+        }
 
         if plan.intents.contains(.inventory) {
             if let inventory = inventoryFact(beans: beans, book: book, now: now, calendar: calendar) {
@@ -56,6 +65,71 @@ enum StructuredRetriever {
     }
 
     // MARK: - 各类事实
+
+    /// 最近这一杯的诊断与下一杯建议（CP-009）。
+    ///
+    /// 它把 `BrewDiagnosticEngine` 的结论写成**可直接引用**的几行：结论 + 逐条证据 +
+    /// 「下一杯优先改什么」+ 保持不变的部分。这个顺序就是用户问「为什么」「怎么办」
+    /// 时想听到的顺序，抽取式回答会原样带出去，所以每一行都必须是真实数字——
+    /// 数据不足时这里写的是「还差几次」，不是硬凑的一条建议。
+    private static func diagnosticFact(
+        bean: Bean,
+        diagnosis: BrewDiagnosis,
+        calendar: Calendar
+    ) -> RetrievedPassage? {
+        var lines: [String] = []
+
+        if let primary = diagnosis.primary {
+            lines.append(L("最近这一杯更接近「%@」（%@）。",
+                           primary.finding.title, primary.confidence.diagnosticLabel))
+            lines.append(contentsOf: primary.evidence)
+            for extra in diagnosis.candidates.dropFirst().prefix(2) {
+                lines.append(L("另外还看到：%@。", extra.finding.title))
+            }
+        } else if diagnosis.baseline.isUsable {
+            lines.append(L("最近这一杯在你自己的记录里没有明显异常。"))
+        } else {
+            lines.append(diagnosis.baseline.shortfallMessage)
+            lines.append(PersonalBaseline.keepRecordingAdvice)
+        }
+
+        if let suggestion = diagnosis.suggestion {
+            lines.append(L("下一杯建议：%@。", suggestion.headline))
+            lines.append(L("原因：%@", suggestion.reason))
+            if !suggestion.keep.isEmpty {
+                lines.append(L("保持不变：%@。", suggestion.keep.joined(separator: L("、"))))
+            }
+            lines.append(L("下一杯留意：%@。", suggestion.observe.joined(separator: L("、"))))
+        } else if diagnosis.baseline.isUsable, !diagnosis.candidates.isEmpty {
+            lines.append(L("这一轮没有足够把握给出单向的调整建议。"))
+        }
+
+        for item in diagnosis.knowledge.prefix(2) {
+            lines.append(L("知识库里的说法：%@——%@", item.title, item.source))
+        }
+
+        // 依据有多硬写清楚，等于告诉用户这句话该信几分。
+        // `basisNote` 自带「依据：」前缀，所以这里不再套一层，免得写成「判断依据：依据：…」。
+        lines.append(diagnosis.baseline.basisNote)
+
+        return RetrievedPassage(
+            id: "fact:diagnosis:\(bean.id.uuidString)",
+            origin: .structuredFact,
+            sourceType: .brew,
+            title: L("「%@」最近这杯的分析", bean.displayName),
+            content: lines.joined(separator: "\n"),
+            metadata: DocumentMetadata(
+                beanID: bean.id,
+                method: bean.latestBrew?.method.nonEmpty,
+                docDate: bean.latestBrew?.date,
+                origin: bean.origin.nonEmpty,
+                process: bean.process.nonEmpty
+            ),
+            relevance: 1,
+            similarity: nil,
+            updatedAt: bean.updatedAt
+        )
+    }
 
     private static func inventoryFact(
         beans: [Bean],

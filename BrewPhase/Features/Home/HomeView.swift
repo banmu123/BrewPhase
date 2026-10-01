@@ -18,6 +18,7 @@ struct HomeView: View {
 
     @State private var isAddingBean = false
     @State private var brewingBean: Bean?
+    @State private var isLoggingBrew = false
 
     // MARK: - Derived
 
@@ -85,6 +86,23 @@ struct HomeView: View {
             .background(Palette.paper)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // 记一杯是每天都会做的事，和「加一包豆」同级，所以放在工具栏最左边、
+                // 带文字。冲完直接进来记，参数默认沿用上一杯——这条路的长度决定了
+                // 用户会不会一直记下去。
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        isLoggingBrew = true
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "cup.and.saucer.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                            Text("记一杯")
+                                .font(TypeScale.callout)
+                        }
+                        .foregroundStyle(Palette.roast)
+                    }
+                    .accessibilityLabel("记一杯")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 18) {
                         // 洞察放在添加豆旁边：问「最近适合喝哪包」「今天做手冲
@@ -114,7 +132,10 @@ struct HomeView: View {
                 BeanEditorView(mode: .create)
             }
             .sheet(item: $brewingBean) { bean in
-                BrewEditorView(bean: bean)
+                QuickBrewLogView(bean: bean)
+            }
+            .sheet(isPresented: $isLoggingBrew) {
+                QuickBrewLogView(bean: nil)
             }
             .animation(Motion.glide, value: beans.count)
         }

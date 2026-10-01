@@ -393,6 +393,10 @@ struct RuleQueryAnalyzer: QueryAnalyzer {
     /// 问题是完全正常的，绑错了会拿一包无关的豆子去查常识。
     private func bindsToFocusedBag(text: String, intents: Set<QueryIntent>) -> Bool {
         if refersToABag(text) { return true }
+        // 诊断类问句说的就是**这一杯**（「为什么这杯不好喝」「下一杯怎么改」），
+        // 所以它压过下面那条「知识型问法优先解释成通用问题」的规则——否则
+        // 「为什么…」这个起头词会把诊断本身也一起否掉（「为什么」同时是知识问句的词）。
+        if intents.contains(.diagnosis) { return true }
         // 知识型的问法优先解释成通用问题。
         guard !intents.contains(.knowledge) else { return false }
         return intents.contains(where: \.isAboutThisBag)
@@ -423,7 +427,7 @@ extension QueryIntent {
     /// 这一类问题默认指的是「当前这包豆子」——从豆子页面提问时不带名字也应该锁定它。
     var isAboutThisBag: Bool {
         switch self {
-        case .recipe, .timing, .rating, .status: return true
+        case .recipe, .timing, .rating, .status, .diagnosis: return true
         case .inventory, .preference, .similarity, .knowledge: return false
         }
     }

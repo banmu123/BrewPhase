@@ -69,7 +69,7 @@ final class HybridRetriever {
         let beanContext = candidateBeanID
             .flatMap { id in beans.first { $0.id == id } }
             .map { BeanContextResolver().context(for: $0, today: now) }
-        let plan = ConversationQueryPlanner.apply(
+        var plan = ConversationQueryPlanner.apply(
             analyzed, conversation: conversation, beanContext: beanContext, languageCode: languageCode
         )
 
@@ -95,11 +95,25 @@ final class HybridRetriever {
         }
 
         // 3 — 结构化直查。
+        //
+        // 诊断只在「问这一杯」的时候算一次（规则 + 个人历史，确定性、无模型）：
+        // 它既是给用户的答案（结构化事实），也是这一轮的调整建议（进对话状态）。
+        var diagnosis: BrewDiagnosis?
+        if plan.intents.contains(.diagnosis), plan.focusBeanID != nil {
+            let focusBean = plan.focusBeanID.flatMap { id in beans.first { $0.id == id } }
+            diagnosis = focusBean.flatMap {
+                BrewDiagnosisService.diagnose(bean: $0, allBrews: brews, languageCode: languageCode)
+            }
+            plan.suggestion = diagnosis?.suggestion.map {
+                SuggestionState(parameter: $0.parameter, direction: $0.direction)
+            }
+        }
+
         var facts: [RetrievedPassage] = []
         if plan.wantsStructuredFacts {
             facts = StructuredRetriever.facts(
                 plan: plan, beans: beans, brews: brews, tastings: tastings,
-                book: book, now: now, calendar: calendar
+                book: book, diagnosis: diagnosis, now: now, calendar: calendar
             )
         }
 

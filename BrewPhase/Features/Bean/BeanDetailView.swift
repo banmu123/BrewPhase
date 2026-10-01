@@ -9,16 +9,17 @@ struct BeanDetailView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Query private var rules: [PhaseRule]
+    /// 别的豆子的记录也要看：个人基线的第三层回退是「同一冲法、别的豆子」。
+    @Query(sort: \Brew.date, order: .reverse) private var allBrews: [Brew]
 
     @State private var isEditing = false
     @State private var isAddingBrew = false
+    @State private var isQuickLogging = false
     @State private var isAddingTasting = false
     @State private var editingBrew: Brew?
     @State private var isAdjustingStock = false
     @State private var isConfirmingDelete = false
     @State private var showsAllBrews = false
-    /// Drives the "copy the last recipe, then adjust" path into the brew editor.
-    @State private var isCopyingLastBrew = false
 
     /// 本地问答的总开关。跟着设置走，关掉时这里不显示入口——留一个点了没有反应的
     /// 按钮比不显示更糟。
@@ -28,6 +29,14 @@ struct BeanDetailView: View {
 
     private var insight: BeanInsight {
         InsightFactory.insight(for: bean, book: book)
+    }
+
+    /// 最近一杯的诊断。没有记录时为 nil——一张没有对象的诊断卡不该出现。
+    ///
+    /// 算在视图这一层是刻意的：它只依赖已有记录，是纯函数，不需要缓存；
+    /// 换一包豆、记完新的一杯，它会自己刷新。
+    private var recentDiagnosis: BrewDiagnosis? {
+        BrewDiagnosisService.diagnose(bean: bean, allBrews: allBrews, languageCode: languageCode)
     }
 
     private var rule: PhaseRuleData { book.rule(for: bean.roastLevel) }
@@ -43,6 +52,11 @@ struct BeanDetailView: View {
                 FlavorWindowCard(bean: bean,
                                  defaults: BrewDefaults.current(),
                                  todayDay: bean.currentDayAfterRoast)
+                // 「上次那杯怎么样、这次怎么改」比知识区块更常用，所以排在它前面：
+                // 打开豆子页的人多半是刚冲完或者准备再冲一杯。
+                if let recentDiagnosis {
+                    BrewDiagnosticCard(diagnosis: recentDiagnosis, showsKnowledge: false)
+                }
                 BeanKnowledgeSection(bean: bean, languageCode: languageCode)
                 stockSection
                 if asksAboutThisBag {
@@ -111,8 +125,8 @@ struct BeanDetailView: View {
         .sheet(isPresented: $isAdjustingStock) {
             StockAdjustView(bean: bean)
         }
-        .sheet(isPresented: $isCopyingLastBrew) {
-            BrewEditorView(bean: bean, autoCopyLast: true)
+        .sheet(isPresented: $isQuickLogging) {
+            QuickBrewLogView(bean: bean)
         }
         .confirmationDialog(
             "删除这包豆子？",
@@ -322,14 +336,13 @@ struct BeanDetailView: View {
 
     private var addBrewButtons: some View {
         HStack(spacing: 10) {
-            SecondaryButton(title: "记一次冲煮", systemImage: "plus") {
-                isAddingBrew = true
+            // 常用的是快记：参数已经沿用上一杯，只需要回答「这次变了什么」。
+            SecondaryButton(title: "记一杯", systemImage: "plus") {
+                isQuickLogging = true
             }
-            if bean.latestBrew != nil {
-                // §11: the recipe worth repeating is one tap away.
-                SecondaryButton(title: "复制参数再来一次", systemImage: "doc.on.doc") {
-                    isCopyingLastBrew = true
-                }
+            // 完整表单仍然在：想逐项填、或者要改的是配方本身时用它。
+            SecondaryButton(title: "完整表单", systemImage: "square.and.pencil") {
+                isAddingBrew = true
             }
             Spacer(minLength: 0)
         }

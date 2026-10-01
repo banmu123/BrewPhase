@@ -25,6 +25,9 @@
 #           one after another, each waiting for the previous answer. Without it
 #           the multi-turn context (references, inheritance, switching) cannot
 #           be screenshotted — every turn would start from an empty session.
+# --quick-demo  records one deliberately mediocre cup (high acidity, low
+#           sweetness, thin body) and stops on the 30-second log's result page,
+#           so the diagnosis and the next-cup suggestion can be screenshotted.
 # --pref    writes one string preference before launching. Repeatable. Used to
 #           point the app at a local Ollama, e.g.
 #             --pref brewphase.rag.answerEngine=ollama
@@ -57,6 +60,7 @@ while [ $# -gt 0 ]; do
     --tab)    DEMO_ARGS+=(-BrewPhaseTab "$2"); shift 2 ;;
     --ask)    DEMO_ARGS+=(-BrewPhaseAsk "$2"); shift 2 ;;
     --ask-more) DEMO_ARGS+=(-BrewPhaseAskMore "$2"); shift 2 ;;
+    --quick-demo) DEMO_ARGS+=(-BrewPhaseQuickLogDemo yes); shift ;;
     --lang)   LANG_SETTING="$2"; shift 2 ;;
     --pref)   PREFS+=("$2"); shift 2 ;;
     --udid)   UDID="$2"; shift 2 ;;

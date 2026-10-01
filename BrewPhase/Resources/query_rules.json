@@ -53,6 +53,13 @@
       "有什么讲究", "一般用", "一般要", "通常",
       "why", "how should", "what is", "should i", "is it normal", "what does",
       "how do i", "generally", "what causes"
+    ],
+    "diagnosis": [
+      "下一杯", "下次怎么", "怎么改", "怎么调", "怎么调整", "问题出", "哪里不对",
+      "怎么回事", "不好喝", "太酸", "太苦", "偏酸", "偏苦", "发干", "干涩",
+      "萃取不足", "过萃", "怎么救", "怎么补救", "改进",
+      "next cup", "what should i change", "how do i fix", "what went wrong",
+      "too sour", "too bitter", "under extracted", "over extracted"
     ]
   },
   "bagReferences": [

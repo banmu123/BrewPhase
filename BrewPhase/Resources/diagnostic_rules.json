@@ -1,0 +1,48 @@
+{
+  "revision": 1,
+  "note": {
+    "zh-Hans": "冲煮诊断用的匹配词表与知识检索查询。放 JSON 而不是 Swift 字面量：这些是匹配用的数据，不是界面文案，写成源码字面量会被本地化流水线收成待翻译的键（与 query_rules.json / conversation_rules.json 同因）。词表在加载时统一做全角转半角 + 转小写。",
+    "en": "Matching tables and knowledge queries for brew diagnosis. Kept in JSON rather than Swift literals: these are matching data, not interface copy, and as source literals they would be collected by the localisation pipeline as keys needing translation (same reason as query_rules.json / conversation_rules.json). Every entry is normalised on load."
+  },
+  "notesKeywords": {
+    "dryness": [
+      "干涩", "发干", "口干", "尾段干", "有点干", "偏干", "收干", "涩感", "涩", "收敛",
+      "粗糙", "咬舌", "麻舌", "刮舌",
+      "astringent", "astringency", "dry", "drying", "harsh", "rough", "puckering"
+    ],
+    "hollow": [
+      "水感", "淡水感", "寡淡", "空洞", "薄水", "单薄", "发空",
+      "hollow", "watery", "wateriness", "thin", "empty"
+    ]
+  },
+  "notes": {
+    "zh-Hans": "「dryingness」这一组刻意不收单字「干」：中文里「干净」是好评，含「干」——按单字匹配会把好喝的记录判成干涩。",
+    "en": "The dryness group deliberately omits the bare character for 'dry': in Chinese, the word for 'clean' (干净) contains it, so a single-character match would read a good cup as astringent."
+  },
+  "knowledgeQueries": {
+    "underExtraction": {
+      "zh-Hans": "萃取不足 酸度高 甜感不足 研磨偏粗",
+      "en": "under extraction high acidity low sweetness grind too coarse"
+    },
+    "overExtraction": {
+      "zh-Hans": "过萃 苦味 干涩 萃取过度",
+      "en": "over extraction bitterness astringent over extracted"
+    },
+    "timeDeviation": {
+      "zh-Hans": "流速 通道效应 冲煮时间",
+      "en": "flow rate channelling brew time"
+    },
+    "parameterDeviation": {
+      "zh-Hans": "水温 粉水比 粉量",
+      "en": "water temperature brew ratio dose"
+    },
+    "lowSweetness": {
+      "zh-Hans": "甜感 萃取 烘焙度",
+      "en": "sweetness extraction roast level"
+    },
+    "thinBody": {
+      "zh-Hans": "醇厚度 浓度 粉水比",
+      "en": "body strength brew ratio"
+    }
+  }
+}

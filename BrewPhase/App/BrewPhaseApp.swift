@@ -93,6 +93,7 @@ struct RootView: View {
 
     @Environment(\.modelContext) private var context
     @Query(sort: \Bean.createdAt, order: .reverse) private var beans: [Bean]
+    @Query(sort: \Brew.date, order: .reverse) private var brews: [Brew]
     @Query private var rules: [PhaseRule]
 
     /// Only ever set when the app was launched for UI inspection. See `DebugLaunch`.
@@ -207,7 +208,34 @@ struct RootView: View {
             NavigationStack { AskView(focusBean: spotlightBean) }
         case .insights:
             NavigationStack { InsightsView() }
+        case .quickLog:
+            // 从最近冲过的那包进来，和首页「记一杯」走的是同一条路。
+            QuickBrewLogView(bean: beans.first { $0.id == recentBrewBeanID } ?? spotlightBean)
+        case .brewDiagnosis:
+            if let bean = spotlightBean,
+               let diagnosis = BrewDiagnosisService.diagnose(
+                   bean: bean, allBrews: brews, languageCode: LanguageManager.shared.current.resolvedCode
+               ) {
+                NavigationStack {
+                    ScrollView {
+                        BrewDiagnosticCard(diagnosis: diagnosis)
+                            .padding(.horizontal, Metric.gutter)
+                            .padding(.top, 10)
+                    }
+                    .background(Palette.paper)
+                    .navigationTitle("这杯怎么样")
+                    .navigationBarTitleDisplayMode(.inline)
+                }
+            } else {
+                debugEmpty
+            }
         }
+    }
+
+    /// 最近被冲过的那包豆——「记一杯」默认预填它的上一次参数。
+    private var recentBrewBeanID: UUID? {
+        let newest = brews.max { $0.date < $1.date }
+        return newest?.bean?.id
     }
 
     private var debugEmpty: some View {

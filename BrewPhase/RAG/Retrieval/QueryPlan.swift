@@ -14,6 +14,11 @@ enum QueryIntent: String, CaseIterable, Sendable {
     case preference
     case similarity
     case knowledge
+    /// 「为什么这杯分低」「下一杯怎么改」——这一杯的诊断与调整建议。
+    ///
+    /// 它是**关于具体某一次冲煮**的问题，所以和 `rating` 一样属于「这包豆」那一类：
+    /// 从豆子页面问「怎么回事」不必再念一遍名字（见 `isAboutThisBag`）。
+    case diagnosis
 
     var label: String {
         switch self {
@@ -25,6 +30,7 @@ enum QueryIntent: String, CaseIterable, Sendable {
         case .preference: return L("口味偏好")
         case .similarity: return L("相似经历")
         case .knowledge: return L("咖啡知识")
+        case .diagnosis: return L("冲煮诊断")
         }
     }
 
@@ -150,6 +156,13 @@ struct QueryPlan: Equatable, Sendable {
     /// 派生自 `resolution`，不单独存一份：把「计划里的歧义」和「解析出的歧义」
     /// 做成两个字段，迟早会出现两者不一致的计划。
     var clarification: ReferenceAmbiguity? { resolution?.ambiguity }
+
+    /// 这一轮给出的调整建议（如果有）。
+    ///
+    /// 由检索层在跑完诊断后写入，然后由 `ConversationStateUpdater` 带进下一轮——
+    /// 这样「那水温呢」能接上「上一轮建议你磨细一档」这个上下文，而**不必把回答
+    /// 原文当记忆**（规格 §二十一）。
+    var suggestion: SuggestionState?
 
     var hasFocusBean: Bool { focusBeanID != nil }
 

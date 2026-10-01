@@ -399,7 +399,10 @@ struct ConversationReferenceResolver {
         case .bean: hasReferent = resolved.beanID != nil
         case .method: hasReferent = resolved.method != nil
         case .equipment: hasReferent = resolved.equipment != nil
-        case .brew: hasReferent = resolved.brewID != nil
+        case .brew:
+            // 「这杯 / 刚才那杯」：锁定了豆子时，它指向那包豆**最近的一次**——这是
+            // 可以确定的事，不是猜。连哪包豆都不知道，才算真的缺对象。
+            hasReferent = resolved.brewID != nil || resolved.beanID != nil
         case .parameter: hasReferent = resolved.parameter != nil
         case .process, .origin, .variety, .roast:
             hasReferent = !resolved.referencedEntityIDs.isEmpty
@@ -581,7 +584,7 @@ enum ConversationQueryPlanner {
 
         // 9 — 把「这一轮沿用了什么」写进给用户看的那句说明。
         //     它就在回答卡片的脚注里，是这套系统「可解释」的一部分。
-        let extra = summaryLines(resolution)
+        let extra = summaryLines(resolution, conversation: conversation)
         if !extra.isEmpty {
             plan.summary = ([plan.summary].compactMap { $0 } + extra).joined(separator: "\n")
         }
@@ -589,7 +592,10 @@ enum ConversationQueryPlanner {
     }
 
     /// 并轨这一轮额外产生的说明行。
-    private static func summaryLines(_ resolution: ResolvedReferences) -> [String] {
+    private static func summaryLines(
+        _ resolution: ResolvedReferences,
+        conversation: ConversationContext
+    ) -> [String] {
         var lines: [String] = []
         if !resolution.inheritedLabels.isEmpty {
             lines.append(L("沿用上一轮：%@", resolution.inheritedLabels.joined(separator: L(" · "))))
@@ -600,6 +606,11 @@ enum ConversationQueryPlanner {
             } else {
                 lines.append(L("这一轮在问：%@", parameter.label))
             }
+        }
+        // 上一轮给过调整建议时把它摆出来：这样用户看得见「系统还记得它上一条说了什么」，
+        // 而不是每一轮都像重新开始。状态里只有「哪个旋钮、往哪边」，不存回答原文。
+        if let suggestion = conversation.activeSuggestion {
+            lines.append(L("上一轮的建议：%@", suggestion.headline))
         }
         return lines
     }

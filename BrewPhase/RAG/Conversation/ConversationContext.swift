@@ -215,6 +215,19 @@ struct EvidenceRef: Equatable, Sendable {
     }
 }
 
+/// 上一轮给出的调整建议（规格 §二十一：只保存结构化状态，不保存整段回答）。
+///
+/// 只留「哪个旋钮、往哪边」两件事——有这两件就够让下一轮接上
+/// 「上一轮建议你磨细一档，那水温要不要一起动」；把回答原文存下来则既臃肿又不可靠
+/// （回答是抽取式拼出来的，它不是事实源）。
+struct SuggestionState: Equatable, Sendable {
+    let parameter: AdjustmentParameter
+    let direction: AdjustmentDirection
+
+    /// 展示用的一句话。现算而不是存字符串：存下来的话，用户切换语言之后它还写着旧语言。
+    var headline: String { L("%@：%@", parameter.label, direction.label(for: parameter)) }
+}
+
 /// 多轮对话的语义状态（规格 §七）。
 ///
 /// **它不是聊天记录。** 只保存「对下一轮检索有价值的东西」：锁定的是哪包豆子、
@@ -245,6 +258,8 @@ struct ConversationContext: Equatable, Sendable {
     var activeMethod: MethodReference?
     var activeEquipment: MethodReference?
     var activeParameter: QueryParameter?
+    /// 上一轮给的调整建议（诊断 → 下一杯怎么改）。
+    var activeSuggestion: SuggestionState?
     /// 上一轮的方向。存它是为了让「再低一点呢」能连上上一轮的方向语义，
     /// 而不是每次都要求用户重说一遍。
     var lastDirection: ParameterDirection?
