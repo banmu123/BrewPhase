@@ -112,11 +112,37 @@ protocol QueryAnalyzer: Sendable {
         now: Date,
         calendar: Calendar
     ) -> QueryPlan
+
+    /// 带对话上下文的版本（规格 §十三）。
+    ///
+    /// 加在协议上而不是替换旧方法，是为了让既有实现与测试里的替身一行不改就能编译：
+    /// 下面 extension 里的默认实现直接忽略上下文。真正会用到上下文的只有
+    /// `RuleQueryAnalyzer`。
+    func plan(
+        for question: String,
+        beans: [BeanHint],
+        focusBeanID: UUID?,
+        conversation: ConversationContext,
+        now: Date,
+        calendar: Calendar
+    ) -> QueryPlan
 }
 
 extension QueryAnalyzer {
     func plan(for question: String, beans: [BeanHint] = [], focusBeanID: UUID? = nil) -> QueryPlan {
         plan(for: question, beans: beans, focusBeanID: focusBeanID, now: Date(), calendar: DateMath.calendar)
+    }
+
+    /// 默认实现：忽略对话上下文，行为与单轮完全一致。
+    func plan(
+        for question: String,
+        beans: [BeanHint],
+        focusBeanID: UUID?,
+        conversation: ConversationContext,
+        now: Date,
+        calendar: Calendar
+    ) -> QueryPlan {
+        plan(for: question, beans: beans, focusBeanID: focusBeanID, now: now, calendar: calendar)
     }
 }
 
@@ -128,15 +154,33 @@ extension QueryAnalyzer {
 struct RuleQueryAnalyzer: QueryAnalyzer {
 
     let rules: QueryRules
+    /// 指代解析器（规格 §十三）。纯值类型，不碰数据库。
+    let resolver: ConversationReferenceResolver
 
-    init(rules: QueryRules = .loaded) {
+    init(rules: QueryRules = .loaded, resolver: ConversationReferenceResolver = ConversationReferenceResolver()) {
         self.rules = rules
+        self.resolver = resolver
+    }
+
+    /// 单轮入口：等于「空会话」的对话入口。
+    func plan(
+        for question: String,
+        beans: [BeanHint],
+        focusBeanID: UUID?,
+        now: Date,
+        calendar: Calendar
+    ) -> QueryPlan {
+        plan(
+            for: question, beans: beans, focusBeanID: focusBeanID,
+            conversation: .empty, now: now, calendar: calendar
+        )
     }
 
     func plan(
         for question: String,
         beans: [BeanHint],
         focusBeanID: UUID?,
+        conversation: ConversationContext,
         now: Date,
         calendar: Calendar
     ) -> QueryPlan {
@@ -202,6 +246,22 @@ struct RuleQueryAnalyzer: QueryAnalyzer {
         // 没有任何帮助。
         plan.wantsStructuredFacts = !plan.intents.isEmpty || plan.focusBeanID != nil || !plan.filter.methods.isEmpty
         plan.wantsVectorSearch = plan.intents != [.inventory]
+
+        // 9 — 对话上下文（规格 §十三）：解析这句话里的指代与承接。
+        //
+        // 这里只做**语义**：它指谁、在问哪个参数、算不算承接上一轮。真正的并轨
+        // （补上继承来的 focus bean、冲法、实体与检索 query）由
+        // `ConversationQueryPlanner` 在拿到 `Bean` 之后完成——分析器只认识值类型的
+        // `BeanHint`，而实体解析需要那包豆子本身。分开的另一个好处是：
+        // 这一步完全可以用几个字符串测，不需要数据库。
+        plan.resolution = resolver.resolve(
+            question: raw,
+            conversation: conversation,
+            plan: plan,
+            // 用非隔离的语言码读取（`LanguageManager.shared.current` 是主 actor 的，
+            // 分析器本身不是）——和 `L()` 读的是同一个锁保护的全局值。
+            languageCode: currentLocaleCode()
+        )
 
         plan.terms = Array(Set(terms)).sorted()
         plan.summary = summary(for: plan)

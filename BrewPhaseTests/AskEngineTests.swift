@@ -178,22 +178,25 @@ final class AskEngineTests: XCTestCase {
 
     // MARK: - 增量索引
 
+    // 这两条测的是**索引**，所以用的问题刻意不带指代词。「我这包豆怎么样？」
+    // 在没有任何上下文时会走「这句话缺少明确对象」那条路（不再瞎查），索引自然
+    // 也就不建了——那是多轮对话那一层有意改掉的行为，与增量索引无关。
     func testTheFirstQuestionBuildsTheIndexAndTheNextOneReusesIt() async throws {
-        let first = try await ask("我这包豆怎么样？")
+        let first = try await ask("我的豆子怎么样？")
         XCTAssertGreaterThan(first.report.total, 0, "索引里应该既有用户资料也有知识库")
         XCTAssertGreaterThan(first.report.embedded, 0)
 
-        let second = try await ask("我这包豆怎么样？")
+        let second = try await ask("我的豆子怎么样？")
         XCTAssertEqual(second.report.embedded, 0, "数据没变就不该重算任何向量")
         XCTAssertEqual(second.report.reused, second.report.total - 0 - second.report.removed)
     }
 
     func testChangingTheLanguageRebuildsTheIndexBecauseTheVectorSpaceMoved() async throws {
-        _ = try await ask("我这包豆怎么样？")
+        _ = try await ask("我的豆子怎么样？")
 
         let beans = try context.fetch(FetchDescriptor<Bean>())
         let answer = await engine.ask(
-            "how is this bag",
+            "how are my beans",
             focusBeanID: nil,
             beans: beans,
             brews: try context.fetch(FetchDescriptor<Brew>()),
@@ -248,7 +251,7 @@ final class AskEngineTests: XCTestCase {
         settings.ollamaChatModel = "no-such-model"
 
         let answer = await engine.ask(
-            "我这包豆怎么样？",
+            "我的豆子怎么样？",
             beans: try context.fetch(FetchDescriptor<Bean>()),
             brews: try context.fetch(FetchDescriptor<Brew>()),
             tastings: try context.fetch(FetchDescriptor<Tasting>()),

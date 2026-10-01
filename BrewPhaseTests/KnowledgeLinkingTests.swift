@@ -164,12 +164,30 @@ final class KnowledgeLinkingTests: XCTestCase {
             [.origin, .region, .variety, .varietyGroup, .process].contains($0.entity.type)
         }
         XCTAssertTrue(originLike.isEmpty, "未知产区不该产生产地/产区/品种/处理法链接：\(originLike.map(\.entity.id))")
-        XCTAssertTrue(linked.knowledge.directKnowledge.isEmpty, "不该有专属知识")
+
+        // 「直接知识」不会全空：烘焙度是 App 里必有的一项，而知识库里确实有一篇
+        // 「烘焙度不是酸苦的唯一开关」带着 `roast.light`。所以这条用例真正守的东西
+        // 是**归因**——直接知识只准由烘焙度引来，产地/产区/品种/处理法四类一条都不许有。
+        // （数据里多一篇带 roast.light 的条目就会让「一条都不许有」这种写法失效，
+        //   那不是这条用例想测的东西。）
+        let roastNames = Set(
+            KnowledgeSearchService(graph: graph).displayNames(for: ["roast.light"], languageCode: "zh-Hans")
+        )
+        for item in linked.knowledge.directKnowledge {
+            XCTAssertTrue(Set(item.matchedEntities).isSubset(of: roastNames),
+                          "直接知识只能来自烘焙度这条链接，实际命中的是：\(item.matchedEntities)")
+        }
         XCTAssertFalse(linked.knowledge.allKnowledge.isEmpty, "应回退到通用知识")
 
         let insight = BeanKnowledgeInsight.beanKnowledge(linked, languageCode: "zh-Hans")
-        XCTAssertEqual(insight.summary, L("暂时没有这包豆子的专属资料，下面显示的是更上层的通用知识。"))
-        XCTAssertEqual(insight.confidence, .low)
+        // 卡片必须如实说自己关联了几条，而不是笼统地说「有专属资料」。
+        XCTAssertEqual(insight.summary,
+                       L("已关联 %@ 条与这包豆子直接相关的知识。",
+                         String(linked.knowledge.directKnowledge.count)))
+        // 置信度按既有规则来（有直接知识 → 中等）。这条期望值跟着数据走：
+        // 若将来决定「烘焙度这种粗粒度 scope 不算直接相关」，要改的是
+        // `PersonalKnowledgeService` 的规则，那时这条断言也应跟着改回 .low。
+        XCTAssertEqual(insight.confidence, .medium)
     }
 
     // MARK: - §51 Equipment Specificity / §23

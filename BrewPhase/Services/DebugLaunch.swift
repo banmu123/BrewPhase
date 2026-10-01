@@ -63,4 +63,23 @@ enum DebugLaunch {
     static var askQuestion: String? {
         value(for: "-BrewPhaseAsk")
     }
+
+    /// `-BrewPhaseAskMore "那用 V60 呢？" -BrewPhaseAskMore "水温呢？"`（可重复）
+    ///
+    /// 第一个问题之后的**追问**，按顺序一条条问，每条都等上一条答完。
+    ///
+    /// 为什么必须真的有这个入口：多轮上下文（指代解析、继承、换豆子清理）只有
+    /// 在第二轮以后才存在，而 `simctl launch` 不能点击输入框。没有它，就只能靠
+    /// 单元测试证明多轮是对的，界面上那张「正在讨论」的提示条截不到真图。
+    static var askFollowUps: [String] {
+        let args = ProcessInfo.processInfo.arguments
+        var questions: [String] = []
+        for (index, argument) in args.enumerated() where argument == "-BrewPhaseAskMore" {
+            guard args.indices.contains(index + 1) else { continue }
+            let value = args[index + 1]
+            guard !value.hasPrefix("-") else { continue }
+            questions.append(value)
+        }
+        return questions
+    }
 }

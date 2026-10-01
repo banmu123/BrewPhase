@@ -1,0 +1,63 @@
+{
+  "revision": 1,
+  "note": {
+    "zh-Hans": "多轮对话的匹配词表：指代词组、承接词、参数名、调整方向。和 query_rules.json 同一个理由放在 JSON 里——这些是匹配用的数据，不是界面文案，写成 Swift 字面量会被本地化流水线收成待翻译的键。所有词条在加载时统一做「全角转半角 + 转小写」归一化。",
+    "en": "Matching tables for multi-turn conversation: reference phrases, follow-up markers, parameter names and adjustment directions. Kept in JSON for the same reason as query_rules.json: these are matching data, not interface copy, and as source literals they would be collected by the localisation pipeline as keys needing translation. Every entry is normalised (full-width to half-width, lowercased) when loaded."
+  },
+  "references": {
+    "bean": [
+      "这包豆", "这包豆子", "这包", "这款豆", "这款", "这个豆", "这个豆子", "这豆子", "这只豆",
+      "这一包", "该豆", "它",
+      "刚才那包", "刚才那包豆", "刚才这款", "刚才这包", "刚才那只", "刚才那支",
+      "this bag", "this bean", "this coffee", "this one", "this lot", "it"
+    ],
+    "method": [
+      "这个方法", "这种冲法", "这个冲法", "这个做法", "这种方式", "这样冲",
+      "刚才那个冲法", "刚才的做法", "刚才这种方式"
+    ],
+    "equipment": [
+      "这个磨", "这台磨", "这个磨豆机", "这台磨豆机", "这台机器", "这个器具", "这只壶", "这个壶"
+    ],
+    "process": [
+      "这个处理法", "这种处理法", "这个处理方式", "这种处理方式", "刚才那个处理法"
+    ],
+    "origin": [
+      "这个产区", "这种产区", "这个产地", "这个国家", "这个地区", "刚才那个产区"
+    ],
+    "variety": [
+      "这个品种", "这种品种", "这个豆种", "这种豆种", "这个品种的豆子"
+    ],
+    "roast": [
+      "这个烘焙度", "这种烘焙度", "这个烘焙", "这种烘焙", "刚才那个烘焙度"
+    ],
+    "brew": [
+      "刚才那杯", "上一杯", "上次那杯", "刚才那次", "这一次冲煮", "这次冲煮", "这杯"
+    ],
+    "parameter": [
+      "这个参数", "这个数值", "这个温度", "这个水温", "刚才那个参数", "刚才那个数值"
+    ]
+  },
+  "followUps": [
+    "那", "呢", "那么", "还有呢", "接着", "然后呢", "再问", "那么说",
+    "what about", "then", "and"
+  ],
+  "parameters": {
+    "temperature": ["水温", "温度", "°c", "摄氏度", "多少度", "temperature", "water temp"],
+    "grind": ["研磨度", "研磨", "刻度", "粗细", "格数", "grind size", "grind setting", "grind"],
+    "time": ["冲煮时间", "时间", "时长", "几秒", "几分钟", "冲多久", "brew time", "time"],
+    "ratio": ["粉水比", "水粉比", "比例", "ratio"],
+    "dose": ["粉量", "豆量", "克数", "dose"],
+    "water": ["水量", "注水量", "水重", "water amount", "water weight"],
+    "pressure": ["压力", "bar", "pressure"]
+  },
+  "directions": {
+    "higher": ["高一点", "高点", "高一些", "再高", "太高", "升高", "偏高", "higher", "hotter"],
+    "lower": ["低一点", "低点", "低一些", "再低", "太低", "降低", "降温", "偏低", "lower", "cooler"],
+    "finer": ["细一点", "细点", "细一些", "再细", "磨细", "finer"],
+    "coarser": ["粗一点", "粗点", "粗一些", "再粗", "磨粗", "coarser"],
+    "faster": ["快一点", "快点", "快一些", "再快", "faster"],
+    "slower": ["慢一点", "慢点", "慢一些", "再慢", "slower"],
+    "more": ["多一点", "多点", "多些", "增加", "more"],
+    "less": ["少一点", "少点", "少些", "减少", "less"]
+  }
+}

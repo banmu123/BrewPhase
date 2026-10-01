@@ -3,6 +3,7 @@
 #
 #   Tools/run.sh [--demo] [--screen <name>] [--tab <cellar|brews|more>]
 #                [--lang <system|zh-Hans|en>] [--ask "<question>"]
+#                [--ask-more "<question>"]...
 #                [--pref "key=value"]...
 #                [--udid <udid>] [--shots "2 4 6"]
 #
@@ -20,6 +21,10 @@
 # --ask     opens the ask screen and submits this question on arrival. A
 #           simulator cannot tap, so without it the local RAG chain never runs
 #           and there is nothing to look at.
+# --ask-more  follow-up questions for the same ask screen. Repeatable, and asked
+#           one after another, each waiting for the previous answer. Without it
+#           the multi-turn context (references, inheritance, switching) cannot
+#           be screenshotted — every turn would start from an empty session.
 # --pref    writes one string preference before launching. Repeatable. Used to
 #           point the app at a local Ollama, e.g.
 #             --pref brewphase.rag.answerEngine=ollama
@@ -51,6 +56,7 @@ while [ $# -gt 0 ]; do
     --screen) DEMO_ARGS+=(-BrewPhaseScreen "$2"); shift 2 ;;
     --tab)    DEMO_ARGS+=(-BrewPhaseTab "$2"); shift 2 ;;
     --ask)    DEMO_ARGS+=(-BrewPhaseAsk "$2"); shift 2 ;;
+    --ask-more) DEMO_ARGS+=(-BrewPhaseAskMore "$2"); shift 2 ;;
     --lang)   LANG_SETTING="$2"; shift 2 ;;
     --pref)   PREFS+=("$2"); shift 2 ;;
     --udid)   UDID="$2"; shift 2 ;;

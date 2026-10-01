@@ -115,7 +115,48 @@ struct QueryPlan: Equatable, Sendable {
     /// 只能猜为什么没搜到他要的东西。
     var summary: String?
 
+    // MARK: - 对话上下文（多轮，规格 §十三/§十四）
+
+    /// 这一轮聊到的话题。由 `ConversationQueryPlanner` 写入。
+    var topic: ConversationTopic?
+    /// 这一轮问的参数维度与方向。「低一点呢」解析出的就是这两个字段。
+    var parameter: QueryParameter?
+    var direction: ParameterDirection?
+
+    /// 指代解析的全过程（每个字段都带「从哪来」）。
+    ///
+    /// 留着它不是为了调试好看：界面上那句「沿用上一轮」、以及状态推进时的
+    /// 「谁是显式说的、谁是继承的」，都要靠它区分。
+    var resolution: ResolvedReferences?
+
+    /// 从对话上下文继承来的实体 id。
+    ///
+    /// **不是过滤条件**——它只用于检索扩写与 warm 加权。理由见
+    /// `ConversationQueryPlanner`：知识库里有一批文档根本没有 entityIds，
+    /// 按实体硬筛会把今天答得出来的问题筛成「没找到」。
+    var inheritedEntityIDs: [String] = []
+
+    /// 上一轮引用过的资料 id（热候选，只影响排序，不影响取舍）。
+    var warmEvidenceIDs: [String] = []
+
+    /// 向量检索实际用来算 embedding 的文本。为空时就是问题本身。
+    ///
+    /// 为什么要有它：省略句（「那水温呢」）在向量空间里没有主体，拿它单独去算
+    /// 相似度天然偏低。继承上下文把它补成一句带语境的话。
+    var retrievalQuery: String = ""
+
+    /// 指代解析不出来时的说明。非空表示这一轮不该检索，而该请用户补一句。
+    ///
+    /// 派生自 `resolution`，不单独存一份：把「计划里的歧义」和「解析出的歧义」
+    /// 做成两个字段，迟早会出现两者不一致的计划。
+    var clarification: ReferenceAmbiguity? { resolution?.ambiguity }
+
     var hasFocusBean: Bool { focusBeanID != nil }
+
+    /// 真的拿去算 embedding 的文本。
+    var effectiveRetrievalQuery: String {
+        retrievalQuery.trimmed.isEmpty ? question : retrievalQuery
+    }
 }
 
 extension QueryPlan {

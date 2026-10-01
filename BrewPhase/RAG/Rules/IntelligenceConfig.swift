@@ -80,7 +80,7 @@ enum IntelligenceConfig {
     /// 处理法的判断走 `query_rules.json` 的别名表（「水洗」/「washed」是同一
     /// 件事的两种写法），因为 `process` 字段是自由文本。
     static func weatherAffinity(for scene: WeatherScene, bean: Bean) -> Double {
-        let process = (bean.process ?? "").lowercased()
+        let process = bean.process.lowercased()
 
         func processIs(_ canonical: String) -> Bool {
             QueryRules.loaded.processes.contains { group in
@@ -109,4 +109,26 @@ enum IntelligenceConfig {
     /// 同档豆子之间要多大的契合度差才值得换推荐。太小的话，推荐会随天气
     /// 抖来抖去，用户记不住。
     static let weatherTieBreakMinimumMargin = 0.1
+
+    // MARK: 多轮对话的边界
+    //
+    // 对话状态只存标识（豆子 id、实体 id、话题、参数、证据 id），不存正文。
+    // 这里的四个数决定「记忆有多长、有多重」——改它们不需要动任何解析或检索代码。
+
+    /// 证据窗口保留最近几轮。
+    ///
+    /// 取 3：再往前的东西已经和当前问题不在一个语境里了，留着只会让「这个证据
+    /// 算不算热」变得含糊。规格 §二十三 点名不要凭感觉，这里就是那个数。
+    static let conversationEvidenceTurns = 3
+    /// 证据窗口最多留几条。
+    static let conversationEvidenceLimit = 8
+    /// 「上一轮引用过的资料」在排序里的加权。
+    ///
+    /// 故意很小：它是**热启动**，不是结论。一条看过的资料不该因为看过就压过更
+    /// 贴题的新资料（规格 §四十七 的反面）。
+    static let warmEvidenceBoost = 0.04
+    /// 检索扩写最多拼几个上下文词。
+    ///
+    /// 太多会把问题淹没：扩写是给省略句补主体，不是把整包豆子的档案塞进查询。
+    static let conversationContextTermLimit = 6
 }

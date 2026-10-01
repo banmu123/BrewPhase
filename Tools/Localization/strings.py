@@ -841,4 +841,38 @@ EN: dict[str, str] = {
     "咖啡与健康": "Coffee and health",
     "清洁维护": "Cleaning and care",
     "术语": "Terminology",
+
+    # MARK: Multi-turn conversation
+    "正在讨论：%@": "Discussing: %@",
+    "沿用上一轮：%@": "Carried over from the previous turn: %@",
+    "这一轮在问：%@": "This turn asks about: %@",
+    "这一轮在问：%@（%@）": "This turn asks about: %@ (%@)",
+    "推荐": "Recommendation",
+    "压力": "Pressure",
+    "高一点": "a bit higher",
+    "低一点": "a bit lower",
+    "细一点": "a bit finer",
+    "粗一点": "a bit coarser",
+    "快一点": "a bit faster",
+    "慢一点": "a bit slower",
+    "多一点": "a bit more",
+    "少一点": "a bit less",
+    "回答只用你的记录和 BrewPhase 知识库，所以我不猜。":
+        "This answer only uses your own records and the built-in BrewPhase knowledge base, "
+        "so I will not guess.",
+    "「%@」我还不确定指哪包豆子。可以说一下豆名，或者从豆子的页面进来问我。":
+        "\"%@\": I cannot tell which bag you mean. Name the coffee, or open its page and ask from there.",
+    "「%@」我还不确定指哪种冲法。直接说器具名就行，比如 V60、爱乐压。":
+        "\"%@\": I cannot tell which brew method you mean. Just name the brewer — V60, AeroPress, "
+        "that sort of thing.",
+    "「%@」我还不确定指哪台器具。说个型号我就知道了。":
+        "\"%@\": I cannot tell which piece of gear you mean. Give me a model name and I will know.",
+    "「%@」我这边还没有能对上的冲煮记录。先说一次具体的冲煮，或者打开那次记录再问我。":
+        "\"%@\": I do not have a brew record that matches yet. Point me at a specific brew, or open "
+        "that record and ask me from there.",
+    "「%@」我还不确定指哪个参数。是想说水温、研磨、时间，还是粉水比？":
+        "\"%@\": I cannot tell which parameter you mean. Water temperature, grind, time, or ratio?",
+    "「%@」我还不确定指的是哪一个。先说说这包豆子的产区或处理法，我就能接上。":
+        "\"%@\": I cannot tell which one you mean. Tell me the origin or the process of the bag and "
+        "I will pick it up.",
 }

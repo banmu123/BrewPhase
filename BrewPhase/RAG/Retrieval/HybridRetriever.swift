@@ -19,6 +19,11 @@ final class HybridRetriever {
         var report: IndexCoordinator.Report
         /// 检索过程中值得告诉用户的话（索引降级、有些资料没算出来…）。
         var notes: [String] = []
+        /// 这一轮锁定的豆子解析出的检索上下文（规格 §七）。
+        ///
+        /// 放在这里而不是让调用方再算一遍：`Bean` 是 `@Model`，解析必须在使用它的
+        /// 那一层做一次，两处各算一次只会让两侧可能不一致。
+        var beanContext: BeanContext?
     }
 
     private let index: SwiftDataVectorIndex
@@ -32,6 +37,7 @@ final class HybridRetriever {
     func retrieve(
         question: String,
         focusBeanID: UUID?,
+        conversation: ConversationContext = .empty,
         beans: [Bean],
         brews: [Brew],
         tastings: [Tasting],
@@ -45,13 +51,38 @@ final class HybridRetriever {
         var notes: [String] = []
 
         // 1 — 先决定怎么查。
-        let plan = analyzer.plan(
+        let analyzed = analyzer.plan(
             for: question,
             beans: beans.map(BeanHint.init(bean:)),
             focusBeanID: focusBeanID,
+            conversation: conversation,
             now: now,
             calendar: calendar
         )
+
+        // 1.5 — 把对话上下文并轨进计划（规格 §十三/§十四）。
+        //
+        // 解析出来的指代可能指向**另一包**豆子（「那 Colombia Huila 呢」），所以
+        // 实体解析要按并轨之后的豆子来——候选豆子先取「分析器定的」，没有才退到
+        // 上一轮锁定的那包。
+        let candidateBeanID = analyzed.focusBeanID ?? analyzed.resolution?.beanID ?? conversation.focusBeanID
+        let beanContext = candidateBeanID
+            .flatMap { id in beans.first { $0.id == id } }
+            .map { BeanContextResolver().context(for: $0, today: now) }
+        let plan = ConversationQueryPlanner.apply(
+            analyzed, conversation: conversation, beanContext: beanContext, languageCode: languageCode
+        )
+
+        // 1.6 — 指代没有落点：这一轮不检索。
+        //
+        // 明确说一句「缺对象」比硬查一堆无关资料更接近用户要的（规格 §三十五/§五十四）。
+        // 也顺带省掉一次无意义的索引同步。
+        if plan.clarification != nil {
+            return Outcome(
+                plan: plan, passages: [], report: IndexCoordinator.Report(),
+                notes: notes, beanContext: beanContext
+            )
+        }
 
         // 2 — 让索引追上数据。只有变了的那几条会真的去算向量。
         let report = await coordinator.sync(
@@ -75,8 +106,10 @@ final class HybridRetriever {
         // 4 — 向量检索。
         var documents: [RetrievedPassage] = []
         if plan.wantsVectorSearch {
+            // 用**扩写后**的查询文本算 embedding：省略句（「那水温呢」）单独去算
+            // 相似度没有主体，继承来的上下文把它补成一句带语境的话。
             documents = await vectorPassages(
-                question: question, plan: plan, settings: settings,
+                question: plan.effectiveRetrievalQuery, plan: plan, settings: settings,
                 languageCode: languageCode, now: now
             )
             if documents.isEmpty, report.total == 0 {
@@ -88,7 +121,7 @@ final class HybridRetriever {
         let limit = plan.passageLimit(default: settings.passageLimit)
         let fused = fuse(facts: facts, documents: documents, plan: plan, limit: limit, now: now)
 
-        return Outcome(plan: plan, passages: fused, report: report, notes: notes)
+        return Outcome(plan: plan, passages: fused, report: report, notes: notes, beanContext: beanContext)
     }
 
     // MARK: - 向量检索
@@ -207,13 +240,22 @@ final class HybridRetriever {
                 sourceAdjust = hit.passage.sourceType.isUserData ? 0.05 : -0.02
             }
 
+            // warm 证据（多轮对话）：同一包豆子继续聊时，上一轮引用过的资料算热候选。
+            //
+            // 它**只加一点权重**，不改取舍：上一轮的证据仍然是这一轮的备选，而不是
+            // 这一轮的答案（规格 §四十七）。加太多会变成「因为看过了所以一直是它」。
+            let warmAdjust = plan.warmEvidenceIDs.contains(hit.passage.recordKey)
+                ? IntelligenceConfig.warmEvidenceBoost
+                : 0
+
             // 权重集中在 `IntelligenceConfig`（协议 §17）：调这三个数不需要改任何
             // 检索代码，将来换 reranker 时也只换这一处。
             let relevance = min(max(
                 IntelligenceConfig.similarityWeight * rankScore
                     + IntelligenceConfig.qualityWeight * ratingScore
                     + IntelligenceConfig.recencyWeight * recencyScore
-                    + sourceAdjust,
+                    + sourceAdjust
+                    + warmAdjust,
                 0
             ), 1)
 

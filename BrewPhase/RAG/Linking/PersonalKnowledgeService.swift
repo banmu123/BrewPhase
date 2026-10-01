@@ -25,7 +25,9 @@ struct PersonalKnowledgeService {
         let bestScore: Int
         let bestDate: Date?
         let bestRecipe: BrewRecipe?
-        let averageScore: FieldStats?
+        /// 全部打过分记录的平均分——和 `PersonalBestAnalyzer.Analysis` 同一个口径，
+        /// 所以是 `Double?` 而不是 `FieldStats?`：后者只统计高评分记录，两者不能混。
+        let averageScore: Double?
         let temperature: FieldStats?
         let timeSeconds: FieldStats?
         let ratio: FieldStats?

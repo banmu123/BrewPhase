@@ -23,7 +23,18 @@ struct AskView: View {
 
     @State private var question = ""
     @State private var exchanges: [Exchange] = []
+    /// 多轮对话的语义状态（规格 §七）。
+    ///
+    /// 它和 `exchanges` 是两件事，刻意分开：`exchanges` 只负责「界面上显示过什么」，
+    /// 这里只负责「下一轮该继承什么」。把两者合成一个会立刻出问题——用户翻回上一轮
+    /// 看的时候，展示历史就成了检索上下文。
+    ///
+    /// 不持久化（规格 §二十四）：退出这个页面就没了，重进是新会话。因此不新增
+    /// SwiftData 模型、不落盘聊天记录。
+    @State private var conversation = ConversationContext.empty
     @State private var isAsking = false
+    /// 调试入口留下的追问队列（`-BrewPhaseAskMore`）。正常使用里始终为空。
+    @State private var pendingDebugQuestions: [String] = []
     @State private var engine: AskEngine?
     @FocusState private var isFocused: Bool
 
@@ -58,6 +69,15 @@ struct AskView: View {
                 guard isAsking else { return }
                 withAnimation(Motion.settle) { proxy.scrollTo(ScrollAnchor.bottom, anchor: .bottom) }
             }
+            // 答案到达时再滚一次，滚到这一轮的**顶部**。
+            //
+            // 只按「问题已发出」那一刻滚到底是不够的：回答比等待指示器高得多，落到底部
+            // 会让用户停在回答中段，得自己往回拨。多轮对话里一屏里同时有几轮的时候，
+            // 这一点直接决定「上一轮说了什么」还看得到看不到。
+            .onChange(of: exchanges.last?.answer?.id) {
+                guard let last = exchanges.last, last.answer != nil else { return }
+                withAnimation(Motion.settle) { proxy.scrollTo(last.id, anchor: .top) }
+            }
         }
         .safeAreaInset(edge: .bottom) { composer }
         .navigationTitle("问一问")
@@ -65,6 +85,7 @@ struct AskView: View {
         .task {
             prepareEngineIfNeeded()
             // 只有从 `Tools/run.sh --ask "…"` 启动时才有值，正常使用里是 nil。
+            pendingDebugQuestions = DebugLaunch.askFollowUps
             if let seeded = DebugLaunch.askQuestion, exchanges.isEmpty {
                 submit(seeded)
             }
@@ -276,35 +297,62 @@ struct AskView: View {
     // MARK: - 输入
 
     private var composer: some View {
-        HStack(spacing: 10) {
-            TextField("问点关于你的豆子的事…", text: $question, axis: .vertical)
-                .font(TypeScale.body)
-                .lineLimit(1...4)
-                .focused($isFocused)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Palette.well)
-                )
-                .submitLabel(.send)
-                .onSubmit { submit(question) }
-
-            Button {
-                submit(question)
-            } label: {
-                Image(systemName: "arrow.up")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Palette.card)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(canSend ? Palette.roast : Palette.inkFaint))
+        VStack(alignment: .leading, spacing: 8) {
+            // 「正在讨论」：把这一轮真正继承到的东西摆在明面上（规格 §四十二）。
+            //
+            // 放在输入框正上方而不是页面顶部，是因为顶部会随对话滚走：多轮对话最容易
+            // 出的问题是「它悄悄换了对象」——用户以为在聊这包豆，系统已经在聊另一包。
+            // 这一行常驻在用户视线落点上，跑偏随时看得见，也解释了回答为什么是这样。
+            if let label = discussionLabel {
+                HStack(spacing: 6) {
+                    Image(systemName: "bubble.left.and.bubble.right.fill")
+                        .font(.system(size: 10))
+                    Text(L("正在讨论：%@", label))
+                        .font(TypeScale.micro)
+                        .lineLimit(1)
+                }
+                .foregroundStyle(Palette.roast)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(Capsule(style: .continuous).fill(Palette.cream.opacity(0.55)))
+                .accessibilityLabel(L("正在讨论：%@", label))
             }
-            .buttonStyle(.plain)
-            .disabled(!canSend)
+
+            HStack(spacing: 10) {
+                TextField("问点关于你的豆子的事…", text: $question, axis: .vertical)
+                    .font(TypeScale.body)
+                    .lineLimit(1...4)
+                    .focused($isFocused)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Palette.well)
+                    )
+                    .submitLabel(.send)
+                    .onSubmit { submit(question) }
+
+                Button {
+                    submit(question)
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Palette.card)
+                        .frame(width: 36, height: 36)
+                        .background(Circle().fill(canSend ? Palette.roast : Palette.inkFaint))
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSend)
+            }
         }
         .padding(.horizontal, Metric.gutter)
         .padding(.top, 10)
         .padding(.bottom, 10)
         .background(.ultraThinMaterial)
+    }
+
+    /// 当前上下文的一句话（「Ethiopia Guji · V60 · 水温」）。空会话时为 nil。
+    private var discussionLabel: String? {
+        conversation.discussionLabel(languageCode: LanguageManager.shared.current.resolvedCode)
     }
 
     private var canSend: Bool {
@@ -337,11 +385,14 @@ struct AskView: View {
         let tastings = self.tastings
         let languageCode = LanguageManager.shared.current.resolvedCode
         let focusID = focusBean?.id
+        // 上一轮的语义状态。视图只做搬运，解析与继承都在引擎那一侧（规格 §二十八）。
+        let previousConversation = conversation
 
         Task {
             let answer = await engine.ask(
                 trimmed,
                 focusBeanID: focusID,
+                conversation: previousConversation,
                 beans: beans,
                 brews: brews,
                 tastings: tastings,
@@ -352,7 +403,20 @@ struct AskView: View {
             if let index = exchanges.firstIndex(where: { $0.id == exchange.id }) {
                 exchanges[index].answer = answer
             }
+            // 状态推进只发生在成功拿到答案之后：这一轮的解析结果由引擎算好，
+            // 视图负责写回，下一轮就能接着聊。
+            conversation = answer.conversationUpdate
             isAsking = false
+
+            // 调试入口预置的追问：一条条问下去，每条都真的等上一条结束——
+            // 截图里看到的因此是一条真实的多轮对话，而不是摆出来的样子。
+            // 中间留一点停顿：人不会在同一帧里连发三句，而 SwiftUI 的滚动动画需要
+            // 一帧才能落位，抢在同一帧里连发会让截图停在中途。
+            if let next = pendingDebugQuestions.first {
+                pendingDebugQuestions.removeFirst()
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                submit(next)
+            }
         }
     }
 

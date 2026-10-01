@@ -49,6 +49,12 @@
 "「%@」对应不到模型认识的类别，这次没有参与预测。" = "“%@” does not match any category the model knows, so it took no part in this estimate.";
 "「%@」我打过分吗？" = "Did I ever score %@?";
 "「%@」我最近三次怎么冲的？" = "How did I brew %@ the last three times?";
+"「%@」我还不确定指哪个参数。是想说水温、研磨、时间，还是粉水比？" = "\"%@\": I cannot tell which parameter you mean. Water temperature, grind, time, or ratio?";
+"「%@」我还不确定指哪包豆子。可以说一下豆名，或者从豆子的页面进来问我。" = "\"%@\": I cannot tell which bag you mean. Name the coffee, or open its page and ask from there.";
+"「%@」我还不确定指哪台器具。说个型号我就知道了。" = "\"%@\": I cannot tell which piece of gear you mean. Give me a model name and I will know.";
+"「%@」我还不确定指哪种冲法。直接说器具名就行，比如 V60、爱乐压。" = "\"%@\": I cannot tell which brew method you mean. Just name the brewer — V60, AeroPress, that sort of thing.";
+"「%@」我还不确定指的是哪一个。先说说这包豆子的产区或处理法，我就能接上。" = "\"%@\": I cannot tell which one you mean. Tell me the origin or the process of the bag and I will pick it up.";
+"「%@」我这边还没有能对上的冲煮记录。先说一次具体的冲煮，或者打开那次记录再问我。" = "\"%@\": I do not have a brew record that matches yet. Point me at a specific brew, or open that record and ask me from there.";
 "「%@」是 %@ 的一包咖啡豆。" = "%@ is a bag of coffee from %@.";
 "「%@」最近的 %@ 次冲煮参数（从新到旧）：" = "The last %@ brews of %@ (newest first):";
 "「%@」没有烘焙日期，无法判断处在哪个阶段。" = "%@ has no roast date, so its phase cannot be worked out.";
@@ -93,6 +99,7 @@
 "从你自己的记录里找答案：什么时候开封的、哪次冲得最好" = "Find the answer in your own records: when it was opened, which brew turned out best";
 "价格" = "Price";
 "会把你改过的所有烘焙度都改回默认值。" = "Every roast level you have edited goes back to its default.";
+"低一点" = "a bit lower";
 "余韵" = "Aftertaste";
 "余韵 %@" = "aftertaste %@";
 "你指定的" = "You chose this";
@@ -153,6 +160,7 @@
 "包装类型" = "Packaging";
 "半日晒" = "Semi-washed";
 "历史分析" = "History check";
+"压力" = "Pressure";
 "厌氧日晒" = "Anaerobic natural";
 "去豆仓挑一包，冲完记下参数和味道，这里就会长起来。" = "Pick a bag from the cellar, brew it and note how it tasted — this is where it fills in.";
 "参数" = "Recipe";
@@ -185,6 +193,7 @@
 "品鉴" = "Tasting";
 "哥伦比亚 · 慧兰" = "Colombia · Huila";
 "器具" = "Method";
+"回答只用你的记录和 BrewPhase 知识库，所以我不猜。" = "This answer only uses your own records and the built-in BrewPhase knowledge base, so I will not guess.";
 "回答只用这台设备上的记录和 BrewPhase 自带的知识条目。不联网，不上传，也没有账号。" = "Answers use only the records on this device and the knowledge notes that ship with BrewPhase. No network, no upload, no account.";
 "回答的语言要和上面这些说明一致。" = "Answer in the same language as these instructions.";
 "回答直接给结论，三到五句话。不要复述资料原文，也不要解释你是怎样检索的。" = "Lead with the conclusion, in three to five sentences. Do not restate the source text, and do not explain how you searched.";
@@ -206,6 +215,7 @@
 "复制" = "Copy";
 "复制上次冲煮" = "Copy last brew";
 "复制参数再来一次" = "Brew again with the same recipe";
+"多一点" = "a bit more";
 "天气也是原因之一：今天%@，几包同阶段的豆子里，这包更对路。" = "Weather played a part too: with %@ weather, this bag fits the day better than its peers.";
 "天气服务暂时不可用（需要在开发者后台为这个 App 开通 WeatherKit）。先用手动场景。" = "The weather service is unavailable (WeatherKit has to be enabled for this App ID in the developer portal). Using the manual scene instead.";
 "太新" = "Too fresh";
@@ -220,6 +230,7 @@
 "导出时出了一点问题，请再试一次" = "Something went wrong while exporting. Please try again";
 "导出的 JSON 可以完整还原你的记录。CSV 只包含豆子、冲煮和风味三张表，方便做统计。" = "The JSON restores your records in full. The CSV holds three tables — beans, brews and tastings — for working with the numbers.";
 "导出的文件只保存在这台设备上，通过系统分享面板发给你自己。BrewPhase 不会上传任何东西。" = "Exported files stay on this device and are handed to you through the system share sheet. BrewPhase uploads nothing.";
+"少一点" = "a bit less";
 "就这包豆子提问" = "Ask about this bag";
 "尽快喝完" = "Finish it soon";
 "层级匹配" = "Hierarchy match";
@@ -260,6 +271,7 @@
 "开封日期是 %@，已经开封 %@ 天。" = "Opened on %@; it has been open %@ days.";
 "引擎返回了空回答" = "the engine returned an empty answer";
 "当前状态" = "Current state";
+"快一点" = "a bit faster";
 "总克数" = "Total";
 "总克数要大于 0" = "The total weight has to be more than 0";
 "总时间 %@" = "total time %@";
@@ -272,6 +284,7 @@
 "意式拼配" = "Espresso blend";
 "意式浓缩" = "Espresso";
 "感官" = "Sensory";
+"慢一点" = "a bit slower";
 "我今天还有哪些豆子？" = "Which bags do I have today?";
 "我在你的记录和 BrewPhase 知识库里都没有找到和这个问题相关的内容。可以换个说法再问一次，或者先补上这包豆子的烘焙日期、开封日期这类信息。" = "I could not find anything in your records or in the BrewPhase knowledge base that answers this. Try wording it differently, or fill in the bag's roast and opening dates first.";
 "我最近三次怎么冲的？" = "How did I brew the last three times?";
@@ -304,6 +317,7 @@
 "排气期结束，风味开始打开时提醒" = "When degassing ends and the flavour starts to open";
 "排气结束" = "Rest ends";
 "推断匹配" = "Inferred match";
+"推荐" = "Recommendation";
 "推荐会参考，但只做微调" = "Suggestions take it into account, with a light touch";
 "推荐冲煮" = "Suggested brewing";
 "提醒" = "Reminders";
@@ -360,6 +374,7 @@
 "正在取位置和天气…" = "Fetching your location and the weather…";
 "正在找相关知识与记录…" = "Looking for related knowledge and records…";
 "正在翻你的记录…" = "Looking through your records…";
+"正在讨论：%@" = "Discussing: %@";
 "正在重建…" = "Rebuilding…";
 "正在问「%@」" = "Asking about %@";
 "每一项都在你自己的常用区间里，没有需要提醒的偏离。" = "Every parameter sits inside your own usual range; nothing worth flagging.";
@@ -397,6 +412,7 @@
 "没有账号，没有登录，没有服务器。" = "No account, no sign-in, no server.";
 "没有需要清理的图片" = "Nothing to clean up";
 "没能保存下来，请再试一次" = "Could not save. Please try again";
+"沿用上一轮：%@" = "Carried over from the previous turn: %@";
 "法压壶" = "French press";
 "泰摩 栗子" = "Timemore Chestnut";
 "洞察" = "Insights";
@@ -485,6 +501,7 @@
 "粉量" = "Dose";
 "粉量 %@" = "%@ coffee";
 "粉量约 %@" = "about %@ coffee";
+"粗一点" = "a bit coarser";
 "系统模型还没有准备好，稍后再试" = "The system model is not ready yet; try again later";
 "系统端侧模型" = "On-device model";
 "系统端侧模型暂时不可用" = "The on-device model is unavailable for now";
@@ -496,6 +513,7 @@
 "约 %@ 天" = "About %@ days";
 "约 %@ 次" = "About %@ brews";
 "线下门店" = "In person";
+"细一点" = "a bit finer";
 "给它起个名字吧" = "Give it a name";
 "维护" = "Maintenance";
 "编辑冲煮" = "Edit brew";
@@ -574,6 +592,8 @@
 "还没有请求通知权限，添加第一包豆子时会问一次" = "Notification permission has not been asked for yet — it comes up once when you add your first bean";
 "还没有风味记录\n冲一次，然后记下今天这杯怎么样。" = "No tasting notes yet.\nBrew this bean and note how today's cup tasted.";
 "还能冲" = "brews left";
+"这一轮在问：%@" = "This turn asks about: %@";
+"这一轮在问：%@（%@）" = "This turn asks about: %@ (%@)";
 "这个回答引擎现在用不了：%@" = "That answer engine is unavailable right now: %@";
 "这些内容模型不认识，没有参与预测：%@" = "The model did not recognise these, so they took no part in the estimate: %@";
 "这些数字只是「%@」，不是保质期，也不会说某包豆子过期了。" = "These figures are only “%@”. They are not a use-by date, and the app will never call a bag expired.";
@@ -657,6 +677,7 @@
 "风味记录" = "Tasting note";
 "风味：%@。" = "Flavours: %@.";
 "飞行模式下也能完整使用。" = "Everything works in aeroplane mode.";
+"高一点" = "a bit higher";
 "高评分记录的水温通常在 %@ 到 %@" = "Your high-scoring brews usually ran %@–%@ water";
 "高评分记录的粉水比通常在 1:%@ 到 1:%@" = "Your high-scoring brews usually ran 1:%@–1:%@";
 "高评分记录的粉量通常在 %@ 到 %@" = "Your high-scoring brews usually used %@–%@ of coffee";

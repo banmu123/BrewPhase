@@ -8,8 +8,9 @@
     "inventory": [
       "还有哪些", "有哪些豆子", "有几包", "剩多少", "还剩", "库存", "豆仓", "还有几包",
       "喝哪包", "今天喝什么", "该喝哪", "手上有哪些", "现在有哪些",
+      "先喝", "喝哪", "该喝", "喝哪个", "先喝哪包", "下一包喝",
       "what do i have", "how many bags", "how many beans", "inventory", "what is left",
-      "whats left", "remaining", "what should i drink", "which bag"
+      "whats left", "remaining", "what should i drink", "which bag", "drink first"
     ],
     "recipe": [
       "怎么冲", "怎么做的", "冲煮参数", "参数", "配方", "粉水比", "水温", "粉量", "水量",
