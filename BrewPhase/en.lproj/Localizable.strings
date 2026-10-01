@@ -37,8 +37,9 @@
 "%@（平均 %@ 分）" = "%@ (avg %@)";
 "%@：平均 %@ 分（%@ 次）" = "%@: %@ on average over %@ brews";
 "%@：当前 %@（常用 %@）" = "%@: now %@ (usual %@)";
+"**下一杯留意**：%@" = "**Watch next time**: %@";
+"**保持不变**：%@" = "**Hold steady**: %@";
 "22 格" = "22 clicks";
-"BrewPhase 知识库里相关的说法：" = "The BrewPhase knowledge base says:";
 "JSON 完整备份 · CSV 表格" = "Full JSON backup · CSV tables";
 "Ollama 本地服务" = "Ollama local service";
 "Ollama 的回答看不懂：%@" = "Ollama's response made no sense: %@";
@@ -75,9 +76,7 @@
 "上一轮的建议：%@" = "Previous suggestion: %@";
 "上次这杯不太理想" = "The last cup was not great";
 "下一杯建议" = "Next cup";
-"下一杯建议：%@。" = "Next cup: %@.";
 "下一杯留意" = "Watch next time";
-"下一杯留意：%@。" = "Watch next time: %@.";
 "下午好" = "Good afternoon";
 "下雨" = "Rainy";
 "下面会给你两部分资料：一部分是用户自己的豆子、冲煮和风味记录，一部分是 BrewPhase 自带的咖啡常识。" = "You will be given two sets of material: the user's own bags, brews and tasting notes, and the coffee background notes that ship with BrewPhase.";
@@ -116,7 +115,6 @@
 "你用%@平均打了 %@ 分（%@ 次）。" = "Your %@ averages %@ over %@ brews.";
 "你的最佳参数" = "Your best parameters";
 "你的记录" = "Your records";
-"你的记录里有这些：" = "Your records contain:";
 "你的记录里没有相关内容，上面只有知识库里的通用说法，不代表你的实际情况。" = "Nothing in your records covers this, so the above is general background from the knowledge base rather than your own situation.";
 "你的较好记录集中在 %@–%@" = "Your better brews cluster around %@–%@";
 "你的高评分记录集中在 %@ 到 %@°C。" = "Your high-scoring brews cluster between %@ and %@°C.";
@@ -126,7 +124,6 @@
 "保存" = "Save";
 "保存后剩余 %@" = "%@ left after saving";
 "保持不变" = "Keep unchanged";
-"保持不变：%@。" = "Keep unchanged: %@.";
 "偏深的烘焙压得住奶，做意式或加奶都不闷。" = "Darker roasts stand up to milk; espresso or milk drinks stay clean.";
 "储存方式" = "Storage";
 "储存温度" = "Storage temp";
@@ -169,7 +166,6 @@
 "删除这包豆子后，它关联的 %@ 条冲煮记录和 %@ 条风味记录也会一起被删除，无法恢复。" = "Deleting this bean also deletes its %@ brews and %@ tasting notes. This cannot be undone.";
 "删除这包豆子？" = "Delete this bean?";
 "删除这条记录" = "Delete this brew";
-"判断依据：%@" = "Evidence: %@";
 "别名匹配" = "Alias match";
 "剩余" = "Left";
 "剩余 %@" = "%@ left";
@@ -187,7 +183,6 @@
 "历史分析" = "History check";
 "压力" = "Pressure";
 "厌氧日晒" = "Anaerobic natural";
-"原因：%@" = "Reason: %@";
 "去豆仓挑一包，冲完记下参数和味道，这里就会长起来。" = "Pick a bag from the cellar, brew it and note how it tasted — this is where it fills in.";
 "参数" = "Recipe";
 "参数偏离" = "Parameter drift";
@@ -204,7 +199,6 @@
 "口感比你自己好喝的那几杯更薄。" = "Thinner than your own better cups.";
 "另外还看到" = "Also seen";
 "另外还看到：%@。" = "Also seen: %@.";
-"另外，相关的记录：" = "Also relevant:";
 "只依据这些资料回答。资料里没有的数字、日期、克数、分数，一个都不要写。" = "Answer only from that material. Do not write any number, date, weight or score that does not appear in it.";
 "只剩 %@ 次的量" = "Only about %@ brews left";
 "只改一件事" = "one change only";
@@ -410,6 +404,8 @@
 "有哪些豆子" = "Inventory";
 "有容" = "Yourong";
 "有点苦了" = "A bit bitter";
+"有点酸，尾段偏薄" = "A little sour, slightly thin finish";
+"有点酸，尾段薄" = "A little sour, thin finish";
 "朋友送的" = "A gift from a friend";
 "未命名" = "Untitled";
 "未填写" = "Not set";
@@ -428,7 +424,6 @@
 "柑橘" = "Mandarin";
 "查看全部 %@ 条" = "Show all %@";
 "标记为已喝完" = "Mark as finished";
-"根据你的记录：" = "From your records:";
 "桃" = "Peach";
 "检索范围：%@" = "Search scope: %@";
 "模型用合成数据训练，结果只是估算，不能当成真实规律。" = "The model was trained on synthetic data. This is only an estimate, not a real pattern.";
@@ -548,12 +543,13 @@
 "相似冲煮" = "Similar brews";
 "相似冲煮使用端侧语义模型，离线可用。" = "Similar brews use the on-device semantic model; works offline.";
 "相似经历" = "Similar experiences";
+"相关的记录" = "Related records";
 "相关知识" = "Related knowledge";
 "相册" = "Library";
+"看出来的问题" = "What stands out";
 "知识库" = "Knowledge base";
 "知识库怎么说" = "What the knowledge base says";
 "知识库说的是通常情况，你的记录说的是这包豆的实际情况；两者不一致时以你的记录为准。" = "The knowledge base describes the general case; your records describe this bag. When they disagree, your records win.";
-"知识库里的说法：%@——%@" = "From the knowledge base: %@ — %@";
 "知识是通用起点，不是这包豆子唯一正确的参数。" = "This is a general starting point, not the one correct recipe for this bag.";
 "研磨" = "Grind";
 "研磨 %@" = "grind %@";

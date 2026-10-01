@@ -191,11 +191,10 @@ struct AskView: View {
 
     private func answerCard(_ answer: AskAnswer) -> some View {
         Card {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(LocalizedStringKey.alreadyLocalized(answer.text))
-                    .font(TypeScale.body)
-                    .foregroundStyle(Palette.ink)
-                    .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 14) {
+                // 回答正文由 `AnswerBody` 排版：小节标题、条目、重点块各有各的字号
+                // 与留白。之前是一整段等重的文字，十几行平铺下来读者找不到重点。
+                AnswerBody(text: answer.text)
 
                 engineLine(answer)
 
@@ -259,7 +258,7 @@ struct AskView: View {
                         Text(LocalizedStringKey.alreadyLocalized(block.passage.title))
                             .font(TypeScale.caption.weight(.medium))
                             .foregroundStyle(Palette.ink)
-                        Text(LocalizedStringKey.alreadyLocalized(block.passage.content.replacingOccurrences(of: "\n", with: " ")))
+                        Text(LocalizedStringKey.alreadyLocalized(AnswerMarkup.plain(block.passage.content)))
                             .font(TypeScale.caption)
                             .foregroundStyle(Palette.inkFaint)
                             .lineLimit(2)

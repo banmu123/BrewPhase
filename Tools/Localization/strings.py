@@ -516,9 +516,8 @@ EN: dict[str, str] = {
     "回答的语言要和上面这些说明一致。": "Answer in the same language as these instructions.",
 
     # MARK: Extractive answers
-    "根据你的记录：": "From your records:",
-    "你的记录里有这些：": "Your records contain:",
-    "另外，相关的记录：": "Also relevant:",
+    "相关的记录": "Related records",
+    "看出来的问题": "What stands out",
     "BrewPhase 知识库里相关的说法：": "The BrewPhase knowledge base says:",
     "你的记录里没有相关内容，上面只有知识库里的通用说法，不代表你的实际情况。":
         "Nothing in your records covers this, so the above is general background from the knowledge base rather than your own situation.",
@@ -1003,14 +1002,14 @@ EN: dict[str, str] = {
     "这包豆": "this bag",
     "这包豆 + %@": "this bag + %@",
     "%@ 的做法": "your %@ brews",
-    "下一杯建议：%@。": "Next cup: %@.",
-    "下一杯留意：%@。": "Watch next time: %@.",
-    "保持不变：%@。": "Keep unchanged: %@.",
-    "原因：%@": "Reason: %@",
     "另外还看到：%@。": "Also seen: %@.",
+    # 「保持不变」那两条：标签与冒号写进键里，而不是在 Swift 里拼一个分隔符。
+    # 理由见 `ExtractiveLLMProvider.bullet`——只由标点组成的键进不了这张表，
+    # 英文界面下就会露出中文的全角冒号。星号是加粗标记，跟着整句一起走。
+    "**保持不变**：%@": "**Hold steady**: %@",
+    "**下一杯留意**：%@": "**Watch next time**: %@",
     "最近这一杯更接近「%@」（%@）。": "The latest cup is closer to \"%@\" (%@).",
     "「%@」最近这杯的分析": "Analysis of the latest cup of \"%@\"",
-    "知识库里的说法：%@——%@": "From the knowledge base: %@ — %@",
     "知识库说的是通常情况，你的记录说的是这包豆的实际情况；两者不一致时以你的记录为准。":
         "The knowledge base describes the general case; your records describe this bag. When they "
         "disagree, your records win.",
@@ -1033,4 +1032,8 @@ EN: dict[str, str] = {
     "减粉": "less coffee",
     "器具 %@": "Brewer %@",
     "水温 %@": "Water %@",
+    # 演示数据里那杯「不太满意」的笔记。演示数据也是用户看得到的文字，
+    # 英文界面下不该写着中文。
+    "有点酸，尾段薄": "A little sour, thin finish",
+    "有点酸，尾段偏薄": "A little sour, slightly thin finish",
 }

@@ -172,3 +172,84 @@ struct BrewDiagnosis: Equatable, Sendable {
                       notes: notes, knowledge: [])
     }
 }
+
+// MARK: - 在「问一问」里的排版
+
+extension BrewDiagnosis {
+
+    /// 这份诊断写进回答正文的样子（`AnswerMarkup`，规格 §十/§十六/§十八）。
+    ///
+    /// 顺序就是用户问「为什么这杯不好喝」时想听到的顺序：
+    /// **结论 → 看出来的问题 → 下一杯改哪一件事 → 保持不变 → 知识库 → 依据**。
+    ///
+    /// 之前这里是一串等重的句子，由回答层再给每行加一个圆点，结果十二行完全平铺；
+    /// 现在把层次交给排版标记，回答层只负责把它带出去。
+    ///
+    /// 两条自律没有变：结论一律写成**候选**（「更接近」，不说「就是」），建议一律
+    /// 只给**一个**旋钮。数据不够时这里写的是「还差几次」，不是硬凑一条建议。
+    var markup: String {
+        var lines: [String] = []
+
+        if let primary {
+            lines.append(AnswerMarkup.callout
+                         + L("最近这一杯更接近「%@」（%@）。",
+                             primary.finding.title, primary.confidence.diagnosticLabel))
+            lines.append("")
+            lines.append(AnswerMarkup.heading + L("看出来的问题"))
+            for item in primary.evidence {
+                lines.append(AnswerMarkup.bullet + item)
+            }
+            let extras = candidates.dropFirst().prefix(2).map(\.finding.title)
+            if !extras.isEmpty {
+                lines.append(AnswerMarkup.note + L("另外还看到：%@。", extras.joined(separator: L("、"))))
+            }
+        } else if baseline.isUsable {
+            lines.append(AnswerMarkup.callout + L("最近这一杯在你自己的记录里没有明显异常。"))
+        } else {
+            lines.append(AnswerMarkup.callout + baseline.shortfallMessage)
+            lines.append(AnswerMarkup.note + PersonalBaseline.keepRecordingAdvice)
+        }
+
+        if let suggestion {
+            lines.append("")
+            lines.append(AnswerMarkup.heading + L("下一杯建议"))
+            // 改哪个旋钮、往哪边改，与「为什么」放在同一块里：这两句分开读，
+            // 用户就容易只记住动作、忘掉理由。
+            lines.append(AnswerMarkup.callout
+                         + "**\(suggestion.headline)**　\(suggestion.reason)")
+            if !suggestion.keep.isEmpty {
+                lines.append(AnswerMarkup.bullet
+                             + L("**保持不变**：%@", suggestion.keep.joined(separator: L("、"))))
+            }
+            if !suggestion.observe.isEmpty {
+                lines.append(AnswerMarkup.bullet
+                             + L("**下一杯留意**：%@", suggestion.observe.joined(separator: L("、"))))
+            }
+        } else if baseline.isUsable, !candidates.isEmpty {
+            lines.append(AnswerMarkup.note + L("这一轮没有足够把握给出单向的调整建议。"))
+        }
+
+        if !knowledge.isEmpty {
+            lines.append("")
+            lines.append(AnswerMarkup.heading + L("知识库"))
+            for item in knowledge.prefix(2) {
+                // 出处写在条目里，不另挂引用编号：这几条不是从用户记录里算出来的，
+                // 标成 [1]（那条结构化事实）会把「谁说的」搅混。
+                lines.append(AnswerMarkup.bullet + "**\(item.title)** · \(item.source)")
+            }
+        }
+
+        // 依据有多硬写清楚，等于告诉用户这句话该信几分。
+        //
+        // 判据是「有没有参考记录」而不是「基线成不成立」：只有一条较好记录时基线
+        // 不成立，但那时**更**需要写出来——否则用户会以为这一条结论跟三条记录时
+        // 一样硬。真正没参考记录时不写：那时候「依据：0 次高评分记录」是自相矛盾
+        // 的一句话，而上面的结论块已经在说「还差几次」。
+        if baseline.highRatedCount > 0 {
+            lines.append("")
+            lines.append(AnswerMarkup.note + baseline.basisNote)
+        }
+
+        return lines.joined(separator: "\n")
+    }
+}

@@ -460,7 +460,7 @@ struct QuickBrewLogView: View {
             sweetness = 2
             bitterness = 2
             bodyValue = 2
-            notes = "有点酸，尾段偏薄"
+            notes = L("有点酸，尾段偏薄")
             save()
         }
     }

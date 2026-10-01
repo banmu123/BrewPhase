@@ -11,6 +11,12 @@ final class BrewDiagnosticTests: XCTestCase {
 
     private let today = Date()
 
+    override func setUpWithError() throws {
+        // 这里有几处断言的期望值是中文文案（`L()` 的结果），所以语言要钉住，
+        // 不能靠「别的测试类先跑、顺手把语言设成了中文」这种顺序上的巧合。
+        LanguageManager.pinForTesting(.simplifiedChinese)
+    }
+
     // MARK: - 夹具
 
     private func cup(
@@ -240,6 +246,49 @@ final class BrewDiagnosticTests: XCTestCase {
         XCTAssertFalse(suggestion?.keep.contains { $0.contains("2:08") } == true,
                        "时间不是能设定的东西，它属于「下一杯留意」，不属于「保持不变」")
         XCTAssertTrue(suggestion?.observe.isEmpty == false)
+    }
+
+    // MARK: - 写进回答正文的排版
+
+    func testTheMarkupIsLayeredRatherThanAFlatList() {
+        let current = cup(daysAgo: 0, temp: 92, time: 128, score: 3,
+                          acidity: 5, sweetness: 2, body: 2)
+
+        let blocks = AnswerMarkup.parse(diagnose(current).markup)
+        let kinds = blocks.map(\.kind)
+        let headings = blocks.filter { $0.kind == .heading }.map(\.runs)
+
+        XCTAssertEqual(kinds.first, .callout, "结论是一段话里最该被看见的那句")
+        XCTAssertTrue(headings.contains([.text("看出来的问题")]), headings.description)
+        XCTAssertTrue(headings.contains([.text("下一杯建议")]), headings.description)
+        XCTAssertGreaterThanOrEqual(kinds.filter { $0 == .callout }.count, 2, "结论与建议各是一个重点块")
+        XCTAssertTrue(kinds.contains(.bullet), "证据与「保持不变」都是条目")
+        XCTAssertTrue(
+            blocks.contains { $0.kind == .bullet && $0.runs.first == .strong(AdjustmentSuggestion.keepTitle) },
+            "「保持不变」那一条要带加粗标签：\(blocks.map(\.runs).description)"
+        )
+        // 引用编号由回答层加：事实本身不知道自己会被编成几号。
+        XCTAssertFalse(diagnose(current).markup.contains("[1]"))
+    }
+
+    func testTheMarkupNamesAThinBasisInsteadOfHidingIt() {
+        let diagnosis = diagnose(
+            cup(daysAgo: 0, temp: 92, time: 128, score: 3, acidity: 5, sweetness: 2),
+            history: [cup(daysAgo: 3, temp: 91, time: 152, score: 5)]
+        )
+
+        XCTAssertEqual(diagnosis.primary?.confidence, .low)
+        XCTAssertTrue(diagnosis.markup.contains("依据："),
+                      "只有一条参考记录时更要把依据写出来：\n\(diagnosis.markup)")
+        XCTAssertTrue(diagnosis.markup.contains("1 次"), diagnosis.markup)
+    }
+
+    func testTheMarkupClaimsNoBasisWhenThereIsNone() {
+        let diagnosis = diagnose(cup(daysAgo: 0, temp: 92, time: 128, score: 3), history: [])
+
+        XCTAssertFalse(diagnosis.markup.contains("依据："),
+                       "一条参考记录都没有时不该写「依据：…」：\n\(diagnosis.markup)")
+        XCTAssertTrue(diagnosis.markup.contains("还差"), diagnosis.markup)
     }
 
     func testEmptyAxesNeverProduceAStrongConclusion() {
