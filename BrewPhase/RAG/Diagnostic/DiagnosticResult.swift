@@ -216,7 +216,7 @@ extension BrewDiagnosis {
             // 改哪个旋钮、往哪边改，与「为什么」放在同一块里：这两句分开读，
             // 用户就容易只记住动作、忘掉理由。
             lines.append(AnswerMarkup.callout
-                         + "**\(suggestion.headline)**　\(suggestion.reason)")
+                         + "**\(suggestion.headline)**" + L("。") + suggestion.reason)
             if !suggestion.keep.isEmpty {
                 lines.append(AnswerMarkup.bullet
                              + L("**保持不变**：%@", suggestion.keep.joined(separator: L("、"))))

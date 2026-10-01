@@ -34,11 +34,14 @@
 "%@ 购买" = "bought %@";
 "%@ 进入风味窗口" = "%@ has entered its window";
 "%@（%@ 次）" = "%@ (%@)";
+"%@（%@）" = "%@ (%@)";
 "%@（平均 %@ 分）" = "%@ (avg %@)";
+"%@：%@" = "%@: %@";
+"%@：%@（%@）" = "%@: %@ (%@)";
 "%@：平均 %@ 分（%@ 次）" = "%@: %@ on average over %@ brews";
 "%@：当前 %@（常用 %@）" = "%@: now %@ (usual %@)";
 "**下一杯留意**：%@" = "**Watch next time**: %@";
-"**保持不变**：%@" = "**Hold steady**: %@";
+"**保持不变**：%@" = "**Keep unchanged**: %@";
 "22 格" = "22 clicks";
 "JSON 完整备份 · CSV 表格" = "Full JSON backup · CSV tables";
 "Ollama 本地服务" = "Ollama local service";
@@ -46,6 +49,9 @@
 "Ollama 返回了 %@：%@" = "Ollama returned %@: %@";
 "V60 一般用多少水温？" = "What water temperature should a V60 use?";
 "· 这次用掉的比剩下的还多" = "· that is more than you have left";
+"、" = ", ";
+"。" = ". ";
+"「%@」" = "“%@”";
 "「%@」一共冲过 %@ 次，其中 %@ 次打过分，平均 %@ 分。" = "The user brewed %@ %@ times, scored %@ of them, averaging %@.";
 "「%@」今天是烘焙后第 %@ 天，处于「%@」（%@）。" = "%@ is on day %@ after roast, in %@ (%@).";
 "「%@」你评分最高的一次" = "Your highest-scoring brew of %@";
@@ -804,5 +810,8 @@
 "黄金风味窗口" = "Peak window";
 "默认值：浅烘 7–28 天 · 中烘 5–21 天 · 中深烘 / 深烘 3–14 天 · 意式拼配 7–21 天。" = "Defaults: Light 7–28 days · Medium 5–21 · Medium-dark / Dark 3–14 · Espresso blend 7–21.";
 "默认冲煮参数" = "Brew defaults";
+"（%@）" = " (%@)";
 "（没有找到和这个问题相关的记录）" = "(no records relevant to this question were found)";
 "（没有找到相关的知识条目）" = "(no relevant knowledge entries were found)";
+"，" = ", ";
+"；" = "; ";

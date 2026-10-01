@@ -381,6 +381,19 @@ EN: dict[str, str] = {
     # the English list reads "Variety, Altitude", not "Variety、Altitude".
     "、": ", ",
 
+    # MARK: 标点本身也是文案
+    #
+    # 中文的句读在英文里不能照搬：列表分隔符是 ", "、句号是 ". "、括号前要留空格。
+    # 这些键里没有汉字，所以 `keys.py` 是靠「出现在 L(...) 里」认出它们的——把标点
+    # 直接写死在 Swift 里，英文界面上就会读到「Washed，Light。」
+    "，": ", ",
+    "。": ". ",
+    "；": "; ",
+    "（%@）": " (%@)",
+    "%@（%@）": "%@ (%@)",
+    "%@：%@": "%@: %@",
+    "%@：%@（%@）": "%@: %@ (%@)",
+
     # MARK: Field names the model wants and the app does not have yet
     #
     # These double as the labels those fields should get when they are added to
@@ -1006,7 +1019,7 @@ EN: dict[str, str] = {
     # 「保持不变」那两条：标签与冒号写进键里，而不是在 Swift 里拼一个分隔符。
     # 理由见 `ExtractiveLLMProvider.bullet`——只由标点组成的键进不了这张表，
     # 英文界面下就会露出中文的全角冒号。星号是加粗标记，跟着整句一起走。
-    "**保持不变**：%@": "**Hold steady**: %@",
+    "**保持不变**：%@": "**Keep unchanged**: %@",
     "**下一杯留意**：%@": "**Watch next time**: %@",
     "最近这一杯更接近「%@」（%@）。": "The latest cup is closer to \"%@\" (%@).",
     "「%@」最近这杯的分析": "Analysis of the latest cup of \"%@\"",

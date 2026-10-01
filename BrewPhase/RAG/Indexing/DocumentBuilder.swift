@@ -62,14 +62,14 @@ enum DocumentBuilder {
         var traits: [String] = []
         if let process = bean.process.nonEmpty { traits.append(L("处理法：%@", process)) }
         traits.append(L("烘焙度：%@", bean.roastLevel.label))
-        lines.append(traits.joined(separator: "；") + "。")
+        lines.append(traits.joined(separator: L("；")) + L("。"))
 
         // 时间线：只写存在的那些日期。
         var dates: [String] = []
         if let roastDate = bean.roastDate { dates.append(L("%@ 烘焙", Fmt.short(roastDate, calendar: calendar))) }
         if let purchaseDate = bean.purchaseDate { dates.append(L("%@ 购买", Fmt.short(purchaseDate, calendar: calendar))) }
         if let openDate = bean.openDate { dates.append(L("%@ 开封", Fmt.short(openDate, calendar: calendar))) }
-        if !dates.isEmpty { lines.append(dates.joined(separator: "，") + "。") }
+        if !dates.isEmpty { lines.append(dates.joined(separator: L("，")) + L("。")) }
 
         // 存量。`remainingG` 为 0 时 `Bean.init` 会把它设成 `weightG`，所以
         // 0 反而说明这是一包没填规格的豆子——那种情况就不写这一句。
@@ -153,7 +153,7 @@ enum DocumentBuilder {
         if let grind = brew.grindSize.nonEmpty { recipe.append(L("研磨度 %@", grind)) }
         if brew.timeSeconds > 0 { recipe.append(L("总时间 %@", brew.timeText)) }
         if let grinder = brew.grinder.nonEmpty { recipe.append(L("磨豆机 %@", grinder)) }
-        if !recipe.isEmpty { lines.append(recipe.joined(separator: "，") + "。") }
+        if !recipe.isEmpty { lines.append(recipe.joined(separator: L("，")) + L("。")) }
 
         if let day = brew.dayAfterRoast {
             lines.append(L("这次冲煮在烘焙后第 %@ 天。", String(day)))
@@ -169,8 +169,8 @@ enum DocumentBuilder {
             if brew.bitterness > 0 { parts.append(L("苦 %@", String(brew.bitterness))) }
             if brew.body > 0 { parts.append(L("醇厚度 %@", String(brew.body))) }
             if brew.aftertaste > 0 { parts.append(L("余韵 %@", String(brew.aftertaste))) }
-            if !parts.isEmpty { verdict += L("（%@）", parts.joined(separator: "、")) }
-            lines.append(verdict + "。")
+            if !parts.isEmpty { verdict += L("（%@）", parts.joined(separator: L("、"))) }
+            lines.append(verdict + L("。"))
         }
 
         if !brew.flavorTags.isEmpty {
@@ -302,16 +302,16 @@ enum DocumentBuilder {
         if !tagCounts.isEmpty {
             let ranked = tagCounts.sorted { ($0.value, $1.key) > ($1.value, $0.key) }.prefix(6)
             let text = ranked.map { L("%@（%@ 次）", FlavorLibrary.displayName(for: $0.key), String($0.value)) }
-            lines.append(L("用户给高分时最常记到的风味是：%@。", text.joined(separator: "、")))
+            lines.append(L("用户给高分时最常记到的风味是：%@。", text.joined(separator: L("、"))))
         }
 
         // 常用冲煮方式与器具。
         if let methods = topCounts(brews.map(\.method)), !methods.isEmpty {
             let text = methods.map { L("%@（%@ 次）", $0.key, String($0.value)) }
-            lines.append(L("用户最常用的冲煮方式是：%@。", text.joined(separator: "、")))
+            lines.append(L("用户最常用的冲煮方式是：%@。", text.joined(separator: L("、"))))
         }
         if let grinders = topCounts(brews.map(\.grinder)), !grinders.isEmpty {
-            lines.append(L("用户常用的磨豆机是：%@。", grinders.map(\.key).joined(separator: "、")))
+            lines.append(L("用户常用的磨豆机是：%@。", grinders.map(\.key).joined(separator: L("、"))))
         }
 
         // 常用参数。只取填了值的记录求平均，把空值当 0 会把均值拉垮。
@@ -326,7 +326,7 @@ enum DocumentBuilder {
             parameterParts.append(L("水温约 %@°C", Fmt.number(temp)))
         }
         if !parameterParts.isEmpty {
-            lines.append(L("用户常用的参数是：%@。", parameterParts.joined(separator: "，")))
+            lines.append(L("用户常用的参数是：%@。", parameterParts.joined(separator: L("，"))))
         }
 
         // 评价最好的豆子。
@@ -340,7 +340,7 @@ enum DocumentBuilder {
             .prefix(3)
         if !bestBeans.isEmpty {
             let text = bestBeans.map { L("%@（平均 %@ 分）", $0.0, Fmt.number($0.1)) }
-            lines.append(L("用户评价最高的豆子是：%@。", text.joined(separator: "、")))
+            lines.append(L("用户评价最高的豆子是：%@。", text.joined(separator: L("、"))))
         }
 
         lines.append(L("用户目前有 %@ 包豆子、%@ 次冲煮记录。", String(beans.count), String(brews.count)))

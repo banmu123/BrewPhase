@@ -5,12 +5,17 @@ One job: walk the Swift sources and return the set of localisation keys. It is
 shared by `generate.py` (to write the tables) and `check.py` (to prove the
 tables cover the source), so both sides always agree on what "a key" is.
 
-A key is any string literal containing Chinese, with two normalisations:
+A key is any string literal containing Chinese, with three normalisations:
 
 * text inside a `//` or `/* */` comment is ignored — the code talks about the
   copy in its comments, and none of that is ever displayed;
 * `\\(interpolation)` becomes `%@`, so `Text("还有 \\(n) 天")` and
-  `L("还有 %@ 天", String(n))` resolve to the same key.
+  `L("还有 %@ 天", String(n))` resolve to the same key;
+* a literal that is **only** Chinese punctuation (`"、"`, `"。"`, `"%@：%@"`)
+  counts when it sits inside an `L(...)` call. Those have no ideograph, so
+  requiring one used to drop them silently — and the consequence was visible:
+  an English build joined lists with a full-width comma and ended sentences
+  with a full-width stop.
 
 Literals that are internal by construction — log messages, `UserDefaults` keys,
 file names — are dropped.
@@ -25,6 +30,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 SOURCES = ROOT / "BrewPhase"
 
 CJK = re.compile(r"[\u4e00-\u9fff]")
+# 中文标点与全角符号（。，、；「」（）…）——它们不含汉字，但同样是文案：
+# 列表分隔符中文写「、」、英文写 ", "，句号中文写「。」、英文写 ". "。
+PUNCTUATION = re.compile(r"[\u3000-\u303f\uff01-\uff5e]")
 LITERAL = re.compile(r'"((?:[^"\\]|\\.)*)"')
 INTERPOLATION = re.compile(r"\\\([^)]*\)")
 
@@ -69,7 +77,13 @@ def source_keys() -> set[str]:
         for line in strip_comments(path.read_text(encoding="utf-8")).split("\n"):
             for match in LITERAL.finditer(line):
                 text = match.group(1)
-                if not CJK.search(text) or is_internal(text, line):
+                if is_internal(text, line):
+                    continue
+                # 汉字一律算键；只有标点的情况要额外看它在哪——`L("、")` 是要翻译
+                # 的列表分隔符，而 `CharacterSet(charactersIn: "。，")` 是解析用的
+                # 字符集合，后者永远不该进文案表。判据就是「在不在 `L(` 调用里」，
+                # 因为 `L()` 的参数按定义就是给用户看的文案。
+                if not CJK.search(text) and not (PUNCTUATION.search(text) and "L(" in line):
                     continue
                 keys.add(INTERPOLATION.sub("%@", text))
     return keys

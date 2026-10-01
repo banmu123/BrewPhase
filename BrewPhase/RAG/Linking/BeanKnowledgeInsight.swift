@@ -158,7 +158,7 @@ enum BeanKnowledgeInsight {
 
         var limitations: [String] = []
         if !context.missingFields.isEmpty {
-            let names = context.missingFields.map(\.label).joined(separator: "、")
+            let names = context.missingFields.map(\.label).joined(separator: L("、"))
             limitations.append(L("还没有填：%@。填上之后关联会更准。", names))
         }
         limitations.append(L("知识是通用起点，不是这包豆子唯一正确的参数。"))
@@ -217,7 +217,7 @@ enum BeanKnowledgeInsight {
                                BrewMath.formatTime(Int(time.maximum.rounded()))))
             }
             if !parts.isEmpty {
-                recommendation = L("先从你自己的高评分区间试：%@。", parts.joined(separator: "，"))
+                recommendation = L("先从你自己的高评分区间试：%@。", parts.joined(separator: L("，")))
                 evidence.insert(InsightResult.EvidenceRow(
                     authority: .inference,
                     text: L("这是从 %@ 次高评分记录里算出来的区间，不是通用建议。",

@@ -291,6 +291,39 @@ final class BrewDiagnosticTests: XCTestCase {
         XCTAssertTrue(diagnosis.markup.contains("还差"), diagnosis.markup)
     }
 
+    // MARK: - 英文界面上不能出现中文句读
+
+    func testSentenceAndListPunctuationAreTranslated() {
+        LanguageManager.pinForTesting(.english)
+        defer { LanguageManager.pinForTesting(.simplifiedChinese) }
+
+        // 这些键里没有汉字，收集器是靠「出现在 L(...) 里」认出它们的；一旦这条
+        // 规则失效，英文界面会读成「Washed，Light。」和「Water 92°C、Coffee 18g」。
+        XCTAssertEqual(L("、"), ", ")
+        XCTAssertEqual(L("，"), ", ")
+        XCTAssertEqual(L("。"), ". ")
+        XCTAssertEqual(L("；"), "; ")
+        XCTAssertEqual(L("（%@）", "4/5"), " (4/5)")
+        XCTAssertEqual(L("%@：%@", "Grind", "finer"), "Grind: finer")
+    }
+
+    func testTheSuggestionKeepsItsPunctuationInTheInterfaceLanguage() {
+        LanguageManager.pinForTesting(.english)
+        defer { LanguageManager.pinForTesting(.simplifiedChinese) }
+
+        let diagnosis = diagnose(cup(daysAgo: 0, temp: 92, time: 128, score: 3, acidity: 5, sweetness: 2))
+        let keepLine = diagnosis.markup
+            .split(separator: "\n")
+            .first { $0.contains(AdjustmentSuggestion.keepTitle) }
+            .map(String.init)
+        let line = try? XCTUnwrap(keepLine)
+
+        XCTAssertNotNil(keepLine, diagnosis.markup)
+        XCTAssertFalse(line?.contains("、") == true, line ?? "")
+        XCTAssertFalse(line?.contains("：") == true, line ?? "")
+        XCTAssertTrue(line?.contains(", ") == true, line ?? "")
+    }
+
     func testEmptyAxesNeverProduceAStrongConclusion() {
         let current = cup(daysAgo: 0, temp: 92, time: 128, score: 3)
 
