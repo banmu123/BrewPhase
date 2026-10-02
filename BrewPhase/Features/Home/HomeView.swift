@@ -105,6 +105,18 @@ struct HomeView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 18) {
+                        // 问一问排在最前：它此前只有两条路能到——「更多 → 问一问」，
+                        // 或者进某包豆的详情页。前者要翻两层，后者得先有想聊的那包豆，
+                        // 于是「主界面上怎么开始问」在界面上是无解的。
+                        NavigationLink {
+                            AskView()
+                        } label: {
+                            Image(systemName: "questionmark.bubble")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(Palette.roast)
+                        }
+                        .accessibilityLabel("问一问")
+
                         // 洞察放在添加豆旁边：问「最近适合喝哪包」「今天做手冲
                         // 还是意式」是和「加一包豆」同级别的日常动作，不该藏在
                         // 更多页的折叠线下面。
