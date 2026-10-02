@@ -365,9 +365,10 @@ enum BrewDiagnosticEngine {
         func parameterDeviation() -> DiagnosticCandidate? {
             var lines: [String] = []
             for parameter in [BrewParameter.temperature, .ratio, .dose] {
+                // `range(of:)` 本身就是 `stats(of:)?.range`，拿到区间就等于拿到了统计，
+                // 不需要再绑一次 `stats`——绑了也只是让编译器报一个「从未使用」。
                 guard let value = current.value(of: parameter),
-                      let range = baseline.range(of: parameter),
-                      let stats = baseline.stats(of: parameter)
+                      let range = baseline.range(of: parameter)
                 else { continue }
                 let outsideLow = value < range.lowerBound - parameter.tolerance
                 let outsideHigh = value > range.upperBound + parameter.tolerance
