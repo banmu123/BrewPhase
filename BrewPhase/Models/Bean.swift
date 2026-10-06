@@ -196,6 +196,37 @@ final class Bean {
         touch()
     }
 
+    // MARK: - Lifecycle changes
+
+    /// 手改库存：把剩余量设成 `grams`。三条规则都在这里，调整页只负责把
+    /// 结果说清楚再调用。
+    ///
+    /// * 为负按 0 算；
+    /// * 剩余量大于总克数时**抬高总克数**——用户比谁都清楚袋子里有多少，
+    ///   这里不擅自把输入砍掉；
+    /// * 已经喝完的袋子改出正数剩余量时回到「在喝」。
+    func setRemaining(_ grams: Double) {
+        remainingG = max(grams, 0)
+        if remainingG > weightG { weightG = remainingG }
+        if remainingG > 0, status == .finished { status = .active }
+        touch()
+    }
+
+    /// 标记为已喝完。**只改状态**：库存与历史记录一律不动。
+    ///
+    /// 这里曾经顺手把 `remainingG` 归零，结果是「恢复到在喝」永远恢复不出
+    /// 任何东西——撤销一个声明不该销毁声明之外的数据。
+    func markFinished() {
+        status = .finished
+        touch()
+    }
+
+    /// 恢复到在喝。同样只改状态：不凭空恢复库存，也不碰任何历史记录。
+    func restoreToActive() {
+        status = .active
+        touch()
+    }
+
     /// Consumption inputs for the estimator, oldest first.
     var brewSamples: [BrewSample] {
         (brews ?? []).map { BrewSample(date: $0.date, coffeeG: $0.coffeeG, waterG: $0.waterG) }

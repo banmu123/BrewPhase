@@ -201,6 +201,34 @@ enum DemoData {
         )
         context.insert(geisha)
 
-        try? context.save()
+        // 7 — 一包已经喝完的豆子。首页的「已喝完」分组、以及「恢复到在喝」
+        // 这条路，只有袋子上真的挂着 finished 状态才看得见。刻意留下 40g：
+        // 恢复只恢复状态、不凭空造库存，「保留当前剩余量」得有一个能看见的例子。
+        let finished = Bean(
+            name: "Rwanda Nyungwe",
+            roaster: L("启程咖啡"),
+            origin: L("卢旺达 · Nyungwe"),
+            process: L("水洗"),
+            roastLevel: .medium,
+            roastDate: day(52),
+            purchaseDate: day(50),
+            openDate: day(46),
+            weightG: 200,
+            remainingG: 40,
+            price: 118,
+            flavorTags: ["Black Tea"],
+            notes: L("味道淡了，收进柜子当纪念。")
+        )
+        context.insert(finished)
+        finished.markFinished()
+
+        do {
+            try context.save()
+        } catch {
+            // 演示数据只在调试启动时安装；失败就说清楚，回滚掉一半的插入，
+            // 免得界面拿到一堆没落库的对象。
+            AppLog.store.error("demo data save failed: \(error.localizedDescription, privacy: .public)")
+            context.rollback()
+        }
     }
 }

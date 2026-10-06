@@ -6,7 +6,29 @@ struct BrewPhaseApp: App {
 
     /// One container for the whole app. Local-only: the default configuration
     /// writes to the app's own sandbox and nothing else (§20).
-    private let container: ModelContainer
+    ///
+    /// There is deliberately no third state here. The app used to fall back to
+    /// an in-memory store when the real one could not be opened — the worst of
+    /// the available answers: the user would keep logging coffee into a session
+    /// that evaporates when the app closes, and nothing on screen said so.
+    /// Unopenable now means unopenable: the recovery screen, no writes, no
+    /// pretending.
+    @State private var store: PersistenceState
+
+    /// The schema is shared between the first open and every retry, so the two
+    /// can never drift apart.
+    private static let schema = Schema([
+        Bean.self,
+        Brew.self,
+        Tasting.self,
+        PhaseReminder.self,
+        PhaseRule.self,
+        // 本地问答用的向量索引。它是**派生数据**：全部内容都能从上面几张表重算，
+        // 所以清掉它不丢信息，只是下次提问要多花一次建索引的时间。加进 schema
+        // 意味着新增一张表，SwiftData 对这种「只加实体」的变更是轻量迁移，
+        // 老数据不需要转换。
+        EmbeddingRecord.self,
+    ])
 
     @StateObject private var language = LanguageManager.shared
 
@@ -19,64 +41,82 @@ struct BrewPhaseApp: App {
         // resolved when `body` runs.
         _ = LanguageManager.shared
 
-        let schema = Schema([
-            Bean.self,
-            Brew.self,
-            Tasting.self,
-            PhaseReminder.self,
-            PhaseRule.self,
-            // 本地问答用的向量索引。它是**派生数据**：全部内容都能从上面几张表重算，
-            // 所以清掉它不丢信息，只是下次提问要多花一次建索引的时间。加进 schema
-            // 意味着新增一张表，SwiftData 对这种「只加实体」的变更是轻量迁移，
-            // 老数据不需要转换。
-            EmbeddingRecord.self,
-        ])
+        // UI inspection only: `-BrewPhaseScreen persistenceRecovery` starts the
+        // app as if the container had failed to open. A broken store cannot be
+        // staged on a working simulator any other way.
+        if DebugLaunch.recoveryDemo {
+            AppLog.lifecycle.error("store forced into recovery state by launch argument")
+            _store = State(initialValue: .failed)
+        } else if let container = Self.openStore() {
+            _store = State(initialValue: .ready(container))
+            Self.bootstrap(on: container)
+        } else {
+            _store = State(initialValue: .failed)
+        }
+    }
 
+    // MARK: - Opening the store
+
+    /// Opens the on-disk store, or returns nil and logs why.
+    ///
+    /// Nothing here touches the database files: a store that fails to open must
+    /// never be "repaired" by deleting it, because that is exactly the data the
+    /// user cares about.
+    private static func openStore() -> ModelContainer? {
         do {
-            container = try ModelContainer(
+            let container = try ModelContainer(
                 for: schema,
                 configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)]
             )
             AppLog.lifecycle.info("store opened")
+            return container
         } catch {
-            // A store that cannot be opened must not take the app down with it.
-            // Falling back to memory keeps the UI usable and lets the user export
-            // whatever is still reachable, rather than facing a crash on launch.
+            // The raw error stays in the log; the recovery screen says only what
+            // a normal user can act on.
             AppLog.lifecycle.error("store failed to open: \(error.localizedDescription, privacy: .public)")
-            container = try! ModelContainer(
-                for: schema,
-                configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
-            )
+            return nil
         }
-
-        bootstrap()
     }
 
     /// First-launch work, done before any view reads the store.
     ///
     /// Both steps are idempotent, so running them on every launch is safe and
     /// means there is no "did we migrate yet" flag to get out of step.
-    private func bootstrap() {
+    private static func bootstrap(on container: ModelContainer) {
         let context = container.mainContext
         PhaseRuleBook.seedIfNeeded(context: context)
         DemoData.installIfRequested(context: context)
     }
 
+    /// The recovery screen's one action: build the persistent container again.
+    private func retry() {
+        guard let container = Self.openStore() else { return }
+        Self.bootstrap(on: container)
+        store = .ready(container)
+    }
+
     var body: some Scene {
         WindowGroup {
-            RootView(selection: $selection)
-                // Channel one of two: `Text("…")` finds its translation through
-                // the environment's locale. Channel two is `L()`, for every string
-                // the app builds rather than renders as a literal.
-                .environment(\.locale, language.current.locale)
-                // Already-rendered navigation titles and section headers do not
-                // re-read the locale on their own, so the tree is rebuilt. The tab
-                // selection lives above this line and therefore survives it —
-                // otherwise picking a language would bounce the user back to the
-                // first tab.
-                .id(language.current)
+            Group {
+                switch store {
+                case .ready(let container):
+                    RootView(selection: $selection)
+                        .modelContainer(container)
+                case .failed:
+                    PersistenceRecoveryView(onRetry: retry)
+                }
+            }
+            // Channel one of two: `Text("…")` finds its translation through
+            // the environment's locale. Channel two is `L()`, for every string
+            // the app builds rather than renders as a literal.
+            .environment(\.locale, language.current.locale)
+            // Already-rendered navigation titles and section headers do not
+            // re-read the locale on their own, so the tree is rebuilt. The tab
+            // selection lives above this line and therefore survives it —
+            // otherwise picking a language would bounce the user back to the
+            // first tab.
+            .id(language.current)
         }
-        .modelContainer(container)
     }
 }
 
@@ -128,6 +168,12 @@ struct RootView: View {
             if let requested = DebugLaunch.screen {
                 try? await Task.sleep(for: .milliseconds(700))
                 debugScreen = requested
+                // 有些菜单动作（标记喝完 / 恢复在喝）模拟器点不到，只能替用户
+                // 走一步——截图要的就是动作发生之后的样子。
+                if let action = DebugLaunch.beanAction {
+                    try? await Task.sleep(for: .milliseconds(400))
+                    performDebugBeanAction(action)
+                }
             }
         }
     }
@@ -135,12 +181,33 @@ struct RootView: View {
     // MARK: - UI inspection (inert unless launched with -BrewPhaseScreen)
 
     /// The highest-priority bag, which is the one worth looking at on the detail
-    /// page and in the editors.
+    /// page and in the editors. `-BrewPhaseBean <name>` overrides the choice so a
+    /// specific bag (no brews, already finished, no roast date) can be inspected.
     private var spotlightBean: Bean? {
+        if let name = DebugLaunch.beanName,
+           let named = beans.first(where: { $0.name == name }) {
+            return named
+        }
         guard let insight = InsightFactory.todaysPick(beans, book: PhaseRuleBook.make(stored: rules)),
               let bean = beans.first(where: { $0.id == insight.id })
         else { return beans.first }
         return bean
+    }
+
+    /// `-BrewPhaseBeanAction finish|restore` — 替用户按一次菜单。
+    private func performDebugBeanAction(_ action: String) {
+        guard let bean = spotlightBean else { return }
+        switch action {
+        case "finish": bean.markFinished()
+        case "restore": bean.restoreToActive()
+        default: return
+        }
+        do {
+            try context.save()
+        } catch {
+            AppLog.store.error("debug bean action failed: \(error.localizedDescription, privacy: .public)")
+            context.rollback()
+        }
     }
 
     @ViewBuilder
@@ -208,6 +275,17 @@ struct RootView: View {
             NavigationStack { AskView(focusBean: spotlightBean) }
         case .insights:
             NavigationStack { InsightsView() }
+        case .persistenceRecovery:
+            // 到不了这里：这个状态在 App 层就被拦下，整个视图树都不会构建。
+            // 留着这个分支只是让 switch 保持穷尽，好让新屏幕不会漏掉。
+            debugEmpty
+        case .stockAdjust:
+            if let bean = spotlightBean {
+                StockAdjustView(bean: bean,
+                                initialValue: DebugLaunch.stockOvershoot ? bean.weightG + 20 : nil)
+            } else {
+                debugEmpty
+            }
         case .quickLog:
             // 从最近冲过的那包进来，和首页「记一杯」走的是同一条路。
             QuickBrewLogView(bean: beans.first { $0.id == recentBrewBeanID } ?? spotlightBean)

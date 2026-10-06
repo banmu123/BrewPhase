@@ -225,9 +225,43 @@ final class BrewLoopTests: XCTestCase {
         let brew = try BrewRecorder.save(draft(dose: 15), bean: guji, in: context)
         XCTAssertEqual(guji.remainingG, 185, accuracy: 0.001)
 
-        BrewRecorder.delete(brew, in: context)
+        try BrewRecorder.delete(brew, in: context)
         XCTAssertEqual(guji.remainingG, 200, accuracy: 0.001)
         XCTAssertEqual(try context.fetch(FetchDescriptor<Brew>()).count, 0)
+    }
+
+    /// 保存失败时靠 `BrewRecorder.apply` 把上一版逐字段写回去（`rollback()`
+    /// 撤不回既有对象的属性改动，见 `PersistenceTests`）。这个往返必须无损，
+    /// 否则失败清理会留下第三种状态——既不是新值也不是旧值。
+    func testReapplyingTheOriginalDraftRestoresEveryField() throws {
+        let brew = try BrewRecorder.save(
+            draft(time: "2:28", temp: 92, dose: 18, water: 300, score: 5,
+                  flavorTags: ["Honey"], notes: "甜感明显"),
+            bean: guji, in: context
+        )
+        let original = BrewRecorder.Draft(existing: brew)
+
+        // 走一遍「用户改了一堆字段」再写回。
+        BrewRecorder.apply(
+            BrewRecorder.Draft(
+                recipe: BrewRecipe(method: "意式浓缩", grinder: "X", grindSize: "3",
+                                   waterTemp: 85, coffeeG: 20, waterG: 40, timeSeconds: 0),
+                timeText: "0:30", date: today, score: 1, notes: "改坏的"
+            ),
+            to: brew
+        )
+        BrewRecorder.apply(original, to: brew)
+
+        XCTAssertEqual(brew.method, "V60")
+        XCTAssertEqual(brew.grinder, "司令官 C40")
+        XCTAssertEqual(brew.grindSize, "22 格")
+        XCTAssertEqual(brew.waterTemp, 92, accuracy: 0.001)
+        XCTAssertEqual(brew.coffeeG, 18, accuracy: 0.001)
+        XCTAssertEqual(brew.waterG, 300, accuracy: 0.001)
+        XCTAssertEqual(brew.timeSeconds, 148)
+        XCTAssertEqual(brew.score, 5)
+        XCTAssertEqual(brew.flavorTags, ["Honey"])
+        XCTAssertEqual(brew.notes, "甜感明显")
     }
 
     // MARK: - 诊断进「问一问」（规格 §28 第 10 项）

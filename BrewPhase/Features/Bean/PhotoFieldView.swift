@@ -4,8 +4,9 @@ import SwiftUI
 /// The bean's picture: take one, pick one, or remove it (§21).
 ///
 /// The image is held in memory until the bean is saved, so cancelling an edit
-/// leaves no file behind. `ImageStore.replace` does the delete-then-write once
-/// the record is known to be committed.
+/// leaves no file behind. 落盘与删旧的顺序由 `BeanEditorView.save()` 统一保证：
+/// 先写新文件 → 落库成功 → 才删旧文件；任何一步失败，磁盘上的文件都还是
+/// 库里指向的那一个。
 struct PhotoFieldView: View {
 
     /// The file name already stored on the bean, if any.

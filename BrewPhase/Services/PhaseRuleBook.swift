@@ -51,18 +51,34 @@ struct PhaseRuleBook: Equatable, Sendable {
         for level in missing {
             context.insert(PhaseRule(data: DefaultPhaseRules.data(for: level)))
         }
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            // 种子没落库就不算播过：不写「已播种」标记，下次启动再试一遍。
+            AppLog.store.error("rule seeding failed: \(error.localizedDescription, privacy: .public)")
+            context.rollback()
+            return false
+        }
         defaults.set(true, forKey: PrefKey.seededPhaseRules)
         return true
     }
 
     /// Resets every level back to the shipped window.
-    static func resetToDefaults(context: ModelContext) {
+    ///
+    /// - Throws: 落库失败时把上下文回滚再抛出——界面必须把失败说出来，
+    ///   不能让用户以为窗口已经恢复默认了。
+    static func resetToDefaults(context: ModelContext) throws {
         let existing = (try? context.fetch(FetchDescriptor<PhaseRule>())) ?? []
         for row in existing { context.delete(row) }
         for level in RoastLevel.allCases {
             context.insert(PhaseRule(data: DefaultPhaseRules.data(for: level)))
         }
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            AppLog.store.error("rule reset failed: \(error.localizedDescription, privacy: .public)")
+            context.rollback()
+            throw error
+        }
     }
 }

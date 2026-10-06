@@ -99,12 +99,12 @@ final class NotificationManager {
         bean.reminders = []
 
         guard let roastDate = bean.roastDate else {
-            try? context.save()
+            commit(context, note: "cleared bag without roast date")
             return
         }
 
         guard preferences.allowsAny else {
-            try? context.save()
+            commit(context, note: "cleared bag with reminders disabled")
             AppLog.notifications.debug("all reminders disabled; cleared bag")
             return
         }
@@ -123,7 +123,7 @@ final class NotificationManager {
         guard isAuthorized else {
             // Record nothing: an unscheduled reminder in the export would be a
             // lie about what the app will actually do.
-            try? context.save()
+            commit(context, note: "cleared bag without notification permission")
             AppLog.notifications.debug("not authorized; planned \(planned.count) but scheduled none")
             return
         }
@@ -139,7 +139,7 @@ final class NotificationManager {
             }
         }
 
-        try? context.save()
+        commit(context, note: "reminder rows for \(bean.name)")
         AppLog.notifications.info("scheduled \(planned.count) reminder(s) for \(bean.name, privacy: .public)")
     }
 
@@ -149,7 +149,14 @@ final class NotificationManager {
         center.removePendingNotificationRequests(withIdentifiers: NotificationPlanner.allIdentifiers(beanID: bean.id))
         for row in bean.reminders ?? [] { context.delete(row) }
         bean.reminders = []
-        try? context.save()
+        commit(context, note: "cancelled reminders for \(bean.name)")
+    }
+
+    /// 只清系统里的待送达提醒，不碰库。删除豆子时用它收尾：库里的提醒行已经
+    /// 随级联删除走了，不需要（也不能）再动上下文。
+    func unschedule(identifiers: [String]) {
+        guard !identifiers.isEmpty else { return }
+        center.removePendingNotificationRequests(withIdentifiers: identifiers)
     }
 
     /// Drops every identifier for every bag. Used by "turn reminders off" and by
@@ -183,6 +190,24 @@ final class NotificationManager {
     /// How many reminders are actually waiting, for the settings screen.
     func pendingCount() async -> Int {
         await center.pendingNotificationRequests().count
+    }
+
+    // MARK: - Writing
+
+    /// 落库提醒行；失败记日志并回滚，不往上抛。
+    ///
+    /// 提醒是**派生数据**：每次启动都会按当前规则整体重排，一次落库失败会在
+    /// 下次启动自愈。所以这里不做 UI 反馈——但也不能像以前那样悄悄吞掉，
+    /// 日志是排查「提醒为什么没排上」时唯一的线索。
+    private func commit(_ context: ModelContext, note: String) {
+        do {
+            try context.save()
+        } catch {
+            AppLog.notifications.error(
+                "save failed after \(note, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            context.rollback()
+        }
     }
 }
 

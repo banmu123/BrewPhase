@@ -99,6 +99,9 @@ enum TypeScale {
     static let micro = Font.system(size: 11, weight: .medium)
     /// Section headers: small, uppercase, generously tracked.
     static let section = Font.system(size: 12, weight: .semibold)
+    /// The one line an action page leads with — the next-cup suggestion on the
+    /// result screen.
+    static let emphasis = Font.system(size: 23, weight: .semibold)
     /// Numbers that sit in columns should not jitter.
     static let numeral = Font.system(size: 15, weight: .medium).monospacedDigit()
     static let bigNumeral = Font.system(size: 24, weight: .semibold).monospacedDigit()

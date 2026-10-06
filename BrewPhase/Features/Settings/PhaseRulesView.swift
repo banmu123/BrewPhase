@@ -14,6 +14,7 @@ struct PhaseRulesView: View {
 
     @State private var revision = 0
     @State private var isConfirmingReset = false
+    @State private var actionError: String?
 
     private var book: PhaseRuleBook { PhaseRuleBook.make(stored: rules) }
 
@@ -43,12 +44,27 @@ struct PhaseRulesView: View {
         }
         .confirmationDialog("恢复默认窗口？", isPresented: $isConfirmingReset, titleVisibility: .visible) {
             Button("恢复默认", role: .destructive) {
-                PhaseRuleBook.resetToDefaults(context: context)
+                do {
+                    try PhaseRuleBook.resetToDefaults(context: context)
+                } catch {
+                    actionError = L("没能保存下来，请再试一次")
+                }
                 revision += 1
             }
             Button("取消", role: .cancel) {}
         } message: {
             Text("会把你改过的所有烘焙度都改回默认值。")
+        }
+        .alert(
+            "没能保存",
+            isPresented: Binding(
+                get: { actionError != nil },
+                set: { if !$0 { actionError = nil } }
+            )
+        ) {
+            Button("好") { actionError = nil }
+        } message: {
+            Text(actionError ?? "")
         }
     }
 
@@ -199,12 +215,26 @@ struct PhaseRulesView: View {
 
     private func apply(_ data: PhaseRuleData, to level: RoastLevel) {
         let normalized = data.normalized()
-        if let row = rules.first(where: { $0.roastLevel == level }) {
+        let row = rules.first(where: { $0.roastLevel == level })
+        let previous = row?.data
+        if let row {
             row.apply(normalized)
         } else {
             context.insert(PhaseRule(data: normalized))
         }
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            // 行内编辑的失败也要看得见：回滚插入/删除、把这一行的数字写回旧值
+            // （rollback 撤不回属性改动，实测），`revision` 触发一次重建把写回
+            // 的值画出来，再把失败说出来。
+            AppLog.store.error("rule save failed: \(error.localizedDescription, privacy: .public)")
+            context.rollback()
+            if let row, let previous { row.apply(previous) }
+            actionError = L("没能保存下来，请再试一次")
+            revision += 1
+            return
+        }
         revision += 1
     }
 

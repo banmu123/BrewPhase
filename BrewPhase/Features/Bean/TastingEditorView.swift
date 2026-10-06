@@ -19,6 +19,7 @@ struct TastingEditorView: View {
     @State private var score: Int = 0
     @State private var flavorTags: [String] = []
     @State private var notes: String = ""
+    @State private var errorMessage: String?
 
     init(bean: Bean, today: Date = Date()) {
         self.bean = bean
@@ -56,6 +57,10 @@ struct TastingEditorView: View {
                         EditorRow(showsDivider: false) {
                             EditorTextField(placeholder: "比如 甜感最明显，很干净", text: $notes)
                         }
+                    }
+
+                    if let errorMessage {
+                        messageCard(errorMessage)
                     }
                 }
                 .padding(.horizontal, Metric.gutter)
@@ -95,6 +100,8 @@ struct TastingEditorView: View {
     }
 
     private func save() {
+        errorMessage = nil
+
         let tasting = Tasting(
             date: date,
             dayAfterRoast: dayAfterRoast,
@@ -106,8 +113,33 @@ struct TastingEditorView: View {
         )
         context.insert(tasting)
         bean.touch()
-        try? context.save()
+
+        do {
+            try context.save()
+        } catch {
+            // 保存失败不进也不退：把刚插入的这条撤掉、回滚上下文，输入都还在
+            // 这一页上，用户可以直接再点一次保存。
+            AppLog.store.error("tasting save failed: \(error.localizedDescription, privacy: .public)")
+            context.rollback()
+            errorMessage = L("没能保存下来，请再试一次")
+            return
+        }
         dismiss()
+    }
+
+    private func messageCard(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "info.circle").font(.system(size: 13))
+            Text(LocalizedStringKey.alreadyLocalized(text))
+                .font(TypeScale.callout)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(Palette.priority)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: Metric.radiusSmall, style: .continuous).fill(Palette.well)
+        )
     }
 }
 

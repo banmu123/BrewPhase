@@ -4,14 +4,18 @@
 #   Tools/run.sh [--demo] [--screen <name>] [--tab <cellar|brews|more>]
 #                [--lang <system|zh-Hans|en>] [--ask "<question>"]
 #                [--ask-more "<question>"]...
+#                [--quick-demo] [--quick-expand <params|flavor|all>]
+#                [--bean "<name>"] [--bean-action <finish|restore>]
+#                [--stock-overshoot]
 #                [--pref "key=value"]...
 #                [--udid <udid>] [--shots "2 4 6"]
 #
-# --demo    seeds six sample bags (only when the store is empty)
+# --demo    seeds seven sample bags (only when the store is empty)
 # --screen  opens a specific screen for inspection, so the deeper pages can be
 #           screenshotted without a UI-test harness. One of:
 #           beanDetail | beanEditor | brewEditor | tasting | tastingTimeline |
-#           rules | export | language | ask | insights
+#           rules | export | language | ask | insights | quickLog |
+#           brewDiagnosis | persistenceRecovery | stockAdjust
 # --tab     which tab to start on
 # --lang    writes the app's own language preference before launching, so the
 #           English interface can be checked without touching the device
@@ -28,6 +32,15 @@
 # --quick-demo  records one deliberately mediocre cup (high acidity, low
 #           sweetness, thin body) and stops on the 30-second log's result page,
 #           so the diagnosis and the next-cup suggestion can be screenshotted.
+# --quick-expand  pre-expands the 30-second log's folded sections (the simulator
+#           cannot tap) and scrolls to the requested one.
+# --bean    makes the bean-scoped debug screens (beanDetail, brewEditor, tasting,
+#           stockAdjust) open this bag by name instead of today's pick.
+# --bean-action  performs one detail-page menu action (finish | restore) after
+#           the screen settles — the menu itself is a popover and cannot be
+#           screenshotted open.
+# --stock-overshoot  opens the stock sheet seeded above the bag's total, which is
+#           the only way the "the total will be adjusted" notice is visible.
 # --pref    writes one string preference before launching. Repeatable. Used to
 #           point the app at a local Ollama, e.g.
 #             --pref brewphase.rag.answerEngine=ollama
@@ -61,6 +74,10 @@ while [ $# -gt 0 ]; do
     --ask)    DEMO_ARGS+=(-BrewPhaseAsk "$2"); shift 2 ;;
     --ask-more) DEMO_ARGS+=(-BrewPhaseAskMore "$2"); shift 2 ;;
     --quick-demo) DEMO_ARGS+=(-BrewPhaseQuickLogDemo yes); shift ;;
+    --quick-expand) DEMO_ARGS+=(-BrewPhaseQuickLogExpand "$2"); shift 2 ;;
+    --bean)   DEMO_ARGS+=(-BrewPhaseBean "$2"); shift 2 ;;
+    --bean-action) DEMO_ARGS+=(-BrewPhaseBeanAction "$2"); shift 2 ;;
+    --stock-overshoot) DEMO_ARGS+=(-BrewPhaseStockOvershoot yes); shift ;;
     --lang)   LANG_SETTING="$2"; shift 2 ;;
     --pref)   PREFS+=("$2"); shift 2 ;;
     --udid)   UDID="$2"; shift 2 ;;
@@ -111,7 +128,9 @@ rm -f /tmp/bp-app.log
 LOGPID=$!
 
 echo "== launch ${DEMO_ARGS[*]:-} =="
-xcrun simctl launch "$UDID" $BUNDLE "${DEMO_ARGS[@]}" >/dev/null
+# `set -u` + bash 3.2: expanding an empty array directly is an "unbound variable"
+# error, so the empty case has to be spelled out.
+xcrun simctl launch "$UDID" $BUNDLE ${DEMO_ARGS[@]+"${DEMO_ARGS[@]}"} >/dev/null
 
 prev=0
 for t in $SHOTS; do

@@ -87,15 +87,6 @@ final class ImageStore: @unchecked Sendable {
         return name
     }
 
-    /// Saves a new image and removes the one it replaces, so editing a bean does
-    /// not leak the previous file.
-    @discardableResult
-    func replace(_ image: UIImage, previous: String?) throws -> String {
-        let name = try save(image)
-        if let previous, previous != name { delete(previous) }
-        return name
-    }
-
     // MARK: - Reading
 
     func image(named name: String?, thumbnail: Bool = true) -> UIImage? {
@@ -123,13 +114,29 @@ final class ImageStore: @unchecked Sendable {
 
     /// Removes both sizes. Called when a bean is deleted, so image lifetime is
     /// tied to bean lifetime (§21).
+    ///
+    /// 删除失败只记日志、不抛出：最坏的结果是一个没人引用的文件留在磁盘上，
+    /// 而「清理无用的图片」会把它们收走。但失败不能像以前那样悄悄溜走——
+    /// 排查「为什么空间没释放」时，日志是唯一的线索。
     func delete(_ name: String?) {
         guard let name, !name.isEmpty else { return }
-        try? fileManager.removeItem(at: url(for: name))
-        try? fileManager.removeItem(at: url(for: name, thumbnail: true))
+        remove(url(for: name))
+        remove(url(for: name, thumbnail: true))
         cache.removeObject(forKey: name as NSString)
         cache.removeObject(forKey: "\(name)|true" as NSString)
         cache.removeObject(forKey: "\(name)|false" as NSString)
+    }
+
+    private func remove(_ url: URL) {
+        // 文件本来就不在（比如没有缩略图）不是错误。
+        guard fileManager.fileExists(atPath: url.path) else { return }
+        do {
+            try fileManager.removeItem(at: url)
+        } catch {
+            AppLog.images.error(
+                "failed to remove \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
     // MARK: - Housekeeping
@@ -149,7 +156,7 @@ final class ImageStore: @unchecked Sendable {
     func clearOrphans(referenced: Set<String>) -> Int {
         let orphans = orphanedFiles(referenced: referenced)
         for url in orphans {
-            try? fileManager.removeItem(at: url)
+            remove(url)
         }
         if !orphans.isEmpty {
             AppLog.images.info("cleared \(orphans.count) orphaned image files")

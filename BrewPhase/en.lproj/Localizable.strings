@@ -43,6 +43,7 @@
 "**下一杯留意**：%@" = "**Watch next time**: %@";
 "**保持不变**：%@" = "**Keep unchanged**: %@";
 "22 格" = "22 clicks";
+"BrewPhase 暂时无法访问已有记录。\n为了避免数据丢失，当前不会保存新的数据。" = "BrewPhase cannot reach your records right now.\nNothing new will be saved, so nothing gets lost.";
 "JSON 完整备份 · CSV 表格" = "Full JSON backup · CSV tables";
 "Ollama 本地服务" = "Ollama local service";
 "Ollama 的回答看不懂：%@" = "Ollama's response made no sense: %@";
@@ -83,6 +84,7 @@
 "上次这杯不太理想" = "The last cup was not great";
 "下一杯建议" = "Next cup";
 "下一杯留意" = "Watch next time";
+"下一杯：%@" = "Next cup: %@";
 "下午好" = "Good afternoon";
 "下雨" = "Rainy";
 "下面会给你两部分资料：一部分是用户自己的豆子、冲煮和风味记录，一部分是 BrewPhase 自带的咖啡常识。" = "You will be given two sets of material: the user's own bags, brews and tasting notes, and the coffee background notes that ship with BrewPhase.";
@@ -177,8 +179,8 @@
 "剩余 %@" = "%@ left";
 "剩余克数" = "Remaining";
 "剩余克数不能是负数" = "The remaining amount cannot be negative";
+"剩余量 %@\n当前总量 %@\n\n保存后总量会调整为 %@。" = "Left %@\nBag size %@\n\nSaving will set the bag size to %@.";
 "剩余量按总克数算" = "Remaining is counted against the bag's total";
-"剩余量比总克数还多，保存时会按 %@ 调整总克数。" = "There is more left than the bag holds; the total will be adjusted to %@ when you save.";
 "剩余量比总克数还多，已把总克数调到 %@" = "There is more left than the bag holds, so the total was widened to %@";
 "加一张包装照片" = "Add a photo of the bag";
 "加粉" = "more coffee";
@@ -186,6 +188,7 @@
 "包装类型" = "Packaging";
 "升温" = "warmer";
 "半日晒" = "Semi-washed";
+"卢旺达 · Nyungwe" = "Rwanda · Nyungwe";
 "历史分析" = "History check";
 "压力" = "Pressure";
 "厌氧日晒" = "Anaerobic natural";
@@ -224,6 +227,7 @@
 "向量模型" = "Embedding model";
 "启程咖啡" = "Qicheng Coffee";
 "味觉细项" = "Taste detail";
+"味道淡了，收进柜子当纪念。" = "The flavour has faded; retiring the bag to the shelf.";
 "咖啡与健康" = "Coffee and health";
 "咖啡基础" = "Coffee basics";
 "咖啡知识" = "Coffee knowledge";
@@ -266,7 +270,9 @@
 "天气也是原因之一：今天%@，几包同阶段的豆子里，这包更对路。" = "Weather played a part too: with %@ weather, this bag fits the day better than its peers.";
 "天气服务暂时不可用（需要在开发者后台为这个 App 开通 WeatherKit）。先用手动场景。" = "The weather service is unavailable (WeatherKit has to be enabled for this App ID in the developer portal). Using the manual scene instead.";
 "太新" = "Too fresh";
+"好" = "OK";
 "如果资料不足以回答，就直接说找不到，并说清缺什么。不要用常识补一个听起来合理的答案。" = "If the material is not enough, say plainly that it cannot be found and what is missing. Do not fill the gap with general knowledge and make it sound plausible.";
+"如果问题持续存在，请先确认设备存储空间正常。" = "If this keeps happening, check that your device has enough free space.";
 "完全匹配" = "Exact match";
 "完成" = "Done";
 "完成了：索引里现在有 %@ 条，这次重算了 %@ 条。" = "Done: the index now holds %@ entries, and %@ were recomputed.";
@@ -285,6 +291,7 @@
 "就这包豆子提问" = "Ask about this bag";
 "尽快喝完" = "Finish it soon";
 "层级匹配" = "Hierarchy match";
+"展开依据" = "Show evidence";
 "巧克力" = "Chocolate";
 "已关联 %@ 条与这包豆子直接相关的知识。" = "Linked %@ entries of knowledge directly relevant to this bag.";
 "已喝完" = "Finished";
@@ -332,6 +339,7 @@
 "总时间 %@" = "total time %@";
 "总时间缩短，风味更干净。" = "Shorter total time, cleaner cup.";
 "总次数" = "Brews";
+"恢复到在喝" = "Mark as open again";
 "恢复默认" = "Reset";
 "恢复默认窗口？" = "Reset the windows?";
 "想记的事情，比如冲煮建议" = "Anything worth noting, e.g. what to change next time";
@@ -380,11 +388,14 @@
 "提醒会根据每包豆子的烘焙日期自动排好" = "Reminders line themselves up from each bag's roast date";
 "提醒会根据烘焙日期一次排好，不需要 App 在后台运行。" = "Reminders are scheduled in one go from the roast date; the app never needs to run in the background.";
 "摩卡壶" = "Moka pot";
+"收起依据" = "Hide evidence";
+"收起风味" = "Hide flavours";
 "故障" = "Troubleshooting";
 "故障排查" = "Troubleshooting";
 "数据" = "Data";
 "新记录会从这里开始" = "New brews start from these";
 "新鲜度" = "Freshness";
+"无法打开本地数据" = "Cannot open your local data";
 "日晒" = "Natural";
 "日期" = "Date";
 "早上好" = "Good morning";
@@ -403,6 +414,7 @@
 "最常用" = "Most used";
 "最近 %@ 天" = "last %@ days";
 "最近 %@ 条" = "last %@";
+"最近一杯" = "Last cup";
 "最近这一杯在你自己的记录里没有明显异常。" = "The latest cup shows nothing unusual against your own records.";
 "最近这一杯更接近「%@」（%@）。" = "The latest cup is closer to \"%@\" (%@).";
 "最高 %@ 分，出现在 %@。" = "The best was %@, on %@.";
@@ -481,7 +493,9 @@
 "没有豆子可以展示" = "Nothing to show yet";
 "没有账号，没有登录，没有服务器。" = "No account, no sign-in, no server.";
 "没有需要清理的图片" = "Nothing to clean up";
+"没能保存" = "Could not save";
 "没能保存下来，请再试一次" = "Could not save. Please try again";
+"没能删除，请再试一次" = "Could not delete. Please try again";
 "沿用上一轮：%@" = "Carried over from the previous turn: %@";
 "沿用你上一次冲的参数" = "Reusing your last brew";
 "沿用这包豆上一次的参数" = "Reusing the last brew of this bag";
@@ -496,6 +510,7 @@
 "深烘" = "Dark";
 "添加第一包豆子，开始记录它从养豆到衰退的整个过程。" = "Add your first bean and start tracking it from resting all the way to decline.";
 "添加豆子" = "Add bean";
+"添加风味" = "Add flavours";
 "清洁维护" = "Cleaning and care";
 "清理 %@ 个无用的图片" = "Clean up %@ unused images";
 "渠道" = "Channel";
@@ -769,6 +784,7 @@
 "醇厚度 %@" = "body %@";
 "醇感" = "Body";
 "重建索引" = "Rebuild index";
+"重新尝试" = "Try again";
 "问一问" = "Ask";
 "问点关于你的豆子的事…" = "Ask something about your coffee…";
 "问题：%@" = "Question: %@";

@@ -85,6 +85,13 @@ enum BrewRecorder {
         /// 校验没过。消息是可以直接给用户看的一句话。
         case invalid(String)
         case saveFailed(String)
+
+        /// 可以直接摆在界面上的那句话。校验失败与落库失败都是。
+        var message: String {
+            switch self {
+            case .invalid(let message), .saveFailed(let message): return message
+            }
+        }
     }
 
     /// 保存（新建或更新）。
@@ -104,26 +111,17 @@ enum BrewRecorder {
             throw Failure.invalid(validation.blocking.first ?? L("这次记录还差一点信息"))
         }
 
+        // 失败清理要用的原值。`rollback()` 只撤得掉插入与删除，**撤不回既有
+        // 对象的属性改动**（2026-10 实测，见 `PersistenceTests`），所以改过
+        // 什么就得自己记着什么。
+        let previousRemaining = bean.remainingG
+        let previousDraft = existing.map { Draft(existing: $0) }
+
         let brew: Brew
         if let existing {
             // 编辑：库存按**差值**调整，改一个打错的粉量不该再扣一次。
             let delta = resolved.coffeeG - existing.coffeeG
-            existing.date = draft.date
-            existing.method = resolved.method.trimmed
-            existing.grinder = resolved.grinder.trimmed
-            existing.grindSize = resolved.grindSize.trimmed
-            existing.waterTemp = resolved.waterTemp
-            existing.coffeeG = resolved.coffeeG
-            existing.waterG = resolved.waterG
-            existing.timeSeconds = resolved.timeSeconds
-            existing.score = BrewMath.clampScore(draft.score)
-            existing.acidity = draft.acidity
-            existing.sweetness = draft.sweetness
-            existing.bitterness = draft.bitterness
-            existing.body = draft.body
-            existing.aftertaste = draft.aftertaste
-            existing.flavorTags = draft.flavorTags
-            existing.notes = draft.notes.trimmed
+            apply(draft, to: existing)
             if delta != 0 { bean.consume(delta) }
             brew = existing
         } else {
@@ -157,15 +155,54 @@ enum BrewRecorder {
         do {
             try context.save()
         } catch {
+            // 落库失败必须把一切退回原状：扣掉的粉、改过的字段、插入的记录、
+            // 镜像风味，任何一样留下来都会在用户重试时叠加一次。
+            // 编辑器的输入都在视图自己的状态里，这些清理不会弄丢它们。
             AppLog.store.error("brew save failed: \(error.localizedDescription, privacy: .public)")
+            context.rollback()
+            bean.remainingG = previousRemaining
+            if let previousDraft {
+                // 编辑：把上一版逐字段写回，并让镜像记录跟着回到旧值。
+                apply(previousDraft, to: brew)
+                syncMirrorTasting(for: brew, bean: bean, in: context)
+            }
             throw Failure.saveFailed(L("没能保存下来，请再试一次"))
         }
         return brew
     }
 
+    /// 把 draft 写进 brew。新建与编辑共用这一份字段赋值，保存失败的写回
+    /// 也用它——字段清单只有一处，不会漏项。
+    static func apply(_ draft: Draft, to brew: Brew) {
+        let resolved = draft.resolvedRecipe
+        brew.date = draft.date
+        brew.method = resolved.method.trimmed
+        brew.grinder = resolved.grinder.trimmed
+        brew.grindSize = resolved.grindSize.trimmed
+        brew.waterTemp = resolved.waterTemp
+        brew.coffeeG = resolved.coffeeG
+        brew.waterG = resolved.waterG
+        brew.timeSeconds = resolved.timeSeconds
+        brew.score = BrewMath.clampScore(draft.score)
+        brew.acidity = draft.acidity
+        brew.sweetness = draft.sweetness
+        brew.bitterness = draft.bitterness
+        brew.body = draft.body
+        brew.aftertaste = draft.aftertaste
+        brew.flavorTags = draft.flavorTags
+        brew.notes = draft.notes.trimmed
+    }
+
     /// 删除一次冲煮：把粉还回袋里，并带走它在风味时间线上留下的那一条。
-    static func delete(_ brew: Brew, in context: ModelContext) {
-        if let bean = brew.bean {
+    ///
+    /// - Throws: 落库失败时把一切退回删除前的样子再抛出——记录还在，
+    ///   调用方必须把这一点告诉用户，不能说成删掉了。
+    static func delete(_ brew: Brew, in context: ModelContext) throws {
+        let bean = brew.bean
+        let previousRemaining = bean?.remainingG
+        let previousStatus = bean?.status
+
+        if let bean {
             bean.remainingG = min(bean.weightG, bean.remainingG + brew.coffeeG)
             if bean.status == .finished, bean.remainingG > 0 { bean.status = .active }
             for tasting in (bean.tastings ?? []) where tasting.brewID == brew.id {
@@ -174,7 +211,17 @@ enum BrewRecorder {
             bean.touch()
         }
         context.delete(brew)
-        try? context.save()
+
+        do {
+            try context.save()
+        } catch {
+            AppLog.store.error("brew delete failed: \(error.localizedDescription, privacy: .public)")
+            context.rollback()
+            // 同上：rollback 撤得掉删除，撤不回还回去的粉与改掉的状态。
+            if let bean, let previousRemaining { bean.remainingG = previousRemaining }
+            if let bean, let previousStatus { bean.status = previousStatus }
+            throw Failure.saveFailed(L("没能删除，请再试一次"))
+        }
     }
 
     /// 库存变了，提醒与「还剩几次」也得跟着变。

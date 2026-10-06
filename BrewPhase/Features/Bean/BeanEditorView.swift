@@ -6,6 +6,66 @@ enum BeanEditorMode: Equatable {
     case edit
 }
 
+/// 打开编辑器那一刻豆子的值。
+///
+/// 存在的理由是一条实测出来的 SwiftData 行为：保存失败后 `rollback()` 只撤得掉
+/// 插入与删除，**撤不回既有对象的属性改动**（见 `PersistenceTests`）。所以编辑
+/// 豆子之后如果落库失败，必须拿这份快照把豆子逐字段写回原样——否则失败的编辑
+/// 会留在内存里，被之后某一次无关的保存顺手写进库里，而用户收到的消息是「没保存」。
+private struct BeanOriginalValues {
+    var name: String
+    var roaster: String
+    var origin: String
+    var process: String
+    var roastLevel: RoastLevel
+    var roastDate: Date?
+    var purchaseDate: Date?
+    var openDate: Date?
+    var weightG: Double
+    var remainingG: Double
+    var price: Double
+    var channel: String
+    var flavorTags: [String]
+    var notes: String
+    var imagePath: String?
+
+    init(_ bean: Bean) {
+        name = bean.name
+        roaster = bean.roaster
+        origin = bean.origin
+        process = bean.process
+        roastLevel = bean.roastLevel
+        roastDate = bean.roastDate
+        purchaseDate = bean.purchaseDate
+        openDate = bean.openDate
+        weightG = bean.weightG
+        remainingG = bean.remainingG
+        price = bean.price
+        channel = bean.channel
+        flavorTags = bean.flavorTags
+        notes = bean.notes
+        imagePath = bean.imagePath
+    }
+
+    func restore(to bean: Bean) {
+        bean.name = name
+        bean.roaster = roaster
+        bean.origin = origin
+        bean.process = process
+        bean.roastLevel = roastLevel
+        bean.roastDate = roastDate
+        bean.purchaseDate = purchaseDate
+        bean.openDate = openDate
+        bean.weightG = weightG
+        bean.remainingG = remainingG
+        bean.price = price
+        bean.channel = channel
+        bean.flavorTags = flavorTags
+        bean.notes = notes
+        bean.imagePath = imagePath
+    }
+}
+
 /// Adding or editing a bag (§3).
 ///
 /// Only four things are required — name, roast date, roast level, weight — and
@@ -52,9 +112,13 @@ struct BeanEditorView: View {
     @State private var hasAttemptedSave = false
     @State private var errorMessage: String?
 
+    /// 编辑前的那份值，落库失败时用来把豆子写回去（见 `BeanOriginalValues`）。
+    private let original: BeanOriginalValues?
+
     init(mode: BeanEditorMode, bean: Bean? = nil) {
         self.mode = mode
         self.bean = bean
+        original = bean.map(BeanOriginalValues.init)
 
         _name = State(initialValue: bean?.name ?? "")
         _roastDate = State(initialValue: bean?.roastDate ?? (mode == .create ? Date() : nil))
@@ -305,6 +369,18 @@ struct BeanEditorView: View {
 
     // MARK: - Saving
 
+    /// 保存的完整顺序是这一版的重点：**写图片 → 落库 → 删旧图片**。
+    ///
+    /// 原来的顺序（先在内存里换掉 `imagePath`、顺手删掉旧文件、最后才落库）在
+    /// 落库失败时会留下最难看的一种残局：记录还指着旧文件，旧文件已经没了。
+    /// 现在的约定是每一步的失败都有出路：
+    ///
+    /// * 图片写不进去 → 直接说，什么都不改；
+    /// * 落库失败 → 删掉刚写的新文件、回滚上下文，旧文件和编辑状态都原样留着；
+    /// * 只有落库确认成功，被替换（或移除）的旧文件才可以删。
+    ///
+    /// 中途被杀进程最坏留下一个孤儿文件——「清理无用的图片」会收走它，而记录
+    /// 永远不会指向不存在的文件。
     private func save() {
         hasAttemptedSave = true
         errorMessage = nil
@@ -316,6 +392,23 @@ struct BeanEditorView: View {
             return
         }
 
+        // 1/3 —— 先写新文件。
+        let newImageName: String?
+        if let pickedImage {
+            do {
+                newImageName = try ImageStore.shared.save(pickedImage)
+            } catch {
+                AppLog.images.error("image save failed: \(error.localizedDescription, privacy: .public)")
+                // ImageStore 能出的错基本只有「编码不出来」，文案和它自己的一致，
+                // 保证界面上同一个问题只有一种说法。
+                errorMessage = L("这张图片没能保存下来，可以换一张试试")
+                return
+            }
+        } else {
+            newImageName = nil
+        }
+
+        // 2/3 —— 更新记录，然后落库。
         let target: Bean
         switch mode {
         case .create:
@@ -358,35 +451,38 @@ struct BeanEditorView: View {
             target = bean
         }
 
-        applyImageChange(to: target)
+        // 图片字段：换新摘旧都在这里改，真正删文件要等落库成功。
+        let previousImage = target.imagePath
+        if let newImageName {
+            target.imagePath = newImageName
+        } else if isImageRemoved {
+            target.imagePath = nil
+        }
 
         do {
             try context.save()
         } catch {
-            errorMessage = L("没能保存下来，请再试一次")
             AppLog.store.error("bean save failed: \(error.localizedDescription, privacy: .public)")
+            // 落库没成：撤掉刚写的新文件、回滚插入/删除，再把豆子逐字段写回
+            // 打开编辑器时的样子——`rollback()` 撤不回属性改动（实测），
+            // 不写回的话这次失败的编辑会留在内存里，被之后某次无关的保存
+            // 顺手写进库里。用户填的东西都在视图自己的 @State 里，一样没丢。
+            if let newImageName { ImageStore.shared.delete(newImageName) }
+            context.rollback()
+            if let original, let bean { original.restore(to: bean) }
+            errorMessage = L("没能保存下来，请再试一次")
             return
+        }
+
+        // 3/3 —— 入库成功，被替换 / 被移除的旧文件现在才可以删。
+        if newImageName != nil || isImageRemoved, let previousImage {
+            ImageStore.shared.delete(previousImage)
         }
 
         let saved = target
         let context = context
         Task { await rescheduleReminders(for: saved, context: context) }
         dismiss()
-    }
-
-    private func applyImageChange(to bean: Bean) {
-        if let pickedImage {
-            do {
-                bean.imagePath = try ImageStore.shared.replace(pickedImage, previous: bean.imagePath)
-            } catch {
-                AppLog.images.error("image save failed: \(error.localizedDescription, privacy: .public)")
-            }
-        } else if isImageRemoved, let existing = bean.imagePath {
-            // Deleting the bean deletes its images (§21); removing just the photo
-            // has to do the same thing by hand.
-            ImageStore.shared.delete(existing)
-            bean.imagePath = nil
-        }
     }
 
     /// Reminders are planned on save, never on a timer (§10).

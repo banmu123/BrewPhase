@@ -37,6 +37,9 @@ struct QuickBrewLogView: View {
     @State private var notes = ""
 
     @State private var showsParameters = false
+    /// 风味标签默认折着：30 秒那条路不该先看见几十个词。点「添加风味」才展开，
+    /// 再点一次收起；已经选上的词任何时候都看得见。
+    @State private var showsFlavorTags = false
     /// 用户动过参数之后就不再自动预填，免得他刚填的数字被覆盖。
     @State private var touchedRecipe = false
     @State private var prefill: BrewPrefill
@@ -64,6 +67,12 @@ struct QuickBrewLogView: View {
         _recipe = State(initialValue: seed.recipe)
         _timeText = State(initialValue: seed.timeText)
         _date = State(initialValue: Date())
+
+        // UI inspection only (见 `DebugLaunch.quickLogFocus`)：模拟器不能点击，
+        // 折叠区展开后的样子要靠这两行先替用户展开。
+        let focus = DebugLaunch.quickLogFocus
+        _showsParameters = State(initialValue: focus == "params" || focus == "all")
+        _showsFlavorTags = State(initialValue: focus == "flavor" || focus == "all")
     }
 
     // MARK: - 派生
@@ -88,6 +97,19 @@ struct QuickBrewLogView: View {
         var recipe = recipe
         recipe.timeSeconds = BrewMath.parseTime(timeText) ?? 0
         return recipe
+    }
+
+    /// 「更多参数」那一行右侧的摘要：`18g · 1:16 · 92°C · 2:28`。
+    /// 只有真有了的值才出现，一个都没有时显示破折号。
+    private var parameterSummary: String {
+        var parts: [String] = []
+        if recipe.coffeeG > 0 { parts.append(Fmt.gramsShort(recipe.coffeeG)) }
+        if recipe.coffeeG > 0, recipe.waterG > 0 { parts.append(recipe.ratioText) }
+        if recipe.waterTemp > 0 { parts.append("\(Int(recipe.waterTemp.rounded()))°C") }
+        if let seconds = BrewMath.parseTime(timeText), seconds > 0 {
+            parts.append(BrewMath.formatTime(seconds))
+        }
+        return parts.isEmpty ? "—" : parts.joined(separator: " · ")
     }
 
     private var projectedRemaining: Double? {
@@ -121,33 +143,51 @@ struct QuickBrewLogView: View {
 
     // MARK: - 表单
 
+    /// 折叠区的滚动锚点，只给调试屏用（展开后内容在折叠线以下，截不到图）。
+    private static let flavorAnchor = "quicklog.flavor"
+    private static let parametersAnchor = "quicklog.parameters"
+
     private var form: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                if activeBeans.isEmpty {
-                    Card(lifted: true) {
-                        EmptyStateView(
-                            symbol: "square.stack.3d.up",
-                            title: "豆仓还是空的",
-                            message: "先加一包豆，再记这一杯。"
-                        )
-                    }
-                } else {
-                    beanSection
-                    prefillNote
-                    methodSection
-                    tasteSection
-                    flavorSection
-                    notesSection
-                    parametersSection
-                    if let errorMessage {
-                        messageCard(errorMessage)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    if activeBeans.isEmpty {
+                        Card(lifted: true) {
+                            EmptyStateView(
+                                symbol: "square.stack.3d.up",
+                                title: "豆仓还是空的",
+                                message: "先加一包豆，再记这一杯。"
+                            )
+                        }
+                    } else {
+                        beanSection
+                        prefillNote
+                        methodSection
+                        tasteSection
+                        flavorSection
+                            .id(Self.flavorAnchor)
+                        notesSection
+                        parametersSection
+                            .id(Self.parametersAnchor)
+                        if let errorMessage {
+                            messageCard(errorMessage)
+                        }
                     }
                 }
+                .padding(.horizontal, Metric.gutter)
+                .padding(.top, 8)
+                .padding(.bottom, 24)
             }
-            .padding(.horizontal, Metric.gutter)
-            .padding(.top, 8)
-            .padding(.bottom, 24)
+            .onAppear {
+                // UI inspection only：展开之后滚到展开的那一块跟前。
+                guard let focus = DebugLaunch.quickLogFocus, focus != "all" else { return }
+                let target = focus == "flavor" ? Self.flavorAnchor : Self.parametersAnchor
+                Task {
+                    // 等布局稳定，不然目标还没有尺寸，滚过去也是原地。
+                    try? await Task.sleep(for: .milliseconds(600))
+                    proxy.scrollTo(target, anchor: .top)
+                }
+            }
         }
         .safeAreaInset(edge: .bottom) { saveBar }
     }
@@ -279,10 +319,40 @@ struct QuickBrewLogView: View {
         }
     }
 
+    /// 风味标签：默认一行「添加风味」，展开才是完整的 `FlavorTagEditor`。
+    /// `FlavorLibrary` 一个组、一个词都没动，只是不再在首屏全铺开。
     private var flavorSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeader(title: "风味标签", detail: .alreadyLocalized("可以以后再补"))
-            Card { FlavorTagEditor(tags: $flavorTags) }
+            Card {
+                VStack(alignment: .leading, spacing: 12) {
+                    if showsFlavorTags {
+                        FlavorTagEditor(tags: $flavorTags)
+                        CardDivider()
+                    } else if !flavorTags.isEmpty {
+                        FlowLayout(spacing: 7, lineSpacing: 7) {
+                            ForEach(flavorTags, id: \.self) { tag in
+                                FlavorChip(text: FlavorLibrary.displayName(for: tag))
+                            }
+                        }
+                        CardDivider()
+                    }
+
+                    Button {
+                        withAnimation(Motion.settle) { showsFlavorTags.toggle() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: showsFlavorTags ? "chevron.up" : "plus.circle")
+                                .font(.system(size: 13, weight: .medium))
+                            Text(showsFlavorTags ? "收起风味" : "添加风味")
+                                .font(TypeScale.callout)
+                            Spacer(minLength: 0)
+                        }
+                        .foregroundStyle(Palette.roast)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
     }
 
@@ -295,6 +365,9 @@ struct QuickBrewLogView: View {
     }
 
     /// 详细参数折起来：30 秒那条路不该看见它们，但改参数时它们是必须有的。
+    ///
+    /// 摘要行把这一杯去要用的数字一眼写全（粉量 · 粉水比 · 水温 · 时间），
+    /// 所以「不展开」也不会让人心里没底。
     private var parametersSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Button {
@@ -308,9 +381,11 @@ struct QuickBrewLogView: View {
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(Palette.inkFaint)
                     Spacer(minLength: 0)
-                    Text(L("%@ · %@", recipe.ratioText, timeText.isEmpty ? "—" : timeText))
+                    Text(parameterSummary)
                         .font(TypeScale.micro.monospacedDigit())
                         .foregroundStyle(Palette.inkFaint)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
             }
             .buttonStyle(.plain)
@@ -427,7 +502,7 @@ struct QuickBrewLogView: View {
                     }
                 }
 
-                BrewDiagnosticCard(diagnosis: diagnosis)
+                BrewDiagnosticCard(diagnosis: diagnosis, emphasizesSuggestion: true)
 
                 HStack(spacing: 10) {
                     SecondaryButton(title: "再记一杯", systemImage: "plus") { logAnother() }

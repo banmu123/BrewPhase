@@ -10,6 +10,9 @@ struct BrewDiagnosticCard: View {
     let diagnosis: BrewDiagnosis
     /// 豆子详情页已经有知识区块时不重复显示；只显示与这次诊断直接相关的知识。
     var showsKnowledge = true
+    /// 刚记完一杯时，「下一杯建议」是行动的落点，比「本次表现」重一档；
+    /// 其它场景（豆子页、问一问）两段保持等重，各读各的。
+    var emphasizesSuggestion = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Metric.sectionGap) {
@@ -145,15 +148,21 @@ struct BrewDiagnosticCard: View {
 
     // MARK: - 下一杯建议
 
+    /// 「本次表现」是解释，「下一杯建议」是行动。
+    ///
+    /// 在刚记完一杯的页面上这一点尤其成立——用户下一步要做的事就写在这张卡里，
+    /// 所以它比「本次表现」重一档：抬高的卡片、23pt 的标题行。仅此而已，
+    /// 没有评分大卡、图表或动画。
     private func suggestionSection(_ suggestion: AdjustmentSuggestion) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeader(title: "下一杯建议", detail: .alreadyLocalized("只改一件事"))
-            Card {
+            Card(lifted: emphasizesSuggestion) {
                 VStack(alignment: .leading, spacing: 13) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(LocalizedStringKey.alreadyLocalized(suggestion.headline))
-                            .font(TypeScale.cardTitle)
+                            .font(emphasizesSuggestion ? TypeScale.emphasis : TypeScale.cardTitle)
                             .foregroundStyle(Palette.roast)
+                            .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 0)
                     }
 

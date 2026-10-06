@@ -20,6 +20,10 @@ struct BeanDetailView: View {
     @State private var isAdjustingStock = false
     @State private var isConfirmingDelete = false
     @State private var showsAllBrews = false
+    /// 「最近一杯」卡片里的完整诊断默认收着，点「展开依据」才出现。
+    @State private var showsRecentDiagnosis = false
+    /// 工具栏动作（标记喝完 / 恢复在喝 / 删除）失败时的提示。
+    @State private var actionError: String?
 
     /// 本地问答的总开关。跟着设置走，关掉时这里不显示入口——留一个点了没有反应的
     /// 按钮比不显示更糟。
@@ -47,20 +51,21 @@ struct BeanDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Metric.sectionGap) {
+                // 页面的十个层次按用户打开一包豆后的提问顺序排（§十一）：
+                // 现在怎么样 → 还剩多少 → 上一杯怎么样 → 下一杯怎么改 → 继续冲，
+                // 冲出足够的记录之后才是参考材料与备注。
                 hero
                 PhaseCard(insight: insight) { isEditing = true }
-                FlavorWindowCard(bean: bean,
-                                 defaults: BrewDefaults.current(),
-                                 todayDay: bean.currentDayAfterRoast)
-                // 「上次那杯怎么样、这次怎么改」比知识区块更常用，所以排在它前面：
-                // 打开豆子页的人多半是刚冲完或者准备再冲一杯。
-                if let recentDiagnosis {
-                    BrewDiagnosticCard(diagnosis: recentDiagnosis, showsKnowledge: false)
-                }
-                BeanKnowledgeSection(bean: bean, languageCode: languageCode)
                 stockSection
-                if asksAboutThisBag {
-                    askSection
+                if let brew = bean.latestBrew, let recentDiagnosis {
+                    recentCupSection(brew: brew, diagnosis: recentDiagnosis)
+                }
+                // 主要行动：不再只靠页面底部的小按钮。
+                if !bean.isFinished {
+                    PrimaryButton(title: "记一杯", systemImage: "cup.and.saucer") {
+                        isQuickLogging = true
+                    }
+                    .padding(.top, -6)
                 }
                 brewsSection
                 TastingTimelineView(
@@ -70,6 +75,15 @@ struct BeanDetailView: View {
                     onAdd: { isAddingTasting = true },
                     onDelete: delete(tasting:)
                 )
+                // 预计风味窗口与知识区块都是参考资料，不属于当前行动，统一排在
+                // 自己的记录之后。
+                FlavorWindowCard(bean: bean,
+                                 defaults: BrewDefaults.current(),
+                                 todayDay: bean.currentDayAfterRoast)
+                BeanKnowledgeSection(bean: bean, languageCode: languageCode)
+                if asksAboutThisBag {
+                    askSection
+                }
                 notesSection
             }
             .padding(.horizontal, Metric.gutter)
@@ -92,10 +106,19 @@ struct BeanDetailView: View {
                     } label: {
                         Label("调整剩余量", systemImage: "scalemass")
                     }
-                    Button {
-                        markFinished()
-                    } label: {
-                        Label("标记为已喝完", systemImage: "checkmark.circle")
+                    // 一句话只在一种状态下是对的——菜单跟着状态说。
+                    if bean.status == .finished {
+                        Button {
+                            restoreToActive()
+                        } label: {
+                            Label("恢复到在喝", systemImage: "arrow.uturn.backward")
+                        }
+                    } else {
+                        Button {
+                            markFinished()
+                        } label: {
+                            Label("标记为已喝完", systemImage: "checkmark.circle")
+                        }
                     }
                     Divider()
                     Button(role: .destructive) {
@@ -138,6 +161,18 @@ struct BeanDetailView: View {
         } message: {
             Text(L("删除这包豆子后，它关联的 %@ 条冲煮记录和 %@ 条风味记录也会一起被删除，无法恢复。",
                    String(bean.brewsCount), String(bean.tastingsOldestFirst.count)))
+        }
+        // 保存类动作失败一律走到这里：动作没生效就得说出来，默默失败等于骗人。
+        .alert(
+            "没能保存",
+            isPresented: Binding(
+                get: { actionError != nil },
+                set: { if !$0 { actionError = nil } }
+            )
+        ) {
+            Button("好") { actionError = nil }
+        } message: {
+            Text(actionError ?? "")
         }
     }
 
@@ -277,6 +312,92 @@ struct BeanDetailView: View {
         }
     }
 
+    // MARK: - 最近一杯
+
+    /// 第四层：最近一杯。一眼看到「上一次发生了什么、下一杯怎么改」。
+    ///
+    /// 完整诊断（结论的依据、知识出处）收在同一张卡片里，点「展开依据」才出现：
+    /// 日常扫一眼只需要三行结论，想深究的时候它还在——功能一个没少，只是不再
+    /// 把整张诊断卡铺在页面前半部分。
+    private func recentCupSection(brew: Brew, diagnosis: BrewDiagnosis) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "最近一杯",
+                          detail: .alreadyLocalized(Fmt.short(brew.date, calendar: DateMath.calendar)))
+            Card {
+                VStack(alignment: .leading, spacing: 13) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(recentRecipeLine(brew))
+                            .font(TypeScale.numeral)
+                            .foregroundStyle(Palette.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        if brew.score > 0 {
+                            StarRating(score: brew.score)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(LocalizedStringKey.alreadyLocalized(conclusionLine(diagnosis)))
+                            .font(TypeScale.bodyMedium)
+                            .foregroundStyle(Palette.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let suggestion = diagnosis.suggestion {
+                            Text(L("下一杯：%@", suggestion.headline))
+                                .font(TypeScale.callout)
+                                .foregroundStyle(Palette.roast)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+
+                    CardDivider()
+
+                    HStack(spacing: 10) {
+                        SecondaryButton(title: "再记一杯", systemImage: "plus") {
+                            isQuickLogging = true
+                        }
+                        Spacer(minLength: 0)
+                        Button {
+                            withAnimation(Motion.settle) { showsRecentDiagnosis.toggle() }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(showsRecentDiagnosis ? "收起依据" : "展开依据")
+                                Image(systemName: showsRecentDiagnosis ? "chevron.up" : "chevron.down")
+                                    .font(.system(size: 9, weight: .semibold))
+                            }
+                            .font(TypeScale.caption)
+                            .foregroundStyle(Palette.inkSoft)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            if showsRecentDiagnosis {
+                BrewDiagnosticCard(diagnosis: diagnosis, showsKnowledge: false)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    /// 一句话结论。没有候选结论时也得说话——说清楚是「记录不够」还是「这杯正常」。
+    private func conclusionLine(_ diagnosis: BrewDiagnosis) -> String {
+        if let primary = diagnosis.primary { return primary.finding.title }
+        if diagnosis.baseline.isUsable { return L("这一杯在你自己的记录里没有明显异常。") }
+        return L("目前数据还不足以建立个人基线。")
+    }
+
+    /// 「最近一杯」的参数行：`2:08 · 18g · 300g · 92°C`（§十一 的排版）。
+    /// 比 `summaryParts` 略去器具——这里是「上一杯发生了什么」，器具在下面的
+    /// 冲煮记录里每次都写着。
+    private func recentRecipeLine(_ brew: Brew) -> String {
+        var parts: [String] = []
+        if brew.timeSeconds > 0 { parts.append(brew.timeText) }
+        if brew.coffeeG > 0 { parts.append(Fmt.gramsShort(brew.coffeeG)) }
+        if brew.waterG > 0 { parts.append(Fmt.gramsShort(brew.waterG)) }
+        if brew.waterTemp > 0 { parts.append("\(Int(brew.waterTemp.rounded()))°C") }
+        return parts.isEmpty ? "—" : parts.joined(separator: " · ")
+    }
+
     // MARK: - Brews
 
     private var brewsSection: some View {
@@ -369,25 +490,68 @@ struct BeanDetailView: View {
     private func delete(tasting: Tasting) {
         context.delete(tasting)
         bean.touch()
-        try? context.save()
+        do {
+            try context.save()
+        } catch {
+            AppLog.store.error("tasting delete failed: \(error.localizedDescription, privacy: .public)")
+            context.rollback()
+            actionError = L("没能删除，请再试一次")
+        }
     }
 
+    /// 标记喝完只改状态：不动库存、不动历史（见 `Bean.markFinished()`）。
     private func markFinished() {
-        bean.status = .finished
-        bean.remainingG = 0
-        bean.touch()
-        try? context.save()
+        bean.markFinished()
+        do {
+            try context.save()
+        } catch {
+            AppLog.store.error("mark finished failed: \(error.localizedDescription, privacy: .public)")
+            context.rollback()
+            bean.status = .active
+            actionError = L("没能保存下来，请再试一次")
+            return
+        }
         NotificationManager.shared.cancel(bean: bean, context: context)
+    }
+
+    /// 恢复到在喝：只恢复状态。库存保持用户当前的值，历史记录一律不碰；
+    /// 提醒则跟着重新排——在喝的袋子才需要提醒。
+    private func restoreToActive() {
+        bean.restoreToActive()
+        do {
+            try context.save()
+        } catch {
+            AppLog.store.error("restore active failed: \(error.localizedDescription, privacy: .public)")
+            context.rollback()
+            bean.status = .finished
+            actionError = L("没能保存下来，请再试一次")
+            return
+        }
+        Task { await BrewRecorder.rescheduleReminders(for: bean, in: context) }
     }
 
     /// Deleting a bag takes its brews, tastings and images with it (§21, §33).
+    ///
+    /// 顺序是这一版刻意定的：**先让 SwiftData 真删成功，再动磁盘上的图片**。
+    /// 反过来（先删图片、再落库）一旦落库失败，就是「记录还在、照片没了」。
+    /// 落库失败时这里什么都不碰：豆子、历史、图片都原样，页面停着，把失败
+    /// 告诉用户。
     private func deleteBean() {
         let imagePath = bean.imagePath
-        NotificationManager.shared.cancel(bean: bean, context: context)
+        let reminderIdentifiers = NotificationPlanner.allIdentifiers(beanID: bean.id)
+
         context.delete(bean)
-        try? context.save()
-        // Only after the record is gone — if the save failed, the picture would
-        // otherwise be orphaned while the bean still points at it.
+        do {
+            try context.save()
+        } catch {
+            AppLog.store.error("bean delete failed: \(error.localizedDescription, privacy: .public)")
+            context.rollback()
+            actionError = L("没能删除，请再试一次")
+            return
+        }
+
+        // 库里已经没有这包豆了，系统里的待送达提醒和图片文件现在才可以清。
+        NotificationManager.shared.unschedule(identifiers: reminderIdentifiers)
         ImageStore.shared.delete(imagePath)
         dismiss()
     }
@@ -402,11 +566,18 @@ struct StockAdjustView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var value: Double
+    @State private var errorMessage: String?
 
-    init(bean: Bean) {
+    /// - Parameter initialValue: 只给调试屏用——「剩余量 > 总量」那条提示需要
+    ///   从那个状态直接打开才看得见（见 `DebugLaunch.stockOvershoot`）。
+    init(bean: Bean, initialValue: Double? = nil) {
         self.bean = bean
-        _value = State(initialValue: bean.remainingG)
+        _value = State(initialValue: initialValue ?? bean.remainingG)
     }
+
+    /// 剩余量超过总克数时保存会抬高总克数。这是必须**提前说**的事：
+    /// 悄悄改掉用户填进去的总量，等于历史数据被动过而没人知道。
+    private var expandsBag: Bool { value > bean.weightG }
 
     var body: some View {
         NavigationStack {
@@ -439,20 +610,15 @@ struct StockAdjustView: View {
                     Spacer(minLength: 0)
                 }
 
-                if value > bean.weightG {
-                    Text(L("剩余量比总克数还多，保存时会按 %@ 调整总克数。", Fmt.grams(value)))
-                        .font(TypeScale.caption)
-                        .foregroundStyle(Palette.inkSoft)
+                if expandsBag {
+                    expansionNotice
                 }
 
-                PrimaryButton(title: "保存") {
-                    bean.remainingG = min(max(value, 0), max(bean.weightG, value))
-                    if bean.remainingG > bean.weightG { bean.weightG = bean.remainingG }
-                    if bean.remainingG > 0, bean.status == .finished { bean.status = .active }
-                    bean.touch()
-                    try? context.save()
-                    dismiss()
+                if let errorMessage {
+                    messageCard(errorMessage)
                 }
+
+                PrimaryButton(title: "保存") { save() }
 
                 Spacer(minLength: 0)
             }
@@ -468,5 +634,62 @@ struct StockAdjustView: View {
                 }
             }
         }
+    }
+
+    /// 「保存后总量会调整为 220g」——把即将发生的事写全，用户点保存之前就知道
+    /// 自己在同意什么。
+    private var expansionNotice: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "info.circle").font(.system(size: 13))
+            Text(L("剩余量 %@\n当前总量 %@\n\n保存后总量会调整为 %@。",
+                   Fmt.grams(value), Fmt.grams(bean.weightG), Fmt.grams(value)))
+                .font(TypeScale.callout)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(Palette.inkSoft)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: Metric.radiusSmall, style: .continuous).fill(Palette.well)
+        )
+    }
+
+    private func messageCard(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "info.circle").font(.system(size: 13))
+            Text(LocalizedStringKey.alreadyLocalized(text))
+                .font(TypeScale.callout)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(Palette.priority)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: Metric.radiusSmall, style: .continuous).fill(Palette.well)
+        )
+    }
+
+    /// 三条规则都在 `Bean.setRemaining` 里；这里只管落库。失败就把三个字段
+    /// 逐个写回去（`rollback()` 撤不回属性改动，见 `BeanOriginalValues`），
+    /// 留在这一页——数字还摆在输入框里，用户看得到、也改得动。
+    private func save() {
+        errorMessage = nil
+        let previousRemaining = bean.remainingG
+        let previousWeight = bean.weightG
+        let previousStatus = bean.status
+
+        bean.setRemaining(value)
+        do {
+            try context.save()
+        } catch {
+            AppLog.store.error("stock adjust failed: \(error.localizedDescription, privacy: .public)")
+            context.rollback()
+            bean.remainingG = previousRemaining
+            bean.weightG = previousWeight
+            bean.status = previousStatus
+            errorMessage = L("没能保存下来，请再试一次")
+            return
+        }
+        dismiss()
     }
 }

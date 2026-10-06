@@ -12,6 +12,7 @@ struct BrewHistoryView: View {
     @Query(sort: \Brew.date, order: .reverse) private var brews: [Brew]
 
     @State private var editingBrew: Brew?
+    @State private var actionError: String?
 
     private var months: [(key: String, brews: [Brew])] {
         var order: [String] = []
@@ -84,6 +85,18 @@ struct BrewHistoryView: View {
                     BrewEditorView(bean: bean, existing: brew)
                 }
             }
+            // 删除失败时记录还在，必须说出来——默默失败会被当成「删掉了」。
+            .alert(
+                "没能保存",
+                isPresented: Binding(
+                    get: { actionError != nil },
+                    set: { if !$0 { actionError = nil } }
+                )
+            ) {
+                Button("好") { actionError = nil }
+            } message: {
+                Text(actionError ?? "")
+            }
         }
     }
 
@@ -154,17 +167,15 @@ struct BrewHistoryView: View {
     }
 
     /// Deleting a brew undoes it: the coffee goes back into the bag and the
-    /// timeline node it created goes with it.
+    /// timeline node it created goes with it. 唯一的写入路径是 `BrewRecorder`，
+    /// 失败时它已经回滚过了，这里只负责把失败说出来。
     private func delete(_ brew: Brew) {
-        if let bean = brew.bean {
-            bean.remainingG = min(bean.weightG, bean.remainingG + brew.coffeeG)
-            if bean.status == .finished, bean.remainingG > 0 { bean.status = .active }
-            for tasting in (bean.tastings ?? []) where tasting.brewID == brew.id {
-                context.delete(tasting)
-            }
-            bean.touch()
+        do {
+            try BrewRecorder.delete(brew, in: context)
+        } catch let failure as BrewRecorder.Failure {
+            actionError = failure.message
+        } catch {
+            actionError = L("没能删除，请再试一次")
         }
-        context.delete(brew)
-        try? context.save()
     }
 }
