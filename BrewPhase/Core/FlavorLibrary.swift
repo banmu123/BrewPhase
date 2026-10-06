@@ -122,6 +122,10 @@ enum PrefKey {
     static let seededPhaseRules = "brewphase.seeded.phaseRules"
     static let askedForNotifications = "brewphase.notifications.asked"
 
+    /// 轻引导（规格 §十七）：第一次记完一杯后，在结果页提一句「参数会自动带上」，
+    /// 只提一次。不用卡片、不用页 — 一行字就够了。
+    static let didShowPrefillHint = "brewphase.onboarding.prefillHint"
+
     /// 实验性的预计风味窗口。默认开着，但要知道这是合成数据训练的模型，
     /// 用户得有一个地方能把它关掉。
     static let experimentalFlavorPrediction = "brewphase.flavor.prediction.enabled"

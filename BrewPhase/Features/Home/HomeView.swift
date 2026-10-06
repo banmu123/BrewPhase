@@ -9,6 +9,7 @@ struct HomeView: View {
 
     @Environment(\.modelContext) private var context
     @Query(sort: \Bean.createdAt, order: .reverse) private var beans: [Bean]
+    @Query(sort: \Brew.date, order: .reverse) private var recentBrews: [Brew]
     @Query private var rules: [PhaseRule]
 
     @AppStorage(PrefKey.defaultMethod) private var defaultMethod: String = "V60"
@@ -19,6 +20,10 @@ struct HomeView: View {
     @State private var isAddingBean = false
     @State private var brewingBean: Bean?
     @State private var isLoggingBrew = false
+    /// 豆仓超过一屏放不下时的「查看全部」。默认只给最先该喝的几包。
+    @State private var showsAllBeans = false
+    /// 「最近一杯」点进去是冲煮编辑器——和冲煮历史里同一条路。
+    @State private var editingBrew: Brew?
 
     // MARK: - Derived
 
@@ -52,6 +57,11 @@ struct HomeView: View {
         }
     }
 
+    /// 豆仓默认只摆最先该喝的几包，其余收进「查看全部」。
+    private var visibleInsights: [BeanInsight] {
+        showsAllBeans ? activeInsights : Array(activeInsights.prefix(4))
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -65,7 +75,7 @@ struct HomeView: View {
                             EmptyStateView(
                                 symbol: "square.stack.3d.up",
                                 title: "还没有你的咖啡豆",
-                                message: "添加正在喝的豆子，BrewPhase 才能帮你判断阶段和饮用顺序。",
+                                message: "记录每一包豆，看到风味怎么变化。先添加正在喝的这一包。",
                                 actionLabel: "添加第一包豆",
                                 action: { isAddingBean = true }
                             )
@@ -75,8 +85,14 @@ struct HomeView: View {
                             TodayCard(insight: pick.insight, bean: pick.bean) {
                                 brewingBean = pick.bean
                             }
+                            if recentBrews.isEmpty {
+                                firstBrewHint
+                            }
+                        } else if activeInsights.isEmpty {
+                            cellarEmptied
                         }
                         cellar
+                        recentBrewSection
                     }
                 }
                 .padding(.horizontal, Metric.gutter)
@@ -123,6 +139,11 @@ struct HomeView: View {
             .sheet(isPresented: $isLoggingBrew) {
                 QuickBrewLogView(bean: nil)
             }
+            .sheet(item: $editingBrew) { brew in
+                if let bean = brew.bean {
+                    BrewEditorView(bean: bean, existing: brew)
+                }
+            }
             .animation(Motion.glide, value: beans.count)
         }
     }
@@ -152,18 +173,97 @@ struct HomeView: View {
         }
     }
 
+    // MARK: - 状态卡
+
+    /// 有豆、还没记过任何一杯：TodayCard 回答了「喝哪包」，这里补上「下一步」
+    /// ——记下第一杯，后面的参数预填和个人规律才有起点。
+    private var firstBrewHint: some View {
+        Card {
+            EmptyStateView(
+                symbol: "cup.and.saucer",
+                title: "先记下第一杯",
+                message: "冲完随手记一笔，之后这里会自动带上一次的参数。",
+                actionLabel: "记一杯",
+                action: { isLoggingBrew = true }
+            )
+        }
+    }
+
+    /// 所有豆子都喝完了：不能让首页空白，也不能拿「已喝完」的列表顶替今天。
+    private var cellarEmptied: some View {
+        Card(lifted: true) {
+            EmptyStateView(
+                symbol: "checkmark.seal",
+                title: "豆仓暂时空了",
+                message: "添加下一包豆，继续记录你的风味轨迹。",
+                actionLabel: "添加豆子",
+                action: { isAddingBean = true }
+            )
+        }
+    }
+
+    // MARK: - 最近一杯
+
+    /// 首页上的轻量一行：昨天那杯怎么样了。点进去是冲煮编辑器。
+    /// 完整的诊断与建议在豆子页和 Quick Log 结果页——这里不展开。
+    @ViewBuilder
+    private var recentBrewSection: some View {
+        if let brew = recentBrews.first {
+            VStack(alignment: .leading, spacing: 10) {
+                SectionHeader(title: "最近一杯")
+                Button {
+                    editingBrew = brew
+                } label: {
+                    Card {
+                        VStack(alignment: .leading, spacing: 7) {
+                            HStack(spacing: 8) {
+                                Text(Fmt.short(brew.date, calendar: DateMath.calendar))
+                                    .font(TypeScale.caption)
+                                    .foregroundStyle(Palette.inkFaint)
+                                Spacer(minLength: 0)
+                                if let beanName = brew.bean?.displayName, !beanName.isEmpty {
+                                    Text(LocalizedStringKey.alreadyLocalized(
+                                        L("%@ · %@", beanName, brew.method.trimmed.isEmpty ? "—" : brew.method.trimmed)))
+                                        .font(TypeScale.caption)
+                                        .foregroundStyle(Palette.inkSoft)
+                                        .lineLimit(1)
+                                }
+                            }
+                            HStack(spacing: 10) {
+                                if brew.score > 0 {
+                                    StarRating(score: brew.score, size: 11)
+                                }
+                                if let taste = brew.tasteLine {
+                                    Text(LocalizedStringKey.alreadyLocalized(taste))
+                                        .font(TypeScale.caption)
+                                        .foregroundStyle(Palette.inkSoft)
+                                        .lineLimit(1)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(Palette.inkFaint)
+                            }
+                        }
+                    }
+                }
+                .buttonStyle(CardButtonStyle())
+            }
+        }
+    }
+
     // MARK: - Cellar
 
     private var cellar: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "豆仓",
+            SectionHeader(title: "我的咖啡豆",
                           detail: .alreadyLocalized(L("%@ 包", String(beans.count))))
 
             if !activeInsights.isEmpty {
                 tallyRow
             }
 
-            ForEach(activeInsights) { insight in
+            ForEach(visibleInsights) { insight in
                 if let bean = beans.first(where: { $0.id == insight.id }) {
                     NavigationLink {
                         BeanDetailView(bean: bean)
@@ -172,6 +272,23 @@ struct HomeView: View {
                     }
                     .buttonStyle(CardButtonStyle())
                 }
+            }
+
+            // 豆子多过一屏时收一层，首页的第一眼留给 TodayCard。
+            if activeInsights.count > 4 {
+                Button {
+                    withAnimation(Motion.settle) { showsAllBeans.toggle() }
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(showsAllBeans ? "收起" : L("查看全部 %@ 包", String(activeInsights.count)))
+                        Image(systemName: showsAllBeans ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .font(TypeScale.callout)
+                    .foregroundStyle(Palette.roast)
+                    .padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
             }
 
             if !finishedBeans.isEmpty {

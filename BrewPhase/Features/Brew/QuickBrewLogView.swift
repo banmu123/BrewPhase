@@ -54,6 +54,8 @@ struct QuickBrewLogView: View {
     @State private var didResolveDefault = false
     /// 「上一杯」对比卡的展开状态（上一批的规格：默认只给摘要）。
     @State private var showsPreviousBrewDetail = false
+    /// 轻引导：只给第一次成功保存看一眼，看完就收。
+    @State private var showsPrefillHint = false
 
     private var languageCode: String { LanguageManager.shared.current.resolvedCode }
     private var defaults: BrewDefaults { BrewDefaults.current() }
@@ -270,9 +272,17 @@ struct QuickBrewLogView: View {
                                 Text(LocalizedStringKey.alreadyLocalized(change.label))
                                     .font(TypeScale.caption)
                                     .foregroundStyle(Palette.inkSoft)
-                                Text(L("%@ → %@", change.from, change.to))
-                                    .font(TypeScale.caption.monospacedDigit())
-                                    .foregroundStyle(Palette.roast)
+                                // 数值参数用「快 22 秒」「高 1°C」这种一句话方向；
+                                // 文本参数（器具/研磨）只有新旧值可看。
+                                if let phrase = change.phrase {
+                                    Text(LocalizedStringKey.alreadyLocalized(phrase))
+                                        .font(TypeScale.caption.monospacedDigit())
+                                        .foregroundStyle(Palette.roast)
+                                } else {
+                                    Text(L("%@ → %@", change.from, change.to))
+                                        .font(TypeScale.caption.monospacedDigit())
+                                        .foregroundStyle(Palette.roast)
+                                }
                                 Spacer(minLength: 0)
                             }
                         }
@@ -629,6 +639,16 @@ struct QuickBrewLogView: View {
                                 .foregroundStyle(Palette.roast)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
+
+                        // 轻引导：只在这辈子的第一次保存后出现一次（规格 §十七）。
+                        // 说清下一次会更快——这正是「再记一杯」想让人发现的事。
+                        if showsPrefillHint {
+                            CardDivider()
+                            Text("下次记这一杯，会自动带上这次的参数。")
+                                .font(TypeScale.caption)
+                                .foregroundStyle(Palette.inkFaint)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
 
@@ -836,6 +856,10 @@ struct QuickBrewLogView: View {
             diagnosis = BrewDiagnosisService.diagnose(
                 bean: bean, brew: brew, allBrews: allBrews, languageCode: languageCode
             )
+            showsPrefillHint = !UserDefaults.standard.bool(forKey: PrefKey.didShowPrefillHint)
+            if showsPrefillHint {
+                UserDefaults.standard.set(true, forKey: PrefKey.didShowPrefillHint)
+            }
             Task { await BrewRecorder.rescheduleReminders(for: bean, in: context) }
         } catch let failure as BrewRecorder.Failure {
             switch failure {

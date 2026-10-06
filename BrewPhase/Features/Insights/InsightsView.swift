@@ -64,6 +64,13 @@ struct InsightsView: View {
                     recentBrewSection
                     if let bestInsight {
                         insightSection(title: "我的最佳参数", insight: bestInsight)
+                        if bestInsight.confidence != .insufficientEvidence {
+                            Text("这是你自己的高分记录统计，不是专业标准。")
+                                .font(TypeScale.caption)
+                                .foregroundStyle(Palette.inkFaint)
+                                .padding(.horizontal, 4)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     if let nextAction {
                         actionSection(nextAction)
@@ -196,13 +203,16 @@ struct InsightsView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 if insight.confidence == .insufficientEvidence {
-                    Label {
-                        Text("证据不足，先不给结论")
-                    } icon: {
-                        Image(systemName: "info.circle")
+                    // 数据不足也要漂亮（规格 §十六）：不是一句冷冰冰的「证据不足」，
+                    // 而是告诉用户规律正在路上。具体差几杯在下面的证据行里。
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("还在认识你的冲煮习惯")
+                            .font(TypeScale.callout.weight(.medium))
+                            .foregroundStyle(Palette.inkSoft)
+                        Text("再记录几杯，这里会开始出现你的个人规律。")
+                            .font(TypeScale.caption)
+                            .foregroundStyle(Palette.inkFaint)
                     }
-                    .font(TypeScale.caption)
-                    .foregroundStyle(Palette.priority)
                 }
 
                 ForEach(insight.reasons, id: \.self) { reason in
@@ -247,7 +257,14 @@ struct InsightsView: View {
     /// 提问式的检索归「问一问」，这里只做主动汇报。
     private var recentBrewSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "最近一杯")
+            // 「最近一杯 / 我的习惯 / 下一步」说的都是同一包豆——切换器就摆在
+            // 这一组开头，默认是今天最该关注的那包。只有一包时不用切。
+            HStack {
+                SectionHeader(title: "最近一杯")
+                if activeBeans.count > 1 {
+                    beanPicker
+                }
+            }
 
             if let latest = selectedBean?.latestBrew {
                 Card {

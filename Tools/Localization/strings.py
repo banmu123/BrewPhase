@@ -189,7 +189,6 @@ EN: dict[str, str] = {
     "巧克力": "Chocolate",
     "风味记录": "Tasting note",
     "记一笔风味": "Add a tasting note",
-    "还没有风味记录\\n冲一次，然后记下今天这杯怎么样。": "No tasting notes yet.\\nBrew this bean and note how today's cup tasted.",
     "这杯怎么样": "How was it",
 
     # MARK: Brewing
@@ -226,7 +225,6 @@ EN: dict[str, str] = {
     "冲煮时间还没填": "The brew time is not filled in yet",
     "删除这条记录": "Delete this brew",
     "还没有冲煮记录": "No brews yet",
-    "还没有冲煮记录\\n冲一次，然后记下今天这杯怎么样。": "No brews yet.\\nBrew this bean and note how today's cup tasted.",
     "去豆仓挑一包，冲完记下参数和味道，这里就会长起来。": "Pick a bag from the cellar, brew it and note how it tasted — this is where it fills in.",
     "总次数": "Brews",
     "平均评分": "Average",
@@ -291,7 +289,6 @@ EN: dict[str, str] = {
     "默认值：浅烘 7–28 天 · 中烘 5–21 天 · 中深烘 / 深烘 3–14 天 · 意式拼配 7–21 天。": "Defaults: Light 7–28 days · Medium 5–21 · Medium-dark / Dark 3–14 · Espresso blend 7–21.",
     "排气 %@–%@ · 窗口 %@–%@ · 衰退 %@": "Rest %@–%@ · Window %@–%@ · Decline %@",
     "排气 %@–%@ 天 · 窗口 %@–%@ 天 · %@": "Rest %@–%@ days · Window %@–%@ days · %@",
-    "没有账号，没有登录，没有服务器。": "No account, no sign-in, no server.",
     "飞行模式下也能完整使用。": "Everything works in aeroplane mode.",
     "所有数据随时可以导出带走。": "All your data can be exported at any time.",
 
@@ -619,7 +616,6 @@ EN: dict[str, str] = {
     "洞察": "Insights",
     "相似冲煮": "Similar brews",
     "我的最佳参数": "My best parameters",
-    "证据不足，先不给结论": "Not enough evidence yet — no conclusion for now",
     "豆仓里还没有豆子。先加一包，喝过几次之后这里就会有话说了。":
         "No bags in the cellar yet. Add one and brew it a few times, and this page will have something to say.",
     "建议与分析只来自你记录里的数字和既定规则；没有历史的地方会直接说证据不足。":
@@ -1093,8 +1089,6 @@ EN: dict[str, str] = {
     "补充烘焙商、产区与价格": "Add roaster, origin and price",
     "添加自定义风味": "Add a custom flavour",
     "还没有你的咖啡豆": "No coffee of yours yet",
-    "添加正在喝的豆子，BrewPhase 才能帮你判断阶段和饮用顺序。":
-        "Add the coffee you are drinking now, and BrewPhase can judge its stage and drinking order for you.",
     "添加第一包豆": "Add your first bag",
     "还没有冲煮记录\\n记下第一杯，之后才能看到你的参数变化和个人规律。":
         "No brews yet.\\nLog the first cup and your parameter patterns will start to show up here.",
@@ -1122,4 +1116,28 @@ EN: dict[str, str] = {
     "按现有的阶段规则，今天最该喝的是「%@」。": "By your stage rules, the bag to drink today is \"%@\".",
     "排气 %@–%@ 天 · 窗口第 %@–%@ 天 · 第 %@ 天开始衰减":
         "Rest %@–%@ days · window days %@–%@ · declining from day %@",
+
+    # MARK: V2 第四批 —— 成品化：首页 / 引导 / 洞察措辞 / 关于页
+    "我的咖啡豆": "My beans",
+    "查看全部 %@ 包": "Show all %@ bags",
+    "收起": "Show less",
+    "先记下第一杯": "Log the first cup",
+    "冲完随手记一笔，之后这里会自动带上一次的参数。":
+        "Jot it down after brewing; the next log will pick up these parameters.",
+    "豆仓暂时空了": "The cellar is empty",
+    "添加下一包豆，继续记录你的风味轨迹。":
+        "Add the next bag and keep tracing how your flavours move.",
+    "记录每一包豆，看到风味怎么变化。先添加正在喝的这一包。":
+        "Log every bag and watch its flavour move. Start with the one you're drinking.",
+    "下次记这一杯，会自动带上这次的参数。":
+        "Next time, this cup's parameters will be filled in for you.",
+    "还在认识你的冲煮习惯": "Still learning how you brew",
+    "再记录几杯，这里会开始出现你的个人规律。":
+        "A few more cups and your own patterns will start to show up here.",
+    "这是你自己的高分记录统计，不是专业标准。":
+        "These ranges come from your own high-rated brews, not a professional standard.",
+    "一本属于你的咖啡实验手册：记录每一包豆，看到风味怎么变化。":
+        "A coffee notebook that's yours: log every bag and watch its flavour move.",
+    "数据只存在这台设备上，没有账号，没有服务器。":
+        "Your data stays on this device. No account, no server.",
 }

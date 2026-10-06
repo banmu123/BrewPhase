@@ -302,9 +302,11 @@ struct MoreView: View {
                         .foregroundStyle(Palette.inkFaint)
                 }
 
+                // 产品价值，不是技术清单（规格 §二十四）：用户关心的是自己的
+                // 豆子、记录和规律，不是实现方式。
                 VStack(alignment: .leading, spacing: 6) {
-                    bullet("BrewPhase stores your coffee records locally on this device.")
-                    bullet("没有账号，没有登录，没有服务器。")
+                    bullet("一本属于你的咖啡实验手册：记录每一包豆，看到风味怎么变化。")
+                    bullet("数据只存在这台设备上，没有账号，没有服务器。")
                     bullet("飞行模式下也能完整使用。")
                     bullet("所有数据随时可以导出带走。")
                 }
