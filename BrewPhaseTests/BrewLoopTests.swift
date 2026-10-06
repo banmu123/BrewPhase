@@ -264,6 +264,41 @@ final class BrewLoopTests: XCTestCase {
         XCTAssertEqual(brew.notes, "甜感明显")
     }
 
+    // MARK: - 上一杯建议 → 这一杯（观察性对比，规格：不下因果）
+
+    func testSuggestionFollowUpReportsOnlyWhatChanged() throws {
+        let previous = makeBrew(guji, daysAgo: 2, time: 128, score: 3)   // 2:08
+        let current = makeBrew(guji, daysAgo: 0, time: 151, score: 4)    // 2:31
+
+        let followUp = SuggestionFollowUp.between(previous: previous, suggestion: nil, current: current)
+
+        XCTAssertEqual(followUp.changesText, "时间 2:08 → 2:31")
+        XCTAssertEqual(followUp.scoreDelta, 1)
+        XCTAssertEqual(followUp.scoreText, L("这次评分比上一杯高。"))
+        XCTAssertNil(followUp.directionText, "没有建议就没有方向结论")
+    }
+
+    func testSuggestionFollowUpSeesTheAdjustmentDirection() throws {
+        let previous = Brew(date: Date(), method: "V60", waterTemp: 92,
+                            coffeeG: 18, waterG: 300, timeSeconds: 150, bean: guji)
+        context.insert(previous)
+        let current = Brew(date: Date(), method: "V60", waterTemp: 94,
+                           coffeeG: 18, waterG: 300, timeSeconds: 150, bean: guji)
+        context.insert(current)
+
+        let suggestion = AdjustmentSuggestion(
+            parameter: .temperature, direction: .higher,
+            reason: "", expectedEffect: "", keep: [], observe: [], referenceRange: nil
+        )
+        let followUp = SuggestionFollowUp.between(previous: previous, suggestion: suggestion, current: current)
+
+        XCTAssertEqual(followUp.followedDirection, true)
+        XCTAssertEqual(followUp.directionText, L("调整方向与上次建议一致。"))
+        XCTAssertEqual(followUp.changes.first?.label, L("水温"))
+        XCTAssertEqual(followUp.changes.first?.from, "92°C")
+        XCTAssertEqual(followUp.changes.first?.to, "94°C")
+    }
+
     // MARK: - 诊断进「问一问」（规格 §28 第 10 项）
 
     private func seedTheStaleCup() throws {

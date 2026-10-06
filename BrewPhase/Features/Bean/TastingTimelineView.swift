@@ -102,11 +102,11 @@ struct TastingTimelineView: View {
                     FlavorTagList(tags: tasting.flavorTags, emptyText: "")
                 }
 
-                if tasting.source == .brew {
-                    Text("来自冲煮记录")
-                        .font(TypeScale.micro)
-                        .foregroundStyle(Palette.inkFaint)
-                }
+                // 来源标识（规格：两条来源不再混成一种）：这条笔记是冲煮带出来的，
+                // 还是用户在吧台随手记的。micro + inkFaint，在场但不抢焦点。
+                Text(LocalizedStringKey.alreadyLocalized(tasting.source.label))
+                    .font(TypeScale.micro)
+                    .foregroundStyle(Palette.inkFaint)
             }
             .padding(.bottom, isLast ? 0 : 16)
         }

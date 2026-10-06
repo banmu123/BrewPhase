@@ -105,6 +105,13 @@ enum DemoData {
             source: .brew, brewID: roughCup.id, bean: guji
         ))
 
+        // 1.7 — 一条手动风味记录。时间线上两种来源都要有例子：冲煮带出的和
+        // 吧台随手记的，来源标识才看得出差别。
+        context.insert(Tasting(
+            date: brewDay(6), dayAfterRoast: 10, flavorTags: ["Jasmine"],
+            score: 4, notes: L("闻着比喝着更香"), source: .manual, bean: guji
+        ))
+
         // 2 — just out of the exhaust window, so the vocabulary's middle state is
         // on screen too: for a light roast the Opening days are 3–6.
         let colombia = Bean(

@@ -10,7 +10,8 @@ import SwiftUI
 ///   真的误导；
 /// * 缺了哪些资料就说出来。模型没法自己表达不确定性，那就由这一层替它说。
 ///
-/// 整个模型是**合成数据**训练的，所以卡片顶端常驻一个「实验」标。
+/// 整个模型是**合成数据**训练的，所以卡片顶端常驻「实验预测」标签；整张卡的
+/// 视觉权重刻意低于阶段卡——它提供另一种看法，不提供结论。
 struct FlavorWindowCard: View {
 
     let bean: Bean
@@ -54,13 +55,21 @@ struct FlavorWindowCard: View {
 
     // MARK: - Pieces
 
+    /// 视觉刻意比阶段卡轻一档：这是合成数据上的实验估计，不该和确定性的
+    /// 阶段判断抢权重。「实验预测」是常驻标签，不是可以忽略的脚注。
     private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("预计风味窗口")
-                .font(TypeScale.title)
-                .foregroundStyle(Palette.ink)
-            Chip(text: L("实验"), tint: Palette.inkSoft, background: Palette.well)
-            Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 5) {
+            Text("实验预测")
+                .font(TypeScale.micro)
+                .tracking(0.8)
+                .foregroundStyle(Palette.inkFaint)
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("预计风味窗口")
+                    .font(TypeScale.bodyMedium)
+                    .foregroundStyle(Palette.inkSoft)
+                Spacer(minLength: 0)
+            }
         }
     }
 
@@ -68,11 +77,11 @@ struct FlavorWindowCard: View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(Fmt.day(curve.peakDay))
-                    .font(TypeScale.bigNumeral)
-                    .foregroundStyle(Palette.ink)
+                    .font(TypeScale.numeral)
+                    .foregroundStyle(Palette.inkSoft)
                 Text("预计最佳")
                     .font(TypeScale.callout)
-                    .foregroundStyle(Palette.inkSoft)
+                    .foregroundStyle(Palette.inkFaint)
             }
 
             Text(L("预计最佳窗口 %@ – %@", Fmt.day(curve.windowStart), Fmt.day(curve.windowEnd)))

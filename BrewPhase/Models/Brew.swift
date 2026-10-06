@@ -116,6 +116,18 @@ final class Brew {
 
     var doseLine: String { Fmt.doseLine(coffeeG: coffeeG, waterG: waterG) }
 
+    /// 「酸 4 · 甜 3 · 苦 2」——只列填了的轴，一个都没填就是 nil。
+    /// 最近一杯摘要、Quick Log 的上一杯卡都用这一行，口径只有一处。
+    var tasteLine: String? {
+        var parts: [String] = []
+        if acidity > 0 { parts.append(L("酸 %@", String(acidity))) }
+        if sweetness > 0 { parts.append(L("甜 %@", String(sweetness))) }
+        if bitterness > 0 { parts.append(L("苦 %@", String(bitterness))) }
+        if body > 0 { parts.append(L("醇厚 %@", String(body))) }
+        if aftertaste > 0 { parts.append(L("余韵 %@", String(aftertaste))) }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     var dayAfterRoast: Int? {
         bean?.dayAfterRoast(on: date)
     }

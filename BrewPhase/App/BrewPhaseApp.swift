@@ -286,6 +286,25 @@ struct RootView: View {
             } else {
                 debugEmpty
             }
+        case .askAdvanced:
+            NavigationStack { AskAdvancedSettingsView() }
+        case .flavorPrediction:
+            if let bean = spotlightBean {
+                NavigationStack {
+                    ScrollView {
+                        FlavorWindowCard(bean: bean,
+                                         defaults: BrewDefaults.current(),
+                                         todayDay: bean.currentDayAfterRoast)
+                            .padding(.horizontal, Metric.gutter)
+                            .padding(.top, 10)
+                    }
+                    .background(Palette.paper)
+                    .navigationTitle("预计风味窗口")
+                    .navigationBarTitleDisplayMode(.inline)
+                }
+            } else {
+                debugEmpty
+            }
         case .quickLog:
             // 从最近冲过的那包进来，和首页「记一杯」走的是同一条路。
             QuickBrewLogView(bean: beans.first { $0.id == recentBrewBeanID } ?? spotlightBean)

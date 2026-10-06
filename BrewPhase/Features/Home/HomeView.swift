@@ -86,9 +86,9 @@ struct HomeView: View {
             .background(Palette.paper)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // 记一杯是每天都会做的事，和「加一包豆」同级，所以放在工具栏最左边、
-                // 带文字。冲完直接进来记，参数默认沿用上一杯——这条路的长度决定了
-                // 用户会不会一直记下去。
+                // 记一杯是每天都会做的事，单独占工具栏左侧。问一问与洞察不再挤在
+                // 这里——「更多」页和豆子页都有入口，首页的第一眼只回答一件事：
+                // 现在该冲哪包（规格：打开 App 第一眼就知道下一步干什么）。
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
                         isLoggingBrew = true
@@ -104,40 +104,14 @@ struct HomeView: View {
                     .accessibilityLabel("记一杯")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    HStack(spacing: 18) {
-                        // 问一问排在最前：它此前只有两条路能到——「更多 → 问一问」，
-                        // 或者进某包豆的详情页。前者要翻两层，后者得先有想聊的那包豆，
-                        // 于是「主界面上怎么开始问」在界面上是无解的。
-                        NavigationLink {
-                            AskView()
-                        } label: {
-                            Image(systemName: "questionmark.bubble")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Palette.roast)
-                        }
-                        .accessibilityLabel("问一问")
-
-                        // 洞察放在添加豆旁边：问「最近适合喝哪包」「今天做手冲
-                        // 还是意式」是和「加一包豆」同级别的日常动作，不该藏在
-                        // 更多页的折叠线下面。
-                        NavigationLink {
-                            InsightsView()
-                        } label: {
-                            Image(systemName: "sparkles")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Palette.roast)
-                        }
-                        .accessibilityLabel("洞察")
-
-                        Button {
-                            isAddingBean = true
-                        } label: {
-                            Image(systemName: "plus")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Palette.roast)
-                        }
-                        .accessibilityLabel("添加豆子")
+                    Button {
+                        isAddingBean = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Palette.roast)
                     }
+                    .accessibilityLabel("添加豆子")
                 }
             }
             .sheet(isPresented: $isAddingBean) {

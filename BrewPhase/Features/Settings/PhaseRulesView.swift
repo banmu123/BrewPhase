@@ -15,6 +15,8 @@ struct PhaseRulesView: View {
     @State private var revision = 0
     @State private var isConfirmingReset = false
     @State private var actionError: String?
+    /// 五个独立参数收进「高级阶段规则」。普通模式只看三段生命周期。
+    @State private var showsAdvancedRules = false
 
     private var book: PhaseRuleBook { PhaseRuleBook.make(stored: rules) }
 
@@ -23,10 +25,13 @@ struct PhaseRulesView: View {
             VStack(alignment: .leading, spacing: Metric.sectionGap) {
                 intro
 
+                // 普通模式：用户在设置咖啡的生命周期，不是在调数学模型。
+                // 三个阶段用一句话各占一行，能改的数字都在下面的高级区。
                 ForEach(RoastLevel.pickerOrder) { level in
-                    levelCard(level)
+                    lifecycleCard(level)
                 }
 
+                advancedSection
                 resetSection
             }
             .padding(.horizontal, Metric.gutter)
@@ -34,7 +39,7 @@ struct PhaseRulesView: View {
             .padding(.bottom, 40)
         }
         .background(Palette.paper)
-        .navigationTitle("风味窗口")
+        .navigationTitle("阶段规则")
         .navigationBarTitleDisplayMode(.inline)
         .id(revision)
         .onDisappear {
@@ -84,6 +89,86 @@ struct PhaseRulesView: View {
     }
 
     // MARK: - One level
+
+    /// 普通模式的三行：养豆期、黄金风味期、风味衰减。数字是既有的
+    /// `PhaseRuleData` 推出来的，这里只负责把它说得像人话。
+    private func lifecycleCard(_ level: RoastLevel) -> some View {
+        let data = book.rule(for: level)
+        let isCustomized = !data.matchesDefaults()
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text(verbatim: level.label)
+                    .font(TypeScale.title)
+                    .foregroundStyle(Palette.ink)
+                if isCustomized {
+                    Chip(text: L("已自定义"), tint: Palette.roast, background: Palette.cream.opacity(0.6))
+                }
+                Spacer(minLength: 0)
+            }
+
+            Card(padding: 0) {
+                VStack(spacing: 0) {
+                    lifecycleRow("养豆期", L("%@–%@ 天", String(data.restMinDays), String(data.restMaxDays)))
+                    CardDivider()
+                    lifecycleRow("黄金风味期", L("%@–%@ 天", String(data.peakStartDay), String(data.peakEndDay)))
+                    CardDivider()
+                    lifecycleRow("风味衰减", L("%@ 天后", String(data.declineStartDay)), showsDivider: false)
+                }
+            }
+        }
+    }
+
+    private func lifecycleRow(_ label: LocalizedStringKey, _ value: String, showsDivider: Bool = true) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(label)
+                    .font(TypeScale.body)
+                    .foregroundStyle(Palette.ink)
+                Spacer(minLength: 8)
+                Text(verbatim: value)
+                    .font(TypeScale.numeral)
+                    .foregroundStyle(Palette.roast)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 13)
+
+            if showsDivider { CardDivider() }
+        }
+    }
+
+    /// 五个独立参数收在这里。默认折着——它们是给「确实想校准」的人准备的。
+    private var advancedSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                withAnimation(Motion.settle) { showsAdvancedRules.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Text("高级阶段规则")
+                        .font(TypeScale.callout)
+                        .foregroundStyle(Palette.inkSoft)
+                    Image(systemName: showsAdvancedRules ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Palette.inkFaint)
+                    Spacer(minLength: 0)
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 4)
+
+            if showsAdvancedRules {
+                Text("修改这些参数会影响 BrewPhase 对咖啡阶段的判断。")
+                    .font(TypeScale.caption)
+                    .foregroundStyle(Palette.inkSoft)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
+
+                ForEach(RoastLevel.pickerOrder) { level in
+                    levelCard(level)
+                }
+            }
+        }
+    }
 
     private func levelCard(_ level: RoastLevel) -> some View {
         let data = book.rule(for: level)

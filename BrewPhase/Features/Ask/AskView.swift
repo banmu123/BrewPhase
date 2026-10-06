@@ -1,15 +1,13 @@
 import SwiftData
 import SwiftUI
 
-/// 问一问：向 BrewPhase 提问，回答只依据本机数据与自带知识库。
+/// 问一问：统一提问入口——「我有问题，我主动问。」
 ///
-/// 界面刻意把三件事摆在明面上，而不是只给一段话：
-/// 1. **这次是谁生成的**——本地摘要、系统端侧模型，还是 Ollama；
-/// 2. **依据了哪几条**——带编号的引用列表，分「你的记录」和「知识库」两段；
-/// 3. **检索范围是什么**——分析器认出来的意图与条数。
-///
-/// 为什么值得占这么多位置：这个功能的可信度完全建立在「你能看见它凭什么这么说」
-/// 之上。一段没有出处的回答，看起来再通顺也不能用来判断自己那包豆子该不该喝。
+/// 界面上只有三样东西：一句「问问你的咖啡」、输入框、和回答。内部依旧调用
+/// 结构化查询、诊断、推荐、语义检索与本地知识库，但那是引擎的事，用户看见的
+/// 只有回答与它的依据（引用列表）——embedding、provider、engine 这类词不上台面。
+/// 回答的可信度依然建立在「你能看见它凭什么这么说」之上：依据收在回答卡里，
+/// 而不是把内部模块的名字摆出来。
 struct AskView: View {
 
     /// 从某包豆子的页面进来时带上它，「这包豆…」就不必念名字。
@@ -97,7 +95,7 @@ struct AskView: View {
     private var intro: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(focusBean.map { LocalizedStringKey.alreadyLocalized(L("正在问「%@」", $0.displayName)) }
-                 ?? LocalizedStringKey("问一问"))
+                 ?? LocalizedStringKey("问问你的咖啡"))
                 .font(TypeScale.title)
                 .foregroundStyle(Palette.ink)
 
@@ -105,14 +103,6 @@ struct AskView: View {
                 .font(TypeScale.caption)
                 .foregroundStyle(Palette.inkSoft)
                 .fixedSize(horizontal: false, vertical: true)
-
-            HStack(spacing: 6) {
-                Image(systemName: "lock.fill")
-                    .font(.system(size: 10))
-                Text(L("本次回答引擎：%@", settings.preferredEngine.label))
-                    .font(TypeScale.micro)
-            }
-            .foregroundStyle(Palette.inkFaint)
         }
         .padding(.bottom, 2)
     }
@@ -138,19 +128,22 @@ struct AskView: View {
         }
     }
 
+    /// 推荐问题只留最常用的四条（规格：不要堆太多）。从豆子页进来时第一条
+    /// 直接问那包豆，不用用户念名字。
     private var suggestionTexts: [String] {
         if let focusBean {
             return [
-                L("「%@」现在适合喝吗？", focusBean.displayName),
-                L("「%@」我最近三次怎么冲的？", focusBean.displayName),
-                L("「%@」我打过分吗？", focusBean.displayName),
+                L("「%@」现在是什么阶段？", focusBean.displayName),
+                L("下一杯怎么调？"),
+                L("上一杯为什么酸？"),
+                L("最近哪杯最好？"),
             ]
         }
         return [
-            L("我最近三次怎么冲的？"),
-            L("我今天还有哪些豆子？"),
-            L("V60 一般用多少水温？"),
-            L("我有没有遇到过类似的干涩？"),
+            L("今天喝哪包？"),
+            L("下一杯怎么调？"),
+            L("最近哪杯最好？"),
+            L("我最近的参数有什么变化？"),
         ]
     }
 
@@ -196,8 +189,6 @@ struct AskView: View {
                 // 与留白。之前是一整段等重的文字，十几行平铺下来读者找不到重点。
                 AnswerBody(text: answer.text)
 
-                engineLine(answer)
-
                 if answer.hasEvidence {
                     Divider().overlay(Palette.hairline)
                     citationList(answer)
@@ -205,28 +196,6 @@ struct AskView: View {
 
                 footnotes(answer)
             }
-        }
-    }
-
-    private func engineLine(_ answer: AskAnswer) -> some View {
-        HStack(spacing: 8) {
-            Label {
-                Text(LocalizedStringKey.alreadyLocalized(L("%@ 生成", answer.engine.label)))
-            } icon: {
-                Image(systemName: answer.engine == .onDeviceSummary ? "text.magnifyingglass" : "sparkles")
-            }
-            .font(TypeScale.micro)
-            .foregroundStyle(Palette.inkFaint)
-
-            if answer.usedFallback {
-                Text("已降级")
-                    .font(TypeScale.micro)
-                    .foregroundStyle(Palette.priority)
-            }
-            Spacer(minLength: 0)
-            Text(L("耗 %@ 秒", Fmt.number(answer.elapsed.tidy)))
-                .font(TypeScale.micro)
-                .foregroundStyle(Palette.inkFaint)
         }
     }
 

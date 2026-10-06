@@ -46,8 +46,12 @@ struct QuickBrewLogView: View {
 
     @State private var saved: Brew?
     @State private var diagnosis: BrewDiagnosis?
+    /// 「上一杯的建议 → 这一杯」的观察性对比。上一杯存在时才可能有值。
+    @State private var followUp: SuggestionFollowUp?
     @State private var errorMessage: String?
     @State private var didResolveDefault = false
+    /// 「上一杯」对比卡的展开状态（上一批的规格：默认只给摘要）。
+    @State private var showsPreviousBrewDetail = false
 
     private var languageCode: String { LanguageManager.shared.current.resolvedCode }
     private var defaults: BrewDefaults { BrewDefaults.current() }
@@ -159,20 +163,21 @@ struct QuickBrewLogView: View {
                                 message: "先加一包豆，再记这一杯。"
                             )
                         }
-                    } else {
-                        beanSection
-                        prefillNote
-                        methodSection
-                        tasteSection
-                        flavorSection
-                            .id(Self.flavorAnchor)
-                        notesSection
-                        parametersSection
-                            .id(Self.parametersAnchor)
-                        if let errorMessage {
-                            messageCard(errorMessage)
-                        }
+                } else {
+                    beanSection
+                    prefillNote
+                    previousBrewCard
+                    methodSection
+                    tasteSection
+                    flavorSection
+                        .id(Self.flavorAnchor)
+                    notesSection
+                    parametersSection
+                        .id(Self.parametersAnchor)
+                    if let errorMessage {
+                        messageCard(errorMessage)
                     }
+                }
                 }
                 .padding(.horizontal, Metric.gutter)
                 .padding(.top, 8)
@@ -474,6 +479,128 @@ struct QuickBrewLogView: View {
         )
     }
 
+    // MARK: - 上一杯
+
+    /// 上一杯摘要：时间 · 评分 · 主要味觉。展开才是「上次 → 本次」的参数与
+    /// 味觉对照——默认只给三行，别让对比表抢占 30 秒那条路的注意力。
+    @ViewBuilder
+    private var previousBrewCard: some View {
+        if let previous = selectedBean?.latestBrew {
+            VStack(alignment: .leading, spacing: 10) {
+                Card {
+                    VStack(alignment: .leading, spacing: 9) {
+                        HStack {
+                            Text("上一杯")
+                                .font(TypeScale.micro)
+                                .tracking(0.8)
+                                .foregroundStyle(Palette.inkFaint)
+                            Spacer(minLength: 0)
+                            Text(Fmt.short(previous.date, calendar: DateMath.calendar))
+                                .font(TypeScale.micro)
+                                .foregroundStyle(Palette.inkFaint)
+                        }
+
+                        HStack(spacing: 8) {
+                            if previous.timeSeconds > 0 {
+                                Text(previous.timeText)
+                                    .font(TypeScale.numeral)
+                                    .foregroundStyle(Palette.ink)
+                            }
+                            if previous.score > 0 {
+                                StarRating(score: previous.score)
+                            }
+                            Spacer(minLength: 0)
+                        }
+
+                        if let taste = previous.tasteLine {
+                            Text(LocalizedStringKey.alreadyLocalized(taste))
+                                .font(TypeScale.caption)
+                                .foregroundStyle(Palette.inkSoft)
+                        }
+
+                        if prefill.basis?.id == previous.id {
+                            Text("本次将沿用上次参数")
+                                .font(TypeScale.caption)
+                                .foregroundStyle(Palette.inkFaint)
+                        }
+
+                        Button {
+                            withAnimation(Motion.settle) { showsPreviousBrewDetail.toggle() }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(showsPreviousBrewDetail ? "收起对比" : "查看变化")
+                                Image(systemName: showsPreviousBrewDetail ? "chevron.up" : "chevron.down")
+                                    .font(.system(size: 9, weight: .semibold))
+                            }
+                            .font(TypeScale.caption)
+                            .foregroundStyle(Palette.roast)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                if showsPreviousBrewDetail {
+                    Card {
+                        VStack(alignment: .leading, spacing: 0) {
+                            comparisonRow("器具", previous.method.trimmed, recipe.method.trimmed)
+                            comparisonRow("粉量", dose(previous.coffeeG), dose(recipe.coffeeG))
+                            comparisonRow("水量", dose(previous.waterG), dose(recipe.waterG))
+                            comparisonRow("水温", temperature(previous.waterTemp), temperature(recipe.waterTemp))
+                            comparisonRow("时间", clock(previous.timeSeconds), clock(BrewMath.parseTime(timeText) ?? 0))
+                            comparisonRow("研磨度", previous.grindSize.trimmed.isEmpty ? "—" : previous.grindSize.trimmed,
+                                          recipe.grindSize.trimmed.isEmpty ? "—" : recipe.grindSize.trimmed)
+                            CardDivider().padding(.vertical, 4)
+                            comparisonRow("酸", tally(previous.acidity), tally(acidity))
+                            comparisonRow("甜", tally(previous.sweetness), tally(sweetness))
+                            comparisonRow("苦", tally(previous.bitterness), tally(bitterness))
+                            comparisonRow("醇厚", tally(previous.body), tally(bodyValue))
+                            comparisonRow("余韵", tally(previous.aftertaste), tally(aftertaste))
+                        }
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
+        }
+    }
+
+    private func dose(_ value: Double) -> String {
+        value > 0 ? Fmt.gramsShort(value) : "—"
+    }
+
+    private func temperature(_ value: Double) -> String {
+        value > 0 ? "\(Int(value.rounded()))°C" : "—"
+    }
+
+    private func clock(_ seconds: Int) -> String {
+        seconds > 0 ? BrewMath.formatTime(seconds) : "—"
+    }
+
+    private func tally(_ value: Int) -> String {
+        value > 0 ? String(value) : "—"
+    }
+
+    /// 「上次 → 本次」的一行。变了用 roast 色标出来，没变就安静地单值。
+    private func comparisonRow(_ label: LocalizedStringKey, _ last: String, _ current: String) -> some View {
+        let changed = last != current
+        return HStack(spacing: 12) {
+            Text(label)
+                .font(TypeScale.caption)
+                .foregroundStyle(Palette.inkSoft)
+                .frame(width: 52, alignment: .leading)
+            Spacer(minLength: 0)
+            if changed {
+                Text(verbatim: "\(last) → \(current)")
+                    .font(TypeScale.caption.monospacedDigit())
+                    .foregroundStyle(Palette.roast)
+            } else {
+                Text(verbatim: last)
+                    .font(TypeScale.caption.monospacedDigit())
+                    .foregroundStyle(Palette.inkFaint)
+            }
+        }
+        .padding(.vertical, 5)
+    }
+
     // MARK: - 结果
 
     private func result(saved brew: Brew, diagnosis: BrewDiagnosis) -> some View {
@@ -502,6 +629,12 @@ struct QuickBrewLogView: View {
                     }
                 }
 
+                // 「上一杯的建议 → 这一杯」：闭环里「验证」的那一环。只摆变化
+                // 与方向，不下因果——判断留给用户（见 `SuggestionFollowUp`）。
+                if let followUp {
+                    followUpCard(followUp)
+                }
+
                 BrewDiagnosticCard(diagnosis: diagnosis, emphasizesSuggestion: true)
 
                 HStack(spacing: 10) {
@@ -512,6 +645,43 @@ struct QuickBrewLogView: View {
             .padding(.horizontal, Metric.gutter)
             .padding(.top, 8)
             .padding(.bottom, 32)
+        }
+    }
+
+    /// 紧跟在「记下了」下面的那张小卡：上次建议是什么、这次变了什么、方向对不对。
+    private func followUpCard(_ followUp: SuggestionFollowUp) -> some View {
+        Card {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.uturn.backward.circle")
+                        .font(.system(size: 11, weight: .medium))
+                    Text("上次建议")
+                        .font(TypeScale.micro)
+                        .tracking(0.8)
+                }
+                .foregroundStyle(Palette.inkFaint)
+
+                if let headline = followUp.suggestionHeadline {
+                    Text(LocalizedStringKey.alreadyLocalized(headline))
+                        .font(TypeScale.bodyMedium)
+                        .foregroundStyle(Palette.roast)
+                }
+
+                if let changes = followUp.changesText {
+                    Text(LocalizedStringKey.alreadyLocalized(L("这次：%@", changes)))
+                        .font(TypeScale.caption.monospacedDigit())
+                        .foregroundStyle(Palette.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                let notes = [followUp.directionText, followUp.scoreText].compactMap { $0 }
+                if !notes.isEmpty {
+                    Text(LocalizedStringKey.alreadyLocalized(notes.joined(separator: "")))
+                        .font(TypeScale.micro)
+                        .foregroundStyle(Palette.inkFaint)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 
@@ -526,16 +696,17 @@ struct QuickBrewLogView: View {
             applyPrefill(for: fallback, method: recipe.method, force: true)
         }
 
-        // 调试入口（`-BrewPhaseQuickLogDemo yes`）：直接记一杯「酸高、甜低、口感薄」
-        // 的咖啡并停在结果页，好让「记完立刻看到诊断与建议」这条路能截图。
+        // 调试入口（`-BrewPhaseQuickLogDemo yes`）：记一杯「照上一杯建议调整过」的
+        // 咖啡并停在结果页，好让「上次建议 → 这一杯」的对比与诊断能一起截图。
         // 注意它不依赖上面那条「没有指定豆子」的分支——带豆进来时同样要能演示。
         if DebugLaunch.quickLogDemo, saved == nil {
-            score = 3
-            acidity = 5
-            sweetness = 2
+            score = 4
+            acidity = 4
+            sweetness = 3
             bitterness = 2
             bodyValue = 2
-            notes = L("有点酸，尾段偏薄")
+            timeText = "2:28"
+            notes = L("按上次的建议磨细了一档，酸降下来了")
             save()
         }
     }
@@ -579,6 +750,15 @@ struct QuickBrewLogView: View {
         guard let bean = selectedBean else { return }
         errorMessage = nil
 
+        // 上一杯与它当时的建议，必须在插入这一杯**之前**取：诊断的历史里
+        // 不能混进还没落库的这一杯，建议也应该是当时真正给过的那条。
+        let previousBrew = bean.latestBrew
+        let previousSuggestion = previousBrew.flatMap { previous in
+            BrewDiagnosisService.diagnose(
+                bean: bean, brew: previous, allBrews: allBrews, languageCode: languageCode
+            )?.suggestion
+        }
+
         let draft = BrewRecorder.Draft(
             recipe: recipe,
             timeText: timeText,
@@ -596,6 +776,11 @@ struct QuickBrewLogView: View {
         do {
             let brew = try BrewRecorder.save(draft, bean: bean, in: context)
             saved = brew
+            if let previousBrew {
+                followUp = SuggestionFollowUp.between(
+                    previous: previousBrew, suggestion: previousSuggestion, current: brew
+                )
+            }
             diagnosis = BrewDiagnosisService.diagnose(
                 bean: bean, brew: brew, allBrews: allBrews, languageCode: languageCode
             )
@@ -615,6 +800,7 @@ struct QuickBrewLogView: View {
     private func logAnother() {
         saved = nil
         diagnosis = nil
+        followUp = nil
         errorMessage = nil
         score = 0
         acidity = 0
@@ -625,6 +811,7 @@ struct QuickBrewLogView: View {
         flavorTags = []
         notes = ""
         date = Date()
+        showsPreviousBrewDetail = false
         if let bean = selectedBean { applyPrefill(for: bean, method: recipe.method, force: true) }
     }
 }

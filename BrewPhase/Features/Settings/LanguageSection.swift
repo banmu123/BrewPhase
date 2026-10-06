@@ -14,9 +14,15 @@ struct LanguageSection: View {
 
     @ObservedObject var language: LanguageManager
 
+    /// 更多页按「咖啡 / 本地智能 / 数据 / 应用」分组后，组头已经说明了语境，
+    /// 这里可以不再重复自己的标题。
+    var showsHeader: Bool = true
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "语言", detail: "立即生效")
+            if showsHeader {
+                SectionHeader(title: "语言", detail: "立即生效")
+            }
 
             Card(padding: 0) {
                 MenuRow(

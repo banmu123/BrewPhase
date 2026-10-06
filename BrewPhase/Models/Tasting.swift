@@ -77,7 +77,7 @@ enum TastingSource: String, Codable, CaseIterable, Sendable {
 
     var label: String {
         switch self {
-        case .manual: return L("风味记录")
+        case .manual: return L("手动记录")
         case .brew: return L("冲煮记录")
         }
     }

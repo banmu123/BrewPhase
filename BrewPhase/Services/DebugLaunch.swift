@@ -37,6 +37,12 @@ enum DebugScreen: String, CaseIterable, Identifiable {
     /// 「调整剩余量」弹层。它平时是详情页上的一个 sheet，模拟器点不到；
     /// 而这轮重新写过的提示文案（剩余量 > 总量时）需要真看一眼。
     case stockAdjust
+    /// 「高级设置 → 本地智能」：向量模型、检索条数、重建索引住的那一层。
+    /// 平时在更多页的第三层，截不到。
+    case askAdvanced
+    /// 预计风味窗口单独一屏：它在豆子页的折叠线以下，而这批要检查它的
+    /// 视觉权重是否真的低于阶段卡。
+    case flavorPrediction
 
     var id: String { rawValue }
 }

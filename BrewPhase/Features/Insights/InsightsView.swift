@@ -1,27 +1,28 @@
 import SwiftData
 import SwiftUI
 
-/// 洞察：V1 智能层的主界面（协议 §30）。
+/// 洞察：「我不用问，它主动告诉我现在最值得关注什么。」
 ///
-/// 刻意**不是**聊天界面。四张卡片各答一类问题，每一张都把依据摆在明面上
-/// （协议 §29）：理由在前，数据行在后，证据不足时直接说「还比较不了」并给出
-/// 真实的样本阈值，而不是硬给一个结论。
+/// 与「问一问」的分工：问一问是用户带着问题来的入口，这里是**主动汇报**——
+/// 按固定的四层往下讲，每一层都把依据摆在明面上（协议 §29）：
 ///
-/// 卡片与数据的关系：
-/// * 今日建议 —— 既有 `PriorityEngine` 的排序结论 + 真实存量与评分；
-/// * 相似冲煮 —— 唯一走语义检索的入口，查的是用户自己的记录；
-/// * 我的最佳参数 —— 用户高评分记录的统计；
-/// * 历史分析 —— 最近一次冲煮和上述统计的偏离。
+/// 1. **Today** —— 今天喝哪包（`PriorityEngine` 的排序结论 + 天气微调）、
+///    手冲还是意式；
+/// 2. **Recent Brew** —— 最近一杯：参数、评分、味觉，与再上一杯相比变了什么，
+///    以及是否偏离自己的正常范围（`ParameterDeviationAnalyzer`）；
+/// 3. **Personal Pattern** —— 高评分记录的稳定参数（`PersonalBestAnalyzer`）；
+/// 4. **Action** —— 只给一个最值得执行的改动（既有诊断链的 `AdjustmentSuggestion`，
+///    这里不新造建议）。
+///
+/// 提问式的检索不在这里——那是「问一问」的职责，两个页面不再各养一个输入框。
 struct InsightsView: View {
 
     @Environment(\.modelContext) private var context
     @Query(sort: \Bean.createdAt, order: .reverse) private var beans: [Bean]
     @Query(sort: \Brew.date, order: .reverse) private var brews: [Brew]
-    @Query(sort: \Tasting.date, order: .reverse) private var tastings: [Tasting]
     @Query private var rules: [PhaseRule]
 
     @State private var engine: RecommendationEngine?
-    @State private var capability: IntelligenceCapability?
     @State private var todayInsight: Insight?
     @State private var methodInsight: Insight?
     @State private var bestInsight: Insight?
@@ -34,11 +35,6 @@ struct InsightsView: View {
     @AppStorage(PrefKey.weatherManualScene) private var manualSceneRaw: String = WeatherScene.unknown.rawValue
     @State private var automaticWeather: WeatherContext?
     @State private var isFetchingWeather = false
-
-    @State private var searchText = ""
-    @State private var searchResult: Insight?
-    @State private var isSearching = false
-    @FocusState private var searchFocused: Bool
 
     private var settings: RAGSettings { RAGSettings.current() }
     private var book: PhaseRuleBook { PhaseRuleBook.make(stored: rules) }
@@ -60,19 +56,19 @@ struct InsightsView: View {
                 } else {
                     weatherRow
                     if let todayInsight {
-                        insightSection(title: "今日建议", insight: todayInsight)
+                        insightSection(title: "今天喝哪包", insight: todayInsight)
                     }
                     if let methodInsight {
                         insightSection(title: "手冲还是意式", insight: methodInsight)
                     }
-                    searchSection
+                    recentBrewSection
                     if let bestInsight {
                         insightSection(title: "我的最佳参数", insight: bestInsight)
                     }
-                    if let deviationInsight {
-                        insightSection(title: "历史分析", insight: deviationInsight)
+                    if let nextAction {
+                        actionSection(nextAction)
                     }
-                    capabilityFootnote
+                    footnote
                 }
             }
             .padding(.horizontal, Metric.gutter)
@@ -245,60 +241,118 @@ struct InsightsView: View {
         }
     }
 
-    // MARK: - 相似冲煮
+    // MARK: - 最近一杯（第二层）
 
-    private var searchSection: some View {
+    /// 选中豆子最近的一次冲煮：参数、评分、味觉，以及与再上一杯的差。
+    /// 提问式的检索归「问一问」，这里只做主动汇报。
+    private var recentBrewSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "相似冲煮")
+            SectionHeader(title: "最近一杯")
 
-            Card {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("写下这次遇到的情况，我在你自己的记录里找相似的先例。")
-                        .font(TypeScale.caption)
+            if let latest = selectedBean?.latestBrew {
+                Card {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(LocalizedStringKey.alreadyLocalized(
+                                latest.recipe.summaryParts.joined(separator: " · ")
+                            ))
+                            .font(TypeScale.numeral)
+                            .foregroundStyle(Palette.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                            Text(Fmt.short(latest.date, calendar: DateMath.calendar))
+                                .font(TypeScale.micro)
+                                .foregroundStyle(Palette.inkFaint)
+                        }
+
+                        if latest.score > 0 {
+                            StarRating(score: latest.score)
+                        }
+
+                        if let taste = latest.tasteLine {
+                            Text(LocalizedStringKey.alreadyLocalized(taste))
+                                .font(TypeScale.caption)
+                                .foregroundStyle(Palette.inkSoft)
+                        }
+
+                        if let previous = brewBefore(latest) {
+                            let comparison = SuggestionFollowUp.between(
+                                previous: previous, suggestion: nil, current: latest
+                            )
+                            if comparison.hasChanges || comparison.scoreText != nil {
+                                CardDivider()
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text("与上一次相比")
+                                        .font(TypeScale.micro)
+                                        .foregroundStyle(Palette.inkFaint)
+                                    if let changes = comparison.changesText {
+                                        Text(LocalizedStringKey.alreadyLocalized(changes))
+                                            .font(TypeScale.caption.monospacedDigit())
+                                            .foregroundStyle(Palette.inkSoft)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                                if let scoreText = comparison.scoreText {
+                                    Text(LocalizedStringKey.alreadyLocalized(scoreText))
+                                        .font(TypeScale.micro)
+                                        .foregroundStyle(Palette.inkFaint)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                Card {
+                    Text("这包豆还没有冲煮记录。记一杯之后，这里就是它的最新进展。")
+                        .font(TypeScale.callout)
                         .foregroundStyle(Palette.inkSoft)
                         .fixedSize(horizontal: false, vertical: true)
-
-                    HStack(spacing: 10) {
-                        TextField("比如「干涩」「发苦」「香气闷」", text: $searchText, axis: .vertical)
-                            .font(TypeScale.body)
-                            .lineLimit(1...3)
-                            .focused($searchFocused)
-                            .submitLabel(.search)
-                            .onSubmit { runSearch() }
-
-                        Button {
-                            runSearch()
-                        } label: {
-                            Image(systemName: "text.magnifyingglass")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(Palette.card)
-                                .frame(width: 34, height: 34)
-                                .background(
-                                    Circle().fill(canSearch ? Palette.roast : Palette.inkFaint)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(!canSearch)
-                    }
                 }
             }
 
-            if isSearching {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("正在翻你的记录…")
-                        .font(TypeScale.caption)
-                        .foregroundStyle(Palette.inkSoft)
-                }
-                .padding(.leading, 4)
-            } else if let searchResult {
-                insightCard(searchResult)
+            // 「是否偏离自己的正常范围」是这一层的另一半，分析器已经算好了。
+            if let deviationInsight {
+                insightCard(deviationInsight)
             }
         }
     }
 
-    private var canSearch: Bool {
-        !isSearching && !searchText.trimmed.isEmpty
+    private func brewBefore(_ brew: Brew) -> Brew? {
+        guard let bean = selectedBean else { return nil }
+        let brews = bean.brewsNewestFirst
+        guard let index = brews.firstIndex(where: { $0.id == brew.id }),
+              brews.indices.contains(index + 1) else { return nil }
+        return brews[index + 1]
+    }
+
+    // MARK: - 下一步（第四层）
+
+    /// 只给一个最值得执行的改动。来源是既有诊断链的 `AdjustmentSuggestion`
+    /// ——这里不新造建议，只把它从诊断里提出来放到台面上。
+    private var nextAction: AdjustmentSuggestion? {
+        guard let bean = selectedBean else { return nil }
+        return BrewDiagnosisService.diagnose(
+            bean: bean, allBrews: brews,
+            languageCode: LanguageManager.shared.current.resolvedCode
+        )?.suggestion
+    }
+
+    private func actionSection(_ suggestion: AdjustmentSuggestion) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "下一步")
+            Card {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(LocalizedStringKey.alreadyLocalized(suggestion.headline))
+                        .font(TypeScale.title)
+                        .foregroundStyle(Palette.roast)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(LocalizedStringKey.alreadyLocalized(suggestion.reason))
+                        .font(TypeScale.caption)
+                        .foregroundStyle(Palette.inkSoft)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
     }
 
     // MARK: - 换豆子
@@ -342,25 +396,12 @@ struct InsightsView: View {
 
     // MARK: - 能力说明
 
-    private var capabilityFootnote: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if let capability {
-                if capability.isUsingLexicalFallback {
-                    Text("这台设备上没有可用的语义模型，相似冲煮已退到词法匹配：只认字面相近的说法。")
-                        .font(TypeScale.caption)
-                        .foregroundStyle(Palette.inkFaint)
-                } else {
-                    Text("相似冲煮使用端侧语义模型，离线可用。")
-                        .font(TypeScale.caption)
-                        .foregroundStyle(Palette.inkFaint)
-                }
-            }
-            Text("建议与分析只来自你记录里的数字和既定规则；没有历史的地方会直接说证据不足。")
-                .font(TypeScale.caption)
-                .foregroundStyle(Palette.inkFaint)
-        }
-        .padding(.horizontal, 4)
-        .fixedSize(horizontal: false, vertical: true)
+    private var footnote: some View {
+        Text("建议与分析只来自你记录里的数字和既定规则；没有历史的地方会直接说证据不足。")
+            .font(TypeScale.caption)
+            .foregroundStyle(Palette.inkFaint)
+            .padding(.horizontal, 4)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: - 动作
@@ -368,7 +409,6 @@ struct InsightsView: View {
     private func prepare() async {
         if engine == nil { engine = RecommendationEngine(context: context) }
         refreshAnalysis()
-        capability = await engine?.capability(settings: settings, languageCode: LanguageManager.shared.current.resolvedCode)
     }
 
     /// 今日建议、做法建议、最佳参数与偏离都是同步统计，刷新一次成本可以忽略。
@@ -386,35 +426,5 @@ struct InsightsView: View {
         methodInsight = engine.methodSuggestion(for: bean, weather: weatherContext, allBrews: brews)
         bestInsight = engine.personalBest(for: bean)
         deviationInsight = engine.deviation(for: bean)
-    }
-
-    private func runSearch() {
-        guard let engine, canSearch else { return }
-        let question = searchText.trimmed
-        isSearching = true
-        searchResult = nil
-        searchFocused = false
-
-        let settings = self.settings
-        let languageCode = LanguageManager.shared.current.resolvedCode
-        let beans = self.beans
-        let brews = self.brews
-        let tastings = self.tastings
-        let book = self.book
-
-        Task {
-            let result = await engine.similarHistory(
-                matching: question,
-                focus: nil,
-                beans: beans,
-                brews: brews,
-                tastings: tastings,
-                book: book,
-                settings: settings,
-                languageCode: languageCode
-            )
-            searchResult = result
-            isSearching = false
-        }
     }
 }

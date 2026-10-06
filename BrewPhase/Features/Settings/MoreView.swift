@@ -1,10 +1,10 @@
 import SwiftData
 import SwiftUI
 
-/// 更多 (§18): reminders, defaults, data, rules, and the privacy statement.
+/// 更多 (§18): 按「咖啡 / 本地智能 / 数据 / 应用」四组整理的设置页。
 ///
-/// Four short sections, no nesting. Settings that need a screen of their own get
-/// one; everything else is a row.
+/// 组头是小号的 tracked 标题；组内每个块用加粗的小标题开场。Tab 名保持
+/// 「更多」不变，这一批只动层级不动入口。
 struct MoreView: View {
 
     @Environment(\.modelContext) private var context
@@ -33,13 +33,25 @@ struct MoreView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Metric.sectionGap) {
-                    reminderSection
-                    defaultsSection
-                    askSection
-                    languageSection
-                    dataSection
-                    rulesSection
-                    aboutSection
+                    // 咖啡：默认参数、阶段规则、提醒——都是「怎么喝」的设定。
+                    SectionHeader(title: "咖啡")
+                    defaultsBlock
+                    rulesBlock
+                    reminderBlock
+
+                    // 本地智能：洞察与问一问的入口与总开关；调参项在高级设置里。
+                    SectionHeader(title: "本地智能")
+                    AskSettingsSection()
+
+                    // 数据：导出与图片，全部在本机。
+                    SectionHeader(title: "数据", detail: "都在本机")
+                    dataBlock
+
+                    // 应用：语言、实验功能、关于。
+                    SectionHeader(title: "应用")
+                    LanguageSection(language: language, showsHeader: false)
+                    experimentalBlock
+                    aboutCard
                 }
                 .padding(.horizontal, Metric.gutter)
                 .padding(.top, 8)
@@ -55,14 +67,73 @@ struct MoreView: View {
         }
     }
 
-    // MARK: - Reminders
+    /// 组内小标题：与组头（tracked 小字）区分——更重、更近墨色、不追踪。
+    private func subHeader(_ title: LocalizedStringKey, detail: LocalizedStringKey? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(TypeScale.callout.weight(.medium))
+                .foregroundStyle(Palette.ink)
+            if let detail {
+                Text(detail)
+                    .font(TypeScale.caption)
+                    .foregroundStyle(Palette.inkFaint)
+            }
+        }
+        .padding(.horizontal, 4)
+    }
 
-    private var reminderSection: some View {
+    // MARK: - 咖啡
+
+    private var defaultsBlock: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "提醒",
-                          detail: pendingReminderCount > 0
-                              ? .alreadyLocalized(L("%@ 条待送达", String(pendingReminderCount)))
-                              : nil)
+            subHeader("默认冲煮参数", detail: "新记录会从这里开始")
+            Card(padding: 0) {
+                VStack(spacing: 0) {
+                    EditorRow(title: "器具") {
+                        EditorTextField(placeholder: "V60", text: $defaultMethod, alignment: .trailing)
+                    }
+                    EditorRow(title: "粉量") {
+                        NumberField(placeholder: "0", value: $defaultDoseG, unit: "g")
+                    }
+                    EditorRow(title: "水量") {
+                        NumberField(placeholder: "0", value: $defaultWaterG, unit: "g")
+                    }
+                    EditorRow(title: "水温", showsDivider: false) {
+                        NumberField(placeholder: "0", value: $defaultWaterTemp, unit: "°C")
+                    }
+                }
+            }
+        }
+    }
+
+    private var rulesBlock: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            NavigationLink {
+                PhaseRulesView()
+            } label: {
+                Card(padding: 0) {
+                    navRow(title: "阶段规则",
+                            detail: book.isPristine
+                                ? LocalizedStringKey("都是默认值")
+                                : .alreadyLocalized(L("已自定义 %@ 项", String(book.customized.count))))
+                }
+            }
+            .buttonStyle(.plain)
+
+            Text(L("这些数字只是「%@」，不是保质期，也不会说某包豆子过期了。", DefaultPhaseRules.disclaimer))
+                .font(TypeScale.caption)
+                .foregroundStyle(Palette.inkFaint)
+                .padding(.horizontal, 4)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var reminderBlock: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            subHeader("提醒",
+                      detail: pendingReminderCount > 0
+                          ? .alreadyLocalized(L("%@ 条待送达", String(pendingReminderCount)))
+                          : nil)
 
             Card(padding: 0) {
                 VStack(spacing: 0) {
@@ -109,89 +180,47 @@ struct MoreView: View {
         }
     }
 
-    // MARK: - Defaults
+    // MARK: - 数据
 
-    private var defaultsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "默认冲煮参数", detail: "新记录会从这里开始")
-            Card(padding: 0) {
-                VStack(spacing: 0) {
-                    EditorRow(title: "器具") {
-                        EditorTextField(placeholder: "V60", text: $defaultMethod, alignment: .trailing)
-                    }
-                    EditorRow(title: "粉量") {
-                        NumberField(placeholder: "0", value: $defaultDoseG, unit: "g")
-                    }
-                    EditorRow(title: "水量") {
-                        NumberField(placeholder: "0", value: $defaultWaterG, unit: "g")
-                    }
-                    EditorRow(title: "水温", showsDivider: false) {
-                        NumberField(placeholder: "0", value: $defaultWaterTemp, unit: "°C")
-                    }
+    private var dataBlock: some View {
+        Card(padding: 0) {
+            VStack(spacing: 0) {
+                Button {
+                    isExporting = true
+                } label: {
+                    navRow(title: "导出", detail: "JSON 完整备份 · CSV 表格")
                 }
-            }
-        }
-    }
+                .buttonStyle(.plain)
 
-    // MARK: - Language
+                CardDivider()
 
-    private var languageSection: some View {
-        LanguageSection(language: language)
-    }
+                VStack(alignment: .leading, spacing: 10) {
+                    navRow(title: "图片",
+                            detail: .alreadyLocalized(
+                                L("%@ 个文件 · %@", String(imageCount), formattedBytes(imageBytes))
+                            ),
+                            showsChevron: false)
 
-    // MARK: - Ask
-
-    /// 本地问答。独立成一个视图，因为它的设置项和控制流都够一屏了，塞进这里
-    /// 会让这个文件变成一个什么都在的地方。
-    private var askSection: some View {
-        AskSettingsSection()
-    }
-
-    // MARK: - Data
-
-    private var dataSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "数据", detail: "都在本机")
-
-            Card(padding: 0) {
-                VStack(spacing: 0) {
                     Button {
-                        isExporting = true
+                        cleanUpImages()
                     } label: {
-                        navRow(title: "导出", detail: "JSON 完整备份 · CSV 表格")
+                        Text(orphanCount > 0
+                             ? LocalizedStringKey.alreadyLocalized(L("清理 %@ 个无用的图片", String(orphanCount)))
+                             : LocalizedStringKey("没有需要清理的图片"))
+                            .font(TypeScale.caption)
+                            .foregroundStyle(orphanCount > 0 ? Palette.roast : Palette.inkFaint)
                     }
                     .buttonStyle(.plain)
+                    .disabled(orphanCount == 0)
 
-                    CardDivider()
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        navRow(title: "图片",
-                                detail: .alreadyLocalized(
-                                    L("%@ 个文件 · %@", String(imageCount), formattedBytes(imageBytes))
-                                ),
-                                showsChevron: false)
-
-                        Button {
-                            cleanUpImages()
-                        } label: {
-                            Text(orphanCount > 0
-                                 ? LocalizedStringKey.alreadyLocalized(L("清理 %@ 个无用的图片", String(orphanCount)))
-                                 : LocalizedStringKey("没有需要清理的图片"))
-                                .font(TypeScale.caption)
-                                .foregroundStyle(orphanCount > 0 ? Palette.roast : Palette.inkFaint)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(orphanCount == 0)
-
-                        if let cleanupMessage {
-                            Text(cleanupMessage)
-                                .font(TypeScale.caption)
-                                .foregroundStyle(Palette.inkSoft)
-                        }
+                    if let cleanupMessage {
+                        Text(cleanupMessage)
+                            .font(TypeScale.caption)
+                            .foregroundStyle(Palette.inkSoft)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 14)
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
             }
         }
     }
@@ -221,23 +250,10 @@ struct MoreView: View {
         .contentShape(Rectangle())
     }
 
-    // MARK: - Rules
+    // MARK: - 应用
 
-    private var rulesSection: some View {
+    private var experimentalBlock: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "风味窗口")
-            NavigationLink {
-                PhaseRulesView()
-            } label: {
-                Card(padding: 0) {
-                    navRow(title: "风味窗口规则",
-                            detail: book.isPristine
-                                ? LocalizedStringKey("都是默认值")
-                                : .alreadyLocalized(L("已自定义 %@ 项", String(book.customized.count))))
-                }
-            }
-            .buttonStyle(.plain)
-
             Card(padding: 0) {
                 EditorToggleRow(
                     title: "实验性风味预测",
@@ -256,10 +272,8 @@ struct MoreView: View {
             }
 
             Text(predictsFlavorWindow
-                 ? LocalizedStringKey("预计风味窗口是实验功能，和上面这套窗口规则是两回事：一个是模型估计，一个是你自己定的规则。")
+                 ? LocalizedStringKey("预计风味窗口是实验功能，和阶段规则是两回事：一个是模型估计，一个是你自己定的规则。")
                  : LocalizedStringKey("预计风味窗口已经关掉，详情页不会显示它。"))
-
-            Text(L("这些数字只是「%@」，不是保质期，也不会说某包豆子过期了。", DefaultPhaseRules.disclaimer))
                 .font(TypeScale.caption)
                 .foregroundStyle(Palette.inkFaint)
                 .padding(.horizontal, 4)
@@ -267,36 +281,33 @@ struct MoreView: View {
         }
     }
 
-    // MARK: - About
+    // MARK: - 关于
 
-    private var aboutSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "关于")
-            Card {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("BrewPhase")
-                            .font(TypeScale.title)
-                            .foregroundStyle(Palette.ink)
-                        Spacer(minLength: 0)
-                        Text(verbatim: "v\(ExportManager.appVersion)")
-                            .font(TypeScale.caption.monospacedDigit())
-                            .foregroundStyle(Palette.inkFaint)
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        bullet("BrewPhase stores your coffee records locally on this device.")
-                        bullet("没有账号，没有登录，没有服务器。")
-                        bullet("飞行模式下也能完整使用。")
-                        bullet("所有数据随时可以导出带走。")
-                    }
-
-                    Text("Slow down. Taste it today.")
-                        .font(TypeScale.signature)
-                        .tracking(0.8)
+    private var aboutCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("BrewPhase")
+                        .font(TypeScale.title)
+                        .foregroundStyle(Palette.ink)
+                    Spacer(minLength: 0)
+                    Text(verbatim: "v\(ExportManager.appVersion)")
+                        .font(TypeScale.caption.monospacedDigit())
                         .foregroundStyle(Palette.inkFaint)
-                        .padding(.top, 2)
                 }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    bullet("BrewPhase stores your coffee records locally on this device.")
+                    bullet("没有账号，没有登录，没有服务器。")
+                    bullet("飞行模式下也能完整使用。")
+                    bullet("所有数据随时可以导出带走。")
+                }
+
+                Text("Slow down. Taste it today.")
+                    .font(TypeScale.signature)
+                    .tracking(0.8)
+                    .foregroundStyle(Palette.inkFaint)
+                    .padding(.top, 2)
             }
         }
     }
