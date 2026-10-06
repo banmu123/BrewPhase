@@ -819,7 +819,10 @@ struct QuickBrewLogView: View {
     }
 
     private func save() {
-        guard let bean = selectedBean else { return }
+        // 双击防护：成功路径上 `saved` 在同一次调用里就被置位，第二次点击会在
+        // 这里被挡住——不会出现两条记录、两次扣库存。失败时 saved 仍为 nil，
+        // 修好再点一次照常工作。
+        guard let bean = selectedBean, saved == nil else { return }
         errorMessage = nil
 
         // 上一杯与它当时的建议，必须在插入这一杯**之前**取：诊断的历史里

@@ -34,6 +34,8 @@ struct BrewEditorView: View {
     @State private var showsAdvanced = false
     @State private var copiedLast = false
     @State private var errorMessage: String?
+    /// 双击防护：保存成功后本页不再重复提交（新建会多出一条记录）。
+    @State private var didSave = false
 
     /// 相关知识区块的文案与检索都跟着当前界面语言走。
     private var languageCode: String { LanguageManager.shared.current.resolvedCode }
@@ -401,6 +403,8 @@ struct BrewEditorView: View {
     /// 写入只走 `BrewRecorder`：校验、库存、风味时间线、提醒，一处说了算。
     /// 30 秒快记走的是同一个函数，因此两条入口落库的结果不可能不一致。
     private func save() {
+        // 双击防护：新建模式下重复提交会产生两条记录；编辑模式本就幂等，一并挡住。
+        guard !didSave else { return }
         errorMessage = nil
 
         let draft = BrewRecorder.Draft(
@@ -431,6 +435,7 @@ struct BrewEditorView: View {
         }
 
         Task { await BrewRecorder.rescheduleReminders(for: bean, in: context) }
+        didSave = true
         dismiss()
     }
 }

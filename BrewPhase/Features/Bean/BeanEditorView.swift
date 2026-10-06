@@ -113,6 +113,8 @@ struct BeanEditorView: View {
     @State private var showsMore = false
     @State private var hasAttemptedSave = false
     @State private var errorMessage: String?
+    /// 双击防护：保存成功后本页不再重复提交（新建会多出一包豆）。
+    @State private var didSave = false
 
     /// 编辑前的那份值，落库失败时用来把豆子写回去（见 `BeanOriginalValues`）。
     private let original: BeanOriginalValues?
@@ -406,6 +408,8 @@ struct BeanEditorView: View {
     /// 中途被杀进程最坏留下一个孤儿文件——「清理无用的图片」会收走它，而记录
     /// 永远不会指向不存在的文件。
     private func save() {
+        // 双击防护：成功才置位，失败后可重试（新建模式重复提交会产生两包豆）。
+        guard !didSave else { return }
         hasAttemptedSave = true
         errorMessage = nil
 
@@ -505,6 +509,7 @@ struct BeanEditorView: View {
         }
 
         // 3/3 —— 入库成功，被替换 / 被移除的旧文件现在才可以删。
+        didSave = true
         if newImageName != nil || isImageRemoved, let previousImage {
             ImageStore.shared.delete(previousImage)
         }

@@ -20,6 +20,8 @@ struct TastingEditorView: View {
     @State private var flavorTags: [String] = []
     @State private var notes: String = ""
     @State private var errorMessage: String?
+    /// 双击防护：保存成功后本页不再重复提交。
+    @State private var didSave = false
 
     init(bean: Bean, today: Date = Date()) {
         self.bean = bean
@@ -100,6 +102,8 @@ struct TastingEditorView: View {
     }
 
     private func save() {
+        // 双击防护：保存成功才置位，失败后仍可重试。
+        guard !didSave else { return }
         errorMessage = nil
 
         let tasting = Tasting(
@@ -124,6 +128,7 @@ struct TastingEditorView: View {
             errorMessage = L("没能保存下来，请再试一次")
             return
         }
+        didSave = true
         dismiss()
     }
 

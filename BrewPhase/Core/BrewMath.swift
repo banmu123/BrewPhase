@@ -81,8 +81,13 @@ enum BrewMath {
     /// Accepts `2:35`, `2.35`, `155`, `1:05`. Returns seconds, or nil if the text
     /// cannot be read as a time. Deliberately forgiving: this is a diary, not a
     /// laboratory log.
+    ///
+    /// 全角数字/冒号/句点一并收下（`２：３５`、`2．35`）——中文键盘上这些是常态，
+    /// 读者没有理由为键盘的宽度付账。
     static func parseTime(_ text: String) -> Int? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // ICU 的 Fullwidth-Halfwidth 变换：`２：３５` → `2:35`、`２．５` → `2.5`。
+        let narrow = text.applyingTransform(StringTransform("Fullwidth-Halfwidth"), reverse: false) ?? text
+        let trimmed = narrow.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
         if trimmed.contains(":") || trimmed.contains("：") {
