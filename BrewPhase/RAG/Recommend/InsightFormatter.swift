@@ -14,25 +14,12 @@ enum InsightFormatter {
 
     // MARK: 今日建议（协议 §23）
 
-    /// `weather` 是背景信息（证据里多一行温度与场景）；`swappedForWeather`
-    /// 表示这包豆是引擎在同档里按天气契合度换上来的——这时理由里要说明，
-    /// 否则用户看到昨天还是另一包会莫名其妙。
     static func todayPick(
         _ pick: BeanInsight,
         bean: Bean,
-        today: Date = Date(),
-        weather: WeatherContext? = nil,
-        swappedForWeather: Bool = false
+        today: Date = Date()
     ) -> Insight {
         var evidence: [Insight.Evidence] = []
-        if let weather, weather.isSet {
-            var parts: [String] = []
-            if let temperature = weather.temperatureCelsius {
-                parts.append(L("现在 %@°C", Fmt.number(temperature)))
-            }
-            parts.append(weather.scene.label)
-            evidence.append(Insight.Evidence(text: parts.joined(separator: " · ")))
-        }
         if let day = pick.reading.dayAfterRoast {
             evidence.append(Insight.Evidence(text: L("烘焙后第 %@ 天", String(day))))
         } else {
@@ -64,11 +51,6 @@ enum InsightFormatter {
             headline = L("建议优先喝：%@", bean.displayName)
         case .normal, .low:
             headline = L("今天可以先喝这包：%@", bean.displayName)
-        }
-
-        var reasons = pick.verdict.reasons
-        if swappedForWeather, let weather {
-            reasons.append(L("天气也是原因之一：今天%@，几包同阶段的豆子里，这包更对路。", weather.scene.label))
         }
 
         let confidence: Insight.Confidence

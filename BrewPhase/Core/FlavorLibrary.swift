@@ -145,16 +145,6 @@ enum PrefKey {
     static let ollamaBaseURL = "brewphase.rag.ollama.baseURL"
     static let ollamaEmbeddingModel = "brewphase.rag.ollama.embeddingModel"
     static let ollamaChatModel = "brewphase.rag.ollama.chatModel"
-
-    // MARK: 天气（洞察页的场景来源）
-
-    /// 「auto」（位置 + WeatherKit）或「manual」（用户手选场景）。默认 manual：
-    /// 天气是增益不是依赖，没授权也能用。
-    static let weatherMode = "brewphase.weather.mode"
-    /// 手动选择的场景（`WeatherScene.rawValue`）。
-    static let weatherManualScene = "brewphase.weather.manualScene"
-    /// 自动模式的结果缓存（JSON：场景 + 温度 + 时间戳），一小时有效。
-    static let weatherCache = "brewphase.weather.cache"
 }
 
 /// The default recipe a new brew starts from (§18).

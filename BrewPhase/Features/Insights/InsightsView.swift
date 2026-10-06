@@ -29,24 +29,9 @@ struct InsightsView: View {
     @State private var deviationInsight: Insight?
     @State private var selectedBeanID: UUID?
 
-    // MARK: 天气场景（手选默认，自动可选）
-
-    @AppStorage(PrefKey.weatherMode) private var weatherMode: String = "manual"
-    @AppStorage(PrefKey.weatherManualScene) private var manualSceneRaw: String = WeatherScene.unknown.rawValue
-    @State private var automaticWeather: WeatherContext?
-    @State private var isFetchingWeather = false
-
     private var settings: RAGSettings { RAGSettings.current() }
     private var book: PhaseRuleBook { PhaseRuleBook.make(stored: rules) }
     private var activeBeans: [Bean] { beans.filter { !$0.isFinished } }
-
-    /// 推荐当前可用的天气上下文。自动模式取抓到的实况；手选模式把场景包成
-    /// 上下文；「未设置」时为 nil——推荐退化为不看天气，行为和从前一样。
-    private var weatherContext: WeatherContext? {
-        if weatherMode == "auto" { return automaticWeather }
-        guard let scene = WeatherScene(rawValue: manualSceneRaw), scene != .unknown else { return nil }
-        return WeatherContext(scene: scene, temperatureCelsius: nil, isAutomatic: false, note: nil)
-    }
 
     var body: some View {
         ScrollView {
@@ -54,7 +39,6 @@ struct InsightsView: View {
                 if activeBeans.isEmpty {
                     emptyCellar
                 } else {
-                    weatherRow
                     if let todayInsight {
                         insightSection(title: "今天喝哪包", insight: todayInsight)
                     }
@@ -105,84 +89,6 @@ struct InsightsView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 60)
-    }
-
-    // MARK: - 天气场景
-
-    /// 手动场景在前（默认、零权限），自动在后（一次位置权限 + 联网）。
-    /// 这行的选择立即生效并持久化——它不是设置项，是推荐的一部分。
-    private var weatherRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "今天的天气", detail: "推荐会参考，但只做微调")
-
-            FlowLayout(spacing: 7, lineSpacing: 7) {
-                ForEach(WeatherScene.manualChoices, id: \.self) { scene in
-                    let isSelected = weatherMode == "manual" && manualSceneRaw == scene.rawValue
-                    Button {
-                        weatherMode = "manual"
-                        manualSceneRaw = scene.rawValue
-                        refreshAnalysis()
-                    } label: {
-                        Chip(
-                            text: scene.label,
-                            tint: isSelected ? Palette.card : Palette.roast,
-                            background: isSelected ? Palette.roast : Palette.well
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                Button {
-                    weatherMode = "auto"
-                    fetchWeather()
-                } label: {
-                    Chip(
-                        text: autoChipLabel,
-                        tint: weatherMode == "auto" ? Palette.card : Palette.roast,
-                        background: weatherMode == "auto" ? Palette.roast : Palette.well
-                    )
-                }
-                .buttonStyle(.plain)
-                .disabled(isFetchingWeather)
-            }
-
-            if isFetchingWeather {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("正在取位置和天气…")
-                        .font(TypeScale.caption)
-                        .foregroundStyle(Palette.inkSoft)
-                }
-            } else if weatherMode == "auto", let automaticWeather, let note = automaticWeather.note {
-                Text(LocalizedStringKey.alreadyLocalized(note))
-                    .font(TypeScale.caption)
-                    .foregroundStyle(Palette.inkFaint)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    private var autoChipLabel: String {
-        if isFetchingWeather { return L("自动…") }
-        if let automaticWeather, weatherMode == "auto" {
-            if let temperature = automaticWeather.temperatureCelsius {
-                return L("自动 · %@ %@", Fmt.number(temperature), automaticWeather.scene.label)
-            }
-            return L("自动 · %@", automaticWeather.scene.label)
-        }
-        return L("自动获取")
-    }
-
-    private func fetchWeather() {
-        guard !isFetchingWeather else { return }
-        isFetchingWeather = true
-
-        Task {
-            let context = await WeatherKitWeatherService().current()
-            automaticWeather = context
-            isFetchingWeather = false
-            refreshAnalysis()
-        }
     }
 
     // MARK: - 卡片
@@ -432,7 +338,7 @@ struct InsightsView: View {
     private func refreshAnalysis() {
         guard let engine, !activeBeans.isEmpty else { return }
 
-        todayInsight = engine.todayPick(beans: beans, book: book, weather: weatherContext)
+        todayInsight = engine.todayPick(beans: beans, book: book)
 
         // 默认选中今天最该关注的那包；用户手动换过之后尊重他的选择。
         if selectedBeanID == nil || !activeBeans.contains(where: { $0.id == selectedBeanID }) {
@@ -440,7 +346,7 @@ struct InsightsView: View {
         }
         guard let bean = selectedBean else { return }
 
-        methodInsight = engine.methodSuggestion(for: bean, weather: weatherContext, allBrews: brews)
+        methodInsight = engine.methodSuggestion(for: bean, allBrews: brews)
         bestInsight = engine.personalBest(for: bean)
         deviationInsight = engine.deviation(for: bean)
     }

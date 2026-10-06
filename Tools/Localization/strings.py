@@ -159,7 +159,6 @@ EN: dict[str, str] = {
     "比如 Ethiopia Guji": "e.g. Ethiopia Guji",
     "比如 埃塞俄比亚 · Guji": "e.g. Ethiopia · Guji",
     "水洗": "Washed",
-    "日晒": "Natural",
     "半日晒": "Semi-washed",
     "厌氧日晒": "Anaerobic natural",
     "拼配": "Blend",
@@ -643,29 +642,10 @@ EN: dict[str, str] = {
     "高评分记录的粉量通常在 %@ 到 %@": "Your high-scoring brews usually used %@–%@ of coffee",
 
     # MARK: 天气场景与做法建议
-    "晴热": "Hot",
-    "温和": "Mild",
-    "转凉": "Cooling down",
-    "冷": "Cold",
-    "下雨": "Rainy",
-    "未设置": "Not set",
-    "今天的天气": "Today's weather",
-    "推荐会参考，但只做微调": "Suggestions take it into account, with a light touch",
-    "自动获取": "Auto",
-    "自动…": "Auto…",
-    "自动 · %@": "Auto · %@",
-    "自动 · %@ %@": "Auto · %@ %@",
-    "正在取位置和天气…": "Fetching your location and the weather…",
-    "拿不到位置（未授权或暂时失败），先用手动选择的场景。":
-        "Could not get your location (not authorised, or it failed). Using the scene you picked instead.",
-    "天气服务暂时不可用（需要在开发者后台为这个 App 开通 WeatherKit）。先用手动场景。":
-        "The weather service is unavailable (WeatherKit has to be enabled for this App ID in the developer portal). Using the manual scene instead.",
     "手冲还是意式": "Filter or espresso",
     "今天适合%@：%@": "Today suits %@: %@",
-    "今天%@，通常更想喝%@。": "With %@ weather today, %@ is what usually hits the spot.",
     "你用%@平均打了 %@ 分（%@ 次）。": "Your %@ averages %@ over %@ brews.",
     "%@：平均 %@ 分（%@ 次）": "%@: %@ on average over %@ brews",
-    "现在 %@°C": "It is %@°C right now",
     "同一个做法至少要冲过 %@ 次才能比较；现在有 %@ 次带评分的记录。":
         "A method needs at least %@ scored brews before they can be compared; there are %@ so far.",
     "这包豆的历史还不够给出做法建议": "Not enough history on this bag for a method suggestion",
@@ -676,8 +656,6 @@ EN: dict[str, str] = {
     "中烘两头都搭，手冲和加奶都稳。": "Medium roasts go either way: filter or milk, both hold up.",
     "偏深的烘焙压得住奶，做意式或加奶都不闷。":
         "Darker roasts stand up to milk; espresso or milk drinks stay clean.",
-    "天气也是原因之一：今天%@，几包同阶段的豆子里，这包更对路。":
-        "Weather played a part too: with %@ weather, this bag fits the day better than its peers.",
     "手冲/滤泡": "filter",
     "意式/奶咖": "espresso",
     "冷萃/冰饮": "cold brew",

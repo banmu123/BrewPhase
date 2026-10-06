@@ -350,54 +350,10 @@ final class InsightsTests: XCTestCase {
         XCTAssertLessThan(elapsed, 2.0, "演示规模的一次问答不许卡")
     }
 
-    // MARK: - 天气场景（今天喝什么、手冲还是意式）
-
-    func testWeatherSceneDerivationFollowsTheConfiguredThresholds() {
-        // 温度档位来自 IntelligenceConfig，不是写死在推导里。
-        XCTAssertEqual(
-            WeatherScene.derive(temperatureCelsius: IntelligenceConfig.hotThresholdCelsius, condition: nil),
-            .hot
-        )
-        XCTAssertEqual(
-            WeatherScene.derive(temperatureCelsius: IntelligenceConfig.hotThresholdCelsius - 0.1, condition: nil),
-            .warm
-        )
-        XCTAssertEqual(
-            WeatherScene.derive(temperatureCelsius: IntelligenceConfig.coldThresholdCelsius - 1, condition: nil),
-            .cold
-        )
-        // 降水优先于温度：15°C 的雨天就是雨天。
-        XCTAssertEqual(
-            WeatherScene.derive(temperatureCelsius: 15, condition: "rain"),
-            .rainy
-        )
-        // 没温度没条件就没有场景。
-        XCTAssertEqual(WeatherScene.derive(temperatureCelsius: nil, condition: nil), .unknown)
-    }
-
-    func testTodayPickBreaksTiesByWeatherAffinityButNeverCrossesTiers() {
-        // 两包同档（都在窗口内）：热天时浅烘水洗的 Guji 应胜过中深烘日晒的 Brazil。
-        let guji = makeGuji(remainingG: 100, daysAgoRoast: 14)
-        let brazil = makeBrazil()
-
-        let hot = WeatherContext(scene: .hot, temperatureCelsius: 32, isAutomatic: false, note: nil)
-        let withWeather = engine.todayPick(beans: [brazil, guji], book: book, defaults: .standard,
-                                           today: today, weather: hot)
-        let withoutWeather = engine.todayPick(beans: [brazil, guji], book: book, defaults: .standard, today: today)
-
-        // 不传天气时行为与从前完全一致——天气是增益不是依赖。
-        XCTAssertNotNil(withoutWeather)
-
-        // 传入热天：证据里要有天气行；理由要说明天气参与了同档取舍（仅当真的换了包）。
-        if let withWeather, withWeather.beanID == guji.id {
-            let joined = withWeather.evidence.map(\.text).joined(separator: "；")
-            XCTAssertTrue(joined.contains(L("晴热")) || withWeather.reasons.contains { $0.contains(L("晴热")) },
-                          "热天推荐浅烘时，天气要么在证据里要么在理由里")
-        }
-    }
+    // MARK: - 今天喝什么、手冲还是意式
 
     func testMethodSuggestionPrefersTheHistoryWhenItIsClear() {
-        // Guji 手冲 4 次平均 4.5，意式 2 次平均 2——历史明确，热天也该是手冲。
+        // Guji 手冲 4 次平均 4.5，意式 2 次平均 2——历史明确，该是手冲。
         let bean = makeGuji()
         makeBrew(bean, daysAgo: 9, score: 5, method: "V60")
         makeBrew(bean, daysAgo: 8, score: 4, method: "V60")
@@ -406,21 +362,20 @@ final class InsightsTests: XCTestCase {
         makeBrew(bean, daysAgo: 3, score: 2, method: "意式浓缩")
         makeBrew(bean, daysAgo: 2, score: 2, method: "espresso")
 
-        let hot = WeatherContext(scene: .hot, temperatureCelsius: 33, isAutomatic: false, note: nil)
-        let insight = engine.methodSuggestion(for: bean, weather: hot, allBrews: try! context.fetch(FetchDescriptor<Brew>()))
+        let insight = engine.methodSuggestion(for: bean, allBrews: try! context.fetch(FetchDescriptor<Brew>()))
 
         XCTAssertEqual(insight.kind, .methodSuggestion)
         XCTAssertEqual(insight.confidence, .medium)
         XCTAssertTrue(insight.headline.contains(MethodFamily.filter.label),
-                      "历史平均分差 ≥0.5 时天气不能推翻记录：\(insight.headline)")
+                      "历史平均分差 ≥0.5 时偏好不能推翻记录：\(insight.headline)")
 
         let joined = insight.reasons.joined(separator: "；") + insight.evidence.map(\.text).joined(separator: "；")
         XCTAssertTrue(joined.contains("4.5"), "手冲的平均分要出现")
         XCTAssertTrue(joined.contains(MethodFamily.espresso.label), "被比下去的家族也要摆出来")
     }
 
-    func testMethodSuggestionLetsTheSceneDecideACloseCall() {
-        // 手冲平均 4.0、意式平均 4.0：平票，冷天让方向上的意式赢。
+    func testMethodSuggestionBreaksATieByTheFixedFamilyOrder() {
+        // 手冲平均 4.0、意式平均 4.0：平票，按「手冲 → 意式 → 冷萃」的固定顺序手冲赢。
         let bean = makeGuji()
         makeBrew(bean, daysAgo: 9, score: 4, method: "V60")
         makeBrew(bean, daysAgo: 7, score: 4, method: "手冲")
@@ -428,18 +383,18 @@ final class InsightsTests: XCTestCase {
         makeBrew(bean, daysAgo: 3, score: 4, method: "意式浓缩")
         makeBrew(bean, daysAgo: 2, score: 4, method: "意式浓缩")
 
-        let cold = WeatherContext(scene: .cold, temperatureCelsius: 5, isAutomatic: false, note: nil)
-        let insight = engine.methodSuggestion(for: bean, weather: cold, allBrews: [])
+        let insight = engine.methodSuggestion(for: bean, allBrews: [])
 
-        XCTAssertTrue(insight.headline.contains(MethodFamily.espresso.label),
-                      "接近的记录里场景决定方向：\(insight.headline)")
-        XCTAssertTrue(insight.reasons.contains { $0.contains(MethodFamily.espresso.label) })
+        XCTAssertTrue(insight.headline.contains(MethodFamily.filter.label),
+                      "平票按固定家族顺序取先者：\(insight.headline)")
+        XCTAssertTrue(insight.evidence.contains { $0.text.contains(MethodFamily.espresso.label) },
+                      "被比下去的家族要摆进证据里")
     }
 
     func testMethodSuggestionWithNoHistoryAtAllSaysSo() {
         let bean = makeGuji()
 
-        let insight = engine.methodSuggestion(for: bean, weather: nil, allBrews: [])
+        let insight = engine.methodSuggestion(for: bean, allBrews: [])
 
         XCTAssertEqual(insight.confidence, .insufficientEvidence)
         XCTAssertTrue(insight.reasons.contains {

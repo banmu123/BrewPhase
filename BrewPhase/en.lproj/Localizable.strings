@@ -93,7 +93,6 @@
 "下一步" = "Next step";
 "下午好" = "Good afternoon";
 "下次记这一杯，会自动带上这次的参数。" = "Next time, this cup's parameters will be filled in for you.";
-"下雨" = "Rainy";
 "下面会给你两部分资料：一部分是用户自己的豆子、冲煮和风味记录，一部分是 BrewPhase 自带的咖啡常识。" = "You will be given two sets of material: the user's own bags, brews and tasting notes, and the coffee background notes that ship with BrewPhase.";
 "不依赖任何模型，中英混写也能匹配，但只认字面相近" = "Depends on no model and copes with mixed Chinese and English, but only matches on literal wording";
 "不同豆子、不同烘焙曲线都会不一样。下面是「%@」，改到符合你自己的经验就好。" = "Every bean and every roast curve differs. The figures below are “%@”, so adjust them to match your own experience.";
@@ -111,13 +110,11 @@
 "产区级" = "Region level";
 "产地" = "Country";
 "今天" = "Today";
-"今天%@，通常更想喝%@。" = "With %@ weather today, %@ is what usually hits the spot.";
 "今天可以先喝这包：%@" = "You could start with %@ today";
 "今天喝哪包" = "Which bag today";
 "今天喝哪包？" = "Which bag today?";
 "今天建议" = "Today's pick";
 "今天是烘焙后第 %@ 天，处于「%@」。" = "Today is day %@ after roast, in %@.";
-"今天的天气" = "Today's weather";
 "今天适合%@：%@" = "Today suits %@: %@";
 "从你自己的记录里找答案：什么时候开封的、哪次冲得最好" = "Find the answer in your own records: when it was opened, which brew turned out best";
 "价格" = "Price";
@@ -176,7 +173,6 @@
 "冲煮时间还没填" = "The brew time is not filled in yet";
 "冲煮记录" = "Brews";
 "冲煮诊断" = "Brew diagnosis";
-"冷" = "Cold";
 "冷萃" = "Cold brew";
 "冷萃/冰饮" = "cold brew";
 "减粉" = "less coffee";
@@ -286,8 +282,6 @@
 "复制上次冲煮" = "Copy last brew";
 "多一点" = "a bit more";
 "多加一点粉" = "a little more coffee";
-"天气也是原因之一：今天%@，几包同阶段的豆子里，这包更对路。" = "Weather played a part too: with %@ weather, this bag fits the day better than its peers.";
-"天气服务暂时不可用（需要在开发者后台为这个 App 开通 WeatherKit）。先用手动场景。" = "The weather service is unavailable (WeatherKit has to be enabled for this App ID in the developer portal). Using the manual scene instead.";
 "好" = "OK";
 "如果资料不足以回答，就直接说找不到，并说清缺什么。不要用常识补一个听起来合理的答案。" = "If the material is not enough, say plainly that it cannot be found and what is missing. Do not fill the gap with general knowledge and make it sound plausible.";
 "如果问题持续存在，请先确认设备存储空间正常。" = "If this keeps happening, check that your device has enough free space.";
@@ -382,7 +376,6 @@
 "抱歉，这次没能生成回答。" = "Sorry, no answer could be generated this time.";
 "拍照" = "Camera";
 "拼配" = "Blend";
-"拿不到位置（未授权或暂时失败），先用手动选择的场景。" = "Could not get your location (not authorised, or it failed). Using the scene you picked instead.";
 "按上次的建议磨细了一档，酸降下来了" = "Followed the last suggestion — ground a step finer, less sour";
 "按时间从新到旧：%@。" = "Newest first: %@.";
 "按现有的阶段规则，今天最该喝的是「%@」。" = "By your stage rules, the bag to drink today is \"%@\".";
@@ -402,7 +395,6 @@
 "排气结束" = "Rest ends";
 "推断匹配" = "Inferred match";
 "推荐" = "Recommendation";
-"推荐会参考，但只做微调" = "Suggestions take it into account, with a light touch";
 "推荐冲煮" = "Suggested brewing";
 "推荐提醒默认打开：进入黄金风味期、黄金期将尽、喝不完提示。养豆完成与黄金期过半默认关闭，按需开启。" = "Recommended reminders are on by default: peak window opening, closing, and drink-up nudges. Rest-complete and halfway stay off until you turn them on.";
 "提醒" = "Reminders";
@@ -421,7 +413,6 @@
 "新记录会从这里开始" = "New brews start from these";
 "新鲜度" = "Freshness";
 "无法打开本地数据" = "Cannot open your local data";
-"日晒" = "Natural";
 "日期" = "Date";
 "早上好" = "Good morning";
 "时间" = "Time";
@@ -431,7 +422,6 @@
 "时间偏短是萃取不足最常见的信号，磨细是最直接的补救。" = "A short brew is the most common under-extraction signal; going finer is the direct fix.";
 "时间偏长，又有苦或干涩，通常是磨得太细。" = "A long brew plus bitterness or dryness usually means the grind is too fine.";
 "晚上好" = "Good evening";
-"晴热" = "Hot";
 "暂时没有这包豆子的专属资料，下面显示的是更上层的通用知识。" = "Nothing specific to this bag yet; what follows is broader, generic knowledge.";
 "更多" = "More";
 "更多信息" = "More details";
@@ -452,7 +442,6 @@
 "朋友送的" = "A gift from a friend";
 "未命名" = "Untitled";
 "未填写" = "Not set";
-"未设置" = "Not set";
 "本地摘要" = "Local summary";
 "本地智能" = "Local intelligence";
 "本地词法匹配" = "Local lexical matching";
@@ -478,7 +467,6 @@
 "正在关联知识…" = "Linking knowledge…";
 "正在养豆" = "Resting";
 "正在准备文件…" = "Preparing the files…";
-"正在取位置和天气…" = "Fetching your location and the weather…";
 "正在找相关知识与记录…" = "Looking for related knowledge and records…";
 "正在翻你的记录…" = "Looking through your records…";
 "正在讨论：%@" = "Discussing: %@";
@@ -543,7 +531,6 @@
 "清洁维护" = "Cleaning and care";
 "清理 %@ 个无用的图片" = "Clean up %@ unused images";
 "渠道" = "Channel";
-"温和" = "Mild";
 "烘焙" = "Roast";
 "烘焙 %@" = "Roasted %@";
 "烘焙与重量" = "Roast and weight";
@@ -562,7 +549,6 @@
 "照片" = "Photo";
 "爱乐压" = "AeroPress";
 "玫瑰" = "Rose";
-"现在 %@°C" = "It is %@°C right now";
 "现在喝" = "drink now";
 "现在正处于黄金风味期" = "Right in its peak window";
 "现在还没有记录。空数据也可以导出，出来的是一份结构完整、内容为空的文件。" = "There are no records yet. An empty export is still fine — it comes out as a complete file with no records in it.";
@@ -649,10 +635,6 @@
 "肯尼亚 · Nyeri" = "Kenya · Nyeri";
 "背景关联" = "Background link";
 "背景知识" = "Background";
-"自动 · %@" = "Auto · %@";
-"自动 · %@ %@" = "Auto · %@ %@";
-"自动…" = "Auto…";
-"自动获取" = "Auto";
 "自定义" = "Custom";
 "自己写一个" = "Write your own";
 "至少需要 %@ 条带评分的冲煮记录后才能进行比较。" = "At least %@ scored brews are needed before a comparison is possible.";
@@ -720,7 +702,6 @@
 "距离窗口结束约 %@ 天" = "About %@ days left in the window";
 "距离进入窗口还有约 %@ 天。" = "About %@ days until it enters the window.";
 "跟随系统" = "Follow System";
-"转凉" = "Cooling down";
 "过去平均 %@ 分" = "averaged %@ before";
 "还剩 %@。" = "%@ left.";
 "还在养豆，风味还没打开" = "Still resting — the flavour is not open yet";

@@ -28,62 +28,30 @@ final class RecommendationEngine {
 
     /// 排序与理由全部来自既有的 `PriorityEngine`——那是这个项目已经在首页跑了
     /// 很久的规则。V1 的职责是把它的结论配上真实证据，而不是再发明一套排序。
-    ///
-    /// `weather` 只做**同档 tie-break**（§今天喝哪包）：PriorityEngine 给出的
-    /// 紧迫档位永远优先，天气只在「两包同档」时帮忙挑一包，且差距要超过
-    /// `weatherTieBreakMinimumMargin` 才动手——否则推荐会随天气抖来抖去。
     func todayPick(
         beans: [Bean],
         book: PhaseRuleBook,
         defaults: BrewDefaults = .current(),
-        today: Date = Date(),
-        weather: WeatherContext? = nil
+        today: Date = Date()
     ) -> Insight? {
         guard let pick = InsightFactory.todaysPick(beans, book: book, defaults: defaults, today: today),
               let bean = beans.first(where: { $0.id == pick.id })
         else { return nil }
 
-        var appliedWeather: WeatherContext?
-        if let weather, weather.isSet {
-            let ranked = InsightFactory.ranked(beans, book: book, defaults: defaults, today: today)
-            let peers = ranked.filter { $0.verdict.tier == pick.verdict.tier }
-            if peers.count > 1 {
-                // BeanInsight 携带的是值快照（BeanSnapshot），契合度要看原始
-                // @Model 上的 roastLevel/process，按 id 回原数组取。
-                let scored = peers.compactMap { insight -> (insight: BeanInsight, bean: Bean, affinity: Double)? in
-                    guard let bean = beans.first(where: { $0.id == insight.bean.id }) else { return nil }
-                    return (insight, bean, IntelligenceConfig.weatherAffinity(for: weather.scene, bean: bean))
-                }
-                let best = scored.max { $0.affinity < $1.affinity }
-                if let best,
-                   best.bean.id != pick.id,
-                   best.affinity - IntelligenceConfig.weatherAffinity(for: weather.scene, bean: bean)
-                    >= IntelligenceConfig.weatherTieBreakMinimumMargin {
-                    // 换成同档里更契合天气的那包。档位信息跟着人走。
-                    if let swappedInsight = ranked.first(where: { $0.bean.id == best.bean.id }) {
-                        return InsightFormatter.todayPick(swappedInsight, bean: best.bean, today: today,
-                                                          weather: weather, swappedForWeather: true)
-                    }
-                }
-            }
-            appliedWeather = weather
-        }
-
-        return InsightFormatter.todayPick(pick, bean: bean, today: today, weather: appliedWeather)
+        return InsightFormatter.todayPick(pick, bean: bean, today: today)
     }
 
     // MARK: 今天喝什么做法
 
-    /// 「今天手冲还是美式/卡布奇诺」——天气场景给出方向，用户自己的历史给
-    /// 出依据。两者怎么融合是刻意的：
+    /// 「今天手冲还是美式/卡布奇诺」——用户自己的历史给出方向和依据：
     ///
     /// * **历史是硬依据**：某个做法家族的平均分和样本数直接来自记录，建议里
     ///   必须引用真实数字；
-    /// * **天气是软方向**：它决定先看哪个家族、以及措辞（「热天来杯冰手冲」），
-    ///   但永远不会把历史高分压下去——你手冲一直 5 分，35°C 的天也照推荐手冲。
+    /// * 平票时按「手冲 → 意式 → 冷萃」的固定顺序取先者，但平均分差距大时
+    ///   （≥0.5）高分历史赢——偏好不推翻你真实的高分记录。
     ///
     /// 这包豆自己的历史优先；不够时退到全部豆子的历史（并如实说明统计范围）。
-    func methodSuggestion(for bean: Bean, weather: WeatherContext?, allBrews: [Brew]) -> Insight {
+    func methodSuggestion(for bean: Bean, allBrews: [Brew]) -> Insight {
         let minimumSamples = IntelligenceConfig.minimumSamplesForComparison - 1 // 做法 ≥2 次才有参考价值
         let ownBrews = bean.brewsNewestFirst
 
@@ -115,10 +83,9 @@ final class RecommendationEngine {
             )
         }
 
-        // 场景方向只是**排序偏好**：方向上第一个有资格的家族获得平票优先权，
-        // 但平均分差距大时（≥0.5）历史赢——天气不推翻你真实的高分记录。
-        let direction = weather.map { IntelligenceConfig.preferredFamilies(for: $0.scene) }
-            ?? [.filter, .espresso, .cold]
+        // 家族偏好顺序：手冲 → 意式 → 冷萃。平票取先者，但平均分差距大时
+        // （≥0.5）高分历史赢——偏好不推翻你真实的高分记录。
+        let direction: [MethodFamily] = [.filter, .espresso, .cold]
         var winner = eligible
         if eligible.family != direction.first,
            let preferred = familyRows.first(where: { $0.family == direction.first && $0.count >= minimumSamples }),
@@ -127,10 +94,6 @@ final class RecommendationEngine {
         }
 
         var reasons: [String] = []
-        if let weather, weather.isSet, weather.scene != .unknown {
-            reasons.append(L("今天%@，通常更想喝%@。",
-                             weather.scene.label, direction.first?.label ?? winner.family.label))
-        }
         reasons.append(L("你用%@平均打了 %@ 分（%@ 次）。",
                          winner.family.label, Fmt.number(winner.average), String(winner.count)))
         if !scope.isOwn {
@@ -145,12 +108,9 @@ final class RecommendationEngine {
             reasons.append(L("偏深的烘焙压得住奶，做意式或加奶都不闷。"))
         }
 
-        var evidence: [Insight.Evidence] = familyRows.map { row in
+        let evidence: [Insight.Evidence] = familyRows.map { row in
             Insight.Evidence(text: L("%@：平均 %@ 分（%@ 次）",
                                       row.family.label, Fmt.number(row.average), String(row.count)))
-        }
-        if let temperature = weather?.temperatureCelsius {
-            evidence.insert(Insight.Evidence(text: L("现在 %@°C", Fmt.number(temperature))), at: 0)
         }
 
         return Insight(
