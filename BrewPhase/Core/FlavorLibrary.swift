@@ -181,9 +181,13 @@ struct BrewDefaults: Equatable, Sendable {
 
 extension ReminderPreferences {
     /// Reads the per-kind switches the settings screen writes.
+    ///
+    /// 默认值与设置页同一处定义（`ReminderKind.recommendedByDefault`）：
+    /// 推荐提醒默认开，其余默认关——没动过开关的用户不该被五路提醒轰炸。
     static func current(from defaults: UserDefaults = .standard) -> ReminderPreferences {
         var disabled = Set<ReminderKind>()
-        for kind in ReminderKind.allCases where !defaults.bool(forKey: PrefKey.reminderEnabled(kind), default: true) {
+        for kind in ReminderKind.allCases
+        where !defaults.bool(forKey: PrefKey.reminderEnabled(kind), default: kind.recommendedByDefault) {
             disabled.insert(kind)
         }
         return ReminderPreferences(disabled: disabled)

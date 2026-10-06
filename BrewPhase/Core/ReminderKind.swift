@@ -10,12 +10,22 @@ enum ReminderKind: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
 
+    /// 提醒分两档：三个「推荐提醒」默认开（进入窗口 / 黄金期将尽 / 喝不完提示），
+    /// 其余默认关（规格：不要默认开启过多提醒）。已开启过的用户不受影响——
+    /// 他们的选择已经写进 UserDefaults。
+    var recommendedByDefault: Bool {
+        switch self {
+        case .windowOpens, .windowEnding, .brewPriority: return true
+        case .restComplete, .windowHalfway: return false
+        }
+    }
+
     var label: String {
         switch self {
         case .restComplete: return L("养豆完成")
-        case .windowOpens: return L("进入风味窗口")
-        case .windowHalfway: return L("窗口过半")
-        case .windowEnding: return L("窗口即将结束")
+        case .windowOpens: return L("进入黄金风味期")
+        case .windowHalfway: return L("黄金期过半")
+        case .windowEnding: return L("黄金期将尽")
         case .brewPriority: return L("建议优先饮用")
         }
     }
@@ -23,10 +33,10 @@ enum ReminderKind: String, Codable, CaseIterable, Identifiable, Sendable {
     var detail: String {
         switch self {
         case .restComplete: return L("排气期结束，风味开始打开时提醒")
-        case .windowOpens: return L("进入最佳风味窗口时提醒")
-        case .windowHalfway: return L("窗口走过一半时提醒")
-        case .windowEnding: return L("窗口结束前两天提醒")
-        case .brewPriority: return L("这包可能喝不完它的窗口时提醒")
+        case .windowOpens: return L("进入黄金风味期时提醒")
+        case .windowHalfway: return L("黄金风味期走过一半时提醒")
+        case .windowEnding: return L("黄金风味期结束前两天提醒")
+        case .brewPriority: return L("这包可能喝不完黄金风味期时提醒")
         }
     }
 
@@ -34,9 +44,9 @@ enum ReminderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         let name = beanName.trimmed.isEmpty ? L("这包豆子") : beanName
         switch self {
         case .restComplete: return L("%@ 养豆结束", name)
-        case .windowOpens: return L("%@ 进入风味窗口", name)
-        case .windowHalfway: return L("%@ 的窗口过半了", name)
-        case .windowEnding: return L("%@ 的窗口快结束了", name)
+        case .windowOpens: return L("%@ 进入黄金风味期", name)
+        case .windowHalfway: return L("%@ 的黄金风味期过半了", name)
+        case .windowEnding: return L("%@ 的黄金风味期快结束了", name)
         case .brewPriority: return L("%@ 建议优先喝", name)
         }
     }
@@ -45,10 +55,10 @@ enum ReminderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         let name = beanName.trimmed.isEmpty ? L("这包豆子") : beanName
         switch self {
         case .restComplete: return L("%@ 的排气期基本结束，风味开始打开了。", name)
-        case .windowOpens: return L("%@ 现在进入最佳风味窗口，可以开始喝了。", name)
-        case .windowHalfway: return L("%@ 的窗口已经过半，接下来的风味会慢慢变平。", name)
-        case .windowEnding: return L("%@ 的窗口还剩两天，想喝到最好的状态就趁现在。", name)
-        case .brewPriority: return L("%@ 的窗口比你的消耗速度更短，建议优先喝完。", name)
+        case .windowOpens: return L("%@ 现在进入黄金风味期，可以开始喝了。", name)
+        case .windowHalfway: return L("%@ 的黄金风味期已经过半，接下来的风味会慢慢变平。", name)
+        case .windowEnding: return L("%@ 的黄金风味期还剩两天，想喝到最好的状态就趁现在。", name)
+        case .brewPriority: return L("%@ 的黄金风味期比你的消耗速度更短，建议优先喝完。", name)
         }
     }
 }

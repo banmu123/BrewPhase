@@ -310,6 +310,7 @@ struct AskView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSend)
+                .accessibilityLabel(Text("发送"))
             }
         }
         .padding(.horizontal, Metric.gutter)

@@ -107,10 +107,10 @@ enum PriorityEngine {
             headline = L("风味正在打开")
         case .peak:
             score += 55
-            headline = L("现在正处于风味窗口")
+            headline = L("现在正处于黄金风味期")
         case .declining:
             score += 40
-            headline = L("风味已经开始衰退")
+            headline = L("风味已经开始衰减")
         }
 
         if reading.dayAfterRoast == nil {
@@ -126,7 +126,7 @@ enum PriorityEngine {
         if reading.phase == .peak {
             if reading.daysUntilWindowEnd <= 2 {
                 score += 20
-                details.append(L("窗口这两天就结束了"))
+                details.append(L("黄金风味期这两天就结束了"))
             } else if reading.daysUntilWindowEnd <= 6 {
                 score += 10
             }
@@ -151,14 +151,14 @@ enum PriorityEngine {
 
         if reading.phase == .declining, stockFraction > 0.45 {
             score += stockFraction * 16
-            details.append(L("已过窗口但还剩不少"))
+            details.append(L("已过黄金风味期但还剩不少"))
         }
 
         // E. This bag will not be finished before the window shuts.
         if reading.phase.isInWindow, reading.daysUntilWindowEnd >= 0 {
             if estimate.daysRemaining > reading.daysUntilWindowEnd {
                 score += 16
-                details.append(L("窗口比你的消耗速度更短"))
+                details.append(L("黄金风味期比你的消耗速度更短"))
             }
         }
 

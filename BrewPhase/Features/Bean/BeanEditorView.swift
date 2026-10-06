@@ -84,7 +84,9 @@ struct BeanEditorView: View {
     // Required
     @State private var name: String
     @State private var roastDate: Date?
-    @State private var roastLevel: RoastLevel
+    /// 烘焙程度**必须明确选择**：它决定阶段、窗口、推荐与提醒。新建时为 nil
+    /// （什么都不预选），保存前没选就明确拦下——绝不允许悄悄落成浅烘或中烘。
+    @State private var roastLevel: RoastLevel?
     @State private var weightG: Double
 
     // Basics
@@ -122,7 +124,8 @@ struct BeanEditorView: View {
 
         _name = State(initialValue: bean?.name ?? "")
         _roastDate = State(initialValue: bean?.roastDate ?? (mode == .create ? Date() : nil))
-        _roastLevel = State(initialValue: bean?.roastLevel ?? .light)
+        // 编辑已有豆子时它总有值；新建时不预选（规格：关键数据不允许被默认值悄悄决定）。
+        _roastLevel = State(initialValue: bean?.roastLevel)
         _weightG = State(initialValue: bean?.weightG ?? 0)
         _roaster = State(initialValue: bean?.roaster ?? "")
         _origin = State(initialValue: bean?.origin ?? "")
@@ -138,13 +141,21 @@ struct BeanEditorView: View {
         _openDate = State(initialValue: bean?.openDate)
         _remainingG = State(initialValue: bean?.remainingG ?? 0)
 
-        _showsMore = State(initialValue: bean.map { !$0.origin.isEmpty || !$0.process.isEmpty || $0.purchaseDate != nil || $0.price > 0 || !$0.channel.isEmpty } ?? false)
+        _showsMore = State(initialValue: bean.map {
+            !$0.origin.isEmpty || !$0.process.isEmpty || $0.purchaseDate != nil
+                || $0.price > 0 || !$0.channel.isEmpty || !$0.roaster.isEmpty || $0.imagePath != nil
+        } ?? false)
     }
 
     // MARK: - Derived
 
     private var effectiveRemaining: Double {
         isOpened ? remainingG : weightG
+    }
+
+    /// 烘焙程度还没选时的拦截文案。它决定阶段与窗口，不能默认。
+    private var roastLevelMissing: String? {
+        roastLevel == nil ? L("选一个烘焙程度吧，阶段判断要靠它") : nil
     }
 
     private var validation: BeanValidation {
@@ -156,7 +167,7 @@ struct BeanEditorView: View {
     /// A live preview of where this bag will land, shown while choosing a roast
     /// level so the rules stop being abstract.
     private var rulePreview: PhaseReading? {
-        guard let roastDate else { return nil }
+        guard let roastDate, let roastLevel else { return nil }
         let draft = BeanSnapshot(
             name: name,
             roastLevel: roastLevel,
@@ -203,18 +214,12 @@ struct BeanEditorView: View {
 
     // MARK: - Sections
 
+    /// 首屏只回答「这是什么豆」：豆名、烘焙日期、烘焙程度、重量。
+    /// 烘焙商、照片、产区、价格都在「更多信息」里（规格：可选信息不上首屏）。
     private var basicsSection: some View {
         EditorSection(title: "这包豆子") {
-            EditorRow(title: "豆名") {
+            EditorRow(title: "豆名", showsDivider: false) {
                 EditorTextField(placeholder: "比如 Ethiopia Guji", text: $name)
-            }
-            EditorRow(title: "烘焙商") {
-                EditorTextField(placeholder: "谁烘的", text: $roaster)
-            }
-            EditorRow(title: "照片", showsDivider: false) {
-                PhotoFieldView(storedName: bean?.imagePath,
-                               pickedImage: $pickedImage,
-                               isRemoved: $isImageRemoved)
             }
         }
     }
@@ -227,9 +232,16 @@ struct BeanEditorView: View {
                     DateRow(title: "烘焙日期", date: $roastDate)
 
                     VStack(alignment: .leading, spacing: 9) {
-                        Text("烘焙度")
-                            .font(TypeScale.body)
-                            .foregroundStyle(Palette.inkSoft)
+                        HStack(spacing: 6) {
+                            Text("烘焙度")
+                                .font(TypeScale.body)
+                                .foregroundStyle(Palette.inkSoft)
+                            if roastLevel == nil {
+                                Text("必选")
+                                    .font(TypeScale.micro)
+                                    .foregroundStyle(Palette.priority)
+                            }
+                        }
                         FlowLayout(spacing: 7, lineSpacing: 7) {
                             ForEach(RoastLevel.pickerOrder) { level in
                                 SelectableTag(text: level.label, isOn: roastLevel == level) {
@@ -270,8 +282,9 @@ struct BeanEditorView: View {
     /// "按默认窗口：7 天后进入窗口，28 天后开始衰退" — the rule in one line, so
     /// the number the app will use is never a mystery.
     private func phasePreview(_ reading: PhaseReading) -> some View {
+        guard let roastLevel else { return AnyView(EmptyView()) }
         let rule = book.rule(for: roastLevel)
-        return HStack(spacing: 8) {
+        return AnyView(HStack(spacing: 8) {
             PhaseDot(color: Palette.tint(reading.phase), size: 7)
             Text(L("排气 %@–%@ 天 · 窗口 %@–%@ 天 · %@",
                    String(rule.restMinDays), String(rule.restMaxDays),
@@ -281,13 +294,21 @@ struct BeanEditorView: View {
                 .foregroundStyle(Palette.inkFaint)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 4)
+        .padding(.horizontal, 4))
     }
 
     private var optionalSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             if showsMore {
                 EditorSection(title: "更多信息") {
+                    EditorRow(title: "烘焙商") {
+                        EditorTextField(placeholder: "谁烘的", text: $roaster)
+                    }
+                    EditorRow(title: "照片") {
+                        PhotoFieldView(storedName: bean?.imagePath,
+                                       pickedImage: $pickedImage,
+                                       isRemoved: $isImageRemoved)
+                    }
                     EditorRow(title: "产区") {
                         EditorTextField(placeholder: "比如 埃塞俄比亚 · Guji", text: $origin)
                     }
@@ -309,13 +330,14 @@ struct BeanEditorView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "plus.circle")
                             .font(.system(size: 13, weight: .medium))
-                        Text("补充产区、处理法、价格")
+                        Text("补充烘焙商、产区与价格")
                             .font(TypeScale.callout)
                     }
                     .foregroundStyle(Palette.roast)
                     .padding(.horizontal, 4)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(Text("补充烘焙商、产区与价格"))
             }
         }
     }
@@ -324,7 +346,7 @@ struct BeanEditorView: View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeader(title: "风味标签", detail: "可以以后再补")
             Card {
-                FlavorTagEditor(tags: $flavorTags)
+                CollapsibleFlavorTags(tags: $flavorTags)
             }
         }
     }
@@ -342,7 +364,9 @@ struct BeanEditorView: View {
         if let errorMessage {
             messageCard(errorMessage, color: Palette.priority)
         } else if hasAttemptedSave {
-            if !validation.blocking.isEmpty {
+            if let missing = roastLevelMissing {
+                messageCard(missing, color: Palette.priority)
+            } else if !validation.blocking.isEmpty {
                 messageCard(validation.blocking.first ?? "", color: Palette.priority)
             } else if let hint = validation.hints.first {
                 messageCard(hint, color: Palette.inkSoft)
@@ -389,6 +413,12 @@ struct BeanEditorView: View {
                                            weightG: weightG, remainingG: effectiveRemaining)
         guard result.canSave, let roastDate else {
             errorMessage = result.blocking.first
+            return
+        }
+        // 烘焙程度必须明确选择（规格：关键数据不允许被默认值悄悄决定——
+        // 它决定阶段、窗口、推荐与提醒）。
+        guard let roastLevel else {
+            errorMessage = roastLevelMissing
             return
         }
 

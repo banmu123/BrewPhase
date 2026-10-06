@@ -37,8 +37,8 @@ struct QuickBrewLogView: View {
     @State private var notes = ""
 
     @State private var showsParameters = false
-    /// 风味标签默认折着：30 秒那条路不该先看见几十个词。点「添加风味」才展开，
-    /// 再点一次收起；已经选上的词任何时候都看得见。
+    /// 风味标签默认折着（折叠态由 `CollapsibleFlavorTags` 管理）；
+    /// 这里只存调试入口的「初始展开」种子。
     @State private var showsFlavorTags = false
     /// 用户动过参数之后就不再自动预填，免得他刚填的数字被覆盖。
     @State private var touchedRecipe = false
@@ -48,6 +48,8 @@ struct QuickBrewLogView: View {
     @State private var diagnosis: BrewDiagnosis?
     /// 「上一杯的建议 → 这一杯」的观察性对比。上一杯存在时才可能有值。
     @State private var followUp: SuggestionFollowUp?
+    /// 结果页的完整诊断（证据 / 知识出处）默认收着。
+    @State private var showsFullDiagnosis = false
     @State private var errorMessage: String?
     @State private var didResolveDefault = false
     /// 「上一杯」对比卡的展开状态（上一批的规格：默认只给摘要）。
@@ -324,39 +326,13 @@ struct QuickBrewLogView: View {
         }
     }
 
-    /// 风味标签：默认一行「添加风味」，展开才是完整的 `FlavorTagEditor`。
-    /// `FlavorLibrary` 一个组、一个词都没动，只是不再在首屏全铺开。
+    /// 风味标签：默认一行「添加风味」，展开才是完整的 `FlavorTagEditor`
+    ///（与豆子编辑器共用 `CollapsibleFlavorTags`）。
     private var flavorSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeader(title: "风味标签", detail: .alreadyLocalized("可以以后再补"))
             Card {
-                VStack(alignment: .leading, spacing: 12) {
-                    if showsFlavorTags {
-                        FlavorTagEditor(tags: $flavorTags)
-                        CardDivider()
-                    } else if !flavorTags.isEmpty {
-                        FlowLayout(spacing: 7, lineSpacing: 7) {
-                            ForEach(flavorTags, id: \.self) { tag in
-                                FlavorChip(text: FlavorLibrary.displayName(for: tag))
-                            }
-                        }
-                        CardDivider()
-                    }
-
-                    Button {
-                        withAnimation(Motion.settle) { showsFlavorTags.toggle() }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: showsFlavorTags ? "chevron.up" : "plus.circle")
-                                .font(.system(size: 13, weight: .medium))
-                            Text(showsFlavorTags ? "收起风味" : "添加风味")
-                                .font(TypeScale.callout)
-                            Spacer(minLength: 0)
-                        }
-                        .foregroundStyle(Palette.roast)
-                    }
-                    .buttonStyle(.plain)
-                }
+                CollapsibleFlavorTags(tags: $flavorTags, initiallyExpanded: showsFlavorTags)
             }
         }
     }
@@ -606,26 +582,53 @@ struct QuickBrewLogView: View {
     private func result(saved brew: Brew, diagnosis: BrewDiagnosis) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Metric.sectionGap) {
+                // 刚喝完的人只想知道两件事：这杯怎么样、下一杯改什么。
+                // 完整分析（证据、知识出处）收在折叠里，不铺成一屏报告。
                 Card {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 8) {
                             Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 15, weight: .medium))
+                                .font(.system(size: 14, weight: .medium))
                                 .foregroundStyle(Palette.peak)
                             Text("记下了")
-                                .font(TypeScale.bodyMedium)
-                                .foregroundStyle(Palette.ink)
+                                .font(TypeScale.callout)
+                                .foregroundStyle(Palette.inkSoft)
                             Spacer(minLength: 0)
-                            if brew.score > 0 {
-                                Text(L("%@ 星", String(brew.score)))
-                                    .font(TypeScale.caption.monospacedDigit())
-                                    .foregroundStyle(Palette.roast)
-                            }
+                            Text(LocalizedStringKey.alreadyLocalized(
+                                brew.bean?.displayName ?? ""))
+                                .font(TypeScale.caption)
+                                .foregroundStyle(Palette.inkFaint)
+                                .lineLimit(1)
                         }
-                        Text(L("%@ · %@", brew.bean?.displayName ?? "", brew.recipe.summaryParts.joined(separator: " · ")))
-                            .font(TypeScale.caption)
+
+                        if brew.score > 0 {
+                            StarRating(score: brew.score, size: 17)
+                                .accessibilityLabel(Text(L("%@ 星", String(brew.score))))
+                        }
+                        if let taste = brew.tasteLine {
+                            Text(LocalizedStringKey.alreadyLocalized(taste))
+                                .font(TypeScale.callout)
+                                .foregroundStyle(Palette.ink)
+                        }
+                        Text(LocalizedStringKey.alreadyLocalized(
+                            brew.recipe.summaryParts.joined(separator: " · ")))
+                            .font(TypeScale.caption.monospacedDigit())
                             .foregroundStyle(Palette.inkFaint)
                             .fixedSize(horizontal: false, vertical: true)
+
+                        CardDivider()
+
+                        // 一句话诊断：候选结论的标题，或者诚实的「没有异常 / 数据还不够」。
+                        Text(LocalizedStringKey.alreadyLocalized(verdictLine(diagnosis)))
+                            .font(TypeScale.bodyMedium)
+                            .foregroundStyle(Palette.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if diagnosis.primary == nil, !diagnosis.baseline.isUsable {
+                            Text(LocalizedStringKey.alreadyLocalized(PersonalBaseline.keepRecordingAdvice))
+                                .font(TypeScale.caption)
+                                .foregroundStyle(Palette.roast)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
 
@@ -635,7 +638,29 @@ struct QuickBrewLogView: View {
                     followUpCard(followUp)
                 }
 
-                BrewDiagnosticCard(diagnosis: diagnosis, emphasizesSuggestion: true)
+                // 一杯就一个改动方向。数据不足时诊断不会给出建议，这里整块不出现
+                // ——不给建议也是一个结论。
+                if let suggestion = diagnosis.suggestion {
+                    nextCupCard(suggestion)
+                }
+
+                Button {
+                    withAnimation(Motion.settle) { showsFullDiagnosis.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(showsFullDiagnosis ? "收起完整分析" : "查看完整分析")
+                        Image(systemName: showsFullDiagnosis ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .font(TypeScale.caption)
+                    .foregroundStyle(Palette.inkSoft)
+                }
+                .buttonStyle(.plain)
+
+                if showsFullDiagnosis {
+                    BrewDiagnosticCard(diagnosis: diagnosis)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
 
                 HStack(spacing: 10) {
                     SecondaryButton(title: "再记一杯", systemImage: "plus") { logAnother() }
@@ -645,6 +670,33 @@ struct QuickBrewLogView: View {
             .padding(.horizontal, Metric.gutter)
             .padding(.top, 8)
             .padding(.bottom, 32)
+        }
+    }
+
+    /// 一句话诊断：候选结论的标题；没有候选时说清是「正常」还是「数据不够」。
+    private func verdictLine(_ diagnosis: BrewDiagnosis) -> String {
+        if let primary = diagnosis.primary { return primary.finding.title }
+        if diagnosis.baseline.isUsable { return L("这一杯在你自己的记录里没有明显异常。") }
+        return diagnosis.baseline.shortfallMessage
+    }
+
+    /// 「下一杯建议」的紧凑版：一个旋钮 + 一句为什么。
+    private func nextCupCard(_ suggestion: AdjustmentSuggestion) -> some View {
+        Card(lifted: true) {
+            VStack(alignment: .leading, spacing: 7) {
+                Text("下一杯建议")
+                    .font(TypeScale.micro)
+                    .tracking(0.8)
+                    .foregroundStyle(Palette.inkFaint)
+                Text(LocalizedStringKey.alreadyLocalized(suggestion.headline))
+                    .font(TypeScale.title)
+                    .foregroundStyle(Palette.roast)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(LocalizedStringKey.alreadyLocalized(suggestion.reason))
+                    .font(TypeScale.caption)
+                    .foregroundStyle(Palette.inkSoft)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -812,6 +864,7 @@ struct QuickBrewLogView: View {
         notes = ""
         date = Date()
         showsPreviousBrewDetail = false
+        showsFullDiagnosis = false
         if let bean = selectedBean { applyPrefill(for: bean, method: recipe.method, force: true) }
     }
 }

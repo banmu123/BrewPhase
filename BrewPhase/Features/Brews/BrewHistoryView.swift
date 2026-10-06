@@ -12,6 +12,8 @@ struct BrewHistoryView: View {
     @Query(sort: \Brew.date, order: .reverse) private var brews: [Brew]
 
     @State private var editingBrew: Brew?
+    /// 待删除的记录：删除一律先过确认框，长按菜单不再直接删。
+    @State private var pendingDelete: Brew?
     @State private var actionError: String?
 
     private var months: [(key: String, brews: [Brew])] {
@@ -63,7 +65,7 @@ struct BrewHistoryView: View {
                                     .buttonStyle(CardButtonStyle())
                                     .contextMenu {
                                         Button(role: .destructive) {
-                                            delete(brew)
+                                            pendingDelete = brew
                                         } label: {
                                             Label("删除这条记录", systemImage: "trash")
                                         }
@@ -96,6 +98,22 @@ struct BrewHistoryView: View {
                 Button("好") { actionError = nil }
             } message: {
                 Text(actionError ?? "")
+            }
+            .confirmationDialog(
+                "删除这条冲煮记录？",
+                isPresented: Binding(
+                    get: { pendingDelete != nil },
+                    set: { if !$0 { pendingDelete = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("删除", role: .destructive) {
+                    if let brew = pendingDelete { delete(brew) }
+                    pendingDelete = nil
+                }
+                Button("取消", role: .cancel) { pendingDelete = nil }
+            } message: {
+                Text("删除后不可恢复。这杯用掉的粉会回到原来那包豆的库存里。")
             }
         }
     }

@@ -72,6 +72,7 @@ struct FlavorTagEditor: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!canAddDraft)
+                .accessibilityLabel(Text("添加自定义风味"))
             }
         }
     }
@@ -123,6 +124,56 @@ struct FlavorTagList: View {
                     FlavorChip(text: FlavorLibrary.displayName(for: tag))
                 }
             }
+        }
+    }
+}
+
+/// 折叠版风味标签（规格：不要在首屏一次性铺开几十个词）。
+///
+/// 折叠时是一行「添加风味」（选过的词以 chip 形式在场）；展开才是完整的
+/// `FlavorTagEditor`，再点一次收起。Quick Log 与豆子编辑器共用这一份，
+/// 「30 秒路径」上永远默认折叠。
+struct CollapsibleFlavorTags: View {
+
+    @Binding var tags: [String]
+    /// 调试入口用：`--quick-expand flavor` 让它以展开姿态出现。
+    var initiallyExpanded: Bool = false
+
+    @State private var isExpanded: Bool
+
+    init(tags: Binding<[String]>, initiallyExpanded: Bool = false) {
+        _tags = tags
+        _isExpanded = State(initialValue: initiallyExpanded)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if isExpanded {
+                FlavorTagEditor(tags: $tags)
+                CardDivider()
+            } else if !tags.isEmpty {
+                FlowLayout(spacing: 7, lineSpacing: 7) {
+                    ForEach(tags, id: \.self) { tag in
+                        FlavorChip(text: FlavorLibrary.displayName(for: tag))
+                    }
+                }
+                CardDivider()
+            }
+
+            Button {
+                withAnimation(Motion.settle) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isExpanded ? "chevron.up" : "plus.circle")
+                        .font(.system(size: 13, weight: .medium))
+                    Text(isExpanded ? "收起风味" : "添加风味")
+                        .font(TypeScale.callout)
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(Palette.roast)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text(isExpanded ? "收起风味" : "添加风味"))
         }
     }
 }

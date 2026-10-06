@@ -20,6 +20,8 @@ struct BeanDetailView: View {
     @State private var isAdjustingStock = false
     @State private var isConfirmingDelete = false
     @State private var showsAllBrews = false
+    /// 待删除的风味记录：删除一律先过确认框。
+    @State private var pendingTastingDelete: Tasting?
     /// 「最近一杯」卡片里的完整诊断默认收着，点「展开依据」才出现。
     @State private var showsRecentDiagnosis = false
     /// 工具栏动作（标记喝完 / 恢复在喝 / 删除）失败时的提示。
@@ -73,7 +75,7 @@ struct BeanDetailView: View {
                     bean: bean.snapshot,
                     rule: rule,
                     onAdd: { isAddingTasting = true },
-                    onDelete: delete(tasting:)
+                    onDelete: { pendingTastingDelete = $0 }
                 )
                 // 预计风味窗口与知识区块都是参考资料，不属于当前行动，统一排在
                 // 自己的记录之后。
@@ -152,15 +154,31 @@ struct BeanDetailView: View {
             QuickBrewLogView(bean: bean)
         }
         .confirmationDialog(
-            "删除这包豆子？",
+            "删除这包咖啡豆？",
             isPresented: $isConfirmingDelete,
             titleVisibility: .visible
         ) {
             Button("删除", role: .destructive) { deleteBean() }
             Button("取消", role: .cancel) {}
         } message: {
-            Text(L("删除这包豆子后，它关联的 %@ 条冲煮记录和 %@ 条风味记录也会一起被删除，无法恢复。",
+            Text(L("删除后不可恢复。它关联的 %@ 条冲煮记录和 %@ 条风味记录也会一起被删除。",
                    String(bean.brewsCount), String(bean.tastingsOldestFirst.count)))
+        }
+        .confirmationDialog(
+            "删除这条风味记录？",
+            isPresented: Binding(
+                get: { pendingTastingDelete != nil },
+                set: { if !$0 { pendingTastingDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("删除", role: .destructive) {
+                if let tasting = pendingTastingDelete { delete(tasting: tasting) }
+                pendingTastingDelete = nil
+            }
+            Button("取消", role: .cancel) { pendingTastingDelete = nil }
+        } message: {
+            Text("删除后不可恢复。冲煮记录本身不受影响。")
         }
         // 保存类动作失败一律走到这里：动作没生效就得说出来，默默失败等于骗人。
         .alert(
@@ -410,7 +428,7 @@ struct BeanDetailView: View {
             Card {
                 VStack(alignment: .leading, spacing: 16) {
                     if bean.brewsCount == 0 {
-                        Text("还没有冲煮记录\n冲一次，然后记下今天这杯怎么样。")
+                        Text("还没有冲煮记录\n记下第一杯，之后才能看到你的参数变化和个人规律。")
                             .font(TypeScale.callout)
                             .foregroundStyle(Palette.inkSoft)
                             .lineSpacing(3)
@@ -567,6 +585,8 @@ struct StockAdjustView: View {
 
     @State private var value: Double
     @State private var errorMessage: String?
+    /// 剩余量 > 总量时的二次确认：调整总容量必须得到用户点头，不悄悄改数据。
+    @State private var showsExpansionConfirm = false
 
     /// - Parameter initialValue: 只给调试屏用——「剩余量 > 总量」那条提示需要
     ///   从那个状态直接打开才看得见（见 `DebugLaunch.stockOvershoot`）。
@@ -618,7 +638,13 @@ struct StockAdjustView: View {
                     messageCard(errorMessage)
                 }
 
-                PrimaryButton(title: "保存") { save() }
+                PrimaryButton(title: "保存") {
+                    if expandsBag {
+                        showsExpansionConfirm = true
+                    } else {
+                        save()
+                    }
+                }
 
                 Spacer(minLength: 0)
             }
@@ -627,6 +653,19 @@ struct StockAdjustView: View {
             .background(Palette.paper)
             .navigationTitle("调整剩余量")
             .navigationBarTitleDisplayMode(.inline)
+            .confirmationDialog(
+                "剩余量高于总容量",
+                isPresented: $showsExpansionConfirm,
+                titleVisibility: .visible
+            ) {
+                Button(role: .destructive) { save() } label: {
+                    Text(LocalizedStringKey.alreadyLocalized(L("把总容量调整为 %@", Fmt.grams(value))))
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text(L("保存后这包豆的总容量会从 %@ 变成 %@。历史记录不受影响。",
+                       Fmt.grams(bean.weightG), Fmt.grams(value)))
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("取消") { dismiss() }

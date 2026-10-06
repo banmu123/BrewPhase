@@ -84,7 +84,7 @@ struct FlavorWindowCard: View {
                     .foregroundStyle(Palette.inkFaint)
             }
 
-            Text(L("预计最佳窗口 %@ – %@", Fmt.day(curve.windowStart), Fmt.day(curve.windowEnd)))
+            Text(L("预计黄金风味期 %@ – %@", Fmt.day(curve.windowStart), Fmt.day(curve.windowEnd)))
                 .font(TypeScale.callout)
                 .foregroundStyle(Palette.inkSoft)
 

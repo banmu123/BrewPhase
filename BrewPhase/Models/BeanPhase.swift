@@ -15,12 +15,15 @@ enum BeanPhase: String, Codable, CaseIterable, Identifiable, Sendable {
     var id: String { rawValue }
 
     /// Full name, used on the detail page.
+    ///
+    /// 产品术语只有一套（规格：不要同一个意思好几个说法）：养豆期 / 风味打开 /
+    /// 黄金风味期 / 风味衰减。内部 case 名保持 resting/opening/peak/declining。
     var title: String {
         switch self {
-        case .resting: return L("太新")
-        case .opening: return L("开始进入窗口")
-        case .peak: return L("黄金风味窗口")
-        case .declining: return L("风味衰退")
+        case .resting: return L("养豆期")
+        case .opening: return L("风味打开")
+        case .peak: return L("黄金风味期")
+        case .declining: return L("风味衰减")
         }
     }
 
@@ -28,9 +31,9 @@ enum BeanPhase: String, Codable, CaseIterable, Identifiable, Sendable {
     var shortTitle: String {
         switch self {
         case .resting: return L("养豆")
-        case .opening: return L("进入窗口")
-        case .peak: return L("黄金窗口")
-        case .declining: return L("衰退")
+        case .opening: return L("打开")
+        case .peak: return L("黄金期")
+        case .declining: return L("衰减")
         }
     }
 

@@ -9,10 +9,10 @@ enum PhasePresentation {
     static func title(phase: BeanPhase, tier: PriorityTier) -> String {
         switch (phase, tier) {
         case (.declining, .high), (.declining, .urgent): return L("建议优先消耗")
-        case (.declining, _): return L("开始衰退")
-        case (.peak, _): return L("黄金窗口")
-        case (.opening, _): return L("进入窗口")
-        case (.resting, _): return L("太新")
+        case (.declining, _): return L("风味衰减")
+        case (.peak, _): return L("黄金风味期")
+        case (.opening, _): return L("风味打开")
+        case (.resting, _): return L("养豆期")
         }
     }
 

@@ -145,7 +145,7 @@ final class ConsumptionAndPriorityTests: XCTestCase {
         // but only 8 days of window.
         let slow = candidate("Slow", roastedDaysAgo: 20, weight: 200, remaining: 200)
         XCTAssertGreaterThan(slow.estimate.daysRemaining, slow.reading.daysUntilWindowEnd)
-        XCTAssertTrue(slow.verdict.details.contains("窗口比你的消耗速度更短"))
+        XCTAssertTrue(slow.verdict.details.contains("黄金风味期比你的消耗速度更短"))
         XCTAssertGreaterThanOrEqual(slow.verdict.tier, PriorityTier.high)
     }
 

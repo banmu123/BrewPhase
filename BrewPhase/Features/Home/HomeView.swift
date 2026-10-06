@@ -64,9 +64,9 @@ struct HomeView: View {
                         Card(lifted: true) {
                             EmptyStateView(
                                 symbol: "square.stack.3d.up",
-                                title: "豆仓还是空的",
-                                message: "添加第一包豆子，开始记录它从养豆到衰退的整个过程。",
-                                actionLabel: "添加豆子",
+                                title: "还没有你的咖啡豆",
+                                message: "添加正在喝的豆子，BrewPhase 才能帮你判断阶段和饮用顺序。",
+                                actionLabel: "添加第一包豆",
                                 action: { isAddingBean = true }
                             )
                         }

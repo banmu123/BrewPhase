@@ -16,6 +16,9 @@ struct StarRating: View {
             }
         }
         .animation(Motion.pop, value: score)
+        // 只读版也要说得清自己是谁：VoiceOver 听到的是「N 星」，而不是五个图形。
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(L("%@ 星", String(score))))
     }
 }
 

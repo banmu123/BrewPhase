@@ -120,7 +120,7 @@ enum StructuredRetriever {
         if let book,
            let pick = InsightFactory.todaysPick(active, book: book),
            let bean = active.first(where: { $0.id == pick.id }) {
-            lines.append(L("按现有的窗口规则，今天最该喝的是「%@」。", bean.displayName))
+            lines.append(L("按现有的阶段规则，今天最该喝的是「%@」。", bean.displayName))
         }
 
         return RetrievedPassage(

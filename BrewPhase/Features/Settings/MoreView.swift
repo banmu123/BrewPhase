@@ -148,6 +148,12 @@ struct MoreView: View {
                 }
             }
 
+            Text("推荐提醒默认打开：进入黄金风味期、黄金期将尽、喝不完提示。养豆完成与黄金期过半默认关闭，按需开启。")
+                .font(TypeScale.caption)
+                .foregroundStyle(Palette.inkFaint)
+                .padding(.horizontal, 4)
+                .fixedSize(horizontal: false, vertical: true)
+
             statusNote
         }
     }
@@ -368,7 +374,9 @@ private struct ReminderToggleRow: View {
     init(kind: ReminderKind, onChange: @escaping () -> Void) {
         self.kind = kind
         self.onChange = onChange
-        _isOn = AppStorage(wrappedValue: true, PrefKey.reminderEnabled(kind))
+        // 默认值与 `ReminderPreferences.current()` 同一处定义：推荐提醒默认开，
+        // 其余默认关。用户动过之后以他写下的值为准。
+        _isOn = AppStorage(wrappedValue: kind.recommendedByDefault, PrefKey.reminderEnabled(kind))
     }
 
     var body: some View {

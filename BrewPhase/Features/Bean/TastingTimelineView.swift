@@ -29,7 +29,15 @@ struct TastingTimelineView: View {
                         emptyState
                     } else {
                         ForEach(Array(tastings.enumerated()), id: \.element.id) { index, tasting in
-                            row(tasting, isLast: index == tastings.count - 1)
+                            // 与上一条的间隔：时间连续感就在这几行小字里——
+                            // 「Day 5 → Day 9」中间隔着几天，一眼可见。
+                            row(
+                                tasting,
+                                gapDays: index == 0
+                                    ? nil
+                                    : tasting.dayAfterRoast - tastings[index - 1].dayAfterRoast,
+                                isLast: index == tastings.count - 1
+                            )
                         }
                         addButton.padding(.top, 14)
                     }
@@ -40,7 +48,7 @@ struct TastingTimelineView: View {
 
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("还没有风味记录\n冲一次，然后记下今天这杯怎么样。")
+            Text("这包豆还没有风味记录\n记一杯或随手记一笔，它的变化就会出现在这里。")
                 .font(TypeScale.callout)
                 .foregroundStyle(Palette.inkSoft)
                 .lineSpacing(3)
@@ -54,7 +62,7 @@ struct TastingTimelineView: View {
 
     // MARK: - Row
 
-    private func row(_ tasting: Tasting, isLast: Bool) -> some View {
+    private func row(_ tasting: Tasting, gapDays: Int?, isLast: Bool) -> some View {
         let phase = PhaseEngine.phase(dayAfterRoast: tasting.dayAfterRoast, bean: bean, rule: rule)
         let color = Palette.tint(phase)
 
@@ -85,6 +93,12 @@ struct TastingTimelineView: View {
 
                     Spacer(minLength: 0)
 
+                    if let gapDays, gapDays >= 2 {
+                        Text(LocalizedStringKey.alreadyLocalized(L("+%@ 天", String(gapDays))))
+                            .font(TypeScale.micro.monospacedDigit())
+                            .foregroundStyle(Palette.latte)
+                    }
+
                     Text(Fmt.short(tasting.date))
                         .font(TypeScale.micro)
                         .foregroundStyle(Palette.inkFaint)
@@ -110,6 +124,7 @@ struct TastingTimelineView: View {
             }
             .padding(.bottom, isLast ? 0 : 16)
         }
+        // 长按唤起删除；真正删除前还有一层确认（在宿主页面上）。
         .contextMenu {
             Button(role: .destructive) {
                 onDelete(tasting)
@@ -117,5 +132,6 @@ struct TastingTimelineView: View {
                 Label("删除这条记录", systemImage: "trash")
             }
         }
+        .accessibilityElement(children: .combine)
     }
 }

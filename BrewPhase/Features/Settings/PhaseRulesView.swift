@@ -217,7 +217,7 @@ struct PhaseRulesView: View {
 
         return VStack(alignment: .leading, spacing: 7) {
             PhaseTrack(reading: reading, showsMarker: true, showsLegend: true)
-            Text(L("排气 %@–%@ 天 · 窗口第 %@–%@ 天 · 第 %@ 天开始衰退",
+            Text(L("排气 %@–%@ 天 · 窗口第 %@–%@ 天 · 第 %@ 天开始衰减",
                    String(normalized.restMinDays), String(normalized.restMaxDays),
                    String(bounds.peakStart), String(bounds.peakEnd), String(bounds.peakEnd)))
                 .font(TypeScale.caption)

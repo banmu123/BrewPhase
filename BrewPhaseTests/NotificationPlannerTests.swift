@@ -199,8 +199,15 @@ final class NotificationPlannerTests: XCTestCase {
         let suite = try XCTUnwrap(UserDefaults(suiteName: "brewphase.tests.reminders"))
         suite.removePersistentDomain(forName: "brewphase.tests.reminders")
 
-        // Everything defaults to on.
-        XCTAssertEqual(ReminderPreferences.current(from: suite).enabledCount, ReminderKind.allCases.count)
+        // 默认只开推荐提醒（进入窗口 / 黄金期将尽 / 喝不完提示），其余默认关——
+        // 不要让五路提醒一起轰炸第一次打开的人。
+        let defaults = ReminderPreferences.current(from: suite)
+        XCTAssertEqual(defaults.enabledCount, 3)
+        XCTAssertTrue(defaults.isEnabled(.windowOpens))
+        XCTAssertTrue(defaults.isEnabled(.windowEnding))
+        XCTAssertTrue(defaults.isEnabled(.brewPriority))
+        XCTAssertFalse(defaults.isEnabled(.restComplete))
+        XCTAssertFalse(defaults.isEnabled(.windowHalfway))
 
         suite.set(false, forKey: PrefKey.reminderEnabled(.windowEnding))
         let loaded = ReminderPreferences.current(from: suite)
