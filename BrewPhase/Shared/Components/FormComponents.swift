@@ -277,6 +277,12 @@ struct DateRow: View {
     @Binding var date: Date?
     var showsDivider: Bool = true
 
+    /// 最近一次的非空日期。清空的那一帧里 DatePicker 还挂在视图树上、仍会读一次
+    /// 它的值——`Binding($date)` 的自动解包在那个时机读到 nil 会直接崩溃
+    /// （实测：添加豆子弹窗里点清除烘焙日期即崩）。这个兜底值让读取永远有值
+    /// 可给；真正的 nil 只由清除按钮写入，且写入后选择器立即离场。
+    @State private var lastKnown: Date = Date()
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
@@ -285,12 +291,18 @@ struct DateRow: View {
                     .foregroundStyle(Palette.inkSoft)
                 Spacer(minLength: 8)
 
-                if let bound = Binding($date) {
-                    // Follows the tree's locale, which the app root sets to the
-                    // chosen language, rather than a hard-coded one.
-                    DatePicker("", selection: bound, displayedComponents: .date)
-                        .labelsHidden()
-                        .datePickerStyle(.compact)
+                if date != nil {
+                    // 手写绑定而不是 `Binding($date)` 自动解包：get 永不踩空。
+                    DatePicker(
+                        "",
+                        selection: Binding(
+                            get: { date ?? lastKnown },
+                            set: { lastKnown = $0; date = $0 }
+                        ),
+                        displayedComponents: .date
+                    )
+                    .labelsHidden()
+                    .datePickerStyle(.compact)
                     Button {
                         withAnimation(Motion.quick) { date = nil }
                     } label: {
@@ -301,7 +313,7 @@ struct DateRow: View {
                     .buttonStyle(.plain)
                 } else {
                     Button {
-                        withAnimation(Motion.quick) { date = Date() }
+                        withAnimation(Motion.quick) { date = lastKnown }
                     } label: {
                         Text("未填写")
                             .font(TypeScale.body)
