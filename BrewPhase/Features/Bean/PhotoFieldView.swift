@@ -36,7 +36,11 @@ struct PhotoFieldView: View {
                     .font(TypeScale.callout)
                     .foregroundStyle(Palette.inkSoft)
 
-                HStack(spacing: 8) {
+                // 按钮胶囊带 `.fixedSize()`（防单词被压成两行），英文「Camera /
+                // Library」加上标题列与缩略图后在窄屏放不下，会把整张卡撑出
+                // 屏幕外（实测）。FlowLayout 让放不下的胶囊自然落到下一行，
+                // 中文顺序不变，英文与更大字号下也不再横向溢出。
+                FlowLayout(spacing: 8, lineSpacing: 8) {
                     if CameraPicker.isAvailable {
                         actionButton("拍照", systemImage: "camera") { isShowingCamera = true }
                     }

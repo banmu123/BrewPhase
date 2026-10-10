@@ -127,7 +127,9 @@ struct EditorTextField: View {
 struct NumberField: View {
     let placeholder: LocalizedStringKey
     @Binding var value: Double
-    var unit: String = "g"
+    /// 单位走 `LocalizedStringKey`：「元」在英文界面显示为 CNY；
+    /// 「g」「°C」这类通用符号没有翻译键，原样显示。
+    var unit: LocalizedStringKey = "g"
     var decimal: Bool = false
     var alignment: TextAlignment = .trailing
 

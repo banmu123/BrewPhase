@@ -77,6 +77,7 @@ while [ $# -gt 0 ]; do
     --quick-expand) DEMO_ARGS+=(-BrewPhaseQuickLogExpand "$2"); shift 2 ;;
     --bean)   DEMO_ARGS+=(-BrewPhaseBean "$2"); shift 2 ;;
     --bean-action) DEMO_ARGS+=(-BrewPhaseBeanAction "$2"); shift 2 ;;
+    --bean-expand) DEMO_ARGS+=(-BrewPhaseBeanEditorExpand yes); shift ;;
     --stock-overshoot) DEMO_ARGS+=(-BrewPhaseStockOvershoot yes); shift ;;
     --lang)   LANG_SETTING="$2"; shift 2 ;;
     --pref)   PREFS+=("$2"); shift 2 ;;

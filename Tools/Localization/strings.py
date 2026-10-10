@@ -1119,4 +1119,5 @@ EN: dict[str, str] = {
     "数据只存在这台设备上，没有账号，没有服务器。":
         "Your data stays on this device. No account, no server.",
     "隐私政策": "Privacy Policy",
+    "元": "CNY",
 }

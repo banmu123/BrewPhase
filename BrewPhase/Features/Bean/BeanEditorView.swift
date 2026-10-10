@@ -146,7 +146,7 @@ struct BeanEditorView: View {
         _showsMore = State(initialValue: bean.map {
             !$0.origin.isEmpty || !$0.process.isEmpty || $0.purchaseDate != nil
                 || $0.price > 0 || !$0.channel.isEmpty || !$0.roaster.isEmpty || $0.imagePath != nil
-        } ?? false)
+        } ?? false || DebugLaunch.beanEditorExpand)
     }
 
     // MARK: - Derived

@@ -152,4 +152,13 @@ enum DebugLaunch {
     static var stockOvershoot: Bool {
         value(for: "-BrewPhaseStockOvershoot") == "yes"
     }
+
+    /// `-BrewPhaseBeanEditorExpand yes`
+    ///
+    /// 豆子编辑器的「更多信息」默认折着，而模拟器不能点击——展开之后的长英文
+    /// 标签（Roaster / Process / Channel…）在固定宽标题列旁边长什么样，只有先
+    /// 替用户展开才截得到。
+    static var beanEditorExpand: Bool {
+        value(for: "-BrewPhaseBeanEditorExpand") == "yes"
+    }
 }
