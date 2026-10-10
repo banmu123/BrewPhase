@@ -182,6 +182,8 @@
 "删除后不可恢复。冲煮记录本身不受影响。" = "This cannot be undone. The brew itself is not affected.";
 "删除后不可恢复。它关联的 %@ 条冲煮记录和 %@ 条风味记录也会一起被删除。" = "This cannot be undone. Its %@ brews and %@ tasting notes will be deleted too.";
 "删除后不可恢复。这杯用掉的粉会回到原来那包豆的库存里。" = "This cannot be undone. The coffee it used goes back to the bag's stock.";
+"删除示例数据" = "Remove sample data";
+"删除示例数据？" = "Remove sample data?";
 "删除这包咖啡豆？" = "Delete this bag of coffee?";
 "删除这包豆子" = "Delete this bean";
 "删除这条冲煮记录？" = "Delete this brew?";
@@ -197,6 +199,7 @@
 "剩余量比总克数还多，已把总克数调到 %@" = "There is more left than the bag holds, so the total was widened to %@";
 "剩余量高于总容量" = "Remaining is more than the bag holds";
 "加一张包装照片" = "Add a photo of the bag";
+"加入示例数据？" = "Add sample data?";
 "加粉" = "more coffee";
 "包含豆子、冲煮、风味、提醒和窗口规则" = "Beans, brews, tastings, reminders and window rules";
 "包装类型" = "Packaging";
@@ -298,6 +301,8 @@
 "导出时出了一点问题，请再试一次" = "Something went wrong while exporting. Please try again";
 "导出的 JSON 可以完整还原你的记录。CSV 只包含豆子、冲煮和风味三张表，方便做统计。" = "The JSON restores your records in full. The CSV holds three tables — beans, brews and tastings — for working with the numbers.";
 "导出的文件只保存在这台设备上，通过系统分享面板发给你自己。BrewPhase 不会上传任何东西。" = "Exported files stay on this device and are handed to you through the system share sheet. BrewPhase uploads nothing.";
+"将删除全部示例豆及其冲煮与风味记录。你自己的记录不受影响。" = "Deletes every sample bag along with its brews and tasting notes. Your own records are untouched.";
+"将加入 7 包演示豆（含冲煮与风味记录）。你自己的记录不受影响，之后关闭开关即可整批移除。" = "Adds 7 sample bags with brews and tasting notes. Your own records are untouched; turn the switch off later to remove them all.";
 "少一点" = "a bit less";
 "少一点粉" = "a little less coffee";
 "少萃一点：苦和干涩会退下去。" = "Extract a little less: bitterness and dryness should recede.";
@@ -592,6 +597,10 @@
 "研磨度 %@" = "grind %@";
 "磨豆机" = "Grinder";
 "磨豆机 %@" = "grinder %@";
+"示例数据" = "Sample data";
+"示例数据已移除，你的记录未受影响。" = "Sample data removed. Your own records are untouched.";
+"示例数据已载入：7 包演示豆，覆盖养豆到喝完的完整生命周期。" = "Sample data loaded: 7 bags covering the full lifecycle, from resting to finished.";
+"示例豆已在库中，关闭即整批移除" = "Sample bags are installed — turning this off removes them all";
 "移除" = "Remove";
 "稍微延长" = "a little longer";
 "稍微缩短" = "a little shorter";
@@ -702,6 +711,8 @@
 "距离窗口结束约 %@ 天" = "About %@ days left in the window";
 "距离进入窗口还有约 %@ 天。" = "About %@ days until it enters the window.";
 "跟随系统" = "Follow System";
+"载入 7 包演示豆，体验完整功能" = "Load 7 sample bags to explore every feature";
+"载入示例数据" = "Load sample data";
 "过去平均 %@ 分" = "averaged %@ before";
 "还剩 %@。" = "%@ left.";
 "还在养豆，风味还没打开" = "Still resting — the flavour is not open yet";

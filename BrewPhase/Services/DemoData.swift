@@ -33,6 +33,38 @@ enum DemoData {
         return true
     }
 
+    /// 库里是否已有示例数据（「更多 → 数据 → 示例数据」开关的数据真相）。
+    static func hasInstalled(context: ModelContext) -> Bool {
+        let count = (try? context.fetchCount(
+            FetchDescriptor<Bean>(predicate: #Predicate { $0.isSample })
+        )) ?? 0
+        return count > 0
+    }
+
+    /// 删除全部示例数据：只碰带 `isSample` 标记的豆子，它们的冲煮、风味与
+    /// 提醒随级联一起走；真实记录不带标记，永远不受影响。
+    ///
+    /// - Returns: true when something was actually deleted.
+    @discardableResult
+    static func removeInstalled(context: ModelContext) -> Bool {
+        let samples = (try? context.fetch(
+            FetchDescriptor<Bean>(predicate: #Predicate { $0.isSample })
+        )) ?? []
+        guard !samples.isEmpty else { return false }
+        for bean in samples {
+            context.delete(bean)
+        }
+        do {
+            try context.save()
+            AppLog.store.info("sample data removed: \(samples.count) bean(s)")
+            return true
+        } catch {
+            AppLog.store.error("sample data removal failed: \(error.localizedDescription, privacy: .public)")
+            context.rollback()
+            return false
+        }
+    }
+
     /// Six bags chosen so that every phase is represented at least once — one
     /// just roasted, one opening, two in their window, one past it and still
     /// nearly full — plus the awkward case: a bag with no roast date at all.
@@ -228,6 +260,13 @@ enum DemoData {
         )
         context.insert(finished)
         finished.markFinished()
+
+        // 示例标记：这些豆子全部来自「示例数据」，关闭设置里的开关时可整批
+        // 移除（冲煮、风味与提醒随级联一起走）。真实记录不带标记，永远不受
+        // 该开关影响——这是「关闭即清空示例」与「误删真实数据」之间的分界线。
+        for bean in [guji, colombia, kenya, brazil, house, geisha, finished] {
+            bean.isSample = true
+        }
 
         do {
             try context.save()

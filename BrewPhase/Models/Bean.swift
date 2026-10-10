@@ -51,6 +51,11 @@ final class Bean {
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
+    /// 示例数据标记。带标记的豆子（及其冲煮、风味、提醒）来自「更多 → 数据 →
+    /// 示例数据」，关闭开关时会被整批删除；真实记录一律不带标记，永远不受
+    /// 该开关影响。默认 false——轻量迁移给历史数据自动补的也是 false。
+    var isSample: Bool = false
+
     // MARK: - Relationships
 
     @Relationship(deleteRule: .cascade, inverse: \Brew.bean)

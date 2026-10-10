@@ -1120,4 +1120,21 @@ EN: dict[str, str] = {
         "Your data stays on this device. No account, no server.",
     "隐私政策": "Privacy Policy",
     "元": "CNY",
+
+    # MARK: 示例数据（审核与试用模式）
+    "示例数据": "Sample data",
+    "示例豆已在库中，关闭即整批移除": "Sample bags are installed — turning this off removes them all",
+    "载入 7 包演示豆，体验完整功能": "Load 7 sample bags to explore every feature",
+    "加入示例数据？": "Add sample data?",
+    "载入示例数据": "Load sample data",
+    "将加入 7 包演示豆（含冲煮与风味记录）。你自己的记录不受影响，之后关闭开关即可整批移除。":
+        "Adds 7 sample bags with brews and tasting notes. Your own records are untouched; turn the switch off later to remove them all.",
+    "删除示例数据？": "Remove sample data?",
+    "删除示例数据": "Remove sample data",
+    "将删除全部示例豆及其冲煮与风味记录。你自己的记录不受影响。":
+        "Deletes every sample bag along with its brews and tasting notes. Your own records are untouched.",
+    "示例数据已载入：7 包演示豆，覆盖养豆到喝完的完整生命周期。":
+        "Sample data loaded: 7 bags covering the full lifecycle, from resting to finished.",
+    "示例数据已移除，你的记录未受影响。":
+        "Sample data removed. Your own records are untouched.",
 }

@@ -24,6 +24,13 @@ struct MoreView: View {
     @State private var imageBytes: Int64 = 0
     @State private var imageCount = 0
     @State private var cleanupMessage: String?
+    /// 示例数据开关的待确认动作。数据真相是 `beans` 里的 isSample 标记，
+    /// 开关只反映它；打开/关闭都要先过一次确认，因为两侧都是破坏性的——
+    /// 一侧往库里加数据，一侧删数据。
+    @State private var pendingSampleAction: SampleAction?
+    @State private var sampleMessage: String?
+
+    enum SampleAction { case install, remove }
 
     @ObservedObject private var language = LanguageManager.shared
 
@@ -200,6 +207,67 @@ struct MoreView: View {
 
                 CardDivider()
 
+                // 示例数据：给审核员和试用用户一条「有完整数据可玩」的路。
+                // 开关只反映库里的 isSample 标记；两侧切换都要确认。
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("示例数据")
+                                .font(TypeScale.body)
+                                .foregroundStyle(Palette.ink)
+                            Text(hasSampleData
+                                 ? "示例豆已在库中，关闭即整批移除"
+                                 : "载入 7 包演示豆，体验完整功能")
+                                .font(TypeScale.caption)
+                                .foregroundStyle(Palette.inkFaint)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 8)
+                        Toggle("", isOn: Binding(
+                            get: { hasSampleData },
+                            set: { pendingSampleAction = $0 ? .install : .remove }
+                        ))
+                        .labelsHidden()
+                        .tint(Palette.roast)
+                        .accessibilityLabel(Text("示例数据"))
+                    }
+                    if let sampleMessage {
+                        Text(sampleMessage)
+                            .font(TypeScale.caption)
+                            .foregroundStyle(Palette.inkSoft)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .confirmationDialog(
+                    "加入示例数据？",
+                    isPresented: Binding(
+                        get: { pendingSampleAction == .install },
+                        set: { if !$0 { pendingSampleAction = nil } }
+                    ),
+                    titleVisibility: .visible
+                ) {
+                    Button("载入示例数据") { performSampleAction(.install) }
+                    Button("取消", role: .cancel) {}
+                } message: {
+                    Text("将加入 7 包演示豆（含冲煮与风味记录）。你自己的记录不受影响，之后关闭开关即可整批移除。")
+                }
+                .confirmationDialog(
+                    "删除示例数据？",
+                    isPresented: Binding(
+                        get: { pendingSampleAction == .remove },
+                        set: { if !$0 { pendingSampleAction = nil } }
+                    ),
+                    titleVisibility: .visible
+                ) {
+                    Button("删除示例数据", role: .destructive) { performSampleAction(.remove) }
+                    Button("取消", role: .cancel) {}
+                } message: {
+                    Text("将删除全部示例豆及其冲煮与风味记录。你自己的记录不受影响。")
+                }
+
+                CardDivider()
+
                 VStack(alignment: .leading, spacing: 10) {
                     navRow(title: "图片",
                             detail: .alreadyLocalized(
@@ -227,6 +295,25 @@ struct MoreView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
+            }
+        }
+    }
+
+    /// 库里有没有示例数据——开关显示的就是这个事实，不是一份独立偏好。
+    private var hasSampleData: Bool {
+        beans.contains { $0.isSample }
+    }
+
+    private func performSampleAction(_ action: SampleAction) {
+        switch action {
+        case .install:
+            DemoData.install(context: context)
+            sampleMessage = L("示例数据已载入：7 包演示豆，覆盖养豆到喝完的完整生命周期。")
+        case .remove:
+            if DemoData.removeInstalled(context: context) {
+                sampleMessage = L("示例数据已移除，你的记录未受影响。")
+            } else {
+                sampleMessage = nil
             }
         }
     }
