@@ -1118,4 +1118,5 @@ EN: dict[str, str] = {
         "A coffee notebook that's yours: log every bag and watch its flavour move.",
     "数据只存在这台设备上，没有账号，没有服务器。":
         "Your data stays on this device. No account, no server.",
+    "隐私政策": "Privacy Policy",
 }

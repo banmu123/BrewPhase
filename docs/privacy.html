@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BrewPhase 隐私政策 · Privacy Policy</title>
+<style>
+  :root {
+    --paper: #f6f1e7;
+    --card: #fffdf8;
+    --ink: #3b3230;
+    --ink-soft: #6f6259;
+    --ink-faint: #9c8d80;
+    --roast: #8a5a3b;
+    --latte: #d9c6ad;
+    --hairline: #e8ddcd;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Hiragino Sans GB", "Segoe UI", Roboto, sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 720px; margin: 0 auto; padding: 40px 20px 80px; }
+  header { text-align: center; padding: 8px 0 28px; }
+  .bean {
+    width: 44px; height: 44px; margin: 0 auto 14px;
+    border-radius: 50% 50% 50% 0;
+    transform: rotate(-45deg);
+    background: linear-gradient(135deg, var(--roast) 55%, #6e4630 55%);
+  }
+  h1 { font-size: 26px; font-weight: 700; letter-spacing: 0.5px; }
+  .sub { color: var(--ink-faint); font-size: 14px; margin-top: 6px; }
+  .effective { color: var(--roast); font-size: 14px; margin-top: 10px; }
+  nav {
+    display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+    margin: 22px 0 8px;
+  }
+  nav a {
+    font-size: 13px; text-decoration: none;
+    color: var(--roast);
+    background: var(--card);
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    padding: 5px 14px;
+  }
+  section {
+    background: var(--card);
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+    padding: 22px 22px 18px;
+    margin-top: 18px;
+  }
+  h2 { font-size: 18px; font-weight: 700; margin-bottom: 10px; color: var(--ink); }
+  h2 .en { font-size: 13px; font-weight: 500; color: var(--ink-faint); margin-left: 8px; }
+  p, li { font-size: 15px; color: var(--ink-soft); }
+  ul { padding-left: 20px; margin: 8px 0; }
+  li { margin: 4px 0; }
+  strong { color: var(--ink); font-weight: 600; }
+  code {
+    background: var(--paper); border-radius: 6px;
+    padding: 1px 6px; font-size: 13px; color: var(--roast);
+  }
+  a { color: var(--roast); }
+  .divider {
+    text-align: center; color: var(--ink-faint);
+    margin: 44px 0 6px; font-size: 13px; letter-spacing: 2px;
+  }
+  .en h2 .en { display: none; }
+  .footnote { text-align: center; color: var(--ink-faint); font-size: 13px; margin-top: 40px; }
+  @media (max-width: 480px) {
+    .page { padding: 24px 14px 60px; }
+    section { padding: 18px 16px 14px; }
+    h1 { font-size: 22px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header>
+  <div class="bean" aria-hidden="true"></div>
+  <h1>BrewPhase 隐私政策</h1>
+  <div class="sub">本地优先的咖啡记录与风味分析应用</div>
+  <div class="effective">生效日期：2026 年 10 月 10 日 · Effective date: October 10, 2026</div>
+  <nav>
+    <a href="#zh-data">我们处理哪些数据</a>
+    <a href="#zh-store">存储与保留</a>
+    <a href="#zh-ml">设备上处理</a>
+    <a href="#zh-network">网络行为</a>
+    <a href="#zh-rights">你的控制权</a>
+    <a href="#en">English</a>
+  </nav>
+</header>
+
+<section id="zh-about">
+  <h2>关于本政策<span class="en">About</span></h2>
+  <p>BrewPhase（下称「本应用」）由 BrewPhase 项目开发者发布（仓库：<a href="https://github.com/banmu123/BrewPhase" rel="noopener">github.com/banmu123/BrewPhase</a>）。本政策适用于本应用的所有当前版本，描述本应用<strong>实际实现</strong>的数据处理方式。我们只根据代码的真实行为来写，不做超出事实的承诺。</p>
+</section>
+
+<section id="zh-data">
+  <h2>我们处理哪些数据<span class="en">Data we handle</span></h2>
+  <p>本应用<strong>不要求任何个人信息</strong>：不注册、不登录、没有账号体系。你使用过程中产生的数据只有你自己输入和记录的内容：</p>
+  <ul>
+    <li><strong>咖啡豆资料</strong>：名称、烘焙商、产区、处理法、烘焙度、日期、克数、价格、风味标签与备注——均由你输入；</li>
+    <li><strong>冲煮记录</strong>：器具、参数（粉量、水温、时间等）、评分、酸甜苦醇余五项感受、文字笔记；</li>
+    <li><strong>风味记录</strong>：日期、评分、标签与笔记（部分由冲煮记录自动生成摘要，内容仍来自你的记录）；</li>
+    <li><strong>图片</strong>：你为咖啡豆拍摄或从相册选取的照片（选取通过系统照片选择器完成，本应用因此<strong>不需要相册权限</strong>）；</li>
+    <li><strong>偏好设置</strong>：语言、默认冲煮参数、提醒开关等，保存在设备本地。</li>
+  </ul>
+  <p>以上数据不含姓名、邮箱、电话号码、位置、设备标识符或任何可用于识别你身份的信息。</p>
+</section>
+
+<section id="zh-store">
+  <h2>数据存储与保留<span class="en">Storage &amp; retention</span></h2>
+  <ul>
+    <li>所有数据保存在<strong>你设备上本应用的沙盒目录</strong>中，不进入任何由我们控制的服务器；</li>
+    <li>数据会一直保留，直到你<strong>删除对应记录</strong>（可删除单条冲煮、风味记录或整包豆子及其全部历史）或<strong>卸载本应用</strong>（卸载会删除本应用沙盒内的全部数据）；</li>
+    <li>如果你开启了设备的 iCloud 备份，上述数据会包含在系统备份中——这是 Apple 提供的系统机制，本应用不参与、不上传；</li>
+    <li>你可以随时将全部数据<strong>导出为 JSON 或 CSV 文件</strong>（在本机生成，通过系统分享面板交给你指定的去处）。</li>
+  </ul>
+</section>
+
+<section id="zh-ml">
+  <h2>设备上的分析与预测<span class="en">On-device analysis</span></h2>
+  <p>本应用的分析功能完全在设备上运行，<strong>不联网</strong>：</p>
+  <ul>
+    <li>冲煮阶段的计算与推荐来自内置规则引擎；</li>
+    <li>「问一问」的检索使用 Apple 系统提供的端侧语句向量（NaturalLanguage 框架）与本地知识库（随应用打包）；</li>
+    <li>「预计风味窗口」是一项<strong>实验功能</strong>，由随应用内置的 Core ML 模型推理，可在设置中关闭；</li>
+    <li>个人基线、参数区间等统计只基于你自己的记录。</li>
+  </ul>
+</section>
+
+<section id="zh-network">
+  <h2>网络行为<span class="en">Network activity</span></h2>
+  <p><strong>本应用的核心功能没有任何网络请求</strong>——飞行模式下可完整使用。不存在遥测、使用统计、广告、崩溃上报或远程配置，也未集成任何第三方分析或广告 SDK。</p>
+  <p>唯一的可选例外：</p>
+  <ul>
+    <li>在「设置 → 本地智能 → 高级设置」中，你可以自行配置一个 <strong>Ollama</strong> 服务地址（默认关闭；默认地址为本机回环 <code>127.0.0.1:11434</code>）。启用后，你在「问一问」输入的问题文本，以及为回答而检索出的记录片段，会发送到<strong>你自己填写的那个服务器地址</strong>；</li>
+    <li>该功能默认关闭；不启用即保持完全离线，且本应用开发者不运行、不经过、也无法接触你配置的任何服务。</li>
+  </ul>
+</section>
+
+<section id="zh-permissions">
+  <h2>系统权限<span class="en">Permissions</span></h2>
+  <ul>
+    <li><strong>通知</strong>：在你保存第一包咖啡豆时请求一次，用于风味窗口提醒。拒绝或关闭后，其余功能不受影响；</li>
+    <li>照片选取使用系统照片选择器，<strong>不需要相册权限</strong>；</li>
+    <li>本应用不请求定位、相机、麦克风、通讯录或健康数据权限。</li>
+  </ul>
+</section>
+
+<section id="zh-rights">
+  <h2>你的控制权<span class="en">Your control</span></h2>
+  <ul>
+    <li><strong>查看与修改</strong>：所有记录都在应用内随时可查看、编辑；</li>
+    <li><strong>删除</strong>：可删除单条冲煮记录、风味记录或整包豆子（删除整包会一并删除其历史）；</li>
+    <li><strong>导出</strong>：随时导出完整 JSON 备份或 CSV 表格，数据带得走；</li>
+    <li><strong>撤回同意</strong>：通知权限可在系统设置中随时关闭；Ollama 高级设置可在应用内随时停用。</li>
+  </ul>
+</section>
+
+<section id="zh-children">
+  <h2>儿童隐私<span class="en">Children</span></h2>
+  <p>本应用不收集任何用户的数据（如上所述，对所有人都是如此），因此也不收集儿童的个人数据。</p>
+</section>
+
+<section id="zh-updates">
+  <h2>政策更新<span class="en">Updates</span></h2>
+  <p>当应用的数据处理方式发生变化时，我们会更新本页内容并修改上方的生效日期。请以页面上的日期为准。</p>
+</section>
+
+<section id="zh-contact">
+  <h2>联系我们<span class="en">Contact</span></h2>
+  <p>关于隐私的问题或建议，请通过 GitHub 提交：<a href="https://github.com/banmu123/BrewPhase/issues" rel="noopener">github.com/banmu123/BrewPhase/issues</a>。</p>
+</section>
+
+<div class="divider">· · ·</div>
+<div class="divider" id="en">English version below</div>
+
+<section lang="en">
+  <h2>Privacy Policy<span class="en"></span></h2>
+  <p><strong>Effective date: October 10, 2026.</strong> BrewPhase ("the app") is published by the BrewPhase project developer (<a href="https://github.com/banmu123/BrewPhase" rel="noopener">github.com/banmu123/BrewPhase</a>). This policy describes what the app <strong>actually does</strong> with data, based on its real implementation.</p>
+</section>
+
+<section lang="en">
+  <h2>Data we handle<span class="en"></span></h2>
+  <p>The app <strong>requires no personal information</strong>: no sign-up, no login, no accounts. The only data involved is what you type and record yourself:</p>
+  <ul>
+    <li><strong>Coffee bean profiles</strong> — name, roaster, origin, process, roast level, dates, weight, price, flavour tags and notes, all entered by you;</li>
+    <li><strong>Brew logs</strong> — method, parameters (dose, temperature, time, etc.), ratings, five taste axes and notes;</li>
+    <li><strong>Tasting notes</strong> — date, score, tags and notes (some are summarised from your brews);</li>
+    <li><strong>Photos</strong> — pictures you take or pick for a bag (picked via the system photo picker, so the app <strong>needs no photo-library permission</strong>);</li>
+    <li><strong>Preferences</strong> — language, default brewing parameters and reminder switches, stored on the device.</li>
+  </ul>
+  <p>None of this includes your name, email, phone number, location, device identifiers or anything that could identify you.</p>
+</section>
+
+<section lang="en">
+  <h2>Storage &amp; retention<span class="en"></span></h2>
+  <ul>
+    <li>All data lives in <strong>the app's sandbox on your device</strong>. There is no developer-controlled server;</li>
+    <li>Data is kept until you <strong>delete the records</strong> (single brews, tasting notes, or a whole bag with its history) or <strong>uninstall the app</strong> (uninstalling removes everything in the sandbox);</li>
+    <li>If you enable iCloud device backup, the data is included in that system backup — handled by Apple's mechanism, not uploaded by the app;</li>
+    <li>You can <strong>export everything as JSON or CSV</strong> at any time (generated on-device, shared via the system share sheet to wherever you choose).</li>
+  </ul>
+</section>
+
+<section lang="en">
+  <h2>On-device analysis<span class="en"></span></h2>
+  <p>All analysis runs entirely on your device, <strong>offline</strong>:</p>
+  <ul>
+    <li>Phase calculation and recommendations come from a built-in rules engine;</li>
+    <li>"Ask" retrieval uses Apple's on-device sentence embeddings (NaturalLanguage) and a knowledge base bundled with the app;</li>
+    <li>"Flavour window" is an <strong>experimental feature</strong> powered by a Core ML model bundled with the app, and can be turned off in settings;</li>
+    <li>Personal baselines and parameter ranges are computed from your own records only.</li>
+  </ul>
+</section>
+
+<section lang="en">
+  <h2>Network activity<span class="en"></span></h2>
+  <p><strong>The app's core features make no network requests</strong> — everything works in airplane mode. There is no telemetry, analytics, advertising, crash reporting or remote config, and no third-party SDKs are integrated.</p>
+  <p>The single optional exception:</p>
+  <ul>
+    <li>In <strong>Settings → Local Intelligence → Advanced</strong> you may configure your own <strong>Ollama</strong> server (off by default; default address is the loopback <code>127.0.0.1:11434</code>). When enabled, the question text you type in "Ask", plus the record snippets retrieved to answer it, are sent to <strong>the server address you entered yourself</strong>;</li>
+    <li>The feature is off by default. Leave it off and the app stays fully offline; the developer neither runs nor can see any server you configure.</li>
+  </ul>
+</section>
+
+<section lang="en">
+  <h2>Permissions<span class="en"></span></h2>
+  <ul>
+    <li><strong>Notifications</strong>: requested once when you save your first bag, for flavour-window reminders. Denying them does not affect anything else;</li>
+    <li>Photo picking uses the system photo picker and <strong>requires no photo-library permission</strong>;</li>
+    <li>The app never requests location, camera, microphone, contacts or health data.</li>
+  </ul>
+</section>
+
+<section lang="en">
+  <h2>Your control<span class="en"></span></h2>
+  <ul>
+    <li><strong>View &amp; edit</strong>: every record is visible and editable in the app;</li>
+    <li><strong>Delete</strong>: individual brews, tasting notes, or a whole bag with its history;</li>
+    <li><strong>Export</strong>: full JSON backup or CSV tables at any time — your data leaves with you;</li>
+    <li><strong>Withdraw consent</strong>: notifications can be switched off in system settings; the Ollama option can be disabled in the app at any time.</li>
+  </ul>
+</section>
+
+<section lang="en">
+  <h2>Children<span class="en"></span></h2>
+  <p>The app collects no data from anyone — as described above — and therefore collects none from children.</p>
+</section>
+
+<section lang="en">
+  <h2>Updates to this policy<span class="en"></span></h2>
+  <p>When the way the app handles data changes, this page will be updated and the effective date above revised. Please refer to the date shown at the top.</p>
+</section>
+
+<section lang="en">
+  <h2>Contact<span class="en"></span></h2>
+  <p>Questions or suggestions about privacy: open an issue at <a href="https://github.com/banmu123/BrewPhase/issues" rel="noopener">github.com/banmu123/BrewPhase/issues</a>.</p>
+</section>
+
+<p class="footnote">BrewPhase · 本地优先，数据属于你 · Local first. Your data stays yours.</p>
+
+</div>
+</body>
+</html>

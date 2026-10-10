@@ -311,6 +311,24 @@ struct MoreView: View {
                     bullet("所有数据随时可以导出带走。")
                 }
 
+                // 隐私政策入口（App Store 要求容易找到）：系统 Link 打开公开网页，
+                // 地址只此一处定义（AppLinks.privacyPolicy）。
+                Link(destination: AppLinks.privacyPolicy) {
+                    HStack(spacing: 6) {
+                        Text("隐私政策")
+                            .font(TypeScale.callout)
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundStyle(Palette.roast)
+                    .frame(maxWidth: .infinity, minHeight: 40)
+                    .background(
+                        RoundedRectangle(cornerRadius: Metric.radiusSmall, style: .continuous)
+                            .fill(Palette.well)
+                    )
+                }
+                .accessibilityLabel(Text("隐私政策"))
+
                 Text("Slow down. Taste it today.")
                     .font(TypeScale.signature)
                     .tracking(0.8)
