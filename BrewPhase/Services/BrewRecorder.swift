@@ -142,7 +142,10 @@ enum BrewRecorder {
                 aftertaste: draft.aftertaste,
                 flavorTags: draft.flavorTags,
                 notes: draft.notes.trimmed,
-                bean: bean
+                bean: bean,
+                espressoYieldG: resolved.espressoYieldG,
+                milkG: resolved.milkG,
+                addedWaterG: resolved.addedWaterG
             )
             context.insert(created)
             bean.consume(resolved.coffeeG)
@@ -183,6 +186,9 @@ enum BrewRecorder {
         brew.coffeeG = resolved.coffeeG
         brew.waterG = resolved.waterG
         brew.timeSeconds = resolved.timeSeconds
+        brew.espressoYieldG = resolved.espressoYieldG
+        brew.milkG = resolved.milkG
+        brew.addedWaterG = resolved.addedWaterG
         brew.score = BrewMath.clampScore(draft.score)
         brew.acidity = draft.acidity
         brew.sweetness = draft.sweetness

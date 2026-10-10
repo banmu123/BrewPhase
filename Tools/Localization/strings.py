@@ -1119,7 +1119,6 @@ EN: dict[str, str] = {
     "数据只存在这台设备上，没有账号，没有服务器。":
         "Your data stays on this device. No account, no server.",
     "隐私政策": "Privacy Policy",
-    "元": "CNY",
 
     # MARK: 示例数据（审核与试用模式）
     "示例数据": "Sample data",
@@ -1137,4 +1136,150 @@ EN: dict[str, str] = {
         "Sample data loaded: 7 bags covering the full lifecycle, from resting to finished.",
     "示例数据已移除，你的记录未受影响。":
         "Sample data removed. Your own records are untouched.",
+
+    # MARK: 冲煮引导（饮品选择 → 配方 → 分步制作）
+    "想做一杯什么": "What are you making?",
+    "想喝什么": "What would you like?",
+    "选一个开始": "pick one to start",
+    "用哪包豆": "Which bag",
+    "手冲咖啡": "Pour-over",
+    "美式咖啡": "Americano",
+    "拿铁": "Latte",
+    "卡布奇诺": "Cappuccino",
+    "冷萃咖啡": "Cold brew",
+    "滤杯手冲，风味最清晰": "Pour-over clarity, brightest flavour",
+    "浓缩咖啡液，奶咖的底": "The shot itself — milk drinks start here",
+    "浓缩加热水，干净直接": "Espresso topped with hot water",
+    "浓缩加牛奶，柔顺顺口": "Espresso and steamed milk, smooth",
+    "奶泡更厚，咖啡感更强": "Thicker foam, more coffee forward",
+    "冷水浸泡，圆润低酸": "Steeped cold — round and low-acid",
+    "约 2 分钟": "about 2 min",
+    "约 3 分钟": "about 3 min",
+    "约 5 分钟": "about 5 min",
+    "冷藏约 12 小时": "about 12 h chilled",
+    "折纸": "Origami",
+    "美式": "Americano",
+    "做法": "Method",
+    "咖啡粉": "Dose",
+    "浓缩液": "Yield",
+    "加水": "Added water",
+    "牛奶": "Milk",
+    "配方": "Recipe",
+    "共 %@ 步 · %@": "%@ steps · %@",
+    "咖啡粉 %@": "%@ of coffee",
+    "浓缩液 %@": "%@ yield",
+    "牛奶 %@": "%@ milk",
+    "加水 %@": "%@ added water",
+    "浓缩 %@": "%@ espresso",
+    "默认建议": "Suggested default",
+    "容易上手的参考起点，不是标准答案——按豆子和口味随意改。":
+        "A friendly starting point, not a rule — adjust to your beans and taste.",
+    "按这包豆子上次同款冲法预填": "Prefilled from this bag's last brew of the same kind",
+    "恢复默认配方": "Reset to default recipe",
+    "开始制作": "Start brewing",
+    "跳过引导，直接记录": "Skip the guide, just log it",
+    "先选一杯": "Pick a drink first",
+    "先加一包豆，再开始做这一杯。": "Add a bag of beans before brewing this cup.",
+    "退出": "Exit",
+    "第 %@ 步，共 %@ 步": "Step %@ of %@",
+    "制作完成": "Done brewing",
+    "这一杯做完了": "This cup is ready",
+    "去记录这杯的味道吧——参数已经按配方目标填好，改成本次的实际值就行。":
+        "Now log how it tasted — the recipe targets are prefilled; set them to what you actually did.",
+    "去记录这杯": "Log this cup",
+    "上一步": "Back",
+    "完成本步": "Done with step",
+    "完成制作": "Finish brewing",
+    "开始": "Start",
+    "暂停": "Pause",
+    "继续": "Resume",
+    "重置": "Reset",
+    "建议 %@": "target %@",
+    "目标 %@": "Target %@",
+    "约 %@": "~%@",
+    "约 %@ 小时": "~%@ h",
+    "%@ 小时": "%@ h",
+    "全程用时 %@": "Total time %@",
+    "到建议时长了，可以进入下一步。": "Target time reached — next step when you're ready.",
+    "烧水备器": "Heat water, set up",
+    "烧一壶水到 %@，备好滤杯、滤纸、电子秤和手冲壶。":
+        "Heat water to %@. Set out the dripper, filter paper, scale and kettle.",
+    "称取咖啡粉": "Weigh the coffee",
+    "按配方称 %@ 咖啡粉，研磨度按你的器具调整。":
+        "Weigh %@ of coffee. Grind to suit your gear.",
+    "称 %@ 咖啡粉倒进粉碗。": "Weigh %@ of coffee into the basket.",
+    "粗研磨，%@ 咖啡粉倒进容器。": "Coarse grind — %@ of coffee into the container.",
+    "润湿滤纸，温杯": "Rinse the filter, warm the server",
+    "滤纸放进滤杯，用热水冲湿，倒掉润洗水。":
+        "Seat the paper in the dripper, rinse it with hot water, discard the rinse water.",
+    "倒粉，轻晃铺平": "Add grounds, level the bed",
+    "咖啡粉倒进滤杯，轻晃让粉面平整，放到秤上归零。":
+        "Tip the grounds in, gently shake the bed flat, place it on the scale and tare.",
+    "闷蒸": "Bloom",
+    "从中心向外绕圈注水至 %@，等 %@ 让粉层排气。":
+        "Pour in circles from the centre out to %@, then wait %@ for the bed to de-gas.",
+    "第一段注水": "First pour",
+    "缓慢绕圈注水至 %@，水流别冲到滤纸。":
+        "Pour slowly in circles up to %@, keeping the stream off the paper.",
+    "第二段注水": "Second pour",
+    "继续注水至 %@，注完轻轻晃一下滤杯，让粉层落平。":
+        "Pour on up to %@, then give the dripper a gentle swirl to settle the bed.",
+    "等待滤干": "Let it draw down",
+    "等液面降到粉层下方，全程大约 %@。":
+        "Wait for the liquid to drop below the bed. The whole brew runs about %@.",
+    "移开滤杯，摇匀分享壶": "Lift the dripper off, swirl the server",
+    "布粉与压粉": "Distribute and tamp",
+    "布粉器转两圈，压粉器水平压实，力道稳就够。":
+        "Two turns of the distributor, then tamp level — steady beats heavy.",
+    "上手柄，预热": "Lock in, preheat",
+    "手柄扣上冲煮头，先放几秒水预热。":
+        "Lock the portafilter into the group and run a few seconds of water to preheat.",
+    "萃取浓缩": "Pull the shot",
+    "接到电子秤上启动萃取，目标 %@ 浓缩液，用时约 25–35 秒。":
+        "Start the shot on the scale — aim for %@ of espresso in about 25–35 s.",
+    "到目标重量就停手，轻晃杯子让油脂均匀":
+        "Stop at the target weight and give the cup a gentle swirl to even out the crema.",
+    "量取水": "Measure the water",
+    "量 %@ 热水倒进杯子；做冰美式就换冰水加冰块。":
+        "Measure %@ of hot water into the cup — for iced, chilled water and ice instead.",
+    "混合": "Combine",
+    "把浓缩倒进水里，轻轻搅匀。": "Pour the espresso into the water and stir gently.",
+    "尝一口，太浓就再补点水": "Taste it — a touch strong, add a little more water",
+    "融合": "Blend",
+    "撒点可可粉就是另一杯了——这杯先原味喝":
+        "A dust of cocoa makes it a mocha — this one, drink it plain first",
+    "称量牛奶": "Measure the milk",
+    "冷藏牛奶 %@，倒进拉花缸。": "%@ of cold milk into the pitcher.",
+    "牛奶 %@——比拿铁少，因为奶泡要占掉一层。":
+        "%@ of milk — less than a latte, because the foam takes a layer of its own.",
+    "打发牛奶": "Steam the milk",
+    "蒸汽棒先补气再加热，打出细滑的奶泡，目标 %@。":
+        "Aerate first, then heat — silky microfoam, target %@.",
+    "浓缩倒进温好的杯子，牛奶从高处细流注入融合。":
+        "Espresso into the warmed cup, then pour the milk from a height to blend.",
+    "趁热喝，奶咖放久了奶泡会塌": "Drink it hot — milk foam waits for no one",
+    "打发奶泡": "Build the foam",
+    "多打进一些空气，做出更厚更结实的奶泡层，目标 %@。":
+        "Work in extra air for a thicker, firmer foam layer, target %@.",
+    "牛奶先倒进浓缩，最后用勺子把奶泡铺到表面。":
+        "Milk into the espresso first, then spoon the foam over the top.",
+    "融合与覆盖": "Blend and cap",
+    "加入冷水": "Add cold water",
+    "注水 %@，边倒边搅拌，让粉全部浸湿。":
+        "Add %@ of water, stirring as you pour so every ground gets wet.",
+    "盖好，放进冰箱": "Seal and refrigerate",
+    "盖紧盖子冷藏，别放在门边——温度要稳。":
+        "Lid on tight, into the fridge — away from the door, where the temperature holds.",
+    "浸泡": "Steep",
+    "冷藏浸泡 %@。这一步交给时间，不用计时器，到点再来。":
+        "Steep %@ in the fridge. Time does the work — no stopwatch, come back when it's due.",
+    "过滤装瓶": "Filter and bottle",
+    "用滤纸或细筛滤掉残渣，装瓶冷藏，三天内喝完。":
+        "Filter out the grounds, bottle and keep chilled — best within three days.",
+    "浓缩液重量还没填": "Espresso yield not filled in",
+    "浸泡时长还没填": "Steep duration not filled in",
+    "实测时长 %@，参数按配方目标预填": "Measured %@; the rest is prefilled from the recipe targets",
+    "参数按配方目标预填，请确认或改成实际值":
+        "Prefilled with the recipe targets — confirm or set what you actually did",
+    "和目标的差别": "Off target",
 }

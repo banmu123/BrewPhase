@@ -134,10 +134,10 @@ struct HomeView: View {
                 BeanEditorView(mode: .create)
             }
             .sheet(item: $brewingBean) { bean in
-                QuickBrewLogView(bean: bean)
+                BrewStartView(bean: bean)
             }
             .sheet(isPresented: $isLoggingBrew) {
-                QuickBrewLogView(bean: nil)
+                BrewStartView(bean: nil)
             }
             .sheet(item: $editingBrew) { brew in
                 if let bean = brew.bean {

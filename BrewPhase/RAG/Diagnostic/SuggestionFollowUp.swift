@@ -77,6 +77,18 @@ struct SuggestionFollowUp: Equatable {
             changes.append(contentsOf: parameterChanges(for: suggestion, previous: previous, current: current))
         }
 
+        // 意式系的浓缩液/牛奶/加水：两边都真有值才可比——「上一杯没填」
+        // 不是 0，更不该读成「从无到有减了半杯奶」。
+        for (label, oldValue, newValue) in [
+            (L("浓缩液"), previous.espressoYieldG, current.espressoYieldG),
+            (L("牛奶"), previous.milkG, current.milkG),
+            (L("加水"), previous.addedWaterG, current.addedWaterG),
+        ] where oldValue > 0 && newValue > 0 && oldValue != newValue {
+            changes.append(Change(label: label,
+                                  from: Fmt.gramsShort(oldValue),
+                                  to: Fmt.gramsShort(newValue)))
+        }
+
         for (label, oldValue, newValue) in [
             (L("酸度"), previous.acidity, current.acidity),
             (L("甜度"), previous.sweetness, current.sweetness),

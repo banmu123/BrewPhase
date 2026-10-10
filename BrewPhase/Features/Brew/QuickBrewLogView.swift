@@ -14,6 +14,9 @@ struct QuickBrewLogView: View {
     /// 从哪包豆进来。传 nil（首页那种「我现在就想记一杯」）时自己挑：
     /// 先看最近冲过的那包，其次今天最该喝的那包。
     let bean: Bean?
+    /// 从制作引导带过来的种子。非 nil 时参数按配方**目标值**预填，
+    /// 页面会明确要求用户确认或改成实际值——引导不会自动把目标当成实测。
+    let guidedSeed: GuidedBrewSeed?
 
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
@@ -61,19 +64,31 @@ struct QuickBrewLogView: View {
     private var defaults: BrewDefaults { BrewDefaults.current() }
     private var book: PhaseRuleBook { PhaseRuleBook.make(stored: rules) }
 
-    init(bean: Bean?) {
+    init(bean: Bean?, guidedSeed: GuidedBrewSeed? = nil) {
         self.bean = bean
+        self.guidedSeed = guidedSeed
         let defaults = BrewDefaults.current()
-        let seed = bean.map {
-            BrewPrefillBuilder.prefill(
-                beanBrews: $0.brewsNewestFirst, allBrews: $0.brewsNewestFirst, defaults: defaults
-            )
-        } ?? BrewPrefill(source: .userDefaults, recipe: defaults.asRecipe, timeText: "", basis: nil)
+
+        if let seed = guidedSeed {
+            // 引导带过来的目标值：直接进表单，不许自动预填覆盖。
+            _recipe = State(initialValue: seed.recipe)
+            _timeText = State(initialValue: seed.timeText)
+            _prefill = State(initialValue: BrewPrefill(
+                source: .userDefaults, recipe: seed.recipe, timeText: "", basis: nil
+            ))
+            _touchedRecipe = State(initialValue: true)
+        } else {
+            let seedRecipe = bean.map {
+                BrewPrefillBuilder.prefill(
+                    beanBrews: $0.brewsNewestFirst, allBrews: $0.brewsNewestFirst, defaults: defaults
+                )
+            } ?? BrewPrefill(source: .userDefaults, recipe: defaults.asRecipe, timeText: "", basis: nil)
+            _prefill = State(initialValue: seedRecipe)
+            _recipe = State(initialValue: seedRecipe.recipe)
+            _timeText = State(initialValue: seedRecipe.timeText)
+        }
 
         _beanID = State(initialValue: bean?.id)
-        _prefill = State(initialValue: seed)
-        _recipe = State(initialValue: seed.recipe)
-        _timeText = State(initialValue: seed.timeText)
         _date = State(initialValue: Date())
 
         // UI inspection only (见 `DebugLaunch.quickLogFocus`)：模拟器不能点击，
@@ -123,6 +138,20 @@ struct QuickBrewLogView: View {
     private var projectedRemaining: Double? {
         guard let bean = selectedBean, recipe.coffeeG > 0 else { return nil }
         return BrewMath.remainingAfter(current: bean.remainingG, dose: recipe.coffeeG, total: bean.weightG)
+    }
+
+    /// 当前做法的家族。意式系要多给三行参数（浓缩液/加水/牛奶），
+    /// 手冲不该被它们打扰。
+    private var methodFamily: MethodFamily? { MethodRules.family(of: recipe.method) }
+
+    /// 浓缩液行：意式系，或这杯真的填了浓缩液。
+    private var showsEspressoFields: Bool {
+        methodFamily == .espresso || recipe.espressoYieldG > 0
+    }
+
+    /// 加水/牛奶行：意式系，或这杯真的填了对应字段。
+    private var showsMilkDrinkFields: Bool {
+        methodFamily == .espresso || recipe.milkG > 0 || recipe.addedWaterG > 0
     }
 
     // MARK: - Body
@@ -240,18 +269,28 @@ struct QuickBrewLogView: View {
     }
 
     /// 沿用上一杯的说明 + 改了什么的实时反馈（规格 §六/§七）。
+    ///
+    /// 引导模式下同一张卡换个说法：参数是**配方目标**，要改成实际值；
+    /// 「这次改了」对照的基线也自然变成了目标值——正好是「目标 vs 实际」。
     private var prefillNote: some View {
         Card(padding: 14) {
             VStack(alignment: .leading, spacing: 9) {
                 HStack(alignment: .top, spacing: 9) {
-                    Image(systemName: prefill.isBareDefault ? "slider.horizontal.3" : "arrow.counterclockwise.circle")
+                    Image(systemName: guidedSeed != nil
+                          ? "checklist" : (prefill.isBareDefault ? "slider.horizontal.3" : "arrow.counterclockwise.circle"))
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(prefill.isBareDefault ? Palette.inkFaint : Palette.roast)
+                        .foregroundStyle(guidedSeed != nil || !prefill.isBareDefault ? Palette.roast : Palette.inkFaint)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(prefillHeadline)
                             .font(TypeScale.callout)
                             .foregroundStyle(Palette.ink)
-                        if let basis = prefill.basis {
+                        if guidedSeed != nil, let plan = guidedSeed?.plan {
+                            Text(LocalizedStringKey.alreadyLocalized(
+                                plan.summaryLines.joined(separator: " · ")))
+                                .font(TypeScale.caption.monospacedDigit())
+                                .foregroundStyle(Palette.inkSoft)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else if let basis = prefill.basis {
                             Text(L("%@ · %@", Fmt.short(basis.date, calendar: DateMath.calendar), basis.summary))
                                 .font(TypeScale.caption)
                                 .foregroundStyle(Palette.inkFaint)
@@ -264,7 +303,7 @@ struct QuickBrewLogView: View {
                 if delta.hasChanges {
                     Divider().overlay(Palette.hairline)
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("这次改了")
+                        Text(guidedSeed != nil ? "和目标的差别" : "这次改了")
                             .font(TypeScale.micro)
                             .foregroundStyle(Palette.inkFaint)
                         ForEach(delta.changes) { change in
@@ -293,6 +332,11 @@ struct QuickBrewLogView: View {
     }
 
     private var prefillHeadline: String {
+        if let seed = guidedSeed {
+            return seed.isMeasured
+                ? L("实测时长 %@，参数按配方目标预填", seed.timeText)
+                : L("参数按配方目标预填，请确认或改成实际值")
+        }
         switch prefill.source {
         case .lastBrewOfSameBean: return L("沿用这包豆上一次的参数")
         case .lastBrewAnyBean: return L("沿用你上一次冲的参数")
@@ -388,9 +432,25 @@ struct QuickBrewLogView: View {
                             NumberField(placeholder: "0", value: $recipe.coffeeG, unit: "g")
                                 .onChange(of: recipe.coffeeG) { touchedRecipe = true }
                         }
+                        if showsEspressoFields {
+                            EditorRow(title: "浓缩液") {
+                                NumberField(placeholder: "0", value: $recipe.espressoYieldG, unit: "g")
+                                    .onChange(of: recipe.espressoYieldG) { touchedRecipe = true }
+                            }
+                        }
                         EditorRow(title: "水量") {
                             NumberField(placeholder: "0", value: $recipe.waterG, unit: "g")
                                 .onChange(of: recipe.waterG) { touchedRecipe = true }
+                        }
+                        if showsMilkDrinkFields {
+                            EditorRow(title: "加水") {
+                                NumberField(placeholder: "0", value: $recipe.addedWaterG, unit: "g")
+                                    .onChange(of: recipe.addedWaterG) { touchedRecipe = true }
+                            }
+                            EditorRow(title: "牛奶") {
+                                NumberField(placeholder: "0", value: $recipe.milkG, unit: "g")
+                                    .onChange(of: recipe.milkG) { touchedRecipe = true }
+                            }
                         }
                         EditorRow(title: "水温") {
                             NumberField(placeholder: "0", value: $recipe.waterTemp, unit: "°C")
@@ -763,7 +823,8 @@ struct QuickBrewLogView: View {
         guard !didResolveDefault else { return }
         didResolveDefault = true
 
-        if beanID == nil, let fallback = defaultBean() {
+        // 引导模式下参数是配方目标，没有豆子也不许让预填把它们冲掉。
+        if beanID == nil, guidedSeed == nil, let fallback = defaultBean() {
             beanID = fallback.id
             applyPrefill(for: fallback, method: recipe.method, force: true)
         }
@@ -777,7 +838,8 @@ struct QuickBrewLogView: View {
             sweetness = 3
             bitterness = 2
             bodyValue = 2
-            timeText = "2:28"
+            // 引导带来的实测时长不许被演示值覆盖——那正是这条链要验的东西。
+            if guidedSeed == nil { timeText = "2:28" }
             notes = L("按上次的建议磨细了一档，酸降下来了")
             save()
         }
@@ -795,16 +857,21 @@ struct QuickBrewLogView: View {
 
     private func select(_ bean: Bean) {
         beanID = bean.id
+        // 引导模式：换豆子只换扣库存的对象，配方目标不动——那是给这款饮品的。
+        guard guidedSeed == nil else { return }
         touchedRecipe = false
         applyPrefill(for: bean, method: recipe.method, force: true)
     }
 
     private func pick(method: String) {
         recipe.method = method
+        // 引导模式：方法本来就是饮品带来的，换 chips 也不重跑预填。
+        guard guidedSeed == nil else { return }
         applyPrefill(for: selectedBean, method: method)
     }
 
     private func applyPrefill(for bean: Bean?, method: String?, force: Bool = false) {
+        guard guidedSeed == nil else { return }
         guard force || !touchedRecipe, let bean else { return }
         let next = BrewPrefillBuilder.prefill(
             beanBrews: bean.brewsNewestFirst,
@@ -823,6 +890,7 @@ struct QuickBrewLogView: View {
         // 这里被挡住——不会出现两条记录、两次扣库存。失败时 saved 仍为 nil，
         // 修好再点一次照常工作。
         guard let bean = selectedBean, saved == nil else { return }
+        AppLog.store.info("quick log save: hasSeed=\(self.guidedSeed != nil, privacy: .public), method=\(self.recipe.method.trimmed, privacy: .public)")
         errorMessage = nil
 
         // 上一杯与它当时的建议，必须在插入这一杯**之前**取：诊断的历史里
@@ -892,6 +960,12 @@ struct QuickBrewLogView: View {
         date = Date()
         showsPreviousBrewDetail = false
         showsFullDiagnosis = false
-        if let bean = selectedBean { applyPrefill(for: bean, method: recipe.method, force: true) }
+        if let seed = guidedSeed {
+            // 引导模式：回到这份配方的目标值，而不是上一杯的参数。
+            recipe = seed.recipe
+            timeText = seed.timeText
+        } else if let bean = selectedBean {
+            applyPrefill(for: bean, method: recipe.method, force: true)
+        }
     }
 }

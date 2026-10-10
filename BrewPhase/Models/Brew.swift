@@ -30,6 +30,22 @@ final class Brew {
     /// averaged; shown as `2:35` everywhere.
     var timeSeconds: Int = 0
 
+    // MARK: - Milk drinks (added in the brew-guide batch)
+    //
+    // `waterG` keeps its one meaning — brewing water that touches the grounds.
+    // Espresso liquid, milk and americano top-up water each get their own
+    // column, defaulting to 0 = "not applicable", so an old record (or a plain
+    // pour-over) reads exactly as before and no ratio ever gets computed from
+    // milk. Lightweight migration: new columns with defaults, old stores open
+    // without a migration plan.
+
+    /// 萃取出的浓缩咖啡液（意式/美式/拿铁/卡布）。
+    var espressoYieldG: Double = 0
+    /// 牛奶用量（拿铁/卡布）。
+    var milkG: Double = 0
+    /// 萃取之后额外加入的水（美式）。
+    var addedWaterG: Double = 0
+
     // MARK: - Verdict
 
     var score: Int = 0
@@ -63,7 +79,10 @@ final class Brew {
         aftertaste: Int = 0,
         flavorTags: [String] = [],
         notes: String = "",
-        bean: Bean? = nil
+        bean: Bean? = nil,
+        espressoYieldG: Double = 0,
+        milkG: Double = 0,
+        addedWaterG: Double = 0
     ) {
         self.id = UUID()
         self.date = date
@@ -84,6 +103,9 @@ final class Brew {
         self.notes = notes
         self.bean = bean
         self.createdAt = Date()
+        self.espressoYieldG = espressoYieldG
+        self.milkG = milkG
+        self.addedWaterG = addedWaterG
     }
 
     // MARK: - Typed accessors
@@ -147,7 +169,10 @@ final class Brew {
             waterTemp: waterTemp,
             coffeeG: coffeeG,
             waterG: waterG,
-            timeSeconds: timeSeconds
+            timeSeconds: timeSeconds,
+            espressoYieldG: espressoYieldG,
+            milkG: milkG,
+            addedWaterG: addedWaterG
         )
     }
 

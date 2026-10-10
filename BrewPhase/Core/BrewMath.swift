@@ -2,7 +2,13 @@ import Foundation
 
 /// A brew's recipe, detached from any record.
 ///
-/// This is what "复制上次冲煮" copies: seven values, no judgement, no date.
+/// This is what "复制上次冲煮" copies: the repeatable values, no judgement, no date.
+///
+/// `waterG` keeps its one meaning — the water that touches the grounds while
+/// brewing (pour-over pours, cold-brew water). Espresso liquid, milk and the
+/// water an americano adds afterwards each get their own field: stuffing a
+/// latte's milk into `waterG` would invent a 1:9 "ratio" that every comparison
+/// downstream would then believe.
 struct BrewRecipe: Equatable, Sendable {
     var method: String
     var grinder: String
@@ -11,11 +17,38 @@ struct BrewRecipe: Equatable, Sendable {
     var coffeeG: Double
     var waterG: Double
     var timeSeconds: Int
+    /// Extracted espresso liquid, in grams. 0 = not applicable / not filled.
+    var espressoYieldG: Double
+    /// Steamed milk, in grams (latte, cappuccino). 0 = not applicable.
+    var milkG: Double
+    /// Water added *after* the espresso (americano). 0 = not applicable.
+    var addedWaterG: Double
 
-    static let empty = BrewRecipe(
-        method: "", grinder: "", grindSize: "",
-        waterTemp: 0, coffeeG: 0, waterG: 0, timeSeconds: 0
-    )
+    init(
+        method: String = "",
+        grinder: String = "",
+        grindSize: String = "",
+        waterTemp: Double = 0,
+        coffeeG: Double = 0,
+        waterG: Double = 0,
+        timeSeconds: Int = 0,
+        espressoYieldG: Double = 0,
+        milkG: Double = 0,
+        addedWaterG: Double = 0
+    ) {
+        self.method = method
+        self.grinder = grinder
+        self.grindSize = grindSize
+        self.waterTemp = waterTemp
+        self.coffeeG = coffeeG
+        self.waterG = waterG
+        self.timeSeconds = timeSeconds
+        self.espressoYieldG = espressoYieldG
+        self.milkG = milkG
+        self.addedWaterG = addedWaterG
+    }
+
+    static let empty = BrewRecipe()
 
     var ratioText: String { Fmt.ratio(coffeeG: coffeeG, waterG: waterG) }
     var timeText: String { BrewMath.formatTime(timeSeconds) }
@@ -24,13 +57,25 @@ struct BrewRecipe: Equatable, Sendable {
     var isEmpty: Bool {
         method.trimmed.isEmpty && grinder.trimmed.isEmpty && grindSize.trimmed.isEmpty
             && waterTemp <= 0 && coffeeG <= 0 && waterG <= 0 && timeSeconds <= 0
+            && espressoYieldG <= 0 && milkG <= 0 && addedWaterG <= 0
     }
 
     /// The values worth showing next to a "copy last brew" button.
+    ///
+    /// Milk drinks print their own numbers: dose alone when there is no brew
+    /// water, plus the yield / milk / added-water parts that were actually
+    /// filled in. `doseLine`'s `18g / 0g` would read like a mistake.
     var summaryParts: [String] {
         var parts: [String] = []
         if !method.trimmed.isEmpty { parts.append(method) }
-        if coffeeG > 0 || waterG > 0 { parts.append(Fmt.doseLine(coffeeG: coffeeG, waterG: waterG)) }
+        if coffeeG > 0, waterG > 0 {
+            parts.append(Fmt.doseLine(coffeeG: coffeeG, waterG: waterG))
+        } else if coffeeG > 0 {
+            parts.append(Fmt.gramsShort(coffeeG))
+        }
+        if espressoYieldG > 0 { parts.append(L("浓缩 %@", Fmt.gramsShort(espressoYieldG))) }
+        if milkG > 0 { parts.append(L("牛奶 %@", Fmt.gramsShort(milkG))) }
+        if addedWaterG > 0 { parts.append(L("加水 %@", Fmt.gramsShort(addedWaterG))) }
         if waterTemp > 0 { parts.append("\(Int(waterTemp.rounded()))°C") }
         if timeSeconds > 0 { parts.append(timeText) }
         return parts
@@ -131,20 +176,49 @@ enum BrewMath {
 
     /// Validation messages are written the way a person would say them out loud.
     /// There is no such thing as "invalid input" in this app.
+    ///
+    /// What counts as "missing" depends on the drink: a latte has no brew water
+    /// (its liquid is espresso plus milk), and a cold brew steeps for hours in
+    /// the fridge — nagging either one about 水温 would be nonsense. The family
+    /// comes from the method text; a method nothing recognises falls back to the
+    /// original generic hints, so free-typed gear names lose nothing.
     static func validate(_ recipe: BrewRecipe) -> BrewValidation {
+        validate(recipe, family: MethodRules.family(of: recipe.method))
+    }
+
+    /// Same, with the family already resolved (the guide knows the drink it is
+    /// walking through and does not need to re-parse the method text).
+    static func validate(_ recipe: BrewRecipe, family: MethodFamily?) -> BrewValidation {
         var validation = BrewValidation()
 
         if recipe.coffeeG <= 0 {
             validation.blocking.append(L("先填粉量吧，这样才能从库存里扣掉"))
         }
-        if recipe.coffeeG > 0, recipe.waterG <= 0 {
-            validation.hints.append(L("水量还没填，粉水比会留空"))
-        }
-        if recipe.waterTemp <= 0 {
-            validation.hints.append(L("水温还没填"))
-        }
-        if recipe.timeSeconds <= 0 {
-            validation.hints.append(L("冲煮时间还没填"))
+
+        switch family {
+        case .espresso:
+            // 浓缩液是意式系的「产出」，奶咖也依赖它——没填就提醒。
+            if recipe.coffeeG > 0, recipe.espressoYieldG <= 0 {
+                validation.hints.append(L("浓缩液重量还没填"))
+            }
+        case .cold:
+            if recipe.coffeeG > 0, recipe.waterG <= 0 {
+                validation.hints.append(L("水量还没填，粉水比会留空"))
+            }
+            if recipe.timeSeconds <= 0 {
+                validation.hints.append(L("浸泡时长还没填"))
+            }
+        default:
+            // 手冲/滤泡，以及识别不出的冲法：维持原来的通用提示。
+            if recipe.coffeeG > 0, recipe.waterG <= 0 {
+                validation.hints.append(L("水量还没填，粉水比会留空"))
+            }
+            if recipe.waterTemp <= 0 {
+                validation.hints.append(L("水温还没填"))
+            }
+            if recipe.timeSeconds <= 0 {
+                validation.hints.append(L("冲煮时间还没填"))
+            }
         }
         return validation
     }

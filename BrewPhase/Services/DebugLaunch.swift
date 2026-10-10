@@ -28,6 +28,18 @@ enum DebugScreen: String, CaseIterable, Identifiable {
     case insights
     /// 30 秒快记。它是新闭环的入口，但入口在首页工具栏里，一屏截不全整个表单。
     case quickLog
+    /// 「想做一杯什么」——饮品选择与配方准备，引导流程的第一屏。
+    case brewStart
+    /// 分步冲煮引导（手冲那份默认配方）。引导平时藏在导航推进里，
+    /// 模拟器点不到，验收步骤卡与计时块要靠这个入口。
+    case brewGuide
+    /// 自动走完一次引导：按脚本拨计时器、连发两次交接，配合
+    /// `-BrewPhaseQuickLogDemo yes` 会自动保存——验证只落一条记录、
+    /// 时间用的是实测值而不是配方的目标耗时。
+    case brewGuideDemo
+    /// 引导做完之后的记录页：拿铁种子（目标值预填 + 实测时长），
+    /// 验收「目标 vs 实际」卡与浓缩液/牛奶参数行。
+    case brewRecord
     /// 诊断卡单独一屏。和 `tastingTimeline` 同一个理由：它在豆子页上位于折叠线以下，
     /// 而这张卡是这一次交付最需要看清楚的一块界面。
     case brewDiagnosis

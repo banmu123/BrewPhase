@@ -308,6 +308,27 @@ struct RootView: View {
         case .quickLog:
             // 从最近冲过的那包进来，和首页「记一杯」走的是同一条路。
             QuickBrewLogView(bean: beans.first { $0.id == recentBrewBeanID } ?? spotlightBean)
+        case .brewStart:
+            // 引导流程第一屏：饮品卡片 + 配方准备。
+            BrewStartView(bean: spotlightBean)
+        case .brewGuide:
+            // 手冲默认配方的引导页。做完的落点（记录页）不在这条路里——
+            // 那一步要真的写库，调试入口不该替用户记一杯。
+            NavigationStack {
+                BrewGuideView(plan: .default(for: .pourOver)) { _ in }
+            }
+        case .brewGuideDemo:
+            // 自动走完一次引导并交接记录页（见 BrewGuideDemoView 的说明）。
+            NavigationStack {
+                BrewGuideDemoView(bean: spotlightBean)
+            }
+        case .brewRecord:
+            // 引导交接后的记录页：拿铁种子预填目标值与实测时长 1:35。
+            // 与 brewGuide 同一条纪律：不落库，只看预填长什么样。
+            QuickBrewLogView(
+                bean: beans.first { $0.id == recentBrewBeanID } ?? spotlightBean,
+                guidedSeed: GuidedBrewSeed(plan: .default(for: .latte), measuredSeconds: 95)
+            )
         case .brewDiagnosis:
             if let bean = spotlightBean,
                let diagnosis = BrewDiagnosisService.diagnose(

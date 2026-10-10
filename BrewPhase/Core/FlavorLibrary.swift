@@ -87,7 +87,8 @@ enum FlavorLibrary {
 enum BrewCatalog {
 
     static var methods: [String] {
-        ["V60", L("爱乐压"), L("聪明杯"), L("法压壶"), L("意式浓缩"), L("摩卡壶"), L("冷萃")]
+        ["V60", L("爱乐压"), L("聪明杯"), L("法压壶"), L("意式浓缩"), L("美式"),
+         L("拿铁"), L("卡布奇诺"), L("摩卡壶"), L("冷萃")]
     }
 
     static var grinders: [String] {

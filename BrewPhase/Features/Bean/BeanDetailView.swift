@@ -151,7 +151,7 @@ struct BeanDetailView: View {
             StockAdjustView(bean: bean)
         }
         .sheet(isPresented: $isQuickLogging) {
-            QuickBrewLogView(bean: bean)
+            BrewStartView(bean: bean)
         }
         .confirmationDialog(
             "删除这包咖啡豆？",

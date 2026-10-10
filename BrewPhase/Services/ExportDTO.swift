@@ -85,6 +85,12 @@ struct BrewDTO: Codable, Equatable {
     var aftertaste: Int
     var flavorNotes: [String]
     var notes: String
+    // Milk-drink fields, added after format 1 shipped. Optional so a backup
+    // written by an older version still decodes — absence means the same thing
+    // as 0: the drink had no espresso yield / milk / added water on record.
+    var espressoYieldG: Double?
+    var milkG: Double?
+    var addedWaterG: Double?
 }
 
 struct TastingDTO: Codable, Equatable {

@@ -97,7 +97,10 @@ enum ExportManager {
                     body: brew.body,
                     aftertaste: brew.aftertaste,
                     flavorNotes: brew.flavorTags,
-                    notes: brew.notes
+                    notes: brew.notes,
+                    espressoYieldG: brew.espressoYieldG > 0 ? brew.espressoYieldG : nil,
+                    milkG: brew.milkG > 0 ? brew.milkG : nil,
+                    addedWaterG: brew.addedWaterG > 0 ? brew.addedWaterG : nil
                 ))
             }
 
@@ -215,7 +218,8 @@ enum ExportManager {
             header: ["id", "beanName", "date", "dayAfterRoast", "method", "grinder",
                      "grindSize", "waterTemp", "coffeeG", "waterG", "ratio",
                      "timeSeconds", "score", "acidity", "sweetness", "bitterness",
-                     "body", "aftertaste", "flavorTags", "notes"],
+                     "body", "aftertaste", "flavorTags", "notes",
+                     "espressoYieldG", "milkG", "addedWaterG"],
             rows: bundle.brews.map { brew in
                 [
                     brew.id.uuidString, brew.beanName, timestampText(brew.date),
@@ -227,6 +231,9 @@ enum ExportManager {
                     String(brew.score), String(brew.acidity), String(brew.sweetness),
                     String(brew.bitterness), String(brew.body), String(brew.aftertaste),
                     brew.flavorNotes.joined(separator: " / "), brew.notes,
+                    brew.espressoYieldG.map { number($0) } ?? "",
+                    brew.milkG.map { number($0) } ?? "",
+                    brew.addedWaterG.map { number($0) } ?? "",
                 ]
             }
         )

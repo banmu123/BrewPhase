@@ -18,7 +18,10 @@ enum MethodFamily: String, Codable, Sendable, CaseIterable {
 
 /// 家族归一化。别名表在 `brew_method_rules.json`——中文词表不能写进 Swift
 /// 字面量，否则会被本地化流水线收成待翻译文案（和 query_rules.json 同理）。
-@MainActor
+///
+/// 没有 `@MainActor`：唯一的状态是一张不可变的 `Sendable` 别名字典（`static let`
+/// 本身就是线程安全的），而它的调用方不止界面——`BrewMath.validate` 要在写入路径上
+/// 按家族决定提示语，那条路不能被主线程隔离卡住。
 enum MethodRules {
 
     private static let aliases: [MethodFamily: [String]] = load()
