@@ -253,9 +253,6 @@ struct BrewStartView: View {
             withAnimation(Motion.settle) { select(drink: drink) }
         } label: {
             VStack(alignment: .leading, spacing: 7) {
-                Image(systemName: drink.symbolName)
-                    .font(.system(size: 19, weight: .medium))
-                    .foregroundStyle(isSelected ? Palette.roast : Palette.inkFaint)
                 Text(LocalizedStringKey.alreadyLocalized(drink.name))
                     .font(TypeScale.bodyMedium)
                     .foregroundStyle(Palette.ink)

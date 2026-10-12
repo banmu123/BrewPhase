@@ -40,17 +40,6 @@ enum DrinkType: String, CaseIterable, Sendable, Identifiable {
         }
     }
 
-    var symbolName: String {
-        switch self {
-        case .pourOver: return "drop.circle"
-        case .espresso: return "cup.and.saucer.fill"
-        case .americano: return "takeoutbag.and.cup.and.straw.fill"
-        case .latte: return "carton.fill"
-        case .cappuccino: return "cloud.fill"
-        case .coldBrew: return "snowflake"
-        }
-    }
-
     /// 诊断与统计用的家族。与 `brew_method_rules.json` 的分类一致。
     var family: MethodFamily {
         switch self {
