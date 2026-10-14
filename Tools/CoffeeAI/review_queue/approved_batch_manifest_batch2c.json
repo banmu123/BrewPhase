@@ -1,0 +1,15 @@
+{
+ "batch_id": "batch2c-approved-r1",
+ "created_at": "2026-10-14",
+ "approved_samples": [
+  "b2c-001",
+  "b2c-002",
+  "b2c-003"
+ ],
+ "approved_by": "banmu123 (project owner)",
+ "approved_at": "2026-10-14",
+ "deployment_purpose": "noncommercial-research",
+ "decision_reference": "batch2c-approved-r1：b2c-001~003——负责人 2026-10-14 拍板（采纳 GPT 拍板）。审核链：batch2c_candidate_plan（六点九-F 第一步）→ 草稿（第二步，GPT 硬约束落实）→ 审核包（六点九-G，A-H + 层级表核对）→ GPT 六点九-H 拍板（三条批准 + b2c-002 设备 F/P 拆分 + b2c-003 interaction_skill=uncertainty_handling）。GPT 定位：QA 数据 → Agent 行为数据（什么时候应该问/拆变量/承认不知道）。",
+ "source_exception_reference": "Tools/CoffeeAI/source_exceptions.json（本轮仅扩展 allowed_sample_ids：ucdavis←b2c-001/002/003、baratza←b2c-002、nca←b2c-002；claim/topics/授权范围未变）。三来源样本 b2c-002 的 topic 交集 {'pour-over diagnosis'} 由六点九-E topics 对齐扩展覆盖。",
+ "notes": "batch2c-approved-r1：3 条全部批准（approved 22 → 25，达成 approved ≥25 阈值）。训练保持冻结。质量门禁 PASSED（0/0）；130 tests OK；build_kb --check OK。落库后进入阶段七：第一次模型实验准备（数据审计最终版 → mlx-lm 安装 → 基座下载 → LoRA dry-run → loss/overfit/泄漏检查 → 不直接训练）。"
+}
