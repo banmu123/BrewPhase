@@ -230,9 +230,15 @@ class SplitTests(unittest.TestCase):
                     {"role": "assistant", "content": "足够长的回答内容，用来通过最短长度检查的全部要求。"}]
             write_jsonl(c, [{"sample_id": "t1", "group_id": "g1", "messages": msgs}])
             m = td / "tiny.meta.jsonl"
+            sys.path.insert(0, str(SCRIPTS))
+            from coffeeai_common import messages_fingerprint
+            tiny_msgs = [{"role": "user", "content": "q?"},
+                         {"role": "assistant",
+                          "content": "足够长的回答内容，用来通过最短长度检查的全部要求。"}]
             write_jsonl(m, [{"sample_id": "t1", "topic": "t", "license_status": "own-original",
                              "review_status": "approved", "data_version": "v",
                              "dedup_fingerprint": "a" * 64,
+                             "reviewed_content_sha256": messages_fingerprint(tiny_msgs),
                              "source_waiver": "测试样本：无外部事实来源。"}])
             out = td / "out"
             proc = run_script("split_dataset.py", "--corpus", c, "--meta", m,
@@ -471,11 +477,17 @@ class TrainingAdmissionTests(unittest.TestCase):
             msgs = [{"role": "user", "content": q},
                     {"role": "assistant", "content": a}]
             rows_c.append({"sample_id": sid, "group_id": gid, "messages": msgs})
-            rows_m.append({"sample_id": sid, "group_id": gid, "topic": "t",
-                           "source_doc": "t", "source_ids": [], "claim_ids": [],
-                           "license_status": "own-original", "review_status": status,
-                           "data_version": "v", "dedup_fingerprint": "a" * 64,
-                           "source_waiver": "测试样本：行为演示，无外部事实来源。"})
+            meta = {"sample_id": sid, "group_id": gid, "topic": "t",
+                    "source_doc": "t", "source_ids": [], "claim_ids": [],
+                    "license_status": "own-original", "review_status": status,
+                    "data_version": "v", "dedup_fingerprint": "a" * 64,
+                    "source_waiver": "测试样本：行为演示，无外部事实来源。"}
+            if status == "approved":
+                # 阶段四：approved 样本必须绑定审核内容指纹
+                sys.path.insert(0, str(SCRIPTS))
+                from coffeeai_common import messages_fingerprint
+                meta["reviewed_content_sha256"] = messages_fingerprint(msgs)
+            rows_m.append(meta)
         write_jsonl(c, rows_c)
         write_jsonl(m, rows_m)
         return c, m
@@ -543,7 +555,7 @@ class TrainingAdmissionTests(unittest.TestCase):
 
 
 class SourceAdmissionTests(unittest.TestCase):
-    """阶段三 P1：来源级训练准入（真实来源 ID，不虚构）。"""
+    """阶段三/四：来源级训练准入（默认拒绝 + 可审计人工例外；全部使用真实注册表来源）。"""
 
     def _one_sample(self, td, source_ids, claim_ids, usage=None, waiver=None,
                     review="approved", license_status="own-original"):
@@ -556,6 +568,10 @@ class SourceAdmissionTests(unittest.TestCase):
                 "source_ids": source_ids, "claim_ids": claim_ids,
                 "license_status": license_status, "review_status": review,
                 "data_version": "v", "dedup_fingerprint": "a" * 64}
+        if review == "approved":
+            sys.path.insert(0, str(SCRIPTS))
+            from coffeeai_common import messages_fingerprint
+            meta["reviewed_content_sha256"] = messages_fingerprint(msgs)
         if usage is not None:
             meta["source_usage"] = usage
         if waiver is not None:
@@ -563,8 +579,96 @@ class SourceAdmissionTests(unittest.TestCase):
         write_jsonl(m, [meta])
         return c, m
 
-    def _for_training(self, c, m):
-        return run_script("validate_data.py", "--corpus", c, "--meta", m, "--for-training")
+    def _for_training(self, c, m, exceptions=None):
+        args = ["validate_data.py", "--corpus", c, "--meta", m, "--for-training"]
+        if exceptions is not None:
+            exc = Path(exceptions)
+            if not exc.is_absolute():
+                exc = Path.cwd() / exc
+            args += ["--source-exceptions", exc]
+        return run_script(*args)
+
+    def _write_exceptions(self, td, entries):
+        p = Path(td) / "exceptions.json"
+        p.write_text(json.dumps({"schemaVersion": 1, "exceptions": entries},
+                                ensure_ascii=False, indent=2), encoding="utf-8")
+        return p
+
+    def test_wcr_catalog_blocked_by_default(self):
+        """阶段四核心回归：wcr-varieties-catalog（NC-ND + 禁商用/禁衍生）默认必须被阻断，
+        source_usage 声明不能替代人工例外。"""
+        with tempfile.TemporaryDirectory() as td:
+            c, m = self._one_sample(td, ["wcr-varieties-catalog"],
+                                    ["claim.varieties.no-absolute-data"],
+                                    {"wcr-varieties-catalog": "fact-extraction-rewrite"})
+            proc = self._for_training(c, m)
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("source-requires-human-exception", proc.stdout)
+            self.assertIn("wcr-varieties-catalog", proc.stdout)
+
+    def test_valid_human_exception_unblocks(self):
+        """有效人工例外（审批人/日期/范围齐全）才放行，且范围限定为 fact-extraction-rewrite。"""
+        with tempfile.TemporaryDirectory() as td:
+            exc = self._write_exceptions(td, [{
+                "sourceId": "wcr-varieties-catalog", "usage": "fact-extraction-rewrite",
+                "reason": "注册表口径：品种知识仅可独立改写，禁止复制目录表格",
+                "approved_by": "人工审核人（测试占位）", "approved_at": "2026-10-14",
+                "scope": "仅非商业训练样本；逐条人工审核；不复制原文",
+            }])
+            c, m = self._one_sample(td, ["wcr-varieties-catalog"],
+                                    ["claim.varieties.no-absolute-data"],
+                                    {"wcr-varieties-catalog": "fact-extraction-rewrite"})
+            proc = self._for_training(c, m, exceptions=exc)
+            self.assertNotIn("source-requires-human-exception", proc.stdout)
+
+    def test_incomplete_exception_still_blocks(self):
+        """例外缺审批人 → fail-closed，仍然阻断，并给出无效提示。"""
+        with tempfile.TemporaryDirectory() as td:
+            exc = self._write_exceptions(td, [{
+                "sourceId": "wcr-varieties-catalog", "usage": "fact-extraction-rewrite",
+                "reason": "缺审批人的例外", "approved_by": "", "approved_at": "2026-10-14",
+                "scope": "n/a",
+            }])
+            c, m = self._one_sample(td, ["wcr-varieties-catalog"],
+                                    ["claim.varieties.no-absolute-data"],
+                                    {"wcr-varieties-catalog": "fact-extraction-rewrite"})
+            proc = self._for_training(c, m, exceptions=exc)
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("source-requires-human-exception", proc.stdout)
+            self.assertIn("exception-invalid", proc.stdout)
+
+    def test_expired_exception_still_blocks(self):
+        with tempfile.TemporaryDirectory() as td:
+            exc = self._write_exceptions(td, [{
+                "sourceId": "wcr-varieties-catalog", "usage": "fact-extraction-rewrite",
+                "reason": "已过期", "approved_by": "人工审核人", "approved_at": "2026-01-01",
+                "scope": "n/a", "valid_until": "2026-01-02",
+            }])
+            c, m = self._one_sample(td, ["wcr-varieties-catalog"],
+                                    ["claim.varieties.no-absolute-data"],
+                                    {"wcr-varieties-catalog": "fact-extraction-rewrite"})
+            proc = self._for_training(c, m, exceptions=exc)
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("source-requires-human-exception", proc.stdout)
+
+    def test_public_domain_auto_allowed(self):
+        """fda-caffeine（public-domain + allowed/allowed）无需例外即可自动准入。"""
+        with tempfile.TemporaryDirectory() as td:
+            c, m = self._one_sample(td, ["fda-caffeine"], ["claim.health.fda-400"],
+                                    {"fda-caffeine": "fact-extraction-rewrite"})
+            proc = self._for_training(c, m)
+            self.assertNotIn("source-requires-human-exception", proc.stdout)
+            self.assertNotIn("source-blocked-status", proc.stdout)
+
+    def test_unclear_fields_require_exception_even_with_usage(self):
+        """commercialUse/derivatives unclear 的 see-source-terms 来源：声明 usage 也不自动准入。"""
+        with tempfile.TemporaryDirectory() as td:
+            c, m = self._one_sample(td, ["sca-coffee-standards"],
+                                    ["claim.sensory.cva-four"],
+                                    {"sca-coffee-standards": "fact-extraction-rewrite"})
+            proc = self._for_training(c, m)
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("source-requires-human-exception", proc.stdout)
 
     def test_pending_verification_source_blocks_training(self):
         """真实存在的待核验来源（wcr-sensory-lexicon）必须阻断训练。"""
@@ -572,7 +676,7 @@ class SourceAdmissionTests(unittest.TestCase):
             c, m = self._one_sample(td, ["wcr-sensory-lexicon"], [], {})
             proc = self._for_training(c, m)
             self.assertEqual(proc.returncode, 1)
-            self.assertIn("source-blocked-pending", proc.stdout)
+            self.assertIn("source-blocked-status", proc.stdout)
 
     def test_paywalled_and_restricted_sources_block_training(self):
         """付费墙（sca-digital-store）与受限资产（sca-flavor-wheel-2016）阻断。"""
@@ -581,28 +685,12 @@ class SourceAdmissionTests(unittest.TestCase):
                 c, m = self._one_sample(td, [sid], [], {sid: "fact-extraction-rewrite"})
                 proc = self._for_training(c, m)
                 self.assertEqual(proc.returncode, 1, sid)
-                self.assertIn("source-license-blocked", proc.stdout, sid)
-
-    def test_see_source_terms_requires_usage_declaration(self):
-        """see-source-terms 来源：有 usage 声明+claim 关联才可训练。"""
-        with tempfile.TemporaryDirectory() as td:
-            # 无声明 → 阻断
-            c, m = self._one_sample(td, ["sca-coffee-standards"],
-                                    ["claim.sensory.cva-four"], {})
-            proc = self._for_training(c, m)
-            self.assertEqual(proc.returncode, 1)
-            self.assertIn("source-usage-undeclared", proc.stdout)
-            # 有声明 + claim 关联 → 该项通过（剩余 error 只能是 unreviewed 之外的）
-            c, m = self._one_sample(td, ["sca-coffee-standards"],
-                                    ["claim.sensory.cva-four"],
-                                    {"sca-coffee-standards": "fact-extraction-rewrite"})
-            proc = self._for_training(c, m)
-            self.assertNotIn("source-usage-undeclared", proc.stdout)
+                self.assertIn("source-blocked-status", proc.stdout, sid)
 
     def test_claim_linkage_required_when_sources_cited(self):
         with tempfile.TemporaryDirectory() as td:
-            c, m = self._one_sample(td, ["sca-coffee-standards"], [],
-                                    {"sca-coffee-standards": "fact-extraction-rewrite"})
+            c, m = self._one_sample(td, ["fda-caffeine"], [],
+                                    {"fda-caffeine": "fact-extraction-rewrite"})
             proc = self._for_training(c, m)
             self.assertEqual(proc.returncode, 1)
             self.assertIn("missing-claim-linkage", proc.stdout)
@@ -625,7 +713,7 @@ class SourceAdmissionTests(unittest.TestCase):
             proc = self._for_training(c, m)
             self.assertEqual(proc.returncode, 1)
             self.assertIn("not-approved", proc.stdout)
-            self.assertNotIn("source-blocked-pending", proc.stdout)
+            self.assertNotIn("source-blocked-status", proc.stdout)
 
 
 class AllowDownloadTests(unittest.TestCase):
@@ -678,6 +766,151 @@ class EvaluateCommandTests(unittest.TestCase):
         import evaluate
         self.assertEqual(evaluate.TRAINING_SYSTEM,
                          "你是咖啡领域助手。回答需区分事实与推断，资料不足时明确说明，不编造来源。")
+
+
+def _build_approved_split(td):
+    """构建 3 个 approved 组的可划分语料（内容互不相同、审核指纹正确绑定）。"""
+    sys.path.insert(0, str(SCRIPTS))
+    from coffeeai_common import messages_fingerprint
+    c, m = Path(td) / "c.jsonl", Path(td) / "c.meta.jsonl"
+    content = [
+        ("问题一？", "第一条回答：内容足够长，且与其他条目明显不同，用来通过全部检查要求。"),
+        ("问题二？", "第二条回答：手冲与意式的诊断路径不同，需要分别讨论变量与证据。"),
+        ("问题三？", "第三条回答：养豆窗口取决于烘焙度、处理法与储存，不能给统一天数。"),
+    ]
+    rows_c, rows_m = [], []
+    for i, (q, a) in enumerate(content, 1):
+        msgs = [{"role": "user", "content": q}, {"role": "assistant", "content": a}]
+        rows_c.append({"sample_id": f"cb-{i}", "group_id": f"g-cb-{i}", "messages": msgs})
+        rows_m.append({"sample_id": f"cb-{i}", "group_id": f"g-cb-{i}", "topic": "t",
+                       "source_doc": "t", "source_ids": [], "claim_ids": [],
+                       "license_status": "own-original", "review_status": "approved",
+                       "data_version": "v", "dedup_fingerprint": messages_fingerprint(msgs),
+                       "reviewed_content_sha256": messages_fingerprint(msgs),
+                       "source_waiver": "测试样本：无外部事实来源。"})
+    write_jsonl(c, rows_c)
+    write_jsonl(m, rows_m)
+    out = Path(td) / "splits"
+    run_script("split_dataset.py", "--corpus", c, "--meta", m, "--out", out, expect=0)
+    return out
+
+
+class ContentBindingTests(unittest.TestCase):
+    """阶段四：人工审核结果必须绑定到确切的训练文本（reviewed_content_sha256）。"""
+
+    def _approved_split(self, td):
+        return _build_approved_split(td)
+
+    def test_approved_split_passes_admission(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = self._approved_split(td)
+            run_script("validate_data.py", "--check-admission", out, "--json", expect=0)
+
+    def test_tampered_answer_blocks_training(self):
+        """核心回归：保持 sample_id 与已批准元数据不变，只改 JSONL 回答 → 准入失败。"""
+        with tempfile.TemporaryDirectory() as td:
+            out = self._approved_split(td)
+            f = out / "train.jsonl"
+            rows = [json.loads(l) for l in f.read_text(encoding="utf-8").splitlines() if l.strip()]
+            target = rows[0]
+            for msg in target["messages"]:
+                if msg["role"] == "assistant":
+                    msg["content"] = "被篡改的回答：内容与人工审核时确认的文本完全不同。"
+            f.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n",
+                         encoding="utf-8")
+            proc = run_script("validate_data.py", "--check-admission", out, "--json")
+            self.assertEqual(proc.returncode, 1)
+            report = json.loads(proc.stdout)
+            codes = {i["code"] for i in report["admission"]["issues"]}
+            self.assertIn("admission-content-mismatch", codes)
+            self.assertIn(target["sample_id"],
+                          json.dumps(report["admission"]["issues"], ensure_ascii=False))
+
+    def test_missing_reviewed_fingerprint_blocks(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = self._approved_split(td)
+            for name in ("train.meta.jsonl", "valid.meta.jsonl", "test.meta.jsonl"):
+                p = out / name
+                rows = [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
+                for r in rows:
+                    r.pop("reviewed_content_sha256", None)
+                p.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n",
+                             encoding="utf-8")
+            proc = run_script("validate_data.py", "--check-admission", out, "--json")
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("admission-content-unverified", proc.stdout)
+
+    def test_cross_split_duplicate_sample_blocked(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = self._approved_split(td)
+            # 把 train 的一条复制进 test（同 sample_id）
+            train_rows = [l for l in (out / "train.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+            meta_rows = [l for l in (out / "train.meta.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+            with (out / "test.jsonl").open("a", encoding="utf-8") as f:
+                f.write(train_rows[0] + "\n")
+            with (out / "test.meta.jsonl").open("a", encoding="utf-8") as f:
+                f.write(meta_rows[0] + "\n")
+            proc = run_script("validate_data.py", "--check-admission", out, "--json")
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("sample-cross-split", proc.stdout)
+
+
+class EffectiveConfigTests(unittest.TestCase):
+    """阶段四：预检查对象 == 实际训练对象（有效配置唯一化）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp(prefix="coffeeai_effcfg_"))
+        cls.split_dir = _build_approved_split(cls.tmp)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_build_effective_config_applies_overrides(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import run_train
+        raw = {"model": "default/model", "data": "Tools/CoffeeAI/data/splits", "iters": 300}
+        eff = run_train.build_effective_config(raw, "override/model", None)
+        self.assertEqual(eff["model"], "override/model")
+        self.assertEqual(eff["iters"], 300)
+        self.assertEqual(raw["model"], "default/model", "不得就地修改原始配置")
+        eff2 = run_train.build_effective_config(raw, None, "some/data/dir")
+        self.assertEqual(eff2["data"], str(REPO / "some/data/dir"), "相对数据目录应基于仓库根解析")
+
+    def test_effective_config_roundtrip(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import run_train
+        with tempfile.TemporaryDirectory() as td:
+            raw = {"model": "default/model", "data": "d", "iters": 2, "train": True,
+                   "fine_tune_type": "lora", "seed": 0, "batch_size": 1,
+                   "num_layers": 2, "learning_rate": 1.0e-4, "val_batches": 1,
+                   "steps_per_report": 1, "steps_per_eval": 100,
+                   "grad_accumulation_steps": 1, "adapter_path": "adp",
+                   "save_every": 1000, "test": False, "test_batches": 1,
+                   "max_seq_length": 512, "grad_checkpoint": True,
+                   "lora_parameters": {"keys": ["self_attn.q_proj"], "rank": 4,
+                                       "scale": 10.0, "dropout": 0.0}}
+            eff = run_train.build_effective_config(raw, "override/model", None)
+            p = run_train.write_effective_config(eff, Path(td) / "eff.yaml")
+            parsed = run_train.parse_simple_yaml(p)
+            self.assertEqual(parsed["model"], "override/model")
+            self.assertEqual(parsed["iters"], 2)
+            self.assertEqual(parsed["grad_checkpoint"], True)
+
+    def test_dry_run_shows_effective_overrides(self):
+        proc = run_script("run_train.py", "--dry-run",
+                          "--config", COFFEEAI / "configs" / "smoke.yaml",
+                          "--data-dir", self.split_dir,
+                          "--model", "override/test-model", "--allow-download")
+        self.assertEqual(proc.returncode, 0)
+        out = proc.stdout
+        self.assertIn("有效配置", out)
+        self.assertIn("override/test-model", out)
+        # 有效配置应用于基础模型行；原配置模型不得出现在基础模型行
+        model_line = next(l for l in out.splitlines() if l.startswith("基础模型"))
+        self.assertIn("override/test-model", model_line)
+        self.assertNotIn("Qwen3", model_line)
 
 
 class RepoIntegrityTests(unittest.TestCase):

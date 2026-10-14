@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 import sys
+from datetime import date
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -35,27 +36,86 @@ LICENSES_BLOCK_TRAIN = {
 REVIEW_APPROVED = "approved"
 VALID_REVIEW_STATUS = {"approved", "unreviewed", "needs-review", "rejected"}
 
-# ---------------------------------------------------------------- 来源级训练准入政策（阶段三）
-# 依据 knowledge/SOURCE_REGISTRY.md 的项目纪律：
-#   - pending-verification 来源未取得官方可访问 URL，禁止作为事实来源（注册表 §0.1）；
-#   - license unknown = 来源没有自述许可，不许默认可复制（§0.2）；
-#   - 付费数字产品正文不得复制（§2）；
-#   - restricted 资产（如 SCA 风味轮）不得改编；
-#   - 其余外部来源只允许「事实提取 + 独立改写 + 署名」——样本必须显式声明该用法。
-SOURCE_STATUS_BLOCKED = {"pending-verification"}
+# ---------------------------------------------------------------- 来源级训练准入政策（阶段三/四）
+# 项目来源政策（代码严格执行，非法律意见）——默认拒绝：
+#   自动准入（无需人工例外）须同时满足：
+#     status == active 且 license.status == public-domain
+#     且 commercialUse == allowed 且 derivatives == allowed
+#   以下一律阻断（人工例外也不能放行）：
+#     status ∈ {pending-verification, restricted, paywalled}
+#     或 license.status ∈ {unknown, proprietary-paywalled}
+#   其余（see-source-terms / proprietary-free / cc-by-nc-nd / partial /
+#   commercialUse 或 derivatives 为 unclear 或 not-allowed 等）
+#   → 必须在 source_exceptions.json 登记有效人工例外。
+# 有效人工例外要求：usage=fact-extraction-rewrite、approved_by / approved_at /
+#   scope 非空、未过期（valid_until）。缺任何一项即视为无效（fail-closed）。
+SOURCE_STATUS_BLOCKED = {"pending-verification", "restricted", "paywalled"}
 SOURCE_LICENSE_BLOCKED = {"unknown", "proprietary-paywalled"}
 ALLOWED_SOURCE_USAGE = {"fact-extraction-rewrite"}  # 外部来源唯一允许的用法
+SOURCE_EXCEPTIONS_FILE = COFFEEAI_ROOT / "source_exceptions.json"
 EXTERNAL_SOURCE_POLICY = (
-    "外部来源仅允许「事实提取 + 独立改写 + 署名」；训练样本须在元数据 "
-    "source_usage 中为每个引用来源显式声明 usage=fact-extraction-rewrite，"
-    "并提供 claim 关联。pending-verification / license unknown / 付费墙来源禁止引用。"
+    "来源政策（默认拒绝）：仅 public-domain 且 commercialUse/derivatives 均 allowed "
+    "的 active 来源可自动用于「事实提取+独立改写」；其余来源（含 NC-ND、"
+    "see-source-terms、proprietary-free、字段 unclear 者）必须先在 "
+    "Tools/CoffeeAI/source_exceptions.json 登记有效人工例外（来源、理由、审批人、"
+    "日期与适用范围）。本检查执行项目自身政策，不构成法律意见。"
 )
 
 
-def source_admission_issues(source_ids, registry, source_usage):
-    """对一条样本引用的外部来源做训练准入检查。返回 issue 列表（均为 error 级）。"""
+def load_source_exceptions(path=None, today=None):
+    """读取并校验人工例外登记。返回 (有效例外 dict, 被拒条目 list)。
+
+    无效条目（缺审批人/审批日期/适用范围、usage 非法、已过期）一律忽略（fail-closed）。
+    """
+    path = Path(path) if path else SOURCE_EXCEPTIONS_FILE
+    valid, rejected = [], []
+    if not path.is_file():
+        return {}, rejected
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}, [{"sourceId": None, "reason": "exceptions 文件不是合法 JSON"}]
+    for i, e in enumerate(data.get("exceptions", [])):
+        sid = e.get("sourceId")
+        why = None
+        if not sid:
+            why = "缺少 sourceId"
+        elif e.get("usage") not in ALLOWED_SOURCE_USAGE:
+            why = f"usage 非法: {e.get('usage')!r}"
+        elif not str(e.get("approved_by") or "").strip():
+            why = "缺少 approved_by（人工审批人）"
+        elif not str(e.get("approved_at") or "").strip():
+            why = "缺少 approved_at（审批日期）"
+        elif not str(e.get("scope") or "").strip():
+            why = "缺少 scope（适用范围）"
+        else:
+            vu = e.get("valid_until")
+            if vu:
+                try:
+                    if date.fromisoformat(str(vu)) < (today or date.today()):
+                        why = f"例外已于 {vu} 过期"
+                except ValueError:
+                    why = f"valid_until 无法解析: {vu!r}"
+        if why:
+            rejected.append({"sourceId": sid, "reason": why, "index": i})
+        else:
+            valid[sid] = e
+    return valid, rejected
+
+
+def source_auto_allow(info):
+    """注册表条目是否满足自动准入（无需人工例外）。"""
+    return (info.get("status") == "active"
+            and info.get("license_status") == "public-domain"
+            and info.get("commercialUse") == "allowed"
+            and info.get("derivatives") == "allowed")
+
+
+def source_admission_issues(source_ids, registry, source_usage, exceptions=None):
+    """对一条样本引用的外部来源做训练准入检查（默认拒绝）。返回 error 级 issue 列表。"""
     issues = []
     usage = source_usage or {}
+    exceptions = exceptions or {}
     for sid in source_ids:
         info = registry.get(sid)
         if info is None:
@@ -63,12 +123,11 @@ def source_admission_issues(source_ids, registry, source_usage):
                            "message": f"引用了未注册来源: {sid}"})
             continue
         if info.get("status") in SOURCE_STATUS_BLOCKED:
-            issues.append({"level": "error", "code": "source-blocked-pending",
-                           "message": f"来源 {sid} 状态为 pending-verification，禁止作为事实来源"})
-            continue
-        if info.get("status") == "restricted":
-            issues.append({"level": "error", "code": "source-license-blocked",
-                           "message": f"来源 {sid} 为 restricted 资产（禁止改编），禁止用于训练样本"})
+            label = ("pending-verification，禁止作为事实来源"
+                     if info["status"] == "pending-verification"
+                     else f"{info['status']}，禁止用于训练样本")
+            issues.append({"level": "error", "code": "source-blocked-status",
+                           "message": f"来源 {sid} 状态为 {label}"})
             continue
         lic = str(info.get("license_status") or "").lower()
         if lic in SOURCE_LICENSE_BLOCKED:
@@ -78,8 +137,22 @@ def source_admission_issues(source_ids, registry, source_usage):
         declared = usage.get(sid)
         if declared not in ALLOWED_SOURCE_USAGE:
             issues.append({"level": "error", "code": "source-usage-undeclared",
-                           "message": f"来源 {sid} 未显式声明用法（source_usage.{sid} 必须为 "
-                                      f"fact-extraction-rewrite）。{EXTERNAL_SOURCE_POLICY}"})
+                           "message": f"来源 {sid} 未在样本元数据声明用法"
+                                      f"（source_usage.{sid} 必须为 fact-extraction-rewrite）"})
+            continue
+        if source_auto_allow(info):
+            continue
+        # 默认拒绝：需要有效人工例外（source_usage 声明不能替代授权）
+        exc = exceptions.get(sid)
+        if exc is None:
+            issues.append({"level": "error", "code": "source-requires-human-exception",
+                           "message": f"来源 {sid}（license={lic}, commercialUse="
+                                      f"{info.get('commercialUse')!r}, derivatives="
+                                      f"{info.get('derivatives')!r}）不在自动准入范围，且无有效"
+                                      f"人工例外。{EXTERNAL_SOURCE_POLICY}"})
+        elif exc.get("usage") not in ALLOWED_SOURCE_USAGE:
+            issues.append({"level": "error", "code": "source-requires-human-exception",
+                           "message": f"来源 {sid} 的人工例外 usage 非法"})
     return issues
 
 REQUIRED_META_FIELDS = [
@@ -288,7 +361,7 @@ def check_meta(rec, registry_sources=None, for_training=False):
 
 
 def load_registry(path=DEFAULT_REGISTRY):
-    """返回 {sourceId: {status, license_status}}；文件不存在返回 None。"""
+    """返回 {sourceId: {status, license_status, commercialUse, derivatives}}；不存在返回 None。"""
     path = Path(path)
     if not path.is_file():
         return None
@@ -298,9 +371,12 @@ def load_registry(path=DEFAULT_REGISTRY):
         return None
     out = {}
     for s in reg.get("sources", []):
+        lic = s.get("license") or {}
         out[s.get("sourceId")] = {
             "status": s.get("status"),
-            "license_status": (s.get("license") or {}).get("status"),
+            "license_status": lic.get("status"),
+            "commercialUse": lic.get("commercialUse"),
+            "derivatives": lic.get("derivatives"),
         }
     return out
 

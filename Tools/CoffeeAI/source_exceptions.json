@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "policy": "默认拒绝。外部来源仅 public-domain 且 commercialUse/derivatives 均 allowed 的 active 来源可自动准入；其余来源必须在此登记有效人工例外后，方可用于「事实提取+独立改写」。无效或过期条目会被忽略（fail-closed）。本文件由人工维护，任何脚本都不会自动写入或修改。",
+  "required_fields": {
+    "sourceId": "已在 knowledge/SOURCE_REGISTRY.json 注册的来源 ID",
+    "usage": "只允许 fact-extraction-rewrite",
+    "reason": "为什么允许该来源用于独立事实提取（引用注册表条目/许可说明）",
+    "approved_by": "人工审批人（必填，脚本不得代填）",
+    "approved_at": "审批日期（ISO 8601，必填）",
+    "scope": "适用范围（如：仅非商业训练样本、禁止复制原文、须署名）",
+    "valid_until": "有效期（可选，ISO 日期；过期即失效）"
+  },
+  "exceptions": []
+}

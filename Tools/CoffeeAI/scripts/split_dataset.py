@@ -227,6 +227,8 @@ def main(argv=None):
                     "license_status": meta.get("license_status"),
                     "data_version": meta.get("data_version"),
                     "dedup_fingerprint": meta.get("dedup_fingerprint"),
+                    # 阶段四：审核内容指纹快照——训练准入用它逐条比对实际文本
+                    "reviewed_content_sha256": meta.get("reviewed_content_sha256"),
                     "source_ids": meta.get("source_ids") or [],
                     "claim_ids": meta.get("claim_ids") or [],
                     "source_usage": meta.get("source_usage"),

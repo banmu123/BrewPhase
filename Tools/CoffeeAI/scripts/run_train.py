@@ -134,17 +134,36 @@ def mlx_entry():
     return [sys.executable, "-m", "mlx_lm.lora"], [sys.executable, "-m", "mlx_lm.generate"]
 
 
-def preflight(config_path, model_override, data_override, mode, allow_download):
-    """返回 (ok, report)。mode: dry-run / smoke / train"""
+def build_effective_config(cfg_raw, model_override=None, data_override=None):
+    """阶段四：生成唯一的有效训练配置——覆盖值在此一次性应用，
+    preflight / dry-run / smoke / 正式训练全部使用它，杜绝「校验 A、执行 B」。"""
+    cfg = dict(cfg_raw)
+    if model_override:
+        cfg["model"] = model_override
+    if data_override:
+        p = Path(data_override)
+        cfg["data"] = str(p if p.is_absolute() else REPO_ROOT / p)
+    return cfg
+
+
+def write_effective_config(cfg, path):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(dump_yaml(cfg), encoding="utf-8")
+    return path
+
+
+def preflight(config_path, cfg, mode, allow_download):
+    """返回 (ok, report)。mode: dry-run / smoke / train。cfg 必须是有效配置（覆盖已应用）。"""
     report = {}
-    cfg = parse_simple_yaml(config_path)
-    model_ref = model_override or cfg.get("model")
-    data_dir = Path(data_override or cfg.get("data") or "")
+    model_ref = cfg.get("model")
+    data_dir = Path(cfg.get("data") or "")
     if not data_dir.is_absolute():
         data_dir = REPO_ROOT / data_dir
     adapter_path = Path(cfg.get("adapter_path") or "")
     if adapter_path and not adapter_path.is_absolute():
         adapter_path = REPO_ROOT / adapter_path
+    report["config_path"] = str(config_path)
     report["model_ref"] = model_ref
     report["data_dir"] = str(data_dir)
     report["adapter_path"] = str(adapter_path)
@@ -241,7 +260,8 @@ def print_dry_run(report, config_path):
     print("=" * 66)
     print("CommitBrew Coffee AI — 训练 DRY-RUN（只读预览，不训练、不下载）")
     print("=" * 66)
-    print(f"配置文件   : {config_path}")
+    print(f"原始配置   : {config_path}")
+    print(f"有效配置   : 已应用 --model/--data-dir 覆盖（预检对象 == 执行对象）")
     print(f"基础模型   : {report['model_ref']}")
     print(f"模型状态   : {report['model_status']}  {report['model_detail'].get('size_gb', report['model_detail'].get('note', ''))}")
     print(f"微调类型   : {cfg.get('fine_tune_type')}（量化模型自动按 QLoRA，官方 LORA.md）")
@@ -251,11 +271,13 @@ def print_dry_run(report, config_path):
     print(f"学习率/序列: lr={cfg.get('learning_rate')} max_seq_length={cfg.get('max_seq_length')} grad_checkpoint={cfg.get('grad_checkpoint')}")
     print(f"适配器输出 : {report['adapter_path']}")
     print(f"日志目录   : {COFFEEAI / 'runs' / 'logs'}")
-    print(f"manifest   : 正式训练后写 {COFFEEAI / 'runs' / '<run_id>' / 'run_manifest.json'}")
+    print(f"manifest   : 正式训练后写 {COFFEEAI / 'runs' / '<run_id>' / 'run_manifest.json'}"
+          "（含有效配置、模型路径、数据路径与配置摘要）")
     entry, _ = mlx_entry()
     print("-" * 66)
-    print("将执行（dry-run 不执行）:")
-    print(f"  {' '.join(entry)} --config {config_path}")
+    print("将执行（dry-run 不执行；正式训练时把上方有效配置写出为"
+          " runs/<run_id>/effective_config.yaml 并以其调用）：")
+    print(f"  {' '.join(entry)} --config <effective_config.yaml>")
     print("-" * 66)
     for h in report["preflight_hard"]:
         print(f"✗ [阻断] {h}")
@@ -304,7 +326,10 @@ def main(argv=None):
               file=sys.stderr)
         sys.exit(1)
 
-    ok, report = preflight(config_path, args.model, args.data_dir, mode, args.allow_download)
+    # ---- 阶段四：唯一的有效配置（--model/--data-dir 覆盖在此一次应用）
+    cfg_raw = parse_simple_yaml(config_path)
+    cfg_effective = build_effective_config(cfg_raw, args.model, args.data_dir)
+    ok, report = preflight(config_path, cfg_effective, mode, args.allow_download)
 
     if mode == "dry-run":
         print_dry_run(report, config_path)
@@ -340,12 +365,13 @@ def main(argv=None):
             print(f"[CoffeeAI] 烟测失败（exit={code}），请查看日志: {log}", file=sys.stderr)
         sys.exit(code)
 
-    # ---- 正式训练
+    # ---- 正式训练：写出唯一的有效配置并以它执行（预检对象 == 执行对象）
     run_id = f"train_{ts}"
     run_dir = COFFEEAI / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    eff_path = write_effective_config(report["config"], run_dir / "effective_config.yaml")
     log = COFFEEAI / "runs" / "logs" / f"{run_id}.log"
-    code = run_subprocess(entry + ["--config", str(config_path)], log)
+    code = run_subprocess(entry + ["--config", str(eff_path)], log)
 
     manifest = {
         "run_id": run_id,
@@ -355,10 +381,13 @@ def main(argv=None):
         "model_source": report["model_status"],
         "model_detail": report["model_detail"],
         "fine_tune_type": cfg.get("fine_tune_type"),
-        "config_path": str(config_path),
-        "config": cfg,
+        "config_path_original": str(config_path),
+        "effective_config_path": str(eff_path),
+        "effective_config": report["config"],
+        "effective_config_sha256": hashlib.sha256(eff_path.read_bytes()).hexdigest(),
         "data_dir": report["data_dir"],
         "data_counts": report.get("data_counts", {}),
+        "admission_errors": report.get("admission", {}).get("errors"),
         "split_files_sha256_16": report.get("split_dir_sha256", {}),
         "adapter_path": cfg.get("adapter_path"),
         "log_path": str(log),

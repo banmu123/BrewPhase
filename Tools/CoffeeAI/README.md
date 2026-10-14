@@ -18,6 +18,15 @@
 > 外部来源必须声明 `fact-extraction-rewrite` 用法并提供 claim 关联）；③ `--allow-download`
 > 仅对 `--train` 生效，烟测与 dry-run 绝不下载；④ 评测改用模型聊天模板
 > （`--system-prompt` + 默认模板，双模型参数一致）。测试 27 → **41 项**。
+>
+> **阶段四（2026-10-14）**：关闭训练安全缺口 —— ① **来源默认拒绝**：仅 public-domain 且
+> commercialUse/derivatives 均 allowed 的 active 来源自动准入；其余来源需在
+> `source_exceptions.json` 登记有效人工例外（审批人/日期/范围，fail-closed），
+> `wcr-varieties-catalog` 默认阻断（有回归测试）；② **有效配置唯一化**：`--model`/
+> `--data-dir` 覆盖统一写入 effective_config，preflight/显示/smoke/正式训练执行同一份
+> 配置，manifest 记录配置摘要；③ **审核内容绑定**：approved 样本必须携带
+> `reviewed_content_sha256`，准入复查重算实际 messages 摘要逐条比对，篡改即阻断。
+> 测试 41 → **53 项**。影响通告见 `review_queue/batch1_review_report.md` 阶段四节。
 
 ## 0. 红线（先读）
 
@@ -26,9 +35,12 @@
    生成划分，`run_train.py` 在正式训练/烟测前会**独立重读划分产物元数据做准入复查**
    （`validate_data.check_training_admission`），发现任何未审核/许可不明/来源不合规/
    元数据不全的样本即拒绝启动。
-2. 许可纪律沿用 `knowledge/SOURCE_REGISTRY.md`：WCR/SCA 风味轮为 CC BY-NC-ND
-   （不得改编复制）；SCA Handbooks、Barista Hustle 为付费内容（只记书目）；
-   `license: unknown` 一律不得默认可复制；厂商手册只能「事实提取 + 独立改写 + 署名」。
+2. 许可纪律沿用 `knowledge/SOURCE_REGISTRY.md`，并在阶段四升级为**来源默认拒绝**：
+   仅 public-domain 且 commercialUse/derivatives 均 allowed 的 active 来源（当前只有
+   `fda-caffeine`）可自动用于「事实提取+独立改写」；pending-verification / 付费墙 /
+   restricted / unknown 一律阻断；其余来源必须在 `Tools/CoffeeAI/source_exceptions.json`
+   登记有效人工例外（审批人/日期/范围必填，fail-closed）。本检查执行项目自身政策，
+   不构成法律意见。
 3. 不上传、不采集 BrewPhase 用户的豆子/冲煮/品鉴数据；用户 JSON 备份不得当语料。
 4. 本工程不提交模型权重、训练缓存、派生 splits 与评测输出（见仓库根 `.gitignore`）。
 5. 不自动下载模型、不自动训练；下载与训练都需要你显式执行命令。
@@ -176,7 +188,7 @@ grad_checkpoint 的保守配置余量充足；1B–2B 模型只作为内存不�
 | 9 | 不影响 iOS 工程与现有测试 | ✅ `test_existing_kb_build_check_still_passes`（`build_kb.py --check` 通过）；未改动 `BrewPhase/` 任何文件 |
 | 10 | README 结果对应真实执行 | 本表全部来自上面实际运行的测试与命令 |
 
-**测试汇总**：阶段一 22 项 → 阶段二 27 项 → **阶段三 41 项（2026-10-14 实测：Ran 41 tests, OK，Python 3.13.12）**。新增覆盖：`--include-unreviewed` 产物阻断、准入复查 CLI、来源级准入（pending/付费墙/受限/未声明用法/缺 claim 关联/缺豁免）、`--allow-download` 模式门控、评测命令对称性与模板语义。
+**测试汇总**：阶段一 22 项 → 阶段二 27 项 → 阶段三 41 项 → **阶段四 53 项（2026-10-14 实测：Ran 53 tests, OK，Python 3.13.12）**。阶段四新增：`wcr-varieties-catalog` 默认阻断、有效/缺失/过期人工例外、public-domain 自动准入、篡改训练文本阻断（admission-content-mismatch）、缺审核指纹阻断、跨集合重复、有效配置覆盖与往返一致性、dry-run 展示有效配置。
 
 ## 6. 已知限制
 

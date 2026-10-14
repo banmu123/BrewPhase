@@ -31,8 +31,8 @@ from coffeeai_common import (  # noqa: E402
     COFFEEAI_ROOT, DEFAULT_CORPUS_GLOB, DEFAULT_META_GLOB,
     LICENSES_ALLOW_TRAIN, LICENSES_BLOCK_TRAIN, REVIEW_APPROVED,
     check_messages, check_meta, corpus_sha256, expand_globs, load_jsonl,
-    load_registry, message_texts, messages_fingerprint, near_duplicate_pairs,
-    source_admission_issues,
+    load_registry, load_source_exceptions, message_texts,
+    messages_fingerprint, near_duplicate_pairs, source_admission_issues,
 )
 
 
@@ -47,7 +47,9 @@ def build_arg_parser():
     p.add_argument("--check-splits", metavar="DIR",
                    help="检查 train/valid/test.jsonl 的跨集合泄漏")
     p.add_argument("--check-admission", metavar="DIR",
-                   help="P0：对已生成 splits 做正式训练准入复查（审核状态/许可/来源级）")
+                   help="P0：对已生成 splits 做正式训练准入复查（审核状态/许可/来源级/内容指纹）")
+    p.add_argument("--source-exceptions", metavar="PATH", default=None,
+                   help="人工例外登记文件路径（默认 Tools/CoffeeAI/source_exceptions.json）")
     p.add_argument("--max-chars", type=int, default=12000)
     p.add_argument("--min-answer-chars", type=int, default=20)
     p.add_argument("--sim-threshold", type=float, default=0.92)
@@ -58,7 +60,7 @@ def build_arg_parser():
 
 def validate(corpus_patterns, meta_patterns, registry_path=None,
              max_chars=12000, min_answer_chars=20, sim_threshold=0.92,
-             for_training=False):
+             for_training=False, exceptions_path=None):
     """核心校验。返回 (issues, summary_dict)。"""
     issues = []
 
@@ -75,6 +77,14 @@ def validate(corpus_patterns, meta_patterns, registry_path=None,
     if reg is None:
         issues.append({"level": "warning", "code": "registry-missing",
                        "message": "knowledge/SOURCE_REGISTRY.json 不可读，跳过来源核对"})
+
+    # 阶段四：人工例外登记（仅训练模式需要；无效条目 fail-closed 并提示）
+    exceptions = {}
+    if for_training:
+        exceptions, exc_rejected = load_source_exceptions(exceptions_path)
+        for r in exc_rejected:
+            issues.append({"level": "warning", "code": "exception-invalid",
+                           "message": f"人工例外条目无效（未生效）: {r.get('sourceId')}: {r['reason']}"})
 
     corpus_recs, load_errors = load_jsonl(corpus_paths)
     meta_recs, meta_load_errors = load_jsonl(meta_paths)
@@ -141,22 +151,39 @@ def validate(corpus_patterns, meta_patterns, registry_path=None,
                        "sample_id": sid,
                        "message": f"语料样本 {sid} 没有对应元数据"})
 
-    # ---- 指纹一致性
+    # ---- 指纹一致性 + 审核内容绑定（阶段四）
     for rec in corpus_recs2:
         sid = rec["data"].get("sample_id")
         meta = meta_by_id.get(sid)
         msgs = rec["data"].get("messages")
         if meta and isinstance(msgs, list):
             fp_meta = meta.get("dedup_fingerprint")
+            fp_msgs = messages_fingerprint(msgs)
             if fp_meta is None:
                 if meta.get("review_status") == REVIEW_APPROVED:
                     issues.append({"level": "error", "code": "missing-fingerprint",
                                    "sample_id": sid,
                                    "message": "已审核样本缺少 dedup_fingerprint（去重标识必需）"})
-            elif fp_meta != messages_fingerprint(msgs):
+            elif fp_meta != fp_msgs:
                 issues.append({"level": "warning", "code": "fingerprint-mismatch",
                                "sample_id": sid,
                                "message": "元数据指纹与 messages 不一致（样本可能已改动，需重算）"})
+            # 审核内容指纹：approved 样本必须绑定「人工审核时的确切文本」
+            if meta.get("review_status") == REVIEW_APPROVED:
+                rcs = meta.get("reviewed_content_sha256")
+                if not rcs:
+                    issues.append({"level": "error" if for_training else "warning",
+                                   "code": "reviewed-content-unbound",
+                                   "sample_id": sid,
+                                   "message": "approved 样本缺少 reviewed_content_sha256"
+                                              + ("——训练阻断" if for_training else "")})
+                elif rcs != fp_msgs:
+                    issues.append({"level": "error",
+                                   "code": "reviewed-content-mismatch",
+                                   "sample_id": sid,
+                                   "message": "当前 messages 与审核内容指纹不一致——"
+                                              "文本在审核后被改动过，禁止直接训练"
+                                              "（不允许自动重算旧摘要使其生效）"})
 
     # ---- 训练模式
     approved = [sid for sid, m in meta_by_id.items()
@@ -183,9 +210,11 @@ def validate(corpus_patterns, meta_patterns, registry_path=None,
                 issues.append({"level": "error", "code": "missing-fingerprint",
                                "sample_id": sid,
                                "message": "训练样本缺少去重指纹"})
-            # ---- 阶段三：来源级准入（不因样本自身 own-original 而豁免来源限制）
+            # ---- 阶段三/四：来源级准入（默认拒绝 + 可审计人工例外）
             src_ids = m.get("source_ids") or []
-            src_issues = source_admission_issues(src_ids, reg or {}, m.get("source_usage"))
+            src_issues = source_admission_issues(src_ids, reg or {},
+                                                 m.get("source_usage"),
+                                                 exceptions=exceptions)
             for si in src_issues:
                 issues.append({"level": "error", "code": si["code"],
                                "sample_id": sid, "message": si["message"]})
@@ -288,15 +317,17 @@ def check_splits_dir(d, sim_threshold=0.92):
     return issues, summary
 
 
-def check_training_admission(splits_dir, registry_path=None):
+def check_training_admission(splits_dir, registry_path=None, exceptions_path=None):
     """P0：正式训练/烟测前的划分产物准入复查（不信任划分时的标志）。
 
     独立重读 {train,valid,test}.meta.jsonl 与 {train,valid,test}.jsonl，逐条确认：
       1. 每条 jsonl 样本都有对应元数据（按 sample_id 1:1，数量一致）；
       2. review_status == approved（未审核/拒绝一律阻断）；
       3. license_status 通过严格训练准入；
-      4. 来源级准入（pending/unknown/付费墙阻断、usage 声明、claim 关联、豁免）；
-      5. sample_id 不跨集合。
+      4. 来源级准入（默认拒绝 + 有效人工例外）；
+      5. 审核内容指纹：重算实际 messages 摘要并与 reviewed_content_sha256 比对，
+         不一致/缺失/无法验证一律阻断（阶段四）；
+      6. sample_id 不跨集合。
     返回 (issues, summary)。任何 error 都应阻断正式训练。
     """
     issues = []
@@ -305,6 +336,10 @@ def check_training_admission(splits_dir, registry_path=None):
     if reg is None:
         issues.append({"level": "error", "code": "registry-unreadable",
                        "message": "SOURCE_REGISTRY.json 不可读，无法做来源级准入检查（阻断）"})
+    exceptions, exc_rejected = load_source_exceptions(exceptions_path)
+    for r in exc_rejected:
+        issues.append({"level": "warning", "code": "exception-invalid",
+                       "message": f"人工例外条目无效（未生效）: {r.get('sourceId')}: {r['reason']}"})
 
     seen_ids = {}
     counts = {}
@@ -319,6 +354,7 @@ def check_training_admission(splits_dir, registry_path=None):
         recs, errs = load_jsonl([jsonl_f])
         issues.extend(errs)
         counts[split] = len(recs)
+        msgs_by_id = {r["data"].get("sample_id"): r["data"].get("messages") for r in recs}
         if not meta_f.is_file():
             issues.append({"level": "error", "code": "admission-meta-missing",
                            "message": f"缺少 {meta_f}：划分产物必须携带审计元数据"})
@@ -384,8 +420,28 @@ def check_training_admission(splits_dir, registry_path=None):
                 issues.append({"level": "error", "code": "admission-license-unclear",
                                "sample_id": sid,
                                "message": f"{split}/{sid} license_status={lic!r} 不在白名单，阻断"})
+            # ---- 阶段四：审核内容绑定（实际训练文本 == 人工审核文本）
+            msgs = msgs_by_id.get(sid)
+            fp = messages_fingerprint(msgs) if isinstance(msgs, list) else None
+            rcs = m.get("reviewed_content_sha256")
+            if not fp:
+                issues.append({"level": "error", "code": "admission-content-unverifiable",
+                               "sample_id": sid,
+                               "message": f"{split}/{sid}: 无法从 jsonl 读取 messages 计算摘要"})
+            elif not rcs:
+                issues.append({"level": "error", "code": "admission-content-unverified",
+                               "sample_id": sid,
+                               "message": f"{split}/{sid}: 元数据缺少 reviewed_content_sha256"
+                                          "（无审核内容记录，阻断）"})
+            elif rcs != fp:
+                issues.append({"level": "error", "code": "admission-content-mismatch",
+                               "sample_id": sid,
+                               "message": f"{split}/{sid}: 实际训练文本与人工审核内容指纹不一致"
+                                          "——审核后文本被改动，阻断（不允许自动重算放行）"})
             src_ids = m.get("source_ids") or []
-            src_issues = source_admission_issues(src_ids, reg or {}, m.get("source_usage"))
+            src_issues = source_admission_issues(src_ids, reg or {},
+                                                 m.get("source_usage"),
+                                                 exceptions=exceptions)
             for si in src_issues:
                 issues.append({"level": "error", "code": si["code"],
                                "sample_id": sid,
@@ -413,7 +469,8 @@ def main(argv=None):
     report = {"tool": "validate_data", "mode": "for-training" if args.for_training else "check"}
 
     if args.check_admission:
-        issues, summary = check_training_admission(args.check_admission)
+        issues, summary = check_training_admission(args.check_admission,
+                                                   exceptions_path=args.source_exceptions)
         report["admission"] = summary
     elif args.check_splits:
         issues, summary = check_splits_dir(args.check_splits, args.sim_threshold)
@@ -421,7 +478,8 @@ def main(argv=None):
     else:
         issues, summary = validate(
             args.corpus, args.meta, args.registry, args.max_chars,
-            args.min_answer_chars, args.sim_threshold, args.for_training)
+            args.min_answer_chars, args.sim_threshold, args.for_training,
+            exceptions_path=args.source_exceptions)
         report["validation"] = summary
 
     errors = sum(1 for i in issues if i.get("level") == "error")

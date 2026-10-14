@@ -80,3 +80,27 @@
 **逐条复核结论**：阶段二报告标注的重点样本中，b1-004/005/011/019/022/025/029 的回答文本与知识库 claim 表逐字核对一致，无需修订；b1-016 的「明亮酸质是风格而非缺陷」仍属弱支撑表述（保留在通过项里，靠人工裁决）；b1-017 的「一次一变量」保持无独立 claim 的如实标注。
 
 **残余风险（须人工对照外部原文）**：本环境的网络无法访问 WCR/Fellow/Hario/UC Davis 原始页面，所有 claim 锚点只验证了「知识库内部存在且语义对应」，**未**重新核对知识库对外部来源的转述是否准确。人工审核时请对 b1-019/022/025/026 的具体数字做外部抽查。
+
+---
+
+## 阶段四影响通告（2026-10-14，来源政策默认拒绝）
+
+来源级准入已升级为**默认拒绝**：仅 `fda-caffeine`（public-domain 且 commercialUse/derivatives 均 allowed）可自动准入；其余来源（NC-ND、see-source-terms、proprietary-free、字段 unclear 者）必须先在 `Tools/CoffeeAI/source_exceptions.json` 登记有效人工例外（审批人/日期/范围齐全）。`source_usage` 声明不再能单独放行任何来源。
+
+**当前例外登记表为空（脚本不得代填审批信息），因此以下 39 条候选在训练准入层面被来源政策阻断**（样本本身未删除、未改写、review_status 仍为 unreviewed）：
+
+| 来源 | 受影响候选 |
+|---|---|
+| wcr-varieties-catalog / -fields | b1-001, b1-003, b1-004, b1-007, b1-008, b1-024, coffee-ex-008 |
+| fellow-brew-talks | b1-009, b1-019, b1-020, b1-023, b1-028, coffee-ex-004, coffee-ex-005 |
+| fellow-espresso-basics | b1-014, b1-015, b1-016, coffee-ex-001, coffee-ex-002, coffee-ex-003 |
+| hario-v60-expert-guide | b1-006, b1-010, b1-012, b1-013, b1-017, b1-025 |
+| aeropress-how-to-use | b1-009, b1-010, b1-017, b1-030 |
+| sca-coffee-standards / sca-cva | b1-005, b1-021, coffee-ex-006 |
+| cqi-php / cqi-home / cqi-q-grader-faq | b1-007, b1-011, coffee-ex-007 |
+| ucdavis-coldbrew-2025 / -research-index | b1-018, b1-021, b1-022 |
+| 其余（各 1–2 条） | baratza-documents(b1-009/017), stumptown-kalita-guide(b1-006), nca-aboutcoffee(b1-002), hario-v60-hoffmann(b1-025), hario-recipe-cards(b1-022), gaggia-classic-manual(b1-026), sage-bes875-ug-i23(b1-026, coffee-ex-010), aeropress-manual-inverted(b1-027/030), efsa-caffeine-opinion(b1-029) |
+
+不受影响：`coffee-ex-009`（行为规范样本，无外部来源，凭豁免字段通过来源检查；仍为 unreviewed）。
+
+**审核流程含义**：若你决定允许某来源用于独立事实提取，请在 `source_exceptions.json` 按模板登记例外（审批人/日期/范围必填），再继续审核对应候选；未登记来源的候选保持阻断。
