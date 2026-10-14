@@ -53,49 +53,102 @@ SOURCE_STATUS_BLOCKED = {"pending-verification", "restricted", "paywalled"}
 SOURCE_LICENSE_BLOCKED = {"unknown", "proprietary-paywalled"}
 ALLOWED_SOURCE_USAGE = {"fact-extraction-rewrite"}  # 外部来源唯一允许的用法
 SOURCE_EXCEPTIONS_FILE = COFFEEAI_ROOT / "source_exceptions.json"
+# 部署用途（训练准入必须显式声明其一；内部审批不能冒充外部授权）
+KNOWN_DEPLOYMENT_PURPOSES = {"noncommercial-research", "commercial-product"}
+# 商业用途依赖许可方授权的许可状态（not-allowed/unclear/缺失均视为需要外部授权）
+EXTERNAL_GRANT_REQUIRED_LICENSES = {"not-allowed", "unclear"}
+# 例外审批日期的合理下限（项目与注册表均晚于此日期；更早视为「日期不合理」）
+MIN_REASONABLE_APPROVAL_DATE = date(2020, 1, 1)
 EXTERNAL_SOURCE_POLICY = (
     "来源政策（默认拒绝）：仅 public-domain 且 commercialUse/derivatives 均 allowed "
-    "的 active 来源可自动用于「事实提取+独立改写」；其余来源（含 NC-ND、"
-    "see-source-terms、proprietary-free、字段 unclear 者）必须先在 "
-    "Tools/CoffeeAI/source_exceptions.json 登记有效人工例外（来源、理由、审批人、"
-    "日期与适用范围）。本检查执行项目自身政策，不构成法律意见。"
+    "的 active 来源可自动用于「事实提取+独立改写」；其余来源必须先在 "
+    "Tools/CoffeeAI/source_exceptions.json 登记有效人工例外——字段完整（reason/"
+    "approved_by/approved_at/scope/license_basis）、范围结构化（allowed_sample_ids/"
+    "allowed_topics/allowed_claim_ids 至少一项）、部署用途显式（noncommercial-research "
+    "或 commercial-product）。内部审批不等于外部授权：对 commercialUse/derivatives "
+    "not-allowed 或 unclear 的来源做商业用途，必须登记 licensor-grant 及可追溯证据。"
+    "本检查执行项目自身政策，不构成法律意见。"
 )
+
+
+def _parse_iso_date(value):
+    """严格 ISO 日期解析（YYYY-MM-DD）。返回 date 或 None。"""
+    try:
+        d = date.fromisoformat(str(value))
+        # fromisoformat 在某些版本接受非零填充；强制回写校验格式
+        if d.isoformat() != str(value).strip():
+            return None
+        return d
+    except (ValueError, TypeError):
+        return None
+
+
+def _valid_string_list(value):
+    return (isinstance(value, list) and len(value) > 0
+            and all(isinstance(x, str) and x.strip() for x in value))
 
 
 def load_source_exceptions(path=None, today=None):
     """读取并校验人工例外登记。返回 (有效例外 dict, 被拒条目 list)。
 
-    无效条目（缺审批人/审批日期/适用范围、usage 非法、已过期）一律忽略（fail-closed）。
+    阶段四点五：字段与范围全面校验，任何一项不满足即整条无效（fail-closed）：
+      sourceId / usage=fact-extraction-rewrite / reason 非空 / approved_by 非空 /
+      approved_at 为合理 ISO 日期（非未来、>= 2020-01-01）/ scope 非空 /
+      deployment_purposes ⊆ KNOWN_DEPLOYMENT_PURPOSES 且非空 /
+      范围限定器 allowed_sample_ids|allowed_topics|allowed_claim_ids 至少一项非空 /
+      license_basis = {basis, evidence_ref} 均非空 / valid_until（可选）未过期。
     """
     path = Path(path) if path else SOURCE_EXCEPTIONS_FILE
-    valid, rejected = [], []
+    valid, rejected = {}, []
     if not path.is_file():
         return {}, rejected
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return {}, [{"sourceId": None, "reason": "exceptions 文件不是合法 JSON"}]
+    if not isinstance(data, dict) or not isinstance(data.get("exceptions", []), list):
+        return {}, [{"sourceId": None, "reason": "exceptions 文件结构错误（缺 exceptions 数组）"}]
     for i, e in enumerate(data.get("exceptions", [])):
         sid = e.get("sourceId")
         why = None
-        if not sid:
+        if not sid or not isinstance(sid, str):
             why = "缺少 sourceId"
         elif e.get("usage") not in ALLOWED_SOURCE_USAGE:
             why = f"usage 非法: {e.get('usage')!r}"
+        elif not str(e.get("reason") or "").strip():
+            why = "缺少 reason（准入理由）"
         elif not str(e.get("approved_by") or "").strip():
             why = "缺少 approved_by（人工审批人）"
-        elif not str(e.get("approved_at") or "").strip():
-            why = "缺少 approved_at（审批日期）"
         elif not str(e.get("scope") or "").strip():
-            why = "缺少 scope（适用范围）"
-        else:
+            why = "缺少 scope（人类可读的适用范围说明）"
+        elif not _valid_string_list(e.get("deployment_purposes")) or \
+                not set(e["deployment_purposes"]) <= KNOWN_DEPLOYMENT_PURPOSES:
+            why = (f"deployment_purposes 非法: {e.get('deployment_purposes')!r}"
+                   f"（必须为 {sorted(KNOWN_DEPLOYMENT_PURPOSES)} 的非空子集）")
+        elif not any(_valid_string_list(e.get(k)) for k in
+                     ("allowed_sample_ids", "allowed_topics", "allowed_claim_ids")):
+            why = "范围限定器缺失：allowed_sample_ids / allowed_topics / allowed_claim_ids 至少一项非空"
+        lb = e.get("license_basis")
+        if why is None and (not isinstance(lb, dict)
+                            or not str(lb.get("basis") or "").strip()
+                            or not str(lb.get("evidence_ref") or "").strip()):
+            why = "license_basis 必须为 {basis, evidence_ref} 且均非空（许可依据与可追溯证据）"
+        if why is None:
+            approved_at = _parse_iso_date(e.get("approved_at"))
+            if approved_at is None:
+                why = f"approved_at 不是有效 ISO 日期: {e.get('approved_at')!r}"
+            elif approved_at > (today or date.today()):
+                why = f"approved_at 晚于今天（日期不合理）: {approved_at}"
+            elif approved_at < MIN_REASONABLE_APPROVAL_DATE:
+                why = f"approved_at 早于 {MIN_REASONABLE_APPROVAL_DATE}（日期不合理）"
+        if why is None:
             vu = e.get("valid_until")
             if vu:
-                try:
-                    if date.fromisoformat(str(vu)) < (today or date.today()):
-                        why = f"例外已于 {vu} 过期"
-                except ValueError:
+                vud = _parse_iso_date(vu)
+                if vud is None:
                     why = f"valid_until 无法解析: {vu!r}"
+                elif vud < (today or date.today()):
+                    why = f"例外已于 {vu} 过期"
         if why:
             rejected.append({"sourceId": sid, "reason": why, "index": i})
         else:
@@ -111,11 +164,56 @@ def source_auto_allow(info):
             and info.get("derivatives") == "allowed")
 
 
-def source_admission_issues(source_ids, registry, source_usage, exceptions=None):
-    """对一条样本引用的外部来源做训练准入检查（默认拒绝）。返回 error 级 issue 列表。"""
+def check_exception_scope(exc, registry_info, sample, deployment_purpose):
+    """阶段四点五：验证当前样本与训练用途是否落在例外批准的范围内。
+
+    sample: {"sample_id", "topic", "claim_ids"}；deployment_purpose 为当前任务声明的用途。
+    返回 (ok, reason)。
+    """
+    sid = exc.get("sourceId")
+    # 1) 部署用途必须显式且被批准
+    if deployment_purpose not in KNOWN_DEPLOYMENT_PURPOSES:
+        return False, (f"训练用途未显式声明（--deployment-purpose 必须为 "
+                       f"{sorted(KNOWN_DEPLOYMENT_PURPOSES)} 之一）")
+    if deployment_purpose not in (exc.get("deployment_purposes") or []):
+        return False, (f"当前用途 {deployment_purpose} 不在该例外的批准范围 "
+                       f"{exc.get('deployment_purposes')} 内")
+    # 2) 内部审批不能冒充外部授权：商业用途 + 来源禁/不明商用 → 需 licensor-grant + 证据
+    if deployment_purpose == "commercial-product":
+        cu = (registry_info or {}).get("commercialUse")
+        if cu in EXTERNAL_GRANT_REQUIRED_LICENSES or cu is None:
+            lb = exc.get("license_basis") or {}
+            if lb.get("basis") != "licensor-grant" or not str(lb.get("evidence_ref") or "").strip():
+                return False, (f"来源 {sid} 的 commercialUse={cu!r}：商业用途不能仅凭"
+                               f"项目内部审批放行，必须登记 licensor-grant 及可追溯证据"
+                               f"（license_basis.evidence_ref）")
+    # 3) 样本级范围限定（指定了哪项就检查哪项，多项则同时满足）
+    allowed_ids = exc.get("allowed_sample_ids")
+    if allowed_ids and sample.get("sample_id") not in allowed_ids:
+        return False, (f"样本 {sample.get('sample_id')} 不在例外允许的样本范围 "
+                       f"{allowed_ids} 内")
+    allowed_topics = exc.get("allowed_topics")
+    if allowed_topics and sample.get("topic") not in allowed_topics:
+        return False, (f"样本主题 {sample.get('topic')!r} 不在例外允许的主题范围 "
+                       f"{allowed_topics} 内")
+    allowed_claims = exc.get("allowed_claim_ids")
+    if allowed_claims:
+        cited = set(sample.get("claim_ids") or [])
+        if not cited:
+            return False, "样本未引用任何 claim，无法核对例外允许的 claim 范围"
+        outside = sorted(cited - set(allowed_claims))
+        if outside:
+            return False, (f"样本引用的 claim 超出例外允许范围: {outside}")
+    return True, ""
+
+
+def source_admission_issues(source_ids, registry, source_usage, exceptions=None,
+                            deployment_purpose=None, sample=None):
+    """对一条样本引用的外部来源做训练准入检查（默认拒绝 + 范围约束）。返回 error 级列表。"""
     issues = []
     usage = source_usage or {}
     exceptions = exceptions or {}
+    sample = sample or {}
     for sid in source_ids:
         info = registry.get(sid)
         if info is None:
@@ -150,9 +248,15 @@ def source_admission_issues(source_ids, registry, source_usage, exceptions=None)
                                       f"{info.get('commercialUse')!r}, derivatives="
                                       f"{info.get('derivatives')!r}）不在自动准入范围，且无有效"
                                       f"人工例外。{EXTERNAL_SOURCE_POLICY}"})
-        elif exc.get("usage") not in ALLOWED_SOURCE_USAGE:
+            continue
+        if exc.get("usage") not in ALLOWED_SOURCE_USAGE:
             issues.append({"level": "error", "code": "source-requires-human-exception",
                            "message": f"来源 {sid} 的人工例外 usage 非法"})
+            continue
+        ok, reason = check_exception_scope(exc, info, sample, deployment_purpose)
+        if not ok:
+            issues.append({"level": "error", "code": "exception-out-of-scope",
+                           "message": f"来源 {sid} 的人工例外不覆盖当前样本/用途: {reason}"})
     return issues
 
 REQUIRED_META_FIELDS = [

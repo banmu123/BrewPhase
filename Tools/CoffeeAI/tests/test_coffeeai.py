@@ -349,7 +349,8 @@ class RunTrainTests(unittest.TestCase):
         """验收 7：无本地模型 + 数据未就绪时，--train 被拒绝且不联网。"""
         proc = run_script("run_train.py", "--train",
                           "--config", COFFEEAI / "configs" / "smoke.yaml",
-                          "--data-dir", self.split_dir)
+                          "--data-dir", self.split_dir,
+                          "--deployment-purpose", "noncommercial-research")
         self.assertEqual(proc.returncode, 1)
         self.assertIn("绝不", proc.stderr)
 
@@ -507,7 +508,8 @@ class TrainingAdmissionTests(unittest.TestCase):
             # 正式训练必须被准入复查阻断
             proc = run_script("run_train.py", "--train",
                               "--config", COFFEEAI / "configs" / "smoke.yaml",
-                              "--data-dir", out)
+                              "--data-dir", out,
+                              "--deployment-purpose", "noncommercial-research")
             self.assertEqual(proc.returncode, 1)
             combined = proc.stdout + proc.stderr
             self.assertIn("准入复查未通过", combined)
@@ -558,13 +560,13 @@ class SourceAdmissionTests(unittest.TestCase):
     """阶段三/四：来源级训练准入（默认拒绝 + 可审计人工例外；全部使用真实注册表来源）。"""
 
     def _one_sample(self, td, source_ids, claim_ids, usage=None, waiver=None,
-                    review="approved", license_status="own-original"):
+                    review="approved", license_status="own-original", topic="t"):
         c = Path(td) / "s.jsonl"
         m = Path(td) / "s.meta.jsonl"
         msgs = [{"role": "user", "content": "问题？"},
                 {"role": "assistant", "content": "足够长的回答内容，用来通过最短长度检查的全部要求。"}]
         write_jsonl(c, [{"sample_id": "sa1", "group_id": "g-sa", "messages": msgs}])
-        meta = {"sample_id": "sa1", "group_id": "g-sa", "topic": "t", "source_doc": "t",
+        meta = {"sample_id": "sa1", "group_id": "g-sa", "topic": topic, "source_doc": "t",
                 "source_ids": source_ids, "claim_ids": claim_ids,
                 "license_status": license_status, "review_status": review,
                 "data_version": "v", "dedup_fingerprint": "a" * 64}
@@ -579,20 +581,41 @@ class SourceAdmissionTests(unittest.TestCase):
         write_jsonl(m, [meta])
         return c, m
 
-    def _for_training(self, c, m, exceptions=None):
+    def _for_training(self, c, m, exceptions=None, purpose=None):
         args = ["validate_data.py", "--corpus", c, "--meta", m, "--for-training"]
         if exceptions is not None:
             exc = Path(exceptions)
             if not exc.is_absolute():
                 exc = Path.cwd() / exc
             args += ["--source-exceptions", exc]
+        if purpose:
+            args += ["--deployment-purpose", purpose]
         return run_script(*args)
 
     def _write_exceptions(self, td, entries):
         p = Path(td) / "exceptions.json"
-        p.write_text(json.dumps({"schemaVersion": 1, "exceptions": entries},
+        p.write_text(json.dumps({"schemaVersion": 2, "exceptions": entries},
                                 ensure_ascii=False, indent=2), encoding="utf-8")
         return p
+
+    def _full_exception(self, **overrides):
+        """阶段四点五：字段与范围完整的例外模板。"""
+        exc = {
+            "sourceId": "wcr-varieties-catalog",
+            "usage": "fact-extraction-rewrite",
+            "reason": "注册表口径：品种知识仅可独立改写，禁止复制目录表格",
+            "approved_by": "人工审核人（测试占位）",
+            "approved_at": "2026-10-14",
+            "scope": "仅非商业训练样本；逐条人工审核；不复制原文",
+            "deployment_purposes": ["noncommercial-research"],
+            "allowed_sample_ids": ["sa1"],
+            "allowed_topics": ["varieties"],
+            "allowed_claim_ids": ["claim.varieties.no-absolute-data"],
+            "license_basis": {"basis": "registry-sanctioned-use",
+                              "evidence_ref": "knowledge/SOURCE_REGISTRY.md §2 wcr 行"},
+        }
+        exc.update(overrides)
+        return exc
 
     def test_wcr_catalog_blocked_by_default(self):
         """阶段四核心回归：wcr-varieties-catalog（NC-ND + 禁商用/禁衍生）默认必须被阻断，
@@ -607,19 +630,16 @@ class SourceAdmissionTests(unittest.TestCase):
             self.assertIn("wcr-varieties-catalog", proc.stdout)
 
     def test_valid_human_exception_unblocks(self):
-        """有效人工例外（审批人/日期/范围齐全）才放行，且范围限定为 fact-extraction-rewrite。"""
+        """字段完整、范围匹配、用途匹配的有效例外才放行。"""
         with tempfile.TemporaryDirectory() as td:
-            exc = self._write_exceptions(td, [{
-                "sourceId": "wcr-varieties-catalog", "usage": "fact-extraction-rewrite",
-                "reason": "注册表口径：品种知识仅可独立改写，禁止复制目录表格",
-                "approved_by": "人工审核人（测试占位）", "approved_at": "2026-10-14",
-                "scope": "仅非商业训练样本；逐条人工审核；不复制原文",
-            }])
+            exc = self._write_exceptions(td, [self._full_exception()])
             c, m = self._one_sample(td, ["wcr-varieties-catalog"],
                                     ["claim.varieties.no-absolute-data"],
-                                    {"wcr-varieties-catalog": "fact-extraction-rewrite"})
-            proc = self._for_training(c, m, exceptions=exc)
+                                    {"wcr-varieties-catalog": "fact-extraction-rewrite"},
+                                    topic="varieties")
+            proc = self._for_training(c, m, exceptions=exc, purpose="noncommercial-research")
             self.assertNotIn("source-requires-human-exception", proc.stdout)
+            self.assertNotIn("exception-out-of-scope", proc.stdout)
 
     def test_incomplete_exception_still_blocks(self):
         """例外缺审批人 → fail-closed，仍然阻断，并给出无效提示。"""
@@ -722,7 +742,8 @@ class AllowDownloadTests(unittest.TestCase):
     def test_smoke_never_downloads_even_with_flag(self):
         proc = run_script("run_train.py", "--smoke",
                           "--config", COFFEEAI / "configs" / "smoke.yaml",
-                          "--allow-download")
+                          "--allow-download",
+                          "--deployment-purpose", "noncommercial-research")
         self.assertEqual(proc.returncode, 1)
         self.assertIn("烟测不下载", proc.stdout + proc.stderr)
 
@@ -740,7 +761,8 @@ class AllowDownloadTests(unittest.TestCase):
     def test_train_without_flag_still_blocked(self):
         """回归：不传 --allow-download 时正式训练仍被拒且不联网。"""
         proc = run_script("run_train.py", "--train",
-                          "--config", COFFEEAI / "configs" / "smoke.yaml")
+                          "--config", COFFEEAI / "configs" / "smoke.yaml",
+                          "--deployment-purpose", "noncommercial-research")
         self.assertEqual(proc.returncode, 1)
         self.assertIn("绝不", proc.stderr)
 
@@ -911,6 +933,223 @@ class EffectiveConfigTests(unittest.TestCase):
         model_line = next(l for l in out.splitlines() if l.startswith("基础模型"))
         self.assertIn("override/test-model", model_line)
         self.assertNotIn("Qwen3", model_line)
+
+
+class ExceptionScopeTests(unittest.TestCase):
+    """阶段四点五：例外的字段校验、范围约束与用途判定（全部用临时文件，不动正式例外表）。"""
+
+    def _one_sample(self, td, source_ids, claim_ids, usage, topic="varieties",
+                    review="approved"):
+        c = Path(td) / "s.jsonl"
+        m = Path(td) / "s.meta.jsonl"
+        msgs = [{"role": "user", "content": "问题？"},
+                {"role": "assistant", "content": "足够长的回答内容，用来通过最短长度检查的全部要求。"}]
+        write_jsonl(c, [{"sample_id": "sa1", "group_id": "g-sa", "messages": msgs}])
+        meta = {"sample_id": "sa1", "group_id": "g-sa", "topic": topic, "source_doc": "t",
+                "source_ids": source_ids, "claim_ids": claim_ids,
+                "license_status": "own-original", "review_status": review,
+                "data_version": "v", "dedup_fingerprint": "a" * 64}
+        if review == "approved":
+            sys.path.insert(0, str(SCRIPTS))
+            from coffeeai_common import messages_fingerprint
+            meta["reviewed_content_sha256"] = messages_fingerprint(msgs)
+        if usage is not None:
+            meta["source_usage"] = usage
+        meta["source_waiver"] = None if source_ids else "测试豁免"
+        write_jsonl(m, [meta])
+        return c, m
+
+    def _run(self, c, m, exceptions=None, purpose=None):
+        args = ["validate_data.py", "--corpus", c, "--meta", m, "--for-training"]
+        if exceptions is not None:
+            args += ["--source-exceptions", Path(exceptions).resolve()]
+        if purpose:
+            args += ["--deployment-purpose", purpose]
+        return run_script(*args)
+
+    def _write_exceptions(self, td, entries, raw=None):
+        p = Path(td) / "exceptions.json"
+        if raw is not None:
+            p.write_text(raw, encoding="utf-8")
+        else:
+            p.write_text(json.dumps({"schemaVersion": 2, "exceptions": entries},
+                                    ensure_ascii=False, indent=2), encoding="utf-8")
+        return p
+
+    def _full_exception(self, **overrides):
+        exc = {
+            "sourceId": "wcr-varieties-catalog",
+            "usage": "fact-extraction-rewrite",
+            "reason": "注册表口径：品种知识仅可独立改写",
+            "approved_by": "人工审核人（测试占位）",
+            "approved_at": "2026-10-14",
+            "scope": "仅非商业训练样本",
+            "deployment_purposes": ["noncommercial-research"],
+            "allowed_sample_ids": ["sa1"],
+            "allowed_topics": ["varieties"],
+            "allowed_claim_ids": ["claim.varieties.no-absolute-data"],
+            "license_basis": {"basis": "registry-sanctioned-use",
+                              "evidence_ref": "knowledge/SOURCE_REGISTRY.md §2"},
+        }
+        exc.update(overrides)
+        return exc
+
+    # ---- 1) reason 缺失/为空
+    def test_reason_missing_rejected(self):
+        for bad in (None, ""):
+            with tempfile.TemporaryDirectory() as td:
+                exc = self._full_exception()
+                if bad is None:
+                    exc.pop("reason")
+                else:
+                    exc["reason"] = bad
+                ef = self._write_exceptions(td, [exc])
+                c, m = self._one_sample(td, ["wcr-varieties-catalog"],
+                                        ["claim.varieties.no-absolute-data"],
+                                        {"wcr-varieties-catalog": "fact-extraction-rewrite"})
+                proc = self._run(c, m, exceptions=ef, purpose="noncommercial-research")
+                self.assertEqual(proc.returncode, 1)
+                self.assertIn("source-requires-human-exception", proc.stdout)
+
+    # ---- 2) approved_at 格式/合理性
+    def test_approved_at_invalid_or_unreasonable_rejected(self):
+        for bad in ("not-a-date", "2026-13-40", "14/10/2026", "2030-01-01", "2019-12-31"):
+            with tempfile.TemporaryDirectory() as td:
+                ef = self._write_exceptions(td, [self._full_exception(approved_at=bad)])
+                c, m = self._one_sample(td, ["wcr-varieties-catalog"],
+                                        ["claim.varieties.no-absolute-data"],
+                                        {"wcr-varieties-catalog": "fact-extraction-rewrite"})
+                proc = self._run(c, m, exceptions=ef, purpose="noncommercial-research")
+                self.assertEqual(proc.returncode, 1, bad)
+                self.assertIn("source-requires-human-exception", proc.stdout, bad)
+                self.assertIn("exception-invalid", proc.stdout, bad)
+
+    # ---- 3) 样本 ID 不在允许范围
+    def test_sample_outside_allowed_ids_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            ef = self._write_exceptions(td, [self._full_exception(
+                allowed_sample_ids=["other-sample"])])
+            c, m = self._one_sample(td, ["wcr-varieties-catalog"],
+                                    ["claim.varieties.no-absolute-data"],
+                                    {"wcr-varieties-catalog": "fact-extraction-rewrite"})
+            proc = self._run(c, m, exceptions=ef, purpose="noncommercial-research")
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("exception-out-of-scope", proc.stdout)
+            self.assertIn("不在例外允许的样本范围", proc.stdout)
+
+    # ---- 4) 仅非商业例外 vs 声明商业用途
+    def test_commercial_purpose_outside_noncommercial_exception_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            ef = self._write_exceptions(td, [self._full_exception()])
+            c, m = self._one_sample(td, ["wcr-varieties-catalog"],
+                                    ["claim.varieties.no-absolute-data"],
+                                    {"wcr-varieties-catalog": "fact-extraction-rewrite"})
+            proc = self._run(c, m, exceptions=ef, purpose="commercial-product")
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("exception-out-of-scope", proc.stdout)
+            self.assertIn("commercial-product", proc.stdout)
+
+    # ---- 5) 禁商用来源做商业用途必须有 licensor-grant + 证据
+    def test_commercial_use_of_nc_nd_source_requires_licensor_grant(self):
+        with tempfile.TemporaryDirectory() as td:
+            # 无授权依据 → 拒绝（内部审批不能冒充外部授权）
+            ef = self._write_exceptions(td, [self._full_exception(
+                deployment_purposes=["noncommercial-research", "commercial-product"])])
+            c, m = self._one_sample(td, ["wcr-varieties-catalog"],
+                                    ["claim.varieties.no-absolute-data"],
+                                    {"wcr-varieties-catalog": "fact-extraction-rewrite"})
+            proc = self._run(c, m, exceptions=ef, purpose="commercial-product")
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("exception-out-of-scope", proc.stdout)
+            self.assertIn("licensor-grant", proc.stdout)
+            # 有 licensor-grant + 可追溯证据 → 该项通过
+            ef2 = self._write_exceptions(td, [self._full_exception(
+                deployment_purposes=["noncommercial-research", "commercial-product"],
+                license_basis={"basis": "licensor-grant",
+                               "evidence_ref": "permissions/wcr-grant-2026-10.pdf"})])
+            c, m = self._one_sample(td, ["wcr-varieties-catalog"],
+                                    ["claim.varieties.no-absolute-data"],
+                                    {"wcr-varieties-catalog": "fact-extraction-rewrite"})
+            proc = self._run(c, m, exceptions=ef2, purpose="commercial-product")
+            self.assertNotIn("exception-out-of-scope", proc.stdout)
+
+    # ---- 6) 有效例外只在批准范围内生效
+    def test_exception_scope_conjunctive(self):
+        base = dict(source_ids=["wcr-varieties-catalog"],
+                    claim_ids=["claim.varieties.no-absolute-data"],
+                    usage={"wcr-varieties-catalog": "fact-extraction-rewrite"})
+        with tempfile.TemporaryDirectory() as td:
+            ef = self._write_exceptions(td, [self._full_exception()])
+            # 主题不符 → 拒绝
+            c, m = self._one_sample(td, topic="grinding", **{k: v for k, v in base.items()})
+            proc = self._run(c, m, exceptions=ef, purpose="noncommercial-research")
+            self.assertIn("不在例外允许的主题范围", proc.stdout)
+            # claim 超范围 → 拒绝
+            c, m = self._one_sample(td, ["wcr-varieties-catalog"],
+                                    claim_ids=["claim.grinding.manual-not-recipe"],
+                                    usage=base["usage"])
+            proc = self._run(c, m, exceptions=ef, purpose="noncommercial-research")
+            self.assertIn("超出例外允许范围", proc.stdout)
+            # 用途未声明 → 拒绝
+            c, m = self._one_sample(td, **base)
+            proc = self._run(c, m, exceptions=ef, purpose=None)
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("exception-out-of-scope", proc.stdout)
+            self.assertIn("未显式声明", proc.stdout)
+
+    # ---- 8) 例外文件缺失/格式错误/字段类型错误 → 不放行
+    def test_missing_or_broken_exceptions_file_fail_closed(self):
+        base = dict(source_ids=["wcr-varieties-catalog"],
+                    claim_ids=["claim.varieties.no-absolute-data"],
+                    usage={"wcr-varieties-catalog": "fact-extraction-rewrite"})
+        with tempfile.TemporaryDirectory() as td:
+            # 文件不存在
+            c, m = self._one_sample(td, **base)
+            proc = self._run(c, m, exceptions=Path(td) / "nope.json",
+                             purpose="noncommercial-research")
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("source-requires-human-exception", proc.stdout)
+            # 非法 JSON
+            bad = self._write_exceptions(td, [], raw="{not json")
+            c, m = self._one_sample(td, **base)
+            proc = self._run(c, m, exceptions=bad, purpose="noncommercial-research")
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("source-requires-human-exception", proc.stdout)
+            # 字段类型错误（deployment_purposes 为字符串）
+            wrong = self._write_exceptions(td, [self._full_exception(
+                deployment_purposes="noncommercial-research")])
+            c, m = self._one_sample(td, **base)
+            proc = self._run(c, m, exceptions=wrong, purpose="noncommercial-research")
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("source-requires-human-exception", proc.stdout)
+
+    # ---- run_train 侧：用途声明 fail-closed
+    def test_run_train_requires_deployment_purpose(self):
+        proc = run_script("run_train.py", "--train",
+                          "--config", COFFEEAI / "configs" / "smoke.yaml")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("deployment-purpose", proc.stderr)
+        proc = run_script("run_train.py", "--smoke",
+                          "--config", COFFEEAI / "configs" / "smoke.yaml",
+                          "--allow-download")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("deployment-purpose", proc.stderr)
+        # dry-run 不强制（预览用途未声明状态）
+        proc = run_script("run_train.py", "--dry-run",
+                          "--config", COFFEEAI / "configs" / "smoke.yaml")
+        self.assertIn("训练用途   : 未声明", proc.stdout)
+
+    # ---- 7) 自动准入与既有阻断保持有效（抽查）
+    def test_auto_allow_and_blocklist_unchanged(self):
+        with tempfile.TemporaryDirectory() as td:
+            c, m = self._one_sample(td, ["fda-caffeine"], ["claim.health.fda-400"],
+                                    {"fda-caffeine": "fact-extraction-rewrite"})
+            proc = self._run(c, m, exceptions=None, purpose=None)
+            self.assertNotIn("source-requires-human-exception", proc.stdout)
+            self.assertNotIn("exception-out-of-scope", proc.stdout)
+            c, m = self._one_sample(td, ["sca-digital-store"], [], {})
+            proc = self._run(c, m, exceptions=None, purpose="commercial-product")
+            self.assertIn("source-blocked-status", proc.stdout)
 
 
 class RepoIntegrityTests(unittest.TestCase):

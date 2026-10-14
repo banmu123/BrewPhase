@@ -1,14 +1,20 @@
 {
-  "schemaVersion": 1,
-  "policy": "默认拒绝。外部来源仅 public-domain 且 commercialUse/derivatives 均 allowed 的 active 来源可自动准入；其余来源必须在此登记有效人工例外后，方可用于「事实提取+独立改写」。无效或过期条目会被忽略（fail-closed）。本文件由人工维护，任何脚本都不会自动写入或修改。",
+  "schemaVersion": 2,
+  "policy": "默认拒绝。外部来源仅 public-domain 且 commercialUse/derivatives 均 allowed 的 active 来源可自动准入；其余来源必须在此登记有效人工例外。无效或过期条目会被忽略（fail-closed）。本文件由人工维护，任何脚本都不会自动写入或修改。内部审批不等于外部授权：对 commercialUse/derivatives 为 not-allowed 或 unclear 的来源做商业用途（commercial-product），license_basis.basis 必须为 licensor-grant 并附可追溯证据。",
   "required_fields": {
     "sourceId": "已在 knowledge/SOURCE_REGISTRY.json 注册的来源 ID",
     "usage": "只允许 fact-extraction-rewrite",
-    "reason": "为什么允许该来源用于独立事实提取（引用注册表条目/许可说明）",
-    "approved_by": "人工审批人（必填，脚本不得代填）",
-    "approved_at": "审批日期（ISO 8601，必填）",
-    "scope": "适用范围（如：仅非商业训练样本、禁止复制原文、须署名）",
+    "reason": "准入理由（必填非空）",
+    "approved_by": "人工审批人（必填非空，脚本不得代填）",
+    "approved_at": "审批日期（ISO YYYY-MM-DD；不得晚于今天、不得早于 2020-01-01）",
+    "scope": "人类可读的适用范围说明（必填非空；仅作说明，不是权限控制）",
+    "deployment_purposes": "批准的部署用途数组（noncommercial-research | commercial-product 的非空子集）",
+    "allowed_sample_ids": "允许的样本 ID 列表（与 allowed_topics/allowed_claim_ids 至少填一项）",
+    "allowed_topics": "允许的主题列表（可选限定器）",
+    "allowed_claim_ids": "允许的 claim 列表（可选限定器；样本引用的 claim 必须全部在内）",
+    "license_basis": "许可依据：{basis, evidence_ref} 均非空；商业用途且来源禁/不明商用时 basis 必须为 licensor-grant",
     "valid_until": "有效期（可选，ISO 日期；过期即失效）"
   },
+  "scope_semantics": "指定的限定器同时生效：样本的 sample_id/topic/claim_ids 都必须落在批准范围内，训练用途必须 ∈ deployment_purposes，否则该来源对该样本按例外外处理（拒绝）。",
   "exceptions": []
 }

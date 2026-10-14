@@ -30,6 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import env_check  # noqa: E402
+from coffeeai_common import KNOWN_DEPLOYMENT_PURPOSES  # noqa: E402
 from validate_data import check_splits_dir, check_training_admission  # noqa: E402
 
 COFFEEAI = Path(__file__).resolve().parents[1]
@@ -153,9 +154,10 @@ def write_effective_config(cfg, path):
     return path
 
 
-def preflight(config_path, cfg, mode, allow_download):
+def preflight(config_path, cfg, mode, allow_download, deployment_purpose=None):
     """返回 (ok, report)。mode: dry-run / smoke / train。cfg 必须是有效配置（覆盖已应用）。"""
     report = {}
+    report["deployment_purpose"] = deployment_purpose
     model_ref = cfg.get("model")
     data_dir = Path(cfg.get("data") or "")
     if not data_dir.is_absolute():
@@ -208,7 +210,8 @@ def preflight(config_path, cfg, mode, allow_download):
             # ---- P0：训练准入复查（独立重读 meta，不信任划分时的任何标志）。
             # --include-unreviewed 的产物在此被硬性拒绝：只要 meta 里存在
             # 非 approved / 许可不明 / 来源不合规 / 元数据不全的样本，一律阻断。
-            a_issues, a_summary = check_training_admission(data_dir)
+            a_issues, a_summary = check_training_admission(
+                data_dir, deployment_purpose=deployment_purpose)
             report["admission"] = {"counts": a_summary["counts"],
                                    "n_samples": a_summary["n_samples"],
                                    "errors": a_summary["errors"]}
@@ -262,6 +265,7 @@ def print_dry_run(report, config_path):
     print("=" * 66)
     print(f"原始配置   : {config_path}")
     print(f"有效配置   : 已应用 --model/--data-dir 覆盖（预检对象 == 执行对象）")
+    print(f"训练用途   : {report.get('deployment_purpose') or '未声明（烟测/正式训练会被拒绝）'}")
     print(f"基础模型   : {report['model_ref']}")
     print(f"模型状态   : {report['model_status']}  {report['model_detail'].get('size_gb', report['model_detail'].get('note', ''))}")
     print(f"微调类型   : {cfg.get('fine_tune_type')}（量化模型自动按 QLoRA，官方 LORA.md）")
@@ -311,12 +315,23 @@ def main(argv=None):
     p.add_argument("--allow-download", action="store_true",
                    help="显式允许在【正式训练】时下载缺失的基础模型；--dry-run 与 --smoke "
                         "即使传入也绝不下载（烟测要求模型已在本地缓存）")
+    p.add_argument("--deployment-purpose", default=None,
+                   choices=sorted(KNOWN_DEPLOYMENT_PURPOSES),
+                   help="部署用途声明（--smoke 与 --train 必选，fail-closed）："
+                        "noncommercial-research | commercial-product；来源例外与准入"
+                        "检查按此用途判定范围")
     args = p.parse_args(argv)
 
     modes = [m for m in ("dry-run", "smoke", "train") if getattr(args, m.replace("-", "_"))]
     if len(modes) != 1:
         p.error("必须且只能选择一种模式: --dry-run / --smoke / --train")
     mode = modes[0]
+    # ---- 阶段四点五：部署用途 fail-closed——烟测/正式训练必须显式声明
+    if mode in ("smoke", "train") and not args.deployment_purpose:
+        print(f"[CoffeeAI] 错误: --smoke/--train 必须显式声明 --deployment-purpose "
+              f"({sorted(KNOWN_DEPLOYMENT_PURPOSES)} 之一)——来源例外与准入检查按此判定范围。",
+              file=sys.stderr)
+        sys.exit(1)
 
     config_path = Path(args.config)
     if not config_path.is_absolute():
@@ -329,7 +344,8 @@ def main(argv=None):
     # ---- 阶段四：唯一的有效配置（--model/--data-dir 覆盖在此一次应用）
     cfg_raw = parse_simple_yaml(config_path)
     cfg_effective = build_effective_config(cfg_raw, args.model, args.data_dir)
-    ok, report = preflight(config_path, cfg_effective, mode, args.allow_download)
+    ok, report = preflight(config_path, cfg_effective, mode, args.allow_download,
+                           deployment_purpose=args.deployment_purpose)
 
     if mode == "dry-run":
         print_dry_run(report, config_path)
@@ -380,6 +396,7 @@ def main(argv=None):
         "base_model": report["model_ref"],
         "model_source": report["model_status"],
         "model_detail": report["model_detail"],
+        "deployment_purpose": report.get("deployment_purpose"),
         "fine_tune_type": cfg.get("fine_tune_type"),
         "config_path_original": str(config_path),
         "effective_config_path": str(eff_path),

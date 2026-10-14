@@ -94,10 +94,18 @@ def main(argv=None):
     # ---- 先完整校验语料（结构性 error 直接拒绝）
     issues, summary = validate(args.corpus, args.meta, None,
                                for_training=not args.include_unreviewed)
+    # 注意：来源政策/部署用途类 error（source-* / deployment-purpose-*/exception-*）
+    # 属于「训练准入」问题，由 run_train 的准入复查硬性把关；划分只负责组织数据，
+    # 未审核/许可不明的样本本来就进不了 eligible。
+    admission_policy_codes = (
+        "not-approved", "license-blocked", "license-unclear", "missing-fingerprint",
+        "missing-claim-linkage", "missing-source-waiver", "source-usage-undeclared",
+        "source-requires-human-exception", "source-blocked-status",
+        "exception-out-of-scope", "deployment-purpose-undeclared",
+    )
     structural = [i for i in issues
                   if i.get("level") == "error"
-                  and i.get("code") not in ("not-approved", "license-blocked",
-                                            "license-unclear", "missing-fingerprint")]
+                  and i.get("code") not in admission_policy_codes]
     if structural:
         print("[CoffeeAI] 语料存在结构性错误，拒绝划分：", file=sys.stderr)
         for i in structural[:20]:

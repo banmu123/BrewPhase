@@ -50,6 +50,9 @@ def build_arg_parser():
                    help="P0：对已生成 splits 做正式训练准入复查（审核状态/许可/来源级/内容指纹）")
     p.add_argument("--source-exceptions", metavar="PATH", default=None,
                    help="人工例外登记文件路径（默认 Tools/CoffeeAI/source_exceptions.json）")
+    p.add_argument("--deployment-purpose", default=None,
+                   help="训练/审核用途声明（noncommercial-research | commercial-product）；"
+                        "未声明时依赖人工例外的样本一律阻断")
     p.add_argument("--max-chars", type=int, default=12000)
     p.add_argument("--min-answer-chars", type=int, default=20)
     p.add_argument("--sim-threshold", type=float, default=0.92)
@@ -60,7 +63,7 @@ def build_arg_parser():
 
 def validate(corpus_patterns, meta_patterns, registry_path=None,
              max_chars=12000, min_answer_chars=20, sim_threshold=0.92,
-             for_training=False, exceptions_path=None):
+             for_training=False, exceptions_path=None, deployment_purpose=None):
     """核心校验。返回 (issues, summary_dict)。"""
     issues = []
 
@@ -210,11 +213,14 @@ def validate(corpus_patterns, meta_patterns, registry_path=None,
                 issues.append({"level": "error", "code": "missing-fingerprint",
                                "sample_id": sid,
                                "message": "训练样本缺少去重指纹"})
-            # ---- 阶段三/四：来源级准入（默认拒绝 + 可审计人工例外）
+            # ---- 阶段三/四/四点五：来源级准入（默认拒绝 + 可审计人工例外 + 范围约束）
             src_ids = m.get("source_ids") or []
-            src_issues = source_admission_issues(src_ids, reg or {},
-                                                 m.get("source_usage"),
-                                                 exceptions=exceptions)
+            src_issues = source_admission_issues(
+                src_ids, reg or {}, m.get("source_usage"),
+                exceptions=exceptions,
+                deployment_purpose=deployment_purpose,
+                sample={"sample_id": sid, "topic": m.get("topic"),
+                        "claim_ids": m.get("claim_ids") or []})
             for si in src_issues:
                 issues.append({"level": "error", "code": si["code"],
                                "sample_id": sid, "message": si["message"]})
@@ -317,17 +323,20 @@ def check_splits_dir(d, sim_threshold=0.92):
     return issues, summary
 
 
-def check_training_admission(splits_dir, registry_path=None, exceptions_path=None):
+def check_training_admission(splits_dir, registry_path=None, exceptions_path=None,
+                             deployment_purpose=None):
     """P0：正式训练/烟测前的划分产物准入复查（不信任划分时的标志）。
 
     独立重读 {train,valid,test}.meta.jsonl 与 {train,valid,test}.jsonl，逐条确认：
       1. 每条 jsonl 样本都有对应元数据（按 sample_id 1:1，数量一致）；
       2. review_status == approved（未审核/拒绝一律阻断）；
       3. license_status 通过严格训练准入；
-      4. 来源级准入（默认拒绝 + 有效人工例外）；
+      4. 来源级准入（默认拒绝 + 有效人工例外 + 范围/用途约束）；
       5. 审核内容指纹：重算实际 messages 摘要并与 reviewed_content_sha256 比对，
          不一致/缺失/无法验证一律阻断（阶段四）；
       6. sample_id 不跨集合。
+    deployment_purpose：当前训练声明的部署用途（阶段四点五）；未声明时，任何依赖
+    人工例外的样本一律阻断（fail-closed）。
     返回 (issues, summary)。任何 error 都应阻断正式训练。
     """
     issues = []
@@ -439,9 +448,12 @@ def check_training_admission(splits_dir, registry_path=None, exceptions_path=Non
                                "message": f"{split}/{sid}: 实际训练文本与人工审核内容指纹不一致"
                                           "——审核后文本被改动，阻断（不允许自动重算放行）"})
             src_ids = m.get("source_ids") or []
-            src_issues = source_admission_issues(src_ids, reg or {},
-                                                 m.get("source_usage"),
-                                                 exceptions=exceptions)
+            src_issues = source_admission_issues(
+                src_ids, reg or {}, m.get("source_usage"),
+                exceptions=exceptions,
+                deployment_purpose=deployment_purpose,
+                sample={"sample_id": sid, "topic": m.get("topic"),
+                        "claim_ids": m.get("claim_ids") or []})
             for si in src_issues:
                 issues.append({"level": "error", "code": si["code"],
                                "sample_id": sid,
@@ -470,7 +482,8 @@ def main(argv=None):
 
     if args.check_admission:
         issues, summary = check_training_admission(args.check_admission,
-                                                   exceptions_path=args.source_exceptions)
+                                                   exceptions_path=args.source_exceptions,
+                                                   deployment_purpose=args.deployment_purpose)
         report["admission"] = summary
     elif args.check_splits:
         issues, summary = check_splits_dir(args.check_splits, args.sim_threshold)
@@ -479,7 +492,8 @@ def main(argv=None):
         issues, summary = validate(
             args.corpus, args.meta, args.registry, args.max_chars,
             args.min_answer_chars, args.sim_threshold, args.for_training,
-            exceptions_path=args.source_exceptions)
+            exceptions_path=args.source_exceptions,
+            deployment_purpose=args.deployment_purpose)
         report["validation"] = summary
 
     errors = sum(1 for i in issues if i.get("level") == "error")

@@ -3,7 +3,7 @@
 > 目标：把通用开源大模型（起步：Qwen3-4B-Instruct-2507 4bit / MLX-LM QLoRA）逐步微调为
 > 可靠、知边界、不编造来源的咖啡领域助手。
 >
-> **当前状态（2026-10-14）：训练基础设施与验证流程已就绪并通过 22 项自动化测试；
+> **当前状态（2026-10-14）：训练基础设施与验证流程已就绪并通过 62 项自动化测试；
 > 真实训练数据尚未准备好**（`data/corpus/` 里只有 10 条标记为 `unreviewed` 的示例，
 > 默认不会、也不允许进入训练）。
 >
@@ -27,6 +27,14 @@
 > 配置，manifest 记录配置摘要；③ **审核内容绑定**：approved 样本必须携带
 > `reviewed_content_sha256`，准入复查重算实际 messages 摘要逐条比对，篡改即阻断。
 > 测试 41 → **53 项**。影响通告见 `review_queue/batch1_review_report.md` 阶段四节。
+>
+> **阶段四点五（2026-10-14）**：例外范围约束与审批字段校验 —— ① 例外字段全面校验
+> （reason 非空、approved_at 严格 ISO 且不得晚于今天/早于 2020、字段类型错误 fail-closed）；
+> ② **结构化范围**：allowed_sample_ids / allowed_topics / allowed_claim_ids 至少一项，
+> 多项限定同时生效；③ **部署用途声明**：`--deployment-purpose`（noncommercial-research |
+> commercial-product）为 smoke/train 必选并写入 manifest，未声明时依赖例外的样本一律
+> 阻断；④ **内部审批 ≠ 外部授权**：禁/不明商用来源做商业用途必须登记 licensor-grant
+> 及可追溯证据（license_basis.evidence_ref）。测试 53 → **62 项**。
 
 ## 0. 红线（先读）
 
@@ -35,12 +43,15 @@
    生成划分，`run_train.py` 在正式训练/烟测前会**独立重读划分产物元数据做准入复查**
    （`validate_data.check_training_admission`），发现任何未审核/许可不明/来源不合规/
    元数据不全的样本即拒绝启动。
-2. 许可纪律沿用 `knowledge/SOURCE_REGISTRY.md`，并在阶段四升级为**来源默认拒绝**：
-   仅 public-domain 且 commercialUse/derivatives 均 allowed 的 active 来源（当前只有
-   `fda-caffeine`）可自动用于「事实提取+独立改写」；pending-verification / 付费墙 /
-   restricted / unknown 一律阻断；其余来源必须在 `Tools/CoffeeAI/source_exceptions.json`
-   登记有效人工例外（审批人/日期/范围必填，fail-closed）。本检查执行项目自身政策，
-   不构成法律意见。
+2. 许可纪律沿用 `knowledge/SOURCE_REGISTRY.md`，并在阶段四/四点五升级为**来源默认拒绝 +
+   结构化例外范围**：仅 public-domain 且 commercialUse/derivatives 均 allowed 的 active
+   来源（当前只有 `fda-caffeine`）可自动用于「事实提取+独立改写」；pending-verification /
+   付费墙 / restricted / unknown 一律阻断（例外也不放行）；其余来源必须在
+   `Tools/CoffeeAI/source_exceptions.json` 登记有效人工例外——字段完整（reason/
+   approved_by/approved_at/scope/license_basis）、**范围结构化**（allowed_sample_ids/
+   allowed_topics/allowed_claim_ids 至少一项）、**部署用途显式**（--deployment-purpose，
+   烟测/正式训练必选）。内部审批不等于外部授权：禁/不明商用来源做商业用途必须登记
+   licensor-grant 及证据。本检查执行项目自身政策，不构成法律意见。
 3. 不上传、不采集 BrewPhase 用户的豆子/冲煮/品鉴数据；用户 JSON 备份不得当语料。
 4. 本工程不提交模型权重、训练缓存、派生 splits 与评测输出（见仓库根 `.gitignore`）。
 5. 不自动下载模型、不自动训练；下载与训练都需要你显式执行命令。
@@ -51,6 +62,7 @@
 ```
 Tools/CoffeeAI/
 ├── README.md                     本文件
+├── source_exceptions.json        人工例外登记（默认拒绝政策的唯一放行通道，人工维护）
 ├── configs/
 │   ├── m2_16gb_qwen3_4b_qlora.yaml   正式训练配置（官方 lora_config 字段，QLoRA 保守参数）
 │   └── smoke.yaml                    烟测配置（2 iters，只验证管线）
@@ -58,17 +70,23 @@ Tools/CoffeeAI/
 │   ├── corpus/examples_unreviewed.jsonl   10 条示例样本（messages，unreviewed）
 │   ├── meta/examples_unreviewed.meta.jsonl 对应元数据（来源/许可/审核状态/指纹）
 │   └── splits/                            划分产物（gitignore，可随时重新生成）
+├── review_queue/                 阶段二起：候选样本与审核文档（与正式语料隔离）
+│   ├── build_batch1.py               候选构建器（claim/source ID 反向校验）
+│   ├── batch1_candidates.jsonl(+meta)  30 条候选（unreviewed）
+│   ├── batch1_checklist.md           逐条人工审核清单（勾选不产生自动效果）
+│   ├── batch1_source_audit.md / batch1_review_report.md / COVERAGE_REPORT.md
 ├── scripts/
-│   ├── coffeeai_common.py        共享库（加载/指纹/相似度/注册表核对）
+│   ├── coffeeai_common.py        共享库（加载/指纹/相似度/来源准入政策/例外校验）
 │   ├── env_check.py              环境检测（芯片/内存/磁盘/Python/mlx/HF 缓存）
-│   ├── validate_data.py          数据验证（单条/训练前置/跨集合泄漏）
+│   ├── validate_data.py          数据验证（单条/训练前置/跨集合泄漏/准入复查）
 │   ├── split_dataset.py          数据集划分（按题组、可复现、防泄漏）
 │   ├── make_train_config.py      生成 MLX-LM YAML 配置（官方 schema 自检）
+│   ├── make_review_checklist.py  审核清单生成器（只读）
 │   ├── run_train.py              preflight + dry-run / smoke / train + run manifest
-│   └── evaluate.py               基础模型 vs 微调模型对比评测（待人工审核）
+│   └── evaluate.py               基础模型 vs 微调模型对比评测（聊天模板，待人工审核）
 ├── tests/
 │   ├── fixtures/                 10 条 approved 夹具（仅用于测试，不是训练数据）
-│   └── test_coffeeai.py          22 项自动化测试（unittest，仅标准库）
+│   └── test_coffeeai.py          62 项自动化测试（unittest，仅标准库）
 └── runs/                         训练/评测输出（gitignore）
 ```
 
@@ -188,7 +206,7 @@ grad_checkpoint 的保守配置余量充足；1B–2B 模型只作为内存不�
 | 9 | 不影响 iOS 工程与现有测试 | ✅ `test_existing_kb_build_check_still_passes`（`build_kb.py --check` 通过）；未改动 `BrewPhase/` 任何文件 |
 | 10 | README 结果对应真实执行 | 本表全部来自上面实际运行的测试与命令 |
 
-**测试汇总**：阶段一 22 项 → 阶段二 27 项 → 阶段三 41 项 → **阶段四 53 项（2026-10-14 实测：Ran 53 tests, OK，Python 3.13.12）**。阶段四新增：`wcr-varieties-catalog` 默认阻断、有效/缺失/过期人工例外、public-domain 自动准入、篡改训练文本阻断（admission-content-mismatch）、缺审核指纹阻断、跨集合重复、有效配置覆盖与往返一致性、dry-run 展示有效配置。
+**测试汇总**：阶段一 22 项 → 阶段二 27 项 → 阶段三 41 项 → 阶段四 53 项 → **阶段四点五 62 项（2026-10-14 实测：Ran 62 tests, OK，Python 3.13.12）**。阶段四点五新增：reason 缺失拒绝、approved_at 格式/合理性拒绝、样本 ID/主题/claim 范围外拒绝、非商业例外 vs 商业用途拒绝、禁商用来源商业用途需 licensor-grant+证据、例外文件缺失/格式错误/类型错误 fail-closed、run_train 用途声明门控、有效例外仅在批准范围内生效。
 
 ## 6. 已知限制
 
