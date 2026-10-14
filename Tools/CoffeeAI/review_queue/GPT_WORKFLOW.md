@@ -104,6 +104,11 @@ license），不要直接读 SOURCE_REGISTRY.json 原始结构。
 | 六点七/六点八 | 第二轮审核包（8 条 A-H）→ **b2a-005/008 批准落库（approved 14）** | d00f7dd / d283bcc |
 | 六点九 | Batch2b 选题设计（8 条，18 claim 验证存在）→ **六点九-B 草稿生成（待恢复）** | 32e1863 / — |
 | 六点九-B/C/D | **草稿 8 条生成（2491311）→ 门禁行为增强 +9 测试（a0957de）→ 人工审核包 + b2a-006 审计记录（5218512）**——GPT 三轮全部通过，待负责人拍板 | 2491311 / a0957de / 5218512 |
+| 六点九-E | **批准落库 8 条（40e90d6）**：例外 allowed_sample_ids 扩展 + topics 对齐扩展（GPT 修正版方案 A，45b421a 发现 allowed_topics 层冲突后裁定）+ b1-025 存量修复 + 治理测试 3 case；approved 14→**22**、train **18**/2/2（train ≥15 达成）；130 tests OK | 45b421a / 40e90d6 |
+| 纪律修正 | ego-browser 任务空间：单空间复用 + 每轮 finish（负责人指正，曾积压 5 个空间已清） | 16e84f3 |
+| 管线修复 | split_dataset.py 默认输出路径基于仓库根（原 Tools/Tools/ 拼接 bug，GPT 要求单独 commit） | 1de659f |
+| 六点九-F/G | **Batch2c 补齐**：plan（a383816）→ 草稿 b2c-001~003（5554d86）→ 审核包（27291d2）——GPT 全程通过 | a383816 / 5554d86 / 27291d2 |
+| 六点九-H | **Batch2c 落库（0884d88）**：GPT 裁定修订（b2c-002 设备 F/P 拆分、b2c-003 interaction_skill=uncertainty_handling）+ 例外 allowed_sample_ids 扩展 + manifest batch2c-approved-r1；**approved 22→25（阈值达成）、train 20/3/2**；130 tests OK | 0884d88 |
 
 ## 六、关键决策记录（GPT 已拍板，供后续引用）
 
