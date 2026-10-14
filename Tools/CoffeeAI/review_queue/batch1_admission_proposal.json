@@ -1,0 +1,282 @@
+{
+ "generated": "2026-10-14",
+ "rule": "approve_candidate 仅当：内容质量通过 + 事实证据充分 + F/P/I 分层完整 + 无未解决 critical issue；本轮无一条满足『证据充分』（外部核验覆盖不足），故全部 needs-review。",
+ "candidates": [
+  {
+   "sample_id": "b1-001",
+   "content_decision": "保留",
+   "source_status": "blocked",
+   "evidence_status": "partial-verified(WCR首页)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-002",
+   "content_decision": "保留",
+   "source_status": "blocked",
+   "evidence_status": "needs-source-check(nca)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-003",
+   "content_decision": "保留",
+   "source_status": "blocked",
+   "evidence_status": "partial-verified(方法学细节待核)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-004",
+   "content_decision": "保留",
+   "source_status": "blocked",
+   "evidence_status": "needs-source-check",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-005",
+   "content_decision": "暂缓-待补证据",
+   "source_status": "blocked",
+   "evidence_status": "needs-source-check(SCA CVA 日期/编号)",
+   "recommended_action": "needs-review",
+   "confidence": "low",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-006",
+   "content_decision": "保留",
+   "source_status": "blocked",
+   "evidence_status": "partial-verified(Hario✅/Stumptown待核)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-007",
+   "content_decision": "保留",
+   "source_status": "blocked",
+   "evidence_status": "partial-verified(WCR✅/CQI待核)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-008",
+   "content_decision": "保留-冗余待决(b1-024)",
+   "source_status": "blocked",
+   "evidence_status": "verified(WCR首页)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-009",
+   "content_decision": "保留",
+   "source_status": "blocked",
+   "evidence_status": "needs-source-check(三家磨豆机口径)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-010",
+   "content_decision": "保留",
+   "source_status": "blocked",
+   "evidence_status": "needs-source-check(aeropress)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-011",
+   "content_decision": "保留",
+   "source_status": "blocked",
+   "evidence_status": "needs-source-check(CQI三页)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-012",
+   "content_decision": "保留（Hario 原文逐句核验，内容合格）",
+   "source_status": "blocked(默认拒绝，例外提案待批)",
+   "evidence_status": "verified-original(2026-10-14)",
+   "recommended_action": "approve_candidate",
+   "confidence": "high",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-013",
+   "content_decision": "保留（待补丁采纳：推断标注）",
+   "source_status": "blocked(默认拒绝，例外提案待批)",
+   "evidence_status": "verified-original(2026-10-14)",
+   "recommended_action": "needs-review",
+   "confidence": "high",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-014",
+   "content_decision": "保留（待补丁采纳：weak→寡淡）",
+   "source_status": "blocked(默认拒绝，例外提案待批)",
+   "evidence_status": "verified-original(2026-10-14)",
+   "recommended_action": "needs-review",
+   "confidence": "high",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-015",
+   "content_decision": "保留（待补丁采纳：chalky→粉感 + F/I 分层）",
+   "source_status": "blocked(默认拒绝，例外提案待批)",
+   "evidence_status": "verified-original(2026-10-14)",
+   "recommended_action": "needs-review",
+   "confidence": "high",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-016",
+   "content_decision": "轻改-补丁已备",
+   "source_status": "blocked",
+   "evidence_status": "verified-original(Fellow PDF)",
+   "recommended_action": "needs-review",
+   "confidence": "high",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-017",
+   "content_decision": "保留",
+   "source_status": "blocked",
+   "evidence_status": "partial-verified(Baratza口径待核)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-018",
+   "content_decision": "保留",
+   "source_status": "blocked",
+   "evidence_status": "needs-source-check(UC Davis 冷萃研究)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-019",
+   "content_decision": "保留",
+   "source_status": "blocked",
+   "evidence_status": "needs-source-check(fellow brew talks 文章)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-020",
+   "content_decision": "保留",
+   "source_status": "blocked",
+   "evidence_status": "needs-source-check(同上)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-021",
+   "content_decision": "保留",
+   "source_status": "blocked",
+   "evidence_status": "needs-source-check(SCA-131状态/色曲线)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-022",
+   "content_decision": "保留",
+   "source_status": "blocked",
+   "evidence_status": "needs-source-check(UC Davis/Hario Mizudashi)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-023",
+   "content_decision": "保留",
+   "source_status": "blocked",
+   "evidence_status": "needs-source-check(同 freshness)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-024",
+   "content_decision": "保留-冗余待决(b1-008)",
+   "source_status": "blocked",
+   "evidence_status": "verified(WCR首页)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-025",
+   "content_decision": "暂缓-待补证据",
+   "source_status": "blocked",
+   "evidence_status": "partial-verified(Hario✅/Hoffmann待核)",
+   "recommended_action": "needs-review",
+   "confidence": "low",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-026",
+   "content_decision": "保留",
+   "source_status": "blocked",
+   "evidence_status": "needs-source-check(Sage/Gaggia手册)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-027",
+   "content_decision": "保留",
+   "source_status": "blocked",
+   "evidence_status": "needs-source-check(AeroPress 手册立场)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-028",
+   "content_decision": "保留",
+   "source_status": "blocked",
+   "evidence_status": "needs-source-check(Fellow 温度/配比 claim)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-029",
+   "content_decision": "保留",
+   "source_status": "partial-blocked(fda✅/efsa阻断)",
+   "evidence_status": "partial-verified(FDA✅逐字/EFSA待核)",
+   "recommended_action": "needs-review",
+   "confidence": "high",
+   "human_review_required": true
+  },
+  {
+   "sample_id": "b1-030",
+   "content_decision": "保留",
+   "source_status": "blocked",
+   "evidence_status": "needs-source-check(AeroPress 185°F)",
+   "recommended_action": "needs-review",
+   "confidence": "medium",
+   "human_review_required": true
+  }
+ ],
+ "summary": {
+  "total": 30,
+  "approve_candidate_suggested": 1,
+  "needs_review": 29,
+  "note": "b1-012 是唯一『内容+证据双满』的样本（recommended_action=approve_candidate），但仍受来源准入阻断（hario 例外待批）；其余 29 条需补外部核验或先采纳补丁。"
+ }
+}
