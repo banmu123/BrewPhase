@@ -1958,6 +1958,146 @@ class QualityGateTests(unittest.TestCase):
         self.assertEqual(report["errors"], 0)
 
 
+class TestBatch2bInteractionQuality(unittest.TestCase):
+    """阶段六点九-C：Batch2b 行为质量门禁（GPT 指定 7 case + 真实草稿回归）。
+
+    新增检查：missing-information-collection / direct-parameter-answer /
+    next-step-missing / uncertainty-expression-missing / health-boundary-missing /
+    strong-claim-assertion + strong_claim_contexts 语境判定。
+    """
+
+    DRAFT_TOOL = COFFEEAI / "review_queue" / "check_candidate_quality.py"
+
+    def _gate(self, rows, expect=None):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "draft.jsonl"
+            p.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n",
+                         encoding="utf-8")
+            proc = subprocess.run([PY, str(self.DRAFT_TOOL), "--input", str(p), "--json"],
+                                  capture_output=True, text=True, timeout=120, cwd=str(REPO))
+            if expect is not None:
+                self.assertEqual(proc.returncode, expect,
+                                 f"exit={proc.returncode}\n{proc.stdout}\n{proc.stderr}")
+            return json.loads(proc.stdout)
+
+    def _row(self, *, user="问一下。", assistant="回答。", skill=None, topic="espresso",
+             claims=("rule.fellow.shot-bitter",), level="F"):
+        row = {
+            "sample_id": "t-b2b", "topic": topic,
+            "messages": [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": user},
+                {"role": "assistant", "content": assistant},
+            ],
+            "claim_ids": list(claims), "source_ids": ["fellow-espresso-basics"],
+            "reasoning_level": level,
+        }
+        if skill:
+            row["interaction_skill"] = skill
+        return row
+
+    def _codes(self, report):
+        return [i["code"] for s in report["samples"] for i in s["issues"]]
+
+    # case1: 缺少追问 → error
+    def test_case1_missing_info_collection_error(self):
+        """clarification 类样本无信息收集段 → missing-information-collection。"""
+        report = self._gate([self._row(
+            user="我的咖啡很酸，怎么办？",
+            assistant="酸的原因有很多，通常是萃取不足。【I：可能与其他因素有关】",
+            skill="clarification")], expect=1)
+        self.assertIn("missing-information-collection", self._codes(report))
+
+    # case2: 参数问题直接给答案 → error
+    def test_case2_direct_parameter_answer_error(self):
+        """用户请求参数、回答无来源语境/条件限制 → direct-parameter-answer。"""
+        report = self._gate([self._row(
+            user="给我一个黄金比例？",
+            assistant="按经验推荐一个通用值即可，稳定后不用再改。",
+            claims=("rule.fellow.shot-bitter",))], expect=1)
+        self.assertIn("direct-parameter-answer", self._codes(report))
+
+    # case3: 含条件建议 → pass
+    def test_case3_condition_advice_pass(self):
+        """条件化建议 + 信息收集段 → 无 error。"""
+        report = self._gate([self._row(
+            user="我的手冲味道不对怎么办？",
+            assistant="还需要知道你的研磨刻度与滤杯。如果观察到流速偏快，可以尝试磨细一档"
+                      "再对比验证；如果情况不同，需要重新判断。建议的下一步是记录参数。",
+            skill="condition_based_advice")])
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["errors"], 0)
+
+    # case4: 不知道能力表达 → pass
+    def test_case4_uncertainty_expression_pass(self):
+        """uncertainty_handling + 「当前信息不足」限定表达 + 否定语境强断言 → pass。"""
+        report = self._gate([self._row(
+            user="这个豆子为什么有茉莉花香？",
+            assistant="当前信息不足，无法判断唯一原因，可能与产地和处理法有关，需要进一步确认。"
+                      "还需要知道：产地、处理法、烘焙度。",
+            skill="uncertainty_handling", topic="sensory")])
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["errors"], 0)
+        ctx = report["samples"][0].get("strong_claim_contexts", [])
+        self.assertTrue(any(c["keyword"] == "唯一原因" and c["verdict"] == "negation-context"
+                            for c in ctx), f"否定语境应记 pass：{ctx}")
+
+    # case5: 健康回答无医疗边界 → error
+    def test_case5_health_boundary_missing_error(self):
+        """健康类回答缺非医疗建议边界声明 → health-boundary-missing。"""
+        report = self._gate([self._row(
+            user="每天喝咖啡健康吗？",
+            assistant="对多数成人每天 400 mg 一般没问题，放心喝。",
+            topic="health")], expect=1)
+        self.assertIn("health-boundary-missing", self._codes(report))
+
+    # case6: 否定黄金参数 → pass
+    def test_case6_negated_golden_param_pass(self):
+        """「没有适用于所有豆子的黄金参数」是拒绝伪标准，strong_claim_contexts 记 pass。"""
+        report = self._gate([self._row(
+            user="给我黄金比例？",
+            assistant="没有适用于所有豆子的黄金参数，配方取决于豆子与器具；建议的下一步是"
+                      "先固定一个起点做基准再调整。",
+            skill="boundary_setting")])
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["errors"], 0)
+        ctx = report["samples"][0].get("strong_claim_contexts", [])
+        self.assertTrue(any(c["keyword"] == "黄金参数" and c["verdict"] == "negation-context"
+                            for c in ctx), f"否定语境应记 pass：{ctx}")
+
+    # case7: 黄金参数作为推荐 → error
+    def test_case7_golden_param_assertion_error(self):
+        """肯定句式「黄金参数是 X」→ strong-claim-assertion（制造伪标准）。"""
+        report = self._gate([self._row(
+            user="给我黄金比例？",
+            assistant="黄金参数是 1:16，照做即可。")], expect=1)
+        self.assertIn("strong-claim-assertion", self._codes(report))
+
+    def test_case8_next_step_missing_warning(self):
+        """诊断类回答只解释原因无行动建议 → next-step-missing（warning 不阻断）。"""
+        report = self._gate([self._row(
+            user="为什么我的浓缩流速慢？",
+            assistant="Fellow 官方口径把流速偏慢对应研磨偏细。")])
+        self.assertIn("next-step-missing", self._codes(report))
+        self.assertTrue(report["passed"], "warning 不阻断")
+
+    def test_case9_real_batch2b_drafts_pass(self):
+        """回归：真实 Batch2b 草稿 8 条必须 0 error 通过增强后门禁；禁止肯定式伪标准。"""
+        proc = subprocess.run([PY, str(self.DRAFT_TOOL), "--input",
+                               str(COFFEEAI / "review_queue" / "batch2b_candidates_draft.jsonl"),
+                               "--json"], capture_output=True, text=True, timeout=120, cwd=str(REPO))
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        report = json.loads(proc.stdout)
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["errors"], 0)
+        codes = self._codes(report)
+        self.assertNotIn("strong-claim-assertion", codes)
+        self.assertNotIn("missing-information-collection", codes)
+        self.assertNotIn("direct-parameter-answer", codes)
+        self.assertNotIn("uncertainty-expression-missing", codes)
+        self.assertNotIn("health-boundary-missing", codes)
+
+
 class RepoIntegrityTests(unittest.TestCase):
     def test_existing_kb_build_check_still_passes(self):
         """验收 9：不影响既有工程——知识库校验脚本仍通过。"""
