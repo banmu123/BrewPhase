@@ -1,23 +1,25 @@
-# Batch 1 人工审核清单（阶段五点六）
+# Batch 1 人工审核清单（阶段五点六 → 五点七执行后状态）
 
-> 日期：2026-10-14 ｜ 数据来源：`batch1_admission_proposal.json`（30 条）
-> **★ = GPT 指定的重点决策样本**。全部候选当前 `review_status: unreviewed`。
-> 决策动作说明：`accept 补丁`（套用 batch1_revision_patch.jsonl）→ `重审`（人工审核修订稿并
-> 显式更新审核记录）→ `例外`（来源准入解除，见 source_exception_decision.md）→ `approved`。
+> 日期：2026-10-14 ｜ **执行结果：第一批 5 条已 approved**
+> （b1-012/013/014/015/016；reviewed_by=banmu123；双指纹+dedup 重算；
+> check_approval_ready errors=0；validate --for-training 0 error；split 3/1/1 生成——
+> 明确警告数据量不足以训练，仅验证流程）。
+> **★ = GPT 指定的重点决策样本**。
 
-## 重点决策样本（★）
+## 重点决策样本（★）——执行后状态
 
-| sample_id | 当前状态 | 推荐动作 | 人工决策项 |
-|---|---|---|---|
-| ★ b1-012 | unreviewed | **approve_candidate 建议唯一**（Hario 原文逐句核验） | ① 确认内容定稿；② hario 例外方案 A 批准（填 approved_by）；③ 批准后按模板走落库 |
-| ★ b1-013 | unreviewed | 补丁 accept → 重审 | 推断标注措辞是否接受（「这是方向性推断…」） |
-| ★ b1-014 | unreviewed | 补丁 accept → 重审 | weak→寡淡 是否定稿 |
-| ★ b1-015 | unreviewed | 补丁 accept → 重审 | chalky→粉感 + 水温F/烘焙度豆子状态I 分层是否接受 |
-| ★ b1-016 | unreviewed | 补丁 accept → 重审 | 两处术语替换（空洞→寡淡/尖锐单薄） |
-| ★ b1-025 | unreviewed | 暂缓（Hoffmann 配方未核验） | 补外部核验（youtube/博客原文）或降级 P/I 后重写 |
-| ★ b1-005 | unreviewed | 暂缓（SCA CVA 引用细节未核验） | 补 SCA 官方页面核验（四部分编号/2024-11 日期） |
-| ★ b1-008 | unreviewed | 冗余决策 A/B/C | redundancy_decision.md（推荐 A 保留两个：训练「解释能力」） |
-| ★ b1-024 | unreviewed | 冗余决策 A/B/C | 同上（若 A：训练「拒答+追问能力」，与 b1-008 差异化） |
+| sample_id | 状态 | 执行结果 |
+|---|---|---|
+| ★ b1-012 | **approved** | 内容+证据双满，直接批准（hario 例外已登记） |
+| ★ b1-013 | **approved** | 补丁 accept 套用 + 重新审核（推断标注） |
+| ★ b1-014 | **approved** | 补丁 accept 套用 + 重新审核（weak→寡淡） |
+| ★ b1-015 | **approved** | 补丁 accept 套用 + 重新审核（粉感 + F/I 分层） |
+| ★ b1-016 | **approved** | 补丁 accept 套用 + 重新审核（术语替换） |
+| ★ b1-025 | unreviewed | **进第二批**：内容可保留（Hoffmann 已核验），但被 `hario-v60-hoffmann` 来源阻断——需为该来源另提例外提案 |
+| ★ b1-005 | unreviewed | 暂缓：SCA CVA 引用细节待核 |
+| ★ b1-008 | unreviewed | **暂缓**（GPT 建议：第一批求净，第二轮处理） |
+| ★ b1-024 | unreviewed | **暂缓**（同上） |
+| b1-006 | unreviewed | **进第二批**：内容已核验，但被 `stumptown-kalita-guide` 阻断——需为该来源另提例外提案 |
 
 ## 其余候选（21 条，均 unreviewed）
 

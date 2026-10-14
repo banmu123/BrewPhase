@@ -410,12 +410,28 @@ class ReviewQueueTests(unittest.TestCase):
         """构建器可重复运行，且 ID 反向校验持续通过（防知识库改动造成悬空引用）。"""
         run_script("../review_queue/build_batch1.py", expect=0)
 
-    def test_all_candidates_stay_unreviewed(self):
-        """验收：候选（batch1 + 存量示例）必须全部 unreviewed，无自动批准。"""
+    def test_all_candidates_review_status_disciplined(self):
+        """验收（阶段五点七演进）：候选状态只允许两种——
+        unreviewed（默认）或 approved（必须带审批人与双指纹）；禁止其它状态、
+        禁止无审批记录的 approved（防自动批准）。"""
         for meta_file in (self.BATCH_META,
                           COFFEEAI / "data" / "meta" / "examples_unreviewed.meta.jsonl"):
             for row in self._load_meta(meta_file):
-                self.assertEqual(row.get("review_status"), "unreviewed", f"{meta_file.name}:{row['sample_id']}")
+                st = row.get("review_status")
+                if st == "unreviewed":
+                    continue
+                if st == "approved":
+                    # approved 必须有完整审批记录（防无审批人的自动批准）
+                    self.assertTrue(str(row.get("reviewed_by") or "").strip(),
+                                    f"{meta_file.name}:{row['sample_id']} approved 缺 reviewed_by")
+                    self.assertTrue(str(row.get("reviewed_at") or "").strip(),
+                                    f"{meta_file.name}:{row['sample_id']} approved 缺 reviewed_at")
+                    self.assertTrue(str(row.get("reviewed_content_sha256") or "").strip(),
+                                    f"{meta_file.name}:{row['sample_id']} approved 缺内容指纹")
+                    self.assertTrue(str(row.get("reviewed_record_sha256") or "").strip(),
+                                    f"{meta_file.name}:{row['sample_id']} approved 缺记录指纹")
+                else:
+                    self.fail(f"{meta_file.name}:{row['sample_id']} 非法状态: {st!r}")
 
     def test_candidate_ids_traceable(self):
         """验收：source_ids/claim_ids 均可追溯，无编造 ID。"""

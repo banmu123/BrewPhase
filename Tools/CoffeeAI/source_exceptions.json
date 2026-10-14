@@ -16,5 +16,64 @@
     "valid_until": "有效期（可选：字段缺失允许；提供时必须为非空 ISO YYYY-MM-DD 字符串。显式 null、空字符串、数字、布尔、列表、字典、非法日期均整条拒绝；过期即拒绝并明确报告）"
   },
   "scope_semantics": "指定的限定器同时生效：样本的 sample_id/topic/claim_ids 都必须落在批准范围内，训练用途必须 ∈ deployment_purposes，否则该来源对该样本按例外外处理（拒绝）。限定器字段显式 null 按类型错误处理（不算未提供）。同一 sourceId 出现多条例外=冲突：无论顺序与单条字段是否有效，该来源所有条目全部失效（阶段四点八）。",
-  "exceptions": []
+  "exceptions": [
+    {
+      "sourceId": "hario-v60-expert-guide",
+      "usage": "fact-extraction-rewrite",
+      "reason": "Hario UK 官方 V60 指南已逐句核验（2026-10-14，见 external_evidence_packet.md）：调参方向/配方参数/洗滤纸理由与 claim 一致；仅用于独立事实提取与改写，不复制原文",
+      "approved_by": "banmu123 (project owner)",
+      "approved_at": "2026-10-14",
+      "scope": "仅非商业研究训练样本；逐条人工审核；claim 清单限定；不复制原文",
+      "deployment_purposes": [
+        "noncommercial-research"
+      ],
+      "allowed_sample_ids": [
+        "b1-012",
+        "b1-013"
+      ],
+      "allowed_topics": [
+        "brewing-troubleshooting"
+      ],
+      "allowed_claim_ids": [
+        "rule.hario.v60.too-weak",
+        "rule.hario.v60.too-slow",
+        "claim.pourover.v60-official-tuning"
+      ],
+      "license_basis": {
+        "basis": "registry-sanctioned-use",
+        "evidence_ref": "Tools/CoffeeAI/review_queue/source_exception_proposal.md（方案A，负责人批准）+ Tools/CoffeeAI/review_queue/external_evidence_packet.md §1"
+      },
+      "valid_until": "2027-10-14"
+    },
+    {
+      "sourceId": "fellow-espresso-basics",
+      "usage": "fact-extraction-rewrite",
+      "reason": "Fellow Espresso Basics PDF 已逐句核验（2026-10-14，见 external_evidence_packet.md）：酸/咸/weak→磨细、chalky/bitter→磨粗、微调提示、18g/90° 填压与 claim 一致；仅用于独立事实提取与改写，不复制原文",
+      "approved_by": "banmu123 (project owner)",
+      "approved_at": "2026-10-14",
+      "scope": "仅非商业研究训练样本；逐条人工审核；claim 清单限定；不复制原文",
+      "deployment_purposes": [
+        "noncommercial-research"
+      ],
+      "allowed_sample_ids": [
+        "b1-014",
+        "b1-015",
+        "b1-016"
+      ],
+      "allowed_topics": [
+        "espresso",
+        "brewing-troubleshooting"
+      ],
+      "allowed_claim_ids": [
+        "rule.fellow.shot-sour",
+        "rule.fellow.shot-bitter",
+        "claim.extraction.channeling-vendor"
+      ],
+      "license_basis": {
+        "basis": "registry-sanctioned-use",
+        "evidence_ref": "Tools/CoffeeAI/review_queue/source_exception_proposal.md（方案A，负责人批准）+ Tools/CoffeeAI/review_queue/external_evidence_packet.md §2"
+      },
+      "valid_until": "2027-10-14"
+    }
+  ]
 }

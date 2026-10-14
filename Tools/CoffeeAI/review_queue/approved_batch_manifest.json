@@ -1,0 +1,16 @@
+{
+ "batch_id": "batch1-approved-r1",
+ "approved_samples": [
+  "b1-012",
+  "b1-013",
+  "b1-014",
+  "b1-015",
+  "b1-016"
+ ],
+ "approved_by": "banmu123 (project owner)",
+ "approved_at": "2026-10-14",
+ "deployment_purpose": "noncommercial-research",
+ "decision_reference": "Tools/CoffeeAI/review_queue/batch1_decision_package.md + batch1_patch_decision.md（按 ChatGPT 阶段五点五/五点六建议，负责人 2026-10-14 授权执行）",
+ "source_exception_reference": "Tools/CoffeeAI/source_exceptions.json（hario-v60-expert-guide + fellow-espresso-basics，方案 A，valid_until 2027-10-14）",
+ "notes": "第一批 5 条；b1-006（stumptown 阻断）与 b1-025（hario-v60-hoffmann 阻断）待第二批例外提案；b1-008/024 暂缓（GPT 建议）。"
+}

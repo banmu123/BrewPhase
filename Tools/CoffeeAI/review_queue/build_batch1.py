@@ -291,8 +291,33 @@ def main():
 
     out_corpus = Path(__file__).resolve().parent / "batch1_candidates.jsonl"
     out_meta = Path(__file__).resolve().parent / "batch1_candidates.meta.jsonl"
+
+    # ---- 阶段五点七：保护人工批准/修订状态——已 approved 的样本不被重建覆盖
+    # （批准文本含人工采纳的补丁，不在本脚本的 S 表里；批准状态只能由人工流程变更）
+    preserved = {}
+    if out_meta.is_file():
+        for line in out_meta.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                old = json.loads(line)
+                if old.get("review_status") == "approved":
+                    preserved[old["sample_id"]] = old
+    preserved_corpus = {}
+    if out_corpus.is_file() and preserved:
+        for line in out_corpus.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                old = json.loads(line)
+                if old.get("sample_id") in preserved:
+                    preserved_corpus[old["sample_id"]] = line
+
     corpus_lines, meta_lines = [], []
+    rebuilt = 0
     for s in S:
+        if s["sample_id"] in preserved:
+            # 已批准样本：原样保留（corpus 行 + meta 行）
+            corpus_lines.append(preserved_corpus[s["sample_id"]])
+            meta_lines.append(json.dumps(preserved[s["sample_id"]], ensure_ascii=False))
+            continue
+        rebuilt += 1
         messages = [
             {"role": "system", "content": SYSTEM},
             {"role": "user", "content": s["question"]},
@@ -313,8 +338,10 @@ def main():
         }, ensure_ascii=False))
     out_corpus.write_text("\n".join(corpus_lines) + "\n", encoding="utf-8")
     out_meta.write_text("\n".join(meta_lines) + "\n", encoding="utf-8")
-    print(f"[OK] 写出 {len(S)} 条候选 → {out_corpus.name} / {out_meta.name}")
-    print("[OK] 全部 claim_ids / source_ids 校验通过；review_status 均为 unreviewed")
+    print(f"[OK] 写出 {len(S)} 条候选 → {out_corpus.name} / {out_meta.name}"
+          f"（保留已批准 {len(preserved)} 条不动，重建 {rebuilt} 条）")
+    print("[OK] 全部 claim_ids / source_ids 校验通过；"
+          f"review_status：approved {len(preserved)} 条 + unreviewed {rebuilt} 条")
 
 
 if __name__ == "__main__":
