@@ -43,3 +43,10 @@
 ## 工作流程约定（2026-10-14 起）
 
 * **修改完成 → 先 push 远程 → 再询问 GPT**：问 GPT（ChatGPT《检查黄金风味代码》对话）前必须先把改动 commit + push 到 GitHub main，并要求 GPT 先看代码库再结合报告提问。GPT 的提示词按循环执行：执行 → push → 回报 → 问下一步。
+* 询问 GPT 时**必须附上仓库地址** https://github.com/banmu123/BrewPhase （GPT 无需搜索即可核对远程 main；仓库对 GPT 可见）。
+
+## CoffeeAI × ChatGPT 循环——会话交接（2026-10-14 晚）
+
+* **唯一权威交接文档：`Tools/CoffeeAI/review_queue/GPT_WORKFLOW.md`**（新会话必读）——含交互循环规范、ChatGPT 对话技术与选择器、状态快照（approved=14/例外=9/train 11/118 tests）、恢复步骤、阶段历史与关键决策。
+* 中断点：阶段六点九-B（Batch2b 8 条草稿生成）未开始写文件；GPT 提示词全文在 /tmp/gpt_next24.md（备份 /tmp/gpt_next24_backup.md）与交接文档附录要点。
+* 恢复动作：按 GPT_WORKFLOW.md「四」生成 batch2b_candidates_draft.jsonl（两批：低风险 001/002/004/006 → 高风险 003/005/007/008）→ 门禁 → push → 附仓库地址报告 GPT《检查黄金风味代码》对话。
