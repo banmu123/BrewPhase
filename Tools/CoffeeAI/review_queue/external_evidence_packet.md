@@ -70,3 +70,25 @@
 ## 待核验清单（needs-source-check，本轮未访问）
 
 sca.coffee/value-assessment（b1-005）、worldcoffeeresearch.org/news/2023/robusta-variety-catalog 与 varieties 子页（b1-001/003/004）、fellowproducts.com/blogs/brew-talks 养豆两篇（b1-019/020/023/028/009）、UC Davis Coffee Center 冷萃研究与色曲线（b1-018/021/022）、CQI PHP 三页（b1-007/011）、NCA（b1-002）、Baratza（b1-009/017）、AeroPress how-to/手册（b1-009/010/027/030）、Sage BES875 与 Gaggia Classic 手册（b1-026）、Hario Mizudashi 配方卡（b1-022）、Stumptown Kalita 指南（b1-006 半边）。
+
+---
+
+## 阶段六点六-C 追加（2026-10-14）：Stumptown Kalita Wave 指南核验
+
+| 字段 | 值 |
+|---|---|
+| URL | https://stumptowncoffee.com/pages/brew-guide-kalita-wave |
+| 核验时间 | 2026-10-14 |
+| 服务 claim | `claim.pourover.paper-rinse-universal`（stumptown 侧）+ kalita-geometry / kalita-forgiving 佐证 |
+
+逐句支持记录：
+- 滤纸冲洗："Rinse the filter with hot water to wash out any papery taste and warm up the dripper, then pour out the rinse water."（去纸味 + 预热双理由，与 hario 侧表述一致）
+- 平底三孔容错："The flat-bottom filter and three-hole base promote an even extraction, which makes this one of the more forgiving brewers out there."
+- 慢速螺旋注水："The key to mastering this brewer is the slow spiral pour."
+- 配方：21g / 345g / 205°F(≈96°C) / 2:45–3:00 —— 与 pour-over.md 对照表数字一致
+
+⚠️ **新发现（超出既有 claim 范围）**：FAQ 给出调参方向逐字口径——
+"Bitter usually means over-extraction, so go coarser or pour a little faster. **Sour or weak usually means under-extraction, so go finer** or slow your pour down."
+——「酸/淡→欠萃→磨细」方向的厂商逐字证据；处置选项见
+`batch2a_005_008_recovery_report.md` §二（路径 1 入库新 claim / 路径 2 维持 P 层），
+**本轮未入库、未扩例外**。
