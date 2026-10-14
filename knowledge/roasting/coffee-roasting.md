@@ -15,6 +15,9 @@
 | claim.roasting.color-curve | UC Davis 的一项 Scientific Reports 研究显示，咖啡豆在烘焙过程中遵循**通用色曲线**，对「浅/中/深」如何被更一致地定义有重要含义。 | `ucdavis-research-index` |
 | claim.roasting.research-areas | Coffee Center 的研究兴趣包括：烘焙化学动力学与反应路径、烘焙与冲泡的能效、风味分子的识别与表征。 | `ucdavis-coffee-center` |
 | claim.roasting.acidity-study | UC Davis 有研究分析烘焙技术对**咖啡豆酸质**的影响，帮助烘焙师更好地控制品质与风味。 | `ucdavis-research-index` |
+| claim.roasting.ta-sourness-correlation | UC Davis 2021 年研究（ACS Food Science & Technology）：咖啡的**感知酸度（perceived sourness）与可滴定酸（TA）强相关**——此前业界将酸感与 pH 关联；感知酸度是杯测比赛中的专门打分类别，是冲煮咖啡的主导风味轮廓之一。 | `ucdavis-coffee-center`（Grounds for Discovery，2024-08-22） |
+| claim.roasting.ta-peaks-first-crack | UC Davis 团队（Nature Scientific Reports, 2024）跨 **7 种烘焙曲线 × 3 个产地/处理法**实测：TA 从烘焙开始显著上升、在**一爆（first crack）达到峰值**后持续下降，至二爆开始时回落到接近生豆初始值——烘焙进程是滴定酸的主要控制变量之一。 | `ucdavis-coffee-center`（同上） |
+| claim.roasting.roast-controls-flavor | UC Davis 研究者（Anokye-Bempah）：「冲煮阶段能改变感官特性的空间有限，**烘焙过程对咖啡风味的控制力大得多**」——烘焙与冲煮对风味的贡献不是同量级。 | `ucdavis-coffee-center`（同上） |
 | claim.roasting.sca-131 | SCA-131「Coffee Roast Level: Test Method」处于**制定中**，说明「烘焙度测试方法」尚未成为已发布标准。 | `sca-coffee-standards` |
 | claim.roasting.dark-roast-rest | 厂商配方语境中，深烘豆的推荐养豆期可短至烘焙后 **5–7 天**（以 Fellow 引用的深烘肯尼亚批次为例）。 | `fellow-brew-talks` |
 

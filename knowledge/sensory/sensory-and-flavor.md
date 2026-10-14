@@ -25,6 +25,8 @@ SCA 的 **Coffee Value Assessment（CVA）** 正是把评价拆成 Physical / De
 | claim.sensory.cqi-flavor-standards | CQI 的 Q 考核包含**识别与回忆 CQI Flavor Standards（FlavorActiV）水溶液**，说明风味标准被用于**训练与校准**。 | `cqi-q-grader-faq` |
 | claim.sensory.descriptive-panel | UC Davis 的感官研究使用**校准过的描述性分析小组**（14 名）评价咖啡，说明「描述性分析」是有方法学要求的。 | `ucdavis-coldbrew-2025` |
 | claim.sensory.cqi-cupping-form | CQI 明确将继续在 Quality Evaluation 项目中使用 **2004 cupping form**（与 SCA 转向 CVA 并行）。 | `cqi-q-grader-faq` |
+| claim.sensory.brewing-chart-profiles | UC Davis Coffee Center 参与研究的 **Sensory and Consumer Brewing Control Chart**（2025 发表，更新 Lockhart 1957 原版）：按 **TDS（溶解物总量）与萃取率（extraction yield）** 划分风味轮廓；数据来自 12 人品鉴小组与消费者偏好测试（SCA 与 Coffee Science Foundation 支持、Breville 资助）。 | `ucdavis-coffee-center`（Brewing Control Chart 文章，2025-01-02） |
+| claim.sensory.same-bean-different-brew | Ristenpart（UC Davis）：**同一批咖啡豆，改变研磨与萃取方式会落在 Brewing Control Chart 的不同角落、味道明显不同**；用秤对照粉水比、调整研磨与冲煮时间，可以预期并主导风味走向。 | `ucdavis-coffee-center`（同上，Ristenpart 原话逐字核验） |
 
 ## 关键概念区分（写作纪律）
 
