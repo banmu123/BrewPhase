@@ -38,7 +38,8 @@ REPO = HERE.parents[2]
 DIAGNOSTIC_TOPICS = {"espresso", "brewing", "brewing-troubleshooting",
                      "pour-over diagnosis", "espresso-dial-in", "cold-brew",
                      "grinding", "cleaning-maintenance"}
-DIAG_CHAIN_MARKERS = ["验证", "对比", "观察", "排查", "记录", "流速", "尝", "对比冲煮"]
+DIAG_CHAIN_MARKERS = ["验证", "对比", "观察", "排查", "记录", "流速", "尝", "对比冲煮",
+                      "核实"]
 INFERENCE_MARKERS = ["可能", "通常", "往往", "可以尝试", "推断", "尚未核验", "未核验",
                      "常识级", "方向性推断", "因豆而异"]
 FACT_IMPERSONATION_MARKERS = ["必然", "一定是", "肯定是", "永远"]
@@ -65,10 +66,14 @@ PARAM_CONTEXT_MARKERS = ["官方", "指南", "署名", "作者", "来源", "语�
 # 下一步行动建议标记（GPT 规则 3）
 NEXT_STEP_MARKERS = ["建议的下一步", "下一步", "可以尝试", "可以先", "建议你", "建议从",
                      "再决定", "记录", "行动", "建议每次", "建议先", "验证方法", "排查"]
-# 不确定性限定表达（GPT 规则 4）
+# 不确定性限定表达（GPT 规则 4；阶段七-F 补充：知识边界声明也是合法的
+# 不确定性表达——「本知识库没有相关结论」比「当前信息不足」更强的边界声明）
 UNCERTAINTY_MARKERS = ["当前信息不足", "信息不足", "需要更多信息", "还需要更多",
                        "无法判断唯一原因", "无法判断", "当前无法", "需要进一步确认",
-                       "尚未核验", "尚无对应", "不能判断唯一"]
+                       "尚未核验", "尚无对应", "不能判断唯一",
+                       "知识库没有相关结论", "知识库没有相关的研究结论",
+                       "没有相关结论", "没有相关 claim", "没有对应的机理结论",
+                       "本知识库没有"]
 # 健康边界声明标记（GPT case5）
 HEALTH_MARKERS = ["不构成医疗建议", "非医疗建议", "咨询医疗", "医疗人员", "医生", "就医"]
 # 强断言词（GPT 规则 5：扩展扫描；长词在前避免重叠命中）
@@ -147,13 +152,21 @@ def _skill(d):
 
 
 def check_missing_information(d, assistant_text, issues):
-    """六点九-C 规则 1：追问/不确定性/诊断类样本必须含信息收集段。"""
+    """六点九-C 规则 1：追问/不确定性/诊断类样本必须含信息收集段。
+
+    阶段七-F 补充（GPT 健康边界裁定）：健康类样本（topic=health）的信息收集段
+    可由「就医/咨询医疗人员指引」替代——健康话题的信息处理方式是引导专业评估，
+    而不是向用户收集症状做推断；强制追问反而违背 GPT「不需要追问」的行为目标。
+    """
     skill = _skill(d)
     if not skill:
         return  # Batch2a 及更早样本无 interaction_skill 字段，不适用
     if not (skill in ASKING_SKILLS or skill.startswith("uncertainty")
             or skill.startswith("missing_information")):
         return
+    if str(d.get("topic") or "") == "health" and any(
+            m in assistant_text for m in HEALTH_MARKERS):
+        return  # 健康类：就医/咨询指引即为合规的信息处理方式
     if not any(m in assistant_text for m in INFO_COLLECT_MARKERS):
         issues.append({"level": "error", "code": "missing-information-collection",
                        "sample_id": d.get("sample_id"),
@@ -208,6 +221,30 @@ def check_health_boundary(d, assistant_text, issues):
                                   "（参考信息 + 个体差异 + 咨询医疗人员指引）"})
 
 
+def check_knowledge_explanation(d, assistant_text, issues):
+    """阶段七-F（GPT 指示）：knowledge_explanation 类必须直接回答、不强制追问。
+
+    PASS：直接回答核心问题，不强制要求用户提供信息；
+    FAIL：开头即要求补充豆子/设备/参数等（无必要追问）；
+    「还需要知道」信息收集段在直接解释类中不是必需，出现在中部不阻断，
+    但出现在开头（前 120 字符）视为强制追问。
+    """
+    skill = _skill(d)
+    if skill != "knowledge_explanation":
+        return
+    head = assistant_text[:120]
+    forced_ask = [m for m in INFO_COLLECT_MARKERS if m in head]
+    if forced_ask:
+        issues.append({"level": "error", "code": "knowledge-explanation-forced-ask",
+                       "sample_id": d.get("sample_id"),
+                       "message": f"knowledge_explanation 类样本开头出现追问（{forced_ask[0]}…）——"
+                                  "定义/单事实类问题必须直接回答核心问题，不得强制用户提供信息"})
+    if len(assistant_text.strip()) < 150:
+        issues.append({"level": "warning", "code": "knowledge-explanation-too-short",
+                       "sample_id": d.get("sample_id"),
+                       "message": "knowledge_explanation 回答过短——直接解释应有实质内容"})
+
+
 def check_strong_claims(d, assistant_text, issues):
     """六点九-C 规则 6：strong_claim_context_check——强断言词扫描 + 语境判定。
 
@@ -237,6 +274,11 @@ def check_strong_claims(d, assistant_text, issues):
         prefix = assistant_text[max(0, s - 24):s]
         window = assistant_text[max(0, s - 24):min(len(assistant_text), e + 10)].replace("\n", " ")
         assertion = bool(ASSERTION_PATTERN.search(assistant_text[s:min(len(assistant_text), e + 8)]))
+        # 阶段七-F 补充：引号内引用（用户原话/社会框架的引用）为引用语境，
+        # 不算模型的肯定断言——如 b2d-001 的「一定伤身体」是对提问框架的引用。
+        quote_chars = ("“", "」", "『", "\"", "』", "」")
+        quoted = any(q in prefix[-2:] or q in prefix[:2] for q in quote_chars) or \
+            (s >= 1 and assistant_text[s - 1:s] in ("“", "\"", "「", "『"))
         if assertion:
             issues.append({"level": "error", "code": "strong-claim-assertion",
                            "sample_id": sid,
@@ -244,9 +286,9 @@ def check_strong_claims(d, assistant_text, issues):
                                       f"原句：…{window}…"})
             contexts.append({"keyword": w, "context": window, "severity": "error",
                              "verdict": "assertion"})
-        elif any(neg in prefix for neg in NEGATION_MARKERS):
+        elif quoted or any(neg in prefix for neg in NEGATION_MARKERS):
             contexts.append({"keyword": w, "context": window, "severity": "pass",
-                             "verdict": "negation-context"})
+                             "verdict": "quoted-context" if quoted else "negation-context"})
         else:
             issues.append({"level": "warning", "code": "fact-impersonation-risk",
                            "sample_id": sid,
@@ -315,6 +357,8 @@ def main():
         check_next_step(d, assistant_text, issues)
         check_uncertainty_expression(d, assistant_text, issues)
         check_health_boundary(d, assistant_text, issues)
+        # 阶段七-F：knowledge_explanation gate（GPT 指示）
+        check_knowledge_explanation(d, assistant_text, issues)
         sample_out = {"sample_id": sid,
                       "issues": [{"level": i["level"], "code": i["code"],
                                   "message": i["message"]} for i in issues]}

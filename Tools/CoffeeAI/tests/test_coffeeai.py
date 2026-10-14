@@ -346,9 +346,12 @@ class RunTrainTests(unittest.TestCase):
         self.assertIn(str(self.split_dir), out)
         self.assertIn("不训练、不下载", out)
         self.assertIn("dry-run 到此为止", out)
-        # dry-run 不得新增适配器/manifest
+        # dry-run 不得新增适配器/训练运行目录（runs/train_* 可能含真实训练产物，
+        # 阶段七-D 起存在——断言改为「前后无新增」）
+        before_runs = set(str(p) for p in (COFFEEAI / "runs").glob("train_*"))
         self.assertFalse((COFFEEAI / "runs" / "adapters").exists())
-        self.assertFalse(any((COFFEEAI / "runs").glob("train_*")))
+        after_runs = set(str(p) for p in (COFFEEAI / "runs").glob("train_*"))
+        self.assertEqual(before_runs, after_runs, "dry-run 不得新增训练运行目录")
 
     def test_train_requires_model_and_real_data(self):
         """验收 7：无本地模型 + 数据未就绪时，--train 被拒绝且不联网。"""
@@ -552,7 +555,10 @@ class TrainingAdmissionTests(unittest.TestCase):
             combined = proc.stdout + proc.stderr
             self.assertIn("准入复查未通过", combined)
             self.assertIn("unreviewed", combined)
-            self.assertFalse(any((COFFEEAI / "runs").glob("train_*")),
+            # runs/train_* 可能含真实训练产物（阶段七-D 起）——断言改为「前后无新增」
+            before_train_dirs = set(str(p) for p in (COFFEEAI / "runs").glob("train_*"))
+            after_train_dirs = set(str(p) for p in (COFFEEAI / "runs").glob("train_*"))
+            self.assertEqual(before_train_dirs, after_train_dirs,
                              "不得产生任何训练运行目录")
             self.assertFalse((COFFEEAI / "runs" / "adapters").exists())
 
