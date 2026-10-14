@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 
 TESTS = Path(__file__).resolve().parent
@@ -678,18 +679,32 @@ class SourceAdmissionTests(unittest.TestCase):
             self.assertIn("exception-invalid", proc.stdout)
 
     def test_expired_exception_still_blocks(self):
+        """阶段四点七：过期测试独立——除 valid_until 外所有字段完整有效、
+        范围与用途均匹配，断言拒绝原因明确指向「过期」而非字段缺失。"""
         with tempfile.TemporaryDirectory() as td:
-            exc = self._write_exceptions(td, [{
-                "sourceId": "wcr-varieties-catalog", "usage": "fact-extraction-rewrite",
-                "reason": "已过期", "approved_by": "人工审核人", "approved_at": "2026-01-01",
-                "scope": "n/a", "valid_until": "2026-01-02",
-            }])
+            exc = self._write_exceptions(td, [self._full_exception(
+                approved_at="2026-01-01",
+                valid_until="2026-01-02",
+                deployment_purposes=["noncommercial-research"],
+                allowed_sample_ids=["sa1"],
+                allowed_topics=["varieties"],
+                allowed_claim_ids=["claim.varieties.no-absolute-data"],
+                license_basis={"basis": "registry-sanctioned-use",
+                               "evidence_ref": "knowledge/SOURCE_REGISTRY.md §2"})])
             c, m = self._one_sample(td, ["wcr-varieties-catalog"],
                                     ["claim.varieties.no-absolute-data"],
-                                    {"wcr-varieties-catalog": "fact-extraction-rewrite"})
-            proc = self._for_training(c, m, exceptions=exc)
+                                    {"wcr-varieties-catalog": "fact-extraction-rewrite"},
+                                    topic="varieties")
+            proc = self._for_training(c, m, exceptions=exc,
+                                      purpose="noncommercial-research", json_mode=True)
             self.assertEqual(proc.returncode, 1)
-            self.assertIn("source-requires-human-exception", proc.stdout)
+            report = json.loads(proc.stdout)
+            invalid = [i for i in report["validation"]["issues"]
+                       if i.get("code") == "exception-invalid"]
+            self.assertTrue(invalid, "应给出 exception-invalid 提示")
+            self.assertIn("过期", " ".join(i["message"] for i in invalid))
+            codes = {i["code"] for i in report["validation"]["issues"]}
+            self.assertIn("source-requires-human-exception", codes)
 
     def test_public_domain_auto_allowed(self):
         """fda-caffeine（public-domain + allowed/allowed）无需例外即可自动准入。"""
@@ -1403,6 +1418,145 @@ class RecordBindingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             out = self._approved_split(td)
             run_script("validate_data.py", "--check-admission", out, "--json", expect=0)
+
+
+class ExceptionSchemaTests(unittest.TestCase):
+    """阶段四点七：例外 Schema 严格类型校验（加载器单元级 + CLI 端到端）。
+
+    全部使用临时文件与固定 today，不修改正式例外表。
+    """
+
+    TODAY = date(2026, 10, 14)
+
+    def _valid_exception(self, **overrides):
+        exc = {
+            "sourceId": "wcr-varieties-catalog",
+            "usage": "fact-extraction-rewrite",
+            "reason": "注册表口径：品种知识仅可独立改写",
+            "approved_by": "人工审核人（测试占位）",
+            "approved_at": "2026-10-14",
+            "scope": "仅非商业训练样本",
+            "deployment_purposes": ["noncommercial-research"],
+            "allowed_sample_ids": ["sa1"],
+            "allowed_topics": ["varieties"],
+            "allowed_claim_ids": ["claim.varieties.no-absolute-data"],
+            "license_basis": {"basis": "registry-sanctioned-use",
+                              "evidence_ref": "knowledge/SOURCE_REGISTRY.md §2"},
+        }
+        exc.update(overrides)
+        return exc
+
+    def _load(self, entries, raw=None):
+        sys.path.insert(0, str(SCRIPTS))
+        from coffeeai_common import load_source_exceptions
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "e.json"
+            if raw is not None:
+                p.write_text(raw, encoding="utf-8")
+            else:
+                p.write_text(json.dumps({"exceptions": entries}, ensure_ascii=False),
+                             encoding="utf-8")
+            return load_source_exceptions(p, today=self.TODAY)
+
+    def _rejected_reasons(self, entries, raw=None):
+        _valid, rejected = self._load(entries, raw)
+        return " | ".join(r["reason"] for r in rejected)
+
+    # ---- 范围限定器类型绕过
+    def test_string_scope_limiter_rejected_even_if_other_valid(self):
+        """allowed_sample_ids="sa10" + 合法 allowed_topics → 整条失效（类型绕过封堵）。"""
+        reasons = self._rejected_reasons([self._valid_exception(
+            allowed_sample_ids="sa10")])
+        self.assertIn("范围限定器 allowed_sample_ids", reasons)
+
+    def test_numeric_or_dict_scope_limiter_rejected(self):
+        for bad in (123, {"varieties": True}):
+            reasons = self._rejected_reasons([self._valid_exception(
+                allowed_topics=bad)])
+            self.assertIn("范围限定器 allowed_topics", reasons, repr(bad))
+
+    def test_non_string_member_in_claim_limiter_rejected(self):
+        reasons = self._rejected_reasons([self._valid_exception(
+            allowed_claim_ids=["claim.varieties.no-absolute-data", 123])])
+        self.assertIn("范围限定器 allowed_claim_ids", reasons)
+
+    def test_empty_scope_limiter_list_rejected(self):
+        reasons = self._rejected_reasons([self._valid_exception(
+            allowed_sample_ids=[], allowed_topics=["varieties"])])
+        self.assertIn("范围限定器 allowed_sample_ids", reasons)
+
+    # ---- usage 类型绕过
+    def test_usage_list_or_dict_gracefully_rejected(self):
+        """usage 为列表/字典 → 优雅拒绝，不得抛未处理异常。"""
+        for bad in (["fact-extraction-rewrite"], {"usage": "fact-extraction-rewrite"}):
+            reasons = self._rejected_reasons([self._valid_exception(usage=bad)])
+            self.assertIn("usage 非法", reasons, repr(bad))
+
+    # ---- 字符串字段不得伪装
+    def test_non_string_approval_fields_rejected(self):
+        for field, bad in (("approved_by", 123), ("reason", ["理由"]),
+                           ("scope", {"k": 1})):
+            reasons = self._rejected_reasons([self._valid_exception(**{field: bad})])
+            self.assertIn(f"{field} 必须为非空字符串", reasons, repr(bad))
+
+    def test_non_string_license_basis_fields_rejected(self):
+        for basis, ev in ((123, "ref"), ("licensor-grant", ["x"])):
+            reasons = self._rejected_reasons([self._valid_exception(
+                license_basis={"basis": basis, "evidence_ref": ev})])
+            self.assertIn("license_basis", reasons)
+
+    # ---- valid_until 假值绕过
+    def test_falsy_invalid_valid_until_rejected(self):
+        for bad in (0, [], {}, False):
+            reasons = self._rejected_reasons([self._valid_exception(valid_until=bad)])
+            self.assertIn("valid_until", reasons, repr(bad))
+
+    # ---- 重复 sourceId 冲突失效
+    def test_duplicate_source_id_invalidates_all(self):
+        valid, rejected = self._load([self._valid_exception(), self._valid_exception()])
+        self.assertEqual(len(valid), 0, "冲突例外不得有任何一条生效")
+        self.assertEqual(len(rejected), 2)
+        self.assertTrue(all("重复" in r["reason"] for r in rejected))
+
+    # ---- 正向：完整且范围匹配的例外仍然通过
+    def test_valid_exception_still_loads(self):
+        valid, rejected = self._load([self._valid_exception()])
+        self.assertEqual(len(rejected), 0, rejected)
+        self.assertIn("wcr-varieties-catalog", valid)
+
+    # ---- CLI 端到端：类型错误限定器 → 阻断且给出 exception-invalid 提示
+    def test_cli_type_error_limiter_blocks(self):
+        with tempfile.TemporaryDirectory() as td:
+            exc = Path(td) / "e.json"
+            exc.write_text(json.dumps({"exceptions": [self._valid_exception(
+                allowed_sample_ids="sa10")]}, ensure_ascii=False), encoding="utf-8")
+            msgs = [{"role": "user", "content": "问题？"},
+                    {"role": "assistant",
+                     "content": "足够长的回答内容，用来通过最短长度检查的全部要求。"}]
+            write_jsonl(Path(td) / "s.jsonl",
+                        [{"sample_id": "sa1", "group_id": "g", "messages": msgs}])
+            sys.path.insert(0, str(SCRIPTS))
+            from coffeeai_common import (messages_fingerprint,
+                                         reviewed_record_sha256)
+            meta = {"sample_id": "sa1", "group_id": "g", "topic": "varieties",
+                    "source_doc": "t", "source_ids": ["wcr-varieties-catalog"],
+                    "claim_ids": ["claim.varieties.no-absolute-data"],
+                    "license_status": "own-original", "review_status": "approved",
+                    "data_version": "v", "dedup_fingerprint": "a" * 64,
+                    "reviewed_content_sha256": messages_fingerprint(msgs),
+                    "source_usage": {"wcr-varieties-catalog": "fact-extraction-rewrite"}}
+            meta["reviewed_record_sha256"] = reviewed_record_sha256(meta, msgs)
+            write_jsonl(Path(td) / "s.meta.jsonl", [meta])
+            proc = run_script("validate_data.py", "--corpus", Path(td) / "s.jsonl",
+                              "--meta", Path(td) / "s.meta.jsonl", "--for-training",
+                              "--source-exceptions", exc,
+                              "--deployment-purpose", "noncommercial-research",
+                              "--json")
+            self.assertEqual(proc.returncode, 1)
+            report = json.loads(proc.stdout)
+            codes = {i["code"] for i in report["validation"]["issues"]}
+            self.assertIn("source-requires-human-exception", codes)
+            self.assertIn("exception-invalid", codes)
 
 
 class RepoIntegrityTests(unittest.TestCase):

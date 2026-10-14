@@ -88,15 +88,43 @@ def _valid_string_list(value):
             and all(isinstance(x, str) and x.strip() for x in value))
 
 
+def _nonempty_str_error(e, field):
+    """阶段四点七：字段必须为非空字符串；数字/列表/字典等不得经 str() 伪装成审批信息。"""
+    v = e.get(field)
+    if not isinstance(v, str) or not v.strip():
+        return f"{field} 必须为非空字符串（不得用其它类型伪装）: {v!r}"
+    return None
+
+
+def _scope_limiter_error(e):
+    """阶段四点七：范围限定器逐字段校验——只要提供了，就必须是非空字符串列表；
+    禁止用一个合法限定器掩盖另一个字段的类型错误；全部缺失同样无效。"""
+    provided = []
+    for k in ("allowed_sample_ids", "allowed_topics", "allowed_claim_ids"):
+        v = e.get(k)
+        if v is None:
+            continue
+        if not _valid_string_list(v):
+            return f"范围限定器 {k} 必须为非空字符串列表（不得为字符串/数字/字典/空列表）: {v!r}"
+        provided.append(k)
+    if not provided:
+        return ("范围限定器缺失：allowed_sample_ids / allowed_topics / "
+                "allowed_claim_ids 至少一项非空")
+    return None
+
+
 def load_source_exceptions(path=None, today=None):
     """读取并校验人工例外登记。返回 (有效例外 dict, 被拒条目 list)。
 
-    阶段四点五：字段与范围全面校验，任何一项不满足即整条无效（fail-closed）：
-      sourceId / usage=fact-extraction-rewrite / reason 非空 / approved_by 非空 /
-      approved_at 为合理 ISO 日期（非未来、>= 2020-01-01）/ scope 非空 /
+    阶段四点五/七：字段与范围全面校验，任何一项不满足即整条无效（fail-closed）：
+      sourceId / usage=fact-extraction-rewrite（严格字符串）/ reason、approved_by、
+      scope 为非空字符串（不得 str() 强转伪装）/ approved_at 为合理 ISO 日期 /
       deployment_purposes ⊆ KNOWN_DEPLOYMENT_PURPOSES 且非空 /
-      范围限定器 allowed_sample_ids|allowed_topics|allowed_claim_ids 至少一项非空 /
-      license_basis = {basis, evidence_ref} 均非空 / valid_until（可选）未过期。
+      范围限定器逐字段校验（提供即必须为非空字符串列表，禁止类型绕过）/
+      license_basis = {basis, evidence_ref} 均为非空字符串 /
+      valid_until（可选；0/[]/{} 等假值不算「未设置」）/ 未过期。
+      同一 sourceId 多条例外视为冲突——相关条目全部失效。
+      单条校验中的任何类型异常都会被捕获并记为拒绝（不产生未处理 traceback）。
     """
     path = Path(path) if path else SOURCE_EXCEPTIONS_FILE
     valid, rejected = {}, []
@@ -108,53 +136,83 @@ def load_source_exceptions(path=None, today=None):
         return {}, [{"sourceId": None, "reason": "exceptions 文件不是合法 JSON"}]
     if not isinstance(data, dict) or not isinstance(data.get("exceptions", []), list):
         return {}, [{"sourceId": None, "reason": "exceptions 文件结构错误（缺 exceptions 数组）"}]
+    seen_source_ids, conflicted = {}, set()
     for i, e in enumerate(data.get("exceptions", [])):
         sid = e.get("sourceId") if isinstance(e, dict) else None
         why = None
-        if not isinstance(e, dict):
-            why = f"条目不是对象: {type(e).__name__}"
-        elif not sid or not isinstance(sid, str):
-            why = "缺少 sourceId"
-        elif e.get("usage") not in ALLOWED_SOURCE_USAGE:
-            why = f"usage 非法: {e.get('usage')!r}"
-        elif not str(e.get("reason") or "").strip():
-            why = "缺少 reason（准入理由）"
-        elif not str(e.get("approved_by") or "").strip():
-            why = "缺少 approved_by（人工审批人）"
-        elif not str(e.get("scope") or "").strip():
-            why = "缺少 scope（人类可读的适用范围说明）"
-        elif not _valid_string_list(e.get("deployment_purposes")) or \
-                not set(e["deployment_purposes"]) <= KNOWN_DEPLOYMENT_PURPOSES:
-            why = (f"deployment_purposes 非法: {e.get('deployment_purposes')!r}"
-                   f"（必须为 {sorted(KNOWN_DEPLOYMENT_PURPOSES)} 的非空子集）")
-        elif not any(_valid_string_list(e.get(k)) for k in
-                     ("allowed_sample_ids", "allowed_topics", "allowed_claim_ids")):
-            why = "范围限定器缺失：allowed_sample_ids / allowed_topics / allowed_claim_ids 至少一项非空"
-        lb = e.get("license_basis")
-        if why is None and (not isinstance(lb, dict)
-                            or not str(lb.get("basis") or "").strip()
-                            or not str(lb.get("evidence_ref") or "").strip()):
-            why = "license_basis 必须为 {basis, evidence_ref} 且均非空（许可依据与可追溯证据）"
-        if why is None:
-            approved_at = _parse_iso_date(e.get("approved_at"))
-            if approved_at is None:
-                why = f"approved_at 不是有效 ISO 日期: {e.get('approved_at')!r}"
-            elif approved_at > (today or date.today()):
-                why = f"approved_at 晚于今天（日期不合理）: {approved_at}"
-            elif approved_at < MIN_REASONABLE_APPROVAL_DATE:
-                why = f"approved_at 早于 {MIN_REASONABLE_APPROVAL_DATE}（日期不合理）"
-        if why is None:
-            vu = e.get("valid_until")
-            if vu:
-                vud = _parse_iso_date(vu)
-                if vud is None:
-                    why = f"valid_until 无法解析: {vu!r}"
-                elif vud < (today or date.today()):
-                    why = f"例外已于 {vu} 过期"
+        try:
+            if not isinstance(e, dict):
+                why = f"条目不是对象: {type(e).__name__}"
+            elif not sid or not isinstance(sid, str):
+                why = "sourceId 必须为非空字符串"
+            elif not isinstance(e.get("usage"), str) or e["usage"] not in ALLOWED_SOURCE_USAGE:
+                # 先做严格类型检查，再做集合成员判断——列表/字典等不可哈希类型
+                # 不能进入 `in` 判断（否则抛未处理 TypeError）
+                why = f"usage 非法: {e.get('usage')!r}"
+            elif _nonempty_str_error(e, "reason"):
+                why = _nonempty_str_error(e, "reason")
+            elif _nonempty_str_error(e, "approved_by"):
+                why = _nonempty_str_error(e, "approved_by")
+            elif _nonempty_str_error(e, "scope"):
+                why = _nonempty_str_error(e, "scope")
+            elif not _valid_string_list(e.get("deployment_purposes")) or \
+                    not set(e["deployment_purposes"]) <= KNOWN_DEPLOYMENT_PURPOSES:
+                why = (f"deployment_purposes 非法: {e.get('deployment_purposes')!r}"
+                       f"（必须为 {sorted(KNOWN_DEPLOYMENT_PURPOSES)} 的非空子集）")
+            elif _scope_limiter_error(e):
+                why = _scope_limiter_error(e)
+            else:
+                lb = e.get("license_basis")
+                if (not isinstance(lb, dict)
+                        or not isinstance(lb.get("basis"), str) or not lb["basis"].strip()
+                        or not isinstance(lb.get("evidence_ref"), str)
+                        or not lb["evidence_ref"].strip()):
+                    why = ("license_basis 必须为 {basis, evidence_ref} 且均为非空字符串"
+                           "（许可依据与可追溯证据；数字/列表等不得伪装）: "
+                           + json.dumps(lb, ensure_ascii=False, default=str))
+            if why is None:
+                approved_at = _parse_iso_date(e.get("approved_at"))
+                if approved_at is None:
+                    why = f"approved_at 不是有效 ISO 日期: {e.get('approved_at')!r}"
+                elif approved_at > (today or date.today()):
+                    why = f"approved_at 晚于今天（日期不合理）: {approved_at}"
+                elif approved_at < MIN_REASONABLE_APPROVAL_DATE:
+                    why = f"approved_at 早于 {MIN_REASONABLE_APPROVAL_DATE}（日期不合理）"
+            if why is None:
+                vu = e.get("valid_until")
+                if vu is not None and vu != "":
+                    # 阶段四点七：0 / [] / {} 等 Python 假值不得被当成「未设置有效期」
+                    if not isinstance(vu, str):
+                        why = f"valid_until 必须为 ISO 日期字符串或省略: {vu!r}"
+                    else:
+                        vud = _parse_iso_date(vu)
+                        if vud is None:
+                            why = f"valid_until 无法解析: {vu!r}"
+                        elif vud < (today or date.today()):
+                            why = f"例外已于 {vu} 过期"
+        except Exception as ex:  # 兜底：任何类型异常都 fail-closed，不产生未处理 traceback
+            why = f"校验过程异常（fail-closed）: {type(ex).__name__}: {ex}"
         if why:
             rejected.append({"sourceId": sid, "reason": why, "index": i})
+        elif sid in conflicted:
+            rejected.append({"sourceId": sid,
+                             "reason": "sourceId 存在冲突例外，整体失效",
+                             "index": i})
+        elif sid in valid:
+            # 阶段四点七：同一来源多条例外视为冲突——两条全部失效，
+            # 避免后者静默覆盖前者（fail-closed）
+            first_index = seen_source_ids[sid]
+            valid.pop(sid)
+            rejected.append({"sourceId": sid,
+                             "reason": f"sourceId 重复（与第 {i + 1} 条冲突，整体失效）",
+                             "index": first_index})
+            rejected.append({"sourceId": sid,
+                             "reason": f"sourceId 重复（与第 {first_index} 条冲突，整体失效）",
+                             "index": i})
+            conflicted.add(sid)
         else:
             valid[sid] = e
+            seen_source_ids[sid] = i + 1
     return valid, rejected
 
 
@@ -196,17 +254,27 @@ def check_exception_scope(exc, registry_info, sample, deployment_purpose):
                                f"derivatives={info.get('derivatives')!r}）：商业用途不能仅凭"
                                f"项目内部审批放行，必须登记 licensor-grant 及可追溯证据"
                                f"（license_basis.evidence_ref）")
-    # 3) 样本级范围限定（指定了哪项就检查哪项，多项则同时满足）
+    # 3) 样本级范围限定（指定了哪项就检查哪项，多项则同时满足）。
+    #    阶段四点七：防御性类型守卫——限定器不是合法字符串列表时按越界处理
+    #    （fail-closed），杜绝字符串成员判断造成的子串「意外匹配」。
     allowed_ids = exc.get("allowed_sample_ids")
-    if allowed_ids and sample.get("sample_id") not in allowed_ids:
-        return False, (f"样本 {sample.get('sample_id')} 不在例外允许的样本范围 "
-                       f"{allowed_ids} 内")
+    if allowed_ids is not None:
+        if not _valid_string_list(allowed_ids):
+            return False, (f"例外范围限定器 allowed_sample_ids 类型非法: {allowed_ids!r}")
+        if sample.get("sample_id") not in allowed_ids:
+            return False, (f"样本 {sample.get('sample_id')} 不在例外允许的样本范围 "
+                           f"{allowed_ids} 内")
     allowed_topics = exc.get("allowed_topics")
-    if allowed_topics and sample.get("topic") not in allowed_topics:
-        return False, (f"样本主题 {sample.get('topic')!r} 不在例外允许的主题范围 "
-                       f"{allowed_topics} 内")
+    if allowed_topics is not None:
+        if not _valid_string_list(allowed_topics):
+            return False, (f"例外范围限定器 allowed_topics 类型非法: {allowed_topics!r}")
+        if sample.get("topic") not in allowed_topics:
+            return False, (f"样本主题 {sample.get('topic')!r} 不在例外允许的主题范围 "
+                           f"{allowed_topics} 内")
     allowed_claims = exc.get("allowed_claim_ids")
-    if allowed_claims:
+    if allowed_claims is not None:
+        if not _valid_string_list(allowed_claims):
+            return False, (f"例外范围限定器 allowed_claim_ids 类型非法: {allowed_claims!r}")
         cited = set(sample.get("claim_ids") or [])
         if not cited:
             return False, "样本未引用任何 claim，无法核对例外允许的 claim 范围"
