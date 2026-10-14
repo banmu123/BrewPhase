@@ -1705,6 +1705,122 @@ class GlobalConflictTests(unittest.TestCase):
             self.assertIn("exception-invalid", codes)
 
 
+class BoundarySchemaTests(unittest.TestCase):
+    """阶段四点九：sourceId 严格规范与 valid_until 严格 Schema 的边界用例。
+
+    全部使用临时文件、合成输入与固定 today；不触碰正式例外表。
+    """
+
+    TODAY = date(2026, 10, 14)
+
+    def _valid_exception(self, **overrides):
+        exc = {
+            "sourceId": "wcr-varieties-catalog",
+            "usage": "fact-extraction-rewrite",
+            "reason": "注册表口径：品种知识仅可独立改写",
+            "approved_by": "人工审核人（测试占位）",
+            "approved_at": "2026-10-14",
+            "scope": "仅非商业训练样本",
+            "deployment_purposes": ["noncommercial-research"],
+            "allowed_sample_ids": ["sa1"],
+            "allowed_topics": ["varieties"],
+            "allowed_claim_ids": ["claim.varieties.no-absolute-data"],
+            "license_basis": {"basis": "registry-sanctioned-use",
+                              "evidence_ref": "knowledge/SOURCE_REGISTRY.md §2"},
+        }
+        exc.update(overrides)
+        return exc
+
+    def _load(self, entries):
+        sys.path.insert(0, str(SCRIPTS))
+        from coffeeai_common import load_source_exceptions
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "e.json"
+            p.write_text(json.dumps({"exceptions": entries}, ensure_ascii=False),
+                         encoding="utf-8")
+            return load_source_exceptions(p, today=self.TODAY)
+
+    def _single(self, **overrides):
+        """返回 (是否生效, 拒绝原因全文)。"""
+        valid, rejected = self._load([self._valid_exception(**overrides)])
+        return (len(valid) == 1), " | ".join(r["reason"] for r in rejected)
+
+    # ---- sourceId 严格规范
+    def test_source_id_whitespace_only_rejected(self):
+        ok, reasons = self._single(sourceId="   ")
+        self.assertFalse(ok)
+        self.assertIn("纯空白", reasons)
+
+    def test_source_id_padded_whitespace_rejected(self):
+        ok, reasons = self._single(sourceId=" wcr-varieties-catalog ")
+        self.assertFalse(ok)
+        self.assertIn("首尾空白", reasons)
+
+    def test_source_id_unhashable_types_rejected(self):
+        for bad in ([], {}, 123):
+            ok, reasons = self._single(sourceId=bad)
+            self.assertFalse(ok, repr(bad))
+            self.assertIn("sourceId 必须为字符串", reasons, repr(bad))
+
+    def test_source_id_valid_unique_loads(self):
+        ok, reasons = self._single()
+        self.assertTrue(ok, reasons)
+        valid, _ = self._load([self._valid_exception()])
+        self.assertEqual(valid["wcr-varieties-catalog"]["sourceId"],
+                         "wcr-varieties-catalog")
+
+    def test_duplicate_valid_ids_still_all_invalid(self):
+        """阶段四点八核心保证不回退：重复合法 ID 全部失效。"""
+        valid, rejected = self._load([self._valid_exception(), self._valid_exception()])
+        self.assertNotIn("wcr-varieties-catalog", valid)
+        self.assertEqual(len(rejected), 2)
+        for r in rejected:
+            self.assertIn("重复", r["reason"])
+
+    # ---- valid_until 严格 Schema
+    def test_valid_until_absent_is_allowed(self):
+        """字段缺失允许：先显式加入再删除，验证「未提供」语义。"""
+        exc = self._valid_exception(valid_until="2030-01-01")
+        exc.pop("valid_until")
+        valid, rejected = self._load([exc])
+        self.assertEqual(len(valid), 1, rejected)
+        self.assertEqual(len(rejected), 0)
+
+    def test_valid_until_null_rejected(self):
+        ok, reasons = self._single(valid_until=None)
+        self.assertFalse(ok)
+        self.assertIn("valid_until", reasons)
+
+    def test_valid_until_empty_string_rejected(self):
+        ok, reasons = self._single(valid_until="")
+        self.assertFalse(ok)
+        self.assertIn("valid_until", reasons)
+
+    def test_valid_until_wrong_types_rejected(self):
+        for bad in (123, True, [], {}):
+            ok, reasons = self._single(valid_until=bad)
+            self.assertFalse(ok, repr(bad))
+            self.assertIn("valid_until", reasons, repr(bad))
+
+    def test_valid_until_unparseable_string_rejected(self):
+        ok, reasons = self._single(valid_until="not-a-date")
+        self.assertFalse(ok)
+        self.assertIn("无法解析", reasons)
+
+    def test_valid_until_past_rejected_with_expiry_reason(self):
+        ok, reasons = self._single(valid_until="2026-01-02")
+        self.assertFalse(ok)
+        self.assertIn("过期", reasons)
+
+    def test_valid_until_future_allowed(self):
+        ok, reasons = self._single(valid_until="2030-01-01")
+        self.assertTrue(ok, reasons)
+
+    def test_valid_until_today_allowed(self):
+        ok, reasons = self._single(valid_until="2026-10-14")
+        self.assertTrue(ok, reasons)
+
+
 class RepoIntegrityTests(unittest.TestCase):
     def test_existing_kb_build_check_still_passes(self):
         """验收 9：不影响既有工程——知识库校验脚本仍通过。"""

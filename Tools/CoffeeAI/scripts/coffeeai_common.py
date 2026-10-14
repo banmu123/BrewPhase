@@ -119,14 +119,16 @@ def _scope_limiter_error(e):
 def load_source_exceptions(path=None, today=None):
     """读取并校验人工例外登记。返回 (有效例外 dict, 被拒条目 list)。
 
-    阶段四点五/七：字段与范围全面校验，任何一项不满足即整条无效（fail-closed）：
-      sourceId / usage=fact-extraction-rewrite（严格字符串）/ reason、approved_by、
+    阶段四点五/七/八/九：字段与范围全面校验，任何一项不满足即整条无效（fail-closed）：
+      sourceId 为非空字符串、无首尾空白（先类型后冲突判断，不可哈希值明确拒绝）/
+      usage=fact-extraction-rewrite（严格字符串）/ reason、approved_by、
       scope 为非空字符串（不得 str() 强转伪装）/ approved_at 为合理 ISO 日期 /
       deployment_purposes ⊆ KNOWN_DEPLOYMENT_PURPOSES 且非空 /
-      范围限定器逐字段校验（提供即必须为非空字符串列表，禁止类型绕过）/
+      范围限定器逐字段校验（未提供=不参与；显式 null 与其它类型错误一样整条失效）/
       license_basis = {basis, evidence_ref} 均为非空字符串 /
-      valid_until（可选；0/[]/{} 等假值不算「未设置」）/ 未过期。
-      同一 sourceId 多条例外视为冲突——相关条目全部失效。
+      valid_until：缺失允许；提供时必须为非空 ISO 日期字符串（null/""/数字/布尔/
+      列表/字典/非法日期均拒绝），过期拒绝并明确报告。
+      同一 sourceId 多条例外视为冲突——相关条目全部失效（预扫描，与顺序无关）。
       单条校验中的任何类型异常都会被捕获并记为拒绝（不产生未处理 traceback）。
     """
     path = Path(path) if path else SOURCE_EXCEPTIONS_FILE
@@ -156,14 +158,21 @@ def load_source_exceptions(path=None, today=None):
         sid = e.get("sourceId") if isinstance(e, dict) else None
         why = None
         try:
-            if sid is not None and sid in conflicted_ids:
+            # ---- sourceId：先做严格类型与规范检查（阶段四点九），再判断是否属于
+            # conflicted_ids——列表/字典等不可哈希值在这里就被明确拒绝，
+            # 不会触发 `in` 集合判断的通用异常，也不会进入冲突统计或有效字典。
+            if not isinstance(e, dict):
+                why = f"条目不是对象: {type(e).__name__}"
+            elif not isinstance(sid, str):
+                why = f"sourceId 必须为字符串（不得用其它类型伪装）: {sid!r}"
+            elif sid.strip() == "":
+                why = "sourceId 不能为空或纯空白"
+            elif sid != sid.strip():
+                why = f"sourceId 不得包含首尾空白（防止规范化前后不一致）: {sid!r}"
+            elif sid in conflicted_ids:
                 first = occurrences[sid][0] + 1
                 why = (f"sourceId 与文件内其他条目重复（首次出现于第 {first} 条，"
                        f"共 {len(occurrences[sid])} 条）——冲突例外的所有条目一律失效")
-            elif not isinstance(e, dict):
-                why = f"条目不是对象: {type(e).__name__}"
-            elif not sid or not isinstance(sid, str):
-                why = "sourceId 必须为非空字符串"
             elif not isinstance(e.get("usage"), str) or e["usage"] not in ALLOWED_SOURCE_USAGE:
                 # 先做严格类型检查，再做集合成员判断——列表/字典等不可哈希类型
                 # 不能进入 `in` 判断（否则抛未处理 TypeError）
@@ -198,15 +207,18 @@ def load_source_exceptions(path=None, today=None):
                 elif approved_at < MIN_REASONABLE_APPROVAL_DATE:
                     why = f"approved_at 早于 {MIN_REASONABLE_APPROVAL_DATE}（日期不合理）"
             if why is None:
-                vu = e.get("valid_until")
-                if vu is not None and vu != "":
-                    # 阶段四点七：0 / [] / {} 等 Python 假值不得被当成「未设置有效期」
+                # ---- valid_until：严格 Schema（阶段四点九）。字段缺失允许；
+                # 一旦提供，必须为非空、可解析的 ISO 日期字符串——显式 null、
+                # 空字符串、数字、布尔、列表、字典一律整条拒绝；过期继续拒绝。
+                if "valid_until" in e:
+                    vu = e["valid_until"]
                     if not isinstance(vu, str):
-                        why = f"valid_until 必须为 ISO 日期字符串或省略: {vu!r}"
+                        why = ("valid_until 必须为 ISO 日期字符串或整体省略"
+                               f"（显式 null/数字/布尔/列表/字典均非法）: {vu!r}")
                     else:
                         vud = _parse_iso_date(vu)
                         if vud is None:
-                            why = f"valid_until 无法解析: {vu!r}"
+                            why = f"valid_until 无法解析（须为 YYYY-MM-DD）: {vu!r}"
                         elif vud < (today or date.today()):
                             why = f"例外已于 {vu} 过期"
         except Exception as ex:  # 兜底：任何类型异常都 fail-closed，不产生未处理 traceback
