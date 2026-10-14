@@ -54,6 +54,13 @@
 > 相关条目全部失效**（杜绝后者静默覆盖）；④ 单条校验异常兜底 fail-closed，无未处理
 > traceback；⑤ 过期测试重写：除 valid_until 外字段完整有效，拒绝原因明确指向「过期」。
 > 测试 76 → **87 项**。
+>
+> **阶段四点八（2026-10-14）**：重复例外全局冲突检测与显式 null —— ① 加载前**预扫描
+> 全部 sourceId**：同一非空字符串 ID 出现两次及以上，该来源所有条目一律失效
+> （不受顺序与单条字段有效性影响，每条都有可追溯拒绝原因；类型非法的 sourceId 按
+> Schema 错误单独拒绝、不参与冲突统计）；② 范围限定器**显式 null ≠ 未提供**：按类型
+> 错误整条失效，防御层与加载器语义一致；③ 手动准入命令示例补充
+> `--deployment-purpose`。测试 87 → **96 项**。
 
 ## 0. 红线（先读）
 
@@ -191,7 +198,10 @@ python3 Tools/CoffeeAI/scripts/evaluate.py \
   --questions Tools/CoffeeAI/data/splits/test.jsonl --limit 10
 
 # 9) 划分产物准入复查（正式训练前会被 run_train 自动执行，也可手动跑）
-python3 Tools/CoffeeAI/scripts/validate_data.py --check-admission Tools/CoffeeAI/data/splits
+#    --deployment-purpose 必须与实际训练任务的用途一致（noncommercial-research |
+#    commercial-product）；它是训练任务的用途记录，不自动授予任何外部许可。
+python3 Tools/CoffeeAI/scripts/validate_data.py --check-admission Tools/CoffeeAI/data/splits \
+  --deployment-purpose noncommercial-research
 ```
 
 训练配置严格落在当前版本 MLX-LM 官方 `examples/lora_config.yaml` 字段内
@@ -232,7 +242,7 @@ grad_checkpoint 的保守配置余量充足；1B–2B 模型只作为内存不�
 | 9 | 不影响 iOS 工程与现有测试 | ✅ `test_existing_kb_build_check_still_passes`（`build_kb.py --check` 通过）；未改动 `BrewPhase/` 任何文件 |
 | 10 | README 结果对应真实执行 | 本表全部来自上面实际运行的测试与命令 |
 
-**测试汇总**：阶段一 22 项 → 阶段二 27 项 → 阶段三 41 项 → 阶段四 53 项 → 阶段四点五 62 项 → 阶段四点六 76 项 → **阶段四点七 87 项（2026-10-14 实测：Ran 87 tests, OK，Python 3.13.12）**。阶段四点七新增：范围限定器类型绕过封堵（字符串/数字/字典/空列表/非字符串成员）、usage 与字符串字段严格类型、valid_until 假值拒绝、重复 sourceId 冲突整体失效、校验异常兜底、过期测试独立性（拒绝原因明确指向过期）。
+**测试汇总**：阶段一 22 项 → 阶段二 27 项 → 阶段三 41 项 → 阶段四 53 项 → 阶段四点五 62 项 → 阶段四点六 76 项 → 阶段四点七 87 项 → **阶段四点八 96 项（2026-10-14 实测：Ran 96 tests, OK，Python 3.13.12）**。阶段四点八新增：重复 sourceId 全局失效（有效+缺字段、无效+有效、有效+过期、三条混合、单条正常、类型非法 sourceId 不参与冲突统计）、范围限定器显式 null 拒绝（加载器 + 防御层 + CLI 端到端）。
 
 ## 6. 已知限制
 

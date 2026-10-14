@@ -1559,6 +1559,152 @@ class ExceptionSchemaTests(unittest.TestCase):
             self.assertIn("exception-invalid", codes)
 
 
+class GlobalConflictTests(unittest.TestCase):
+    """阶段四点八：重复 sourceId 全局失效（与顺序/字段有效性无关）+ 显式 null 拒绝。"""
+
+    TODAY = date(2026, 10, 14)
+
+    def _valid_exception(self, **overrides):
+        exc = {
+            "sourceId": "wcr-varieties-catalog",
+            "usage": "fact-extraction-rewrite",
+            "reason": "注册表口径：品种知识仅可独立改写",
+            "approved_by": "人工审核人（测试占位）",
+            "approved_at": "2026-10-14",
+            "scope": "仅非商业训练样本",
+            "deployment_purposes": ["noncommercial-research"],
+            "allowed_sample_ids": ["sa1"],
+            "allowed_topics": ["varieties"],
+            "allowed_claim_ids": ["claim.varieties.no-absolute-data"],
+            "license_basis": {"basis": "registry-sanctioned-use",
+                              "evidence_ref": "knowledge/SOURCE_REGISTRY.md §2"},
+        }
+        exc.update(overrides)
+        return exc
+
+    def _load(self, entries):
+        sys.path.insert(0, str(SCRIPTS))
+        from coffeeai_common import load_source_exceptions
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "e.json"
+            p.write_text(json.dumps({"exceptions": entries}, ensure_ascii=False),
+                         encoding="utf-8")
+            return load_source_exceptions(p, today=self.TODAY)
+
+    def _assert_all_conflicted(self, entries, n):
+        """sid 不得出现在有效字典中；n 条相关记录每条都有可追溯拒绝原因。"""
+        valid, rejected = self._load(entries)
+        self.assertNotIn("wcr-varieties-catalog", valid)
+        conflict_rows = [r for r in rejected if r["sourceId"] == "wcr-varieties-catalog"]
+        self.assertEqual(len(conflict_rows), n,
+                         f"应有 {n} 条记录得到拒绝原因: {rejected}")
+        for r in conflict_rows:
+            self.assertTrue(("重复" in r["reason"]) or ("冲突" in r["reason"]),
+                            f"拒绝原因应指向冲突: {r['reason']}")
+        return valid, rejected
+
+    def test_valid_then_missing_reason_both_invalid(self):
+        entries = [self._valid_exception(),
+                   self._valid_exception(reason=None)]
+        self._assert_all_conflicted(entries, 2)
+
+    def test_invalid_then_valid_both_invalid(self):
+        entries = [self._valid_exception(reason=None),
+                   self._valid_exception()]
+        self._assert_all_conflicted(entries, 2)
+
+    def test_valid_then_expired_both_invalid(self):
+        entries = [self._valid_exception(),
+                   self._valid_exception(valid_until="2026-01-02")]
+        self._assert_all_conflicted(entries, 2)
+
+    def test_three_mixed_entries_all_invalid(self):
+        entries = [self._valid_exception(),
+                   self._valid_exception(reason=None),
+                   self._valid_exception(valid_until="2026-01-02")]
+        self._assert_all_conflicted(entries, 3)
+
+    def test_single_valid_entry_still_loads(self):
+        valid, rejected = self._load([self._valid_exception()])
+        self.assertIn("wcr-varieties-catalog", valid)
+        self.assertEqual(len(rejected), 0)
+
+    def test_type_invalid_source_id_not_in_conflict_scan(self):
+        """sourceId 类型非法的记录按 Schema 错误拒绝（保留原始值便于追溯），
+        不参与冲突统计，也不影响其他条目。"""
+        bad = self._valid_exception(sourceId=123)
+        entries = [bad, self._valid_exception()]
+        valid, rejected = self._load(entries)
+        self.assertIn("wcr-varieties-catalog", valid)
+        self.assertEqual(len(rejected), 1)
+        self.assertEqual(rejected[0]["sourceId"], 123, "拒绝记录保留原始非法值以便追溯")
+        self.assertIn("sourceId", rejected[0]["reason"])
+
+    # ---- P2：显式 null 不是「未提供」
+    def test_explicit_null_limiter_rejected(self):
+        """三个限定器各自为 null、另一个限定器合法 → 仍整条失效。"""
+        cases = [
+            {"allowed_sample_ids": None},
+            {"allowed_topics": None},
+            {"allowed_claim_ids": None},
+        ]
+        for overrides in cases:
+            reasons = None
+            sys.path.insert(0, str(SCRIPTS))
+            from coffeeai_common import load_source_exceptions as _l
+            valid, rejected = self._load([self._valid_exception(**overrides)])
+            reasons = " | ".join(r["reason"] for r in rejected)
+            self.assertEqual(len(valid), 0, f"{overrides} 不应生效")
+            self.assertIn("null", reasons, f"{overrides}: {reasons}")
+
+    def test_scope_check_defensive_null(self):
+        """防御层与加载器一致：显式 null 限定器 → out-of-scope，而非视为未提供。"""
+        sys.path.insert(0, str(SCRIPTS))
+        from coffeeai_common import check_exception_scope
+        exc = self._valid_exception(allowed_sample_ids=None)
+        ok, reason = check_exception_scope(
+            exc, {"status": "active", "license_status": "see-source-terms",
+                  "commercialUse": "unclear", "derivatives": "unclear"},
+            {"sample_id": "sa1", "topic": "varieties",
+             "claim_ids": ["claim.varieties.no-absolute-data"]},
+            "noncommercial-research")
+        self.assertFalse(ok)
+        self.assertIn("null", reason)
+
+    def test_cli_null_limiter_blocked(self):
+        with tempfile.TemporaryDirectory() as td:
+            exc = Path(td) / "e.json"
+            exc.write_text(json.dumps({"exceptions": [self._valid_exception(
+                allowed_sample_ids=None)]}, ensure_ascii=False), encoding="utf-8")
+            msgs = [{"role": "user", "content": "问题？"},
+                    {"role": "assistant",
+                     "content": "足够长的回答内容，用来通过最短长度检查的全部要求。"}]
+            write_jsonl(Path(td) / "s.jsonl",
+                        [{"sample_id": "sa1", "group_id": "g", "messages": msgs}])
+            sys.path.insert(0, str(SCRIPTS))
+            from coffeeai_common import (messages_fingerprint,
+                                         reviewed_record_sha256)
+            meta = {"sample_id": "sa1", "group_id": "g", "topic": "varieties",
+                    "source_doc": "t", "source_ids": ["wcr-varieties-catalog"],
+                    "claim_ids": ["claim.varieties.no-absolute-data"],
+                    "license_status": "own-original", "review_status": "approved",
+                    "data_version": "v", "dedup_fingerprint": "a" * 64,
+                    "reviewed_content_sha256": messages_fingerprint(msgs),
+                    "source_usage": {"wcr-varieties-catalog": "fact-extraction-rewrite"}}
+            meta["reviewed_record_sha256"] = reviewed_record_sha256(meta, msgs)
+            write_jsonl(Path(td) / "s.meta.jsonl", [meta])
+            proc = run_script("validate_data.py", "--corpus", Path(td) / "s.jsonl",
+                              "--meta", Path(td) / "s.meta.jsonl", "--for-training",
+                              "--source-exceptions", exc,
+                              "--deployment-purpose", "noncommercial-research",
+                              "--json")
+            self.assertEqual(proc.returncode, 1)
+            report = json.loads(proc.stdout)
+            codes = {i["code"] for i in report["validation"]["issues"]}
+            self.assertIn("source-requires-human-exception", codes)
+            self.assertIn("exception-invalid", codes)
+
+
 class RepoIntegrityTests(unittest.TestCase):
     def test_existing_kb_build_check_still_passes(self):
         """验收 9：不影响既有工程——知识库校验脚本仍通过。"""

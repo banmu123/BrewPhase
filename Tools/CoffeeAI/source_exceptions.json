@@ -15,6 +15,6 @@
     "license_basis": "许可依据：{basis, evidence_ref} 均为非空字符串；商业用途且来源禁/不明商用时 basis 必须为 licensor-grant",
     "valid_until": "有效期（可选；ISO 日期字符串。0/[]/{} 等假值视为非法而非未设置）"
   },
-  "scope_semantics": "指定的限定器同时生效：样本的 sample_id/topic/claim_ids 都必须落在批准范围内，训练用途必须 ∈ deployment_purposes，否则该来源对该样本按例外外处理（拒绝）。同一 sourceId 多条例外=冲突=全部失效。",
+  "scope_semantics": "指定的限定器同时生效：样本的 sample_id/topic/claim_ids 都必须落在批准范围内，训练用途必须 ∈ deployment_purposes，否则该来源对该样本按例外外处理（拒绝）。限定器字段显式 null 按类型错误处理（不算未提供）。同一 sourceId 出现多条例外=冲突：无论顺序与单条字段是否有效，该来源所有条目全部失效（阶段四点八）。",
   "exceptions": []
 }

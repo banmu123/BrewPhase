@@ -97,15 +97,18 @@ def _nonempty_str_error(e, field):
 
 
 def _scope_limiter_error(e):
-    """阶段四点七：范围限定器逐字段校验——只要提供了，就必须是非空字符串列表；
-    禁止用一个合法限定器掩盖另一个字段的类型错误；全部缺失同样无效。"""
+    """阶段四点七/八：范围限定器逐字段校验——字段未出现在对象中视为未提供；
+    但**显式 null 与其它错误类型一样按类型错误处理**（不得当作缺省），只要提供
+    就必须是非空字符串列表；禁止用一个合法限定器掩盖另一个字段的类型错误；
+    全部缺失同样无效。"""
     provided = []
     for k in ("allowed_sample_ids", "allowed_topics", "allowed_claim_ids"):
-        v = e.get(k)
-        if v is None:
-            continue
+        if k not in e:
+            continue  # 未提供 → 不参与
+        v = e[k]
         if not _valid_string_list(v):
-            return f"范围限定器 {k} 必须为非空字符串列表（不得为字符串/数字/字典/空列表）: {v!r}"
+            return (f"范围限定器 {k} 为 null 或类型非法"
+                    f"（必须为非空字符串列表；显式 null 不算缺省）: {v!r}")
         provided.append(k)
     if not provided:
         return ("范围限定器缺失：allowed_sample_ids / allowed_topics / "
@@ -136,12 +139,28 @@ def load_source_exceptions(path=None, today=None):
         return {}, [{"sourceId": None, "reason": "exceptions 文件不是合法 JSON"}]
     if not isinstance(data, dict) or not isinstance(data.get("exceptions", []), list):
         return {}, [{"sourceId": None, "reason": "exceptions 文件结构错误（缺 exceptions 数组）"}]
-    seen_source_ids, conflicted = {}, set()
-    for i, e in enumerate(data.get("exceptions", [])):
+    entries = data.get("exceptions", [])
+    # ---- 阶段四点八：全局冲突预扫描——同一非空字符串 sourceId 出现两次或更多，
+    # 该来源的**所有**条目一律失效，不受条目顺序或单条字段校验结果影响；
+    # 每条相关记录都会得到可追溯的拒绝原因。sourceId 类型非法的记录不参与
+    # 冲突统计，继续按 Schema 错误拒绝。
+    occurrences = {}
+    for i, e in enumerate(entries):
+        sid = e.get("sourceId") if isinstance(e, dict) else None
+        if isinstance(sid, str) and sid.strip():
+            occurrences.setdefault(sid, []).append(i)
+    conflicted_ids = {sid for sid, idxs in occurrences.items() if len(idxs) >= 2}
+
+    valid, rejected = {}, []
+    for i, e in enumerate(entries):
         sid = e.get("sourceId") if isinstance(e, dict) else None
         why = None
         try:
-            if not isinstance(e, dict):
+            if sid is not None and sid in conflicted_ids:
+                first = occurrences[sid][0] + 1
+                why = (f"sourceId 与文件内其他条目重复（首次出现于第 {first} 条，"
+                       f"共 {len(occurrences[sid])} 条）——冲突例外的所有条目一律失效")
+            elif not isinstance(e, dict):
                 why = f"条目不是对象: {type(e).__name__}"
             elif not sid or not isinstance(sid, str):
                 why = "sourceId 必须为非空字符串"
@@ -194,25 +213,8 @@ def load_source_exceptions(path=None, today=None):
             why = f"校验过程异常（fail-closed）: {type(ex).__name__}: {ex}"
         if why:
             rejected.append({"sourceId": sid, "reason": why, "index": i})
-        elif sid in conflicted:
-            rejected.append({"sourceId": sid,
-                             "reason": "sourceId 存在冲突例外，整体失效",
-                             "index": i})
-        elif sid in valid:
-            # 阶段四点七：同一来源多条例外视为冲突——两条全部失效，
-            # 避免后者静默覆盖前者（fail-closed）
-            first_index = seen_source_ids[sid]
-            valid.pop(sid)
-            rejected.append({"sourceId": sid,
-                             "reason": f"sourceId 重复（与第 {i + 1} 条冲突，整体失效）",
-                             "index": first_index})
-            rejected.append({"sourceId": sid,
-                             "reason": f"sourceId 重复（与第 {first_index} 条冲突，整体失效）",
-                             "index": i})
-            conflicted.add(sid)
         else:
             valid[sid] = e
-            seen_source_ids[sid] = i + 1
     return valid, rejected
 
 
@@ -255,26 +257,29 @@ def check_exception_scope(exc, registry_info, sample, deployment_purpose):
                                f"项目内部审批放行，必须登记 licensor-grant 及可追溯证据"
                                f"（license_basis.evidence_ref）")
     # 3) 样本级范围限定（指定了哪项就检查哪项，多项则同时满足）。
-    #    阶段四点七：防御性类型守卫——限定器不是合法字符串列表时按越界处理
-    #    （fail-closed），杜绝字符串成员判断造成的子串「意外匹配」。
+    #    阶段四点七/八：防御性类型守卫与加载器语义一致——字段未出现=未提供；
+    #    **显式 null 或其它非法类型**=按越界处理（fail-closed），杜绝子串「意外匹配」。
     allowed_ids = exc.get("allowed_sample_ids")
-    if allowed_ids is not None:
+    if "allowed_sample_ids" in exc:
         if not _valid_string_list(allowed_ids):
-            return False, (f"例外范围限定器 allowed_sample_ids 类型非法: {allowed_ids!r}")
+            return False, (f"例外范围限定器 allowed_sample_ids 为 null 或类型非法: "
+                           f"{allowed_ids!r}")
         if sample.get("sample_id") not in allowed_ids:
             return False, (f"样本 {sample.get('sample_id')} 不在例外允许的样本范围 "
                            f"{allowed_ids} 内")
     allowed_topics = exc.get("allowed_topics")
-    if allowed_topics is not None:
+    if "allowed_topics" in exc:
         if not _valid_string_list(allowed_topics):
-            return False, (f"例外范围限定器 allowed_topics 类型非法: {allowed_topics!r}")
+            return False, (f"例外范围限定器 allowed_topics 为 null 或类型非法: "
+                           f"{allowed_topics!r}")
         if sample.get("topic") not in allowed_topics:
             return False, (f"样本主题 {sample.get('topic')!r} 不在例外允许的主题范围 "
                            f"{allowed_topics} 内")
     allowed_claims = exc.get("allowed_claim_ids")
-    if allowed_claims is not None:
+    if "allowed_claim_ids" in exc:
         if not _valid_string_list(allowed_claims):
-            return False, (f"例外范围限定器 allowed_claim_ids 类型非法: {allowed_claims!r}")
+            return False, (f"例外范围限定器 allowed_claim_ids 为 null 或类型非法: "
+                           f"{allowed_claims!r}")
         cited = set(sample.get("claim_ids") or [])
         if not cited:
             return False, "样本未引用任何 claim，无法核对例外允许的 claim 范围"
