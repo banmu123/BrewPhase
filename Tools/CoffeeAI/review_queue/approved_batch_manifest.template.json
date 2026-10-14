@@ -1,0 +1,10 @@
+{
+  "batch_id": "",
+  "approved_samples": [],
+  "approved_by": "",
+  "approved_at": "",
+  "deployment_purpose": "",
+  "decision_reference": "",
+  "source_exception_reference": "",
+  "notes": "模板：字段留空。使用时由负责人填写——batch_id（如 batch1-approved-r1）、approved_samples（样本 ID 数组）、approved_by（真实审批人）、approved_at（ISO 日期）、deployment_purpose（noncommercial-research | commercial-product）、decision_reference（指向 batch1_decision_package.md / 补丁决策）、source_exception_reference（指向已批准的例外登记）。填写后交给 check_approval_ready.py 做 dry-run 校验。"
+}
