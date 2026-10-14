@@ -2,7 +2,7 @@
   "schemaVersion": 3,
   "policy": "默认拒绝。外部来源仅 public-domain 且 commercialUse/derivatives 均 allowed 的 active 来源可自动准入；其余来源必须在此登记有效人工例外。校验为严格类型：reason/approved_by/scope/license_basis.basis/evidence_ref 必须为非空字符串（数字/列表/字典不得伪装）；范围限定器 allowed_sample_ids/allowed_topics/allowed_claim_ids 只要提供就必须是非空字符串列表（空列表、字符串、数字、字典、含空串成员均整条失效）；valid_until 只接受 ISO 日期字符串或省略（0/[]/{} 等假值按非法处理）。同一 sourceId 出现多条例外视为冲突，相关条目全部失效。无效或过期条目会被忽略（fail-closed）。本文件由人工维护，任何脚本都不会自动写入或修改。内部审批不等于外部授权：对 commercialUse/derivatives 为 not-allowed 或 unclear 的来源做商业用途（commercial-product），license_basis.basis 必须为 licensor-grant 并附可追溯证据。",
   "required_fields": {
-    "sourceId": "已在 knowledge/SOURCE_REGISTRY.json 注册的来源 ID（非空字符串）",
+    "sourceId": "已在 knowledge/SOURCE_REGISTRY.json 注册的来源 ID；必须是非空字符串，不得包含首尾空白（列表/字典/数字等类型非法值会整条拒绝并保留原始值供审计）",
     "usage": "只允许 fact-extraction-rewrite（严格字符串，列表/字典会优雅拒绝）",
     "reason": "准入理由（必填非空字符串）",
     "approved_by": "人工审批人（必填非空字符串，脚本不得代填）",
