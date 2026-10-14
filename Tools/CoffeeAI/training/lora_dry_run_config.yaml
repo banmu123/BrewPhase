@@ -10,7 +10,7 @@ seed: 0
 # GPT C-3 指定参数
 num_layers: 8            # GPT: lora_layers=8（不 full fine tune）
 batch_size: 1            # 数据仅 20 条 train，小 batch 便于观察变化
-iters: 50                # GPT: 不超过 100 steps；首次目的是验证 pipeline
+iters: 20                # GPT 阶段七-D3 裁定：从 50 改为 20——首次目标是验证链路，不观察收敛
 learning_rate: 0.00001   # 1e-5，避免小数据直接记忆
 max_seq_length: 2048
 

@@ -49,24 +49,52 @@ def convert():
     counts = {}
     for split in ("train", "valid", "test"):
         src = SPLITS / f"{split}.jsonl"
-        rows = []
+        rows, metas = [], []
         for line in src.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             r = json.loads(line)
             sid = r["sample_id"]
             m = meta.get(sid, {})
-            msgs = [mm for mm in r.get("messages", []) if mm.get("role") in ("user", "assistant")]
+            # 保留完整 messages（含 system）：审核指纹绑定审核时的完整对话，
+            # 去掉 system 会导致 admission-content-mismatch（治理红线：不允许
+            # 自动重算放行）；且 system prompt 本身就是 BrewPhase 行为对齐核心
+            # （「区分事实与推断/资料不足时明确说明/不编造来源」）。
+            msgs = r.get("messages", [])
             rows.append({
                 "sample_id": sid,
                 "interaction_skill": skill_of(m),
                 "reasoning_level": m.get("reasoning_level", ""),
                 "messages": msgs,
             })
+            # 审计 meta（run_train.py 准入复查要求划分产物携带完整审计元数据）
+            metas.append({
+                "sample_id": sid,
+                "group_id": m.get("group_id", f"g-{sid}"),
+                "topic": m.get("topic", ""),
+                "source_doc": m.get("source_doc", ""),
+                "source_ids": m.get("source_ids", []),
+                "claim_ids": m.get("claim_ids", []),
+                "license_status": m.get("license_status", "own-original"),
+                "review_status": m.get("review_status", "approved"),
+                "data_version": m.get("data_version", ""),
+                "dedup_fingerprint": m.get("dedup_fingerprint", ""),
+                "source_usage": m.get("source_usage", {}),
+                "reviewed_content_sha256": m.get("reviewed_content_sha256", ""),
+                "reviewed_record_sha256": m.get("reviewed_record_sha256", ""),
+                "reviewed_by": m.get("reviewed_by", ""),
+                "reviewed_at": m.get("reviewed_at", ""),
+                "reasoning_level": m.get("reasoning_level", ""),
+                "risk_notes": m.get("risk_notes", ""),
+                "interaction_skill": skill_of(m),
+                "lora_split": split,
+            })
         out = OUT / f"{split}.jsonl"
         out.write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in rows) + "\n", encoding="utf-8")
+        mout = OUT / f"{split}.meta.jsonl"
+        mout.write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in metas) + "\n", encoding="utf-8")
         counts[split] = len(rows)
-        print(f"{split}: {len(rows)} 条 → {out}")
+        print(f"{split}: {len(rows)} 条 → {out}（+ meta）")
     total = sum(counts.values())
     print(f"合计 {total} 条（预期 25）")
     assert total == 25, f"转换后总数异常: {total} != 25"
