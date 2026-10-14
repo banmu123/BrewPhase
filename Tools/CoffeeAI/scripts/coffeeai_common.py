@@ -109,9 +109,11 @@ def load_source_exceptions(path=None, today=None):
     if not isinstance(data, dict) or not isinstance(data.get("exceptions", []), list):
         return {}, [{"sourceId": None, "reason": "exceptions 文件结构错误（缺 exceptions 数组）"}]
     for i, e in enumerate(data.get("exceptions", [])):
-        sid = e.get("sourceId")
+        sid = e.get("sourceId") if isinstance(e, dict) else None
         why = None
-        if not sid or not isinstance(sid, str):
+        if not isinstance(e, dict):
+            why = f"条目不是对象: {type(e).__name__}"
+        elif not sid or not isinstance(sid, str):
             why = "缺少 sourceId"
         elif e.get("usage") not in ALLOWED_SOURCE_USAGE:
             why = f"usage 非法: {e.get('usage')!r}"
@@ -165,7 +167,7 @@ def source_auto_allow(info):
 
 
 def check_exception_scope(exc, registry_info, sample, deployment_purpose):
-    """阶段四点五：验证当前样本与训练用途是否落在例外批准的范围内。
+    """阶段四点五/六：验证当前样本与训练用途是否落在例外批准的范围内。
 
     sample: {"sample_id", "topic", "claim_ids"}；deployment_purpose 为当前任务声明的用途。
     返回 (ok, reason)。
@@ -178,13 +180,20 @@ def check_exception_scope(exc, registry_info, sample, deployment_purpose):
     if deployment_purpose not in (exc.get("deployment_purposes") or []):
         return False, (f"当前用途 {deployment_purpose} 不在该例外的批准范围 "
                        f"{exc.get('deployment_purposes')} 内")
-    # 2) 内部审批不能冒充外部授权：商业用途 + 来源禁/不明商用 → 需 licensor-grant + 证据
+    # 2) 内部审批不能冒充外部授权：商业用途时对 commercialUse 与 derivatives
+    #    分别独立检查（阶段四点六）——任一为 not-allowed/unclear/缺失，都必须
+    #    登记 licensor-grant 及可追溯证据；两者均明确 allowed 才免于此项。
     if deployment_purpose == "commercial-product":
-        cu = (registry_info or {}).get("commercialUse")
-        if cu in EXTERNAL_GRANT_REQUIRED_LICENSES or cu is None:
+        info = registry_info or {}
+        restricted_dims = [f for f in ("commercialUse", "derivatives")
+                           if info.get(f) in EXTERNAL_GRANT_REQUIRED_LICENSES
+                           or info.get(f) is None]
+        if restricted_dims:
             lb = exc.get("license_basis") or {}
             if lb.get("basis") != "licensor-grant" or not str(lb.get("evidence_ref") or "").strip():
-                return False, (f"来源 {sid} 的 commercialUse={cu!r}：商业用途不能仅凭"
+                return False, (f"来源 {sid} 的 {'/'.join(restricted_dims)} 为受限或不明"
+                               f"（commercialUse={info.get('commercialUse')!r}, "
+                               f"derivatives={info.get('derivatives')!r}）：商业用途不能仅凭"
                                f"项目内部审批放行，必须登记 licensor-grant 及可追溯证据"
                                f"（license_basis.evidence_ref）")
     # 3) 样本级范围限定（指定了哪项就检查哪项，多项则同时满足）
@@ -340,6 +349,32 @@ def message_texts(messages) -> str:
 def messages_fingerprint(messages) -> str:
     payload = json.dumps(messages, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+# ---------------------------------------------------------------- 审核记录摘要（阶段四点六）
+# reviewed_record_sha256 绑定「人工审核时确认的 messages + 影响来源准入的关键元数据」，
+# 与去重指纹（dedup_fingerprint）、内容指纹（reviewed_content_sha256）语义分离。
+# 注意：这是完整性校验和，不是数字签名，不能证明审批人身份或许可文件真实性。
+
+REVIEWED_RECORD_FIELDS = [
+    "sample_id", "topic", "source_ids", "claim_ids",
+    "license_status", "source_usage", "source_waiver",
+]
+
+
+def reviewed_record_payload(meta: dict, messages) -> dict:
+    """构造审核记录的规范化负载（键排序、无空白歧义），供摘要计算与比对。"""
+    payload = {k: meta.get(k) for k in REVIEWED_RECORD_FIELDS}
+    payload["messages"] = messages
+    return payload
+
+
+def reviewed_record_sha256(meta: dict, messages) -> str:
+    """确定性序列化后取 sha256：相同审核记录必得相同摘要。"""
+    payload = reviewed_record_payload(meta, messages)
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                           separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def text_similarity(a: str, b: str) -> float:

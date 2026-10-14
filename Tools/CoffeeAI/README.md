@@ -35,6 +35,16 @@
 > commercial-product）为 smoke/train 必选并写入 manifest，未声明时依赖例外的样本一律
 > 阻断；④ **内部审批 ≠ 外部授权**：禁/不明商用来源做商业用途必须登记 licensor-grant
 > 及可追溯证据（license_basis.evidence_ref）。测试 53 → **62 项**。
+>
+> **阶段四点六（2026-10-14）**：许可维度补齐与审核记录完整性 —— ① 商业授权对
+> commercialUse 与 derivatives **分别独立检查**（任一 not-allowed/unclear/缺失都要求
+> licensor-grant+证据，两者均 allowed 才免检）；② 正向测试全部改为断言
+> `returncode == 0` + JSON 报告 0 error（消除 false-green）；③ 新增
+> **reviewed_record_sha256**：approved 样本的审核记录摘要绑定 messages + sample_id/
+> topic/source_ids/claim_ids/license_status/source_usage/source_waiver，划分快照、
+> 准入复查重算比对，任一字段审核后被改即阻断。**该摘要是完整性校验和，不是数字签名，
+> 不能证明审批人身份或许可文件真实性**；样本实质修改后必须重新人工审核并显式更新。
+> 测试 62 → **76 项**。
 
 ## 0. 红线（先读）
 
@@ -117,6 +127,8 @@ Tools/CoffeeAI/
 | `license_status` | 允许训练：`own-original / approved / ok / public-domain / cc-by / cc-by-sa`；`unknown / see-source-terms / paywalled / restricted / cc-by-nc*` 一律拒绝 |
 | `review_status` | `approved` 才可训练；**审核由人完成，脚本不得自封**（有测试盯着） |
 | `dedup_fingerprint` | `sha256(messages)`，`Tools/CoffeeAI/scripts` 里的工具会核对其一致性 |
+| `reviewed_content_sha256` | **approved 样本必填**：人工审核时确认的确切 messages 摘要 |
+| `reviewed_record_sha256` | **approved 样本必填**：审核记录摘要——绑定 messages + sample_id/topic/source_ids/claim_ids/license_status/source_usage/source_waiver；任一改动即训练阻断，须重新人工审核后由人显式更新。这是完整性校验和，**不是数字签名**，不能证明审批人身份或许可文件真实性 |
 | `source_ids` | 必须已注册于 `knowledge/SOURCE_REGISTRY.json`；`pending-verification` 来源会被警告 |
 
 **如何准备第一批真实数据（建议顺序）**：
@@ -149,14 +161,19 @@ pip install "mlx-lm[train]"
 
 # 5) 下载模型（需要联网，约 2.4–2.6GB，以模型卡为准；推荐先手动下载）
 huggingface-cli download mlx-community/Qwen3-4B-Instruct-2507-4bit
-#   或正式训练时显式允许下载： run_train.py --train --allow-download
-#   （--allow-download 仅对 --train 生效；--dry-run 与 --smoke 即使传入也绝不下载）
+#   或正式训练时显式允许下载： run_train.py --train --allow-download \
+#       --deployment-purpose noncommercial-research
+#   （--allow-download 仅对 --train 生效；--dry-run 与 --smoke 即使传入也绝不下载；
+#     --deployment-purpose 为 smoke/train 必选——它只是训练任务的用途记录，用于来源
+#     例外范围判定并写入 manifest，并不自动授予任何外部许可）
 
 # 6) 烟测（2 iters，只验证管线，不代表质量）
-python3 Tools/CoffeeAI/scripts/run_train.py --smoke --config Tools/CoffeeAI/configs/smoke.yaml
+python3 Tools/CoffeeAI/scripts/run_train.py --smoke --config Tools/CoffeeAI/configs/smoke.yaml \
+  --deployment-purpose noncommercial-research
 
 # 7) 正式训练（preflight 全过后才启动；结束后写 runs/<run_id>/run_manifest.json）
-python3 Tools/CoffeeAI/scripts/run_train.py --train --config Tools/CoffeeAI/configs/m2_16gb_qwen3_4b_qlora.yaml
+python3 Tools/CoffeeAI/scripts/run_train.py --train --config Tools/CoffeeAI/configs/m2_16gb_qwen3_4b_qlora.yaml \
+  --deployment-purpose noncommercial-research
 
 # 8) 对比评测（基础 vs 微调；system+user 经模型聊天模板渲染，双模型参数一致）
 python3 Tools/CoffeeAI/scripts/evaluate.py \
@@ -206,7 +223,7 @@ grad_checkpoint 的保守配置余量充足；1B–2B 模型只作为内存不�
 | 9 | 不影响 iOS 工程与现有测试 | ✅ `test_existing_kb_build_check_still_passes`（`build_kb.py --check` 通过）；未改动 `BrewPhase/` 任何文件 |
 | 10 | README 结果对应真实执行 | 本表全部来自上面实际运行的测试与命令 |
 
-**测试汇总**：阶段一 22 项 → 阶段二 27 项 → 阶段三 41 项 → 阶段四 53 项 → **阶段四点五 62 项（2026-10-14 实测：Ran 62 tests, OK，Python 3.13.12）**。阶段四点五新增：reason 缺失拒绝、approved_at 格式/合理性拒绝、样本 ID/主题/claim 范围外拒绝、非商业例外 vs 商业用途拒绝、禁商用来源商业用途需 licensor-grant+证据、例外文件缺失/格式错误/类型错误 fail-closed、run_train 用途声明门控、有效例外仅在批准范围内生效。
+**测试汇总**：阶段一 22 项 → 阶段二 27 项 → 阶段三 41 项 → 阶段四 53 项 → 阶段四点五 62 项 → **阶段四点六 76 项（2026-10-14 实测：Ran 76 tests, OK，Python 3.13.12）**。阶段四点六新增：commercialUse/derivatives 双维度商业授权矩阵（合成 registry）、非商业用途不受维度影响、缺失字段 fail-closed、合成 registry 端到端（--registry 注入）、审核记录摘要篡改阻断（license/source_ids/topic/waiver 四路）、corpus 层记录不一致阻断、正向测试 returncode==0 + 0 error 加固、例外条目非对象容错。
 
 ## 6. 已知限制
 

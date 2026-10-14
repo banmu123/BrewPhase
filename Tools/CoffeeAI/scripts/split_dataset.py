@@ -237,6 +237,8 @@ def main(argv=None):
                     "dedup_fingerprint": meta.get("dedup_fingerprint"),
                     # 阶段四：审核内容指纹快照——训练准入用它逐条比对实际文本
                     "reviewed_content_sha256": meta.get("reviewed_content_sha256"),
+                    # 阶段四点六：审核记录摘要快照（messages + 准入元数据）
+                    "reviewed_record_sha256": meta.get("reviewed_record_sha256"),
                     "source_ids": meta.get("source_ids") or [],
                     "claim_ids": meta.get("claim_ids") or [],
                     "source_usage": meta.get("source_usage"),

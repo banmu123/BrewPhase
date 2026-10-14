@@ -33,6 +33,7 @@ from coffeeai_common import (  # noqa: E402
     check_messages, check_meta, corpus_sha256, expand_globs, load_jsonl,
     load_registry, load_source_exceptions, message_texts,
     messages_fingerprint, near_duplicate_pairs, source_admission_issues,
+    reviewed_record_sha256,
 )
 
 
@@ -187,6 +188,23 @@ def validate(corpus_patterns, meta_patterns, registry_path=None,
                                    "message": "当前 messages 与审核内容指纹不一致——"
                                               "文本在审核后被改动过，禁止直接训练"
                                               "（不允许自动重算旧摘要使其生效）"})
+                # 审核记录摘要（阶段四点六）：绑定 messages + 准入元数据
+                rrs = meta.get("reviewed_record_sha256")
+                fp_rec = reviewed_record_sha256(meta, msgs)
+                if not rrs:
+                    issues.append({"level": "error" if for_training else "warning",
+                                   "code": "reviewed-record-unbound",
+                                   "sample_id": sid,
+                                   "message": "approved 样本缺少 reviewed_record_sha256"
+                                              "（审核记录未绑定准入元数据）"
+                                              + ("——训练阻断" if for_training else "")})
+                elif rrs != fp_rec:
+                    issues.append({"level": "error",
+                                   "code": "reviewed-record-mismatch",
+                                   "sample_id": sid,
+                                   "message": "当前样本的 messages/准入元数据与审核记录摘要"
+                                              "不一致——来源、claim、许可、主题、用法或豁免"
+                                              "在审核后被改动，须重新人工审核（禁止自动重算放行）"})
 
     # ---- 训练模式
     approved = [sid for sid, m in meta_by_id.items()
@@ -447,6 +465,22 @@ def check_training_admission(splits_dir, registry_path=None, exceptions_path=Non
                                "sample_id": sid,
                                "message": f"{split}/{sid}: 实际训练文本与人工审核内容指纹不一致"
                                           "——审核后文本被改动，阻断（不允许自动重算放行）"})
+            # ---- 阶段四点六：审核记录绑定（messages + 准入元数据一起核对）
+            fp_rec = reviewed_record_sha256(m, msgs) if fp else None
+            rrs = m.get("reviewed_record_sha256")
+            if not fp_rec:
+                pass  # messages 不可读已在上面报 admission-content-unverifiable
+            elif not rrs:
+                issues.append({"level": "error", "code": "admission-record-unverified",
+                               "sample_id": sid,
+                               "message": f"{split}/{sid}: 元数据缺少 reviewed_record_sha256"
+                                          "（审核记录未绑定，阻断）"})
+            elif rrs != fp_rec:
+                issues.append({"level": "error", "code": "admission-record-mismatch",
+                               "sample_id": sid,
+                               "message": f"{split}/{sid}: 实际训练内容或准入元数据与审核记录"
+                                          "摘要不一致——审核后记录被改动，阻断"
+                                          "（不允许自动重算放行）"})
             src_ids = m.get("source_ids") or []
             src_issues = source_admission_issues(
                 src_ids, reg or {}, m.get("source_usage"),

@@ -231,15 +231,19 @@ class SplitTests(unittest.TestCase):
             write_jsonl(c, [{"sample_id": "t1", "group_id": "g1", "messages": msgs}])
             m = td / "tiny.meta.jsonl"
             sys.path.insert(0, str(SCRIPTS))
-            from coffeeai_common import messages_fingerprint
+            from coffeeai_common import (messages_fingerprint,
+                                         reviewed_record_sha256)
             tiny_msgs = [{"role": "user", "content": "q?"},
                          {"role": "assistant",
                           "content": "足够长的回答内容，用来通过最短长度检查的全部要求。"}]
-            write_jsonl(m, [{"sample_id": "t1", "topic": "t", "license_status": "own-original",
-                             "review_status": "approved", "data_version": "v",
-                             "dedup_fingerprint": "a" * 64,
-                             "reviewed_content_sha256": messages_fingerprint(tiny_msgs),
-                             "source_waiver": "测试样本：无外部事实来源。"}])
+            tiny_meta = {"sample_id": "t1", "topic": "t", "license_status": "own-original",
+                         "review_status": "approved", "data_version": "v",
+                         "dedup_fingerprint": "a" * 64,
+                         "reviewed_content_sha256": messages_fingerprint(tiny_msgs),
+                         "source_ids": [], "claim_ids": [], "source_usage": None,
+                         "source_waiver": "测试样本：无外部事实来源。"}
+            tiny_meta["reviewed_record_sha256"] = reviewed_record_sha256(tiny_meta, tiny_msgs)
+            write_jsonl(m, [tiny_meta])
             out = td / "out"
             proc = run_script("split_dataset.py", "--corpus", c, "--meta", m,
                               "--out", out, expect=1)
@@ -484,10 +488,12 @@ class TrainingAdmissionTests(unittest.TestCase):
                     "data_version": "v", "dedup_fingerprint": "a" * 64,
                     "source_waiver": "测试样本：行为演示，无外部事实来源。"}
             if status == "approved":
-                # 阶段四：approved 样本必须绑定审核内容指纹
+                # 阶段四/六：approved 样本必须绑定审核内容与审核记录指纹
                 sys.path.insert(0, str(SCRIPTS))
-                from coffeeai_common import messages_fingerprint
+                from coffeeai_common import (messages_fingerprint,
+                                             reviewed_record_sha256)
                 meta["reviewed_content_sha256"] = messages_fingerprint(msgs)
+                meta["reviewed_record_sha256"] = reviewed_record_sha256(meta, msgs)
             rows_m.append(meta)
         write_jsonl(c, rows_c)
         write_jsonl(m, rows_m)
@@ -570,18 +576,20 @@ class SourceAdmissionTests(unittest.TestCase):
                 "source_ids": source_ids, "claim_ids": claim_ids,
                 "license_status": license_status, "review_status": review,
                 "data_version": "v", "dedup_fingerprint": "a" * 64}
-        if review == "approved":
-            sys.path.insert(0, str(SCRIPTS))
-            from coffeeai_common import messages_fingerprint
-            meta["reviewed_content_sha256"] = messages_fingerprint(msgs)
         if usage is not None:
             meta["source_usage"] = usage
         if waiver is not None:
             meta["source_waiver"] = waiver
+        if review == "approved":
+            sys.path.insert(0, str(SCRIPTS))
+            from coffeeai_common import (messages_fingerprint,
+                                         reviewed_record_sha256)
+            meta["reviewed_content_sha256"] = messages_fingerprint(msgs)
+            meta["reviewed_record_sha256"] = reviewed_record_sha256(meta, msgs)
         write_jsonl(m, [meta])
         return c, m
 
-    def _for_training(self, c, m, exceptions=None, purpose=None):
+    def _for_training(self, c, m, exceptions=None, purpose=None, json_mode=False):
         args = ["validate_data.py", "--corpus", c, "--meta", m, "--for-training"]
         if exceptions is not None:
             exc = Path(exceptions)
@@ -590,7 +598,17 @@ class SourceAdmissionTests(unittest.TestCase):
             args += ["--source-exceptions", exc]
         if purpose:
             args += ["--deployment-purpose", purpose]
+        if json_mode:
+            args += ["--json"]
         return run_script(*args)
+
+    def _assert_admission_ok(self, proc):
+        """阶段四点六：正向测试必须证明退出成功，而非仅看输出不含某错误串。"""
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        report = json.loads(proc.stdout)
+        self.assertEqual(report["validation"]["errors"], 0,
+                         json.dumps(report["validation"]["issues"], ensure_ascii=False))
+        return report
 
     def _write_exceptions(self, td, entries):
         p = Path(td) / "exceptions.json"
@@ -637,7 +655,9 @@ class SourceAdmissionTests(unittest.TestCase):
                                     ["claim.varieties.no-absolute-data"],
                                     {"wcr-varieties-catalog": "fact-extraction-rewrite"},
                                     topic="varieties")
-            proc = self._for_training(c, m, exceptions=exc, purpose="noncommercial-research")
+            proc = self._for_training(c, m, exceptions=exc, purpose="noncommercial-research",
+                                      json_mode=True)
+            self._assert_admission_ok(proc)
             self.assertNotIn("source-requires-human-exception", proc.stdout)
             self.assertNotIn("exception-out-of-scope", proc.stdout)
 
@@ -676,7 +696,8 @@ class SourceAdmissionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             c, m = self._one_sample(td, ["fda-caffeine"], ["claim.health.fda-400"],
                                     {"fda-caffeine": "fact-extraction-rewrite"})
-            proc = self._for_training(c, m)
+            proc = self._for_training(c, m, purpose="noncommercial-research", json_mode=True)
+            self._assert_admission_ok(proc)
             self.assertNotIn("source-requires-human-exception", proc.stdout)
             self.assertNotIn("source-blocked-status", proc.stdout)
 
@@ -723,8 +744,8 @@ class SourceAdmissionTests(unittest.TestCase):
             self.assertIn("missing-source-waiver", proc.stdout)
             c, m = self._one_sample(td, [], [],
                                     waiver="行为规范样本：无外部事实来源。")
-            proc = self._for_training(c, m)
-            self.assertNotIn("missing-source-waiver", proc.stdout)
+            proc = self._for_training(c, m, purpose="noncommercial-research", json_mode=True)
+            self._assert_admission_ok(proc)
 
     def test_unreviewed_blocks_before_source_noise(self):
         """未审核样本：阻断原因是 not-approved，不再叠加来源检查。"""
@@ -793,7 +814,8 @@ class EvaluateCommandTests(unittest.TestCase):
 def _build_approved_split(td):
     """构建 3 个 approved 组的可划分语料（内容互不相同、审核指纹正确绑定）。"""
     sys.path.insert(0, str(SCRIPTS))
-    from coffeeai_common import messages_fingerprint
+    from coffeeai_common import (messages_fingerprint,
+                                 reviewed_record_sha256)
     c, m = Path(td) / "c.jsonl", Path(td) / "c.meta.jsonl"
     content = [
         ("问题一？", "第一条回答：内容足够长，且与其他条目明显不同，用来通过全部检查要求。"),
@@ -804,12 +826,14 @@ def _build_approved_split(td):
     for i, (q, a) in enumerate(content, 1):
         msgs = [{"role": "user", "content": q}, {"role": "assistant", "content": a}]
         rows_c.append({"sample_id": f"cb-{i}", "group_id": f"g-cb-{i}", "messages": msgs})
-        rows_m.append({"sample_id": f"cb-{i}", "group_id": f"g-cb-{i}", "topic": "t",
-                       "source_doc": "t", "source_ids": [], "claim_ids": [],
-                       "license_status": "own-original", "review_status": "approved",
-                       "data_version": "v", "dedup_fingerprint": messages_fingerprint(msgs),
-                       "reviewed_content_sha256": messages_fingerprint(msgs),
-                       "source_waiver": "测试样本：无外部事实来源。"})
+        meta = {"sample_id": f"cb-{i}", "group_id": f"g-cb-{i}", "topic": "t",
+                "source_doc": "t", "source_ids": [], "claim_ids": [],
+                "license_status": "own-original", "review_status": "approved",
+                "data_version": "v", "dedup_fingerprint": messages_fingerprint(msgs),
+                "reviewed_content_sha256": messages_fingerprint(msgs),
+                "source_waiver": "测试样本：无外部事实来源。"}
+        meta["reviewed_record_sha256"] = reviewed_record_sha256(meta, msgs)
+        rows_m.append(meta)
     write_jsonl(c, rows_c)
     write_jsonl(m, rows_m)
     out = Path(td) / "splits"
@@ -949,23 +973,32 @@ class ExceptionScopeTests(unittest.TestCase):
                 "source_ids": source_ids, "claim_ids": claim_ids,
                 "license_status": "own-original", "review_status": review,
                 "data_version": "v", "dedup_fingerprint": "a" * 64}
-        if review == "approved":
-            sys.path.insert(0, str(SCRIPTS))
-            from coffeeai_common import messages_fingerprint
-            meta["reviewed_content_sha256"] = messages_fingerprint(msgs)
         if usage is not None:
             meta["source_usage"] = usage
         meta["source_waiver"] = None if source_ids else "测试豁免"
+        if review == "approved":
+            sys.path.insert(0, str(SCRIPTS))
+            from coffeeai_common import (messages_fingerprint,
+                                         reviewed_record_sha256)
+            meta["reviewed_content_sha256"] = messages_fingerprint(msgs)
+            meta["reviewed_record_sha256"] = reviewed_record_sha256(meta, msgs)
         write_jsonl(m, [meta])
         return c, m
 
     def _run(self, c, m, exceptions=None, purpose=None):
-        args = ["validate_data.py", "--corpus", c, "--meta", m, "--for-training"]
+        args = ["validate_data.py", "--corpus", c, "--meta", m, "--for-training", "--json"]
         if exceptions is not None:
             args += ["--source-exceptions", Path(exceptions).resolve()]
         if purpose:
             args += ["--deployment-purpose", purpose]
         return run_script(*args)
+
+    def _assert_ok(self, proc):
+        """阶段四点六：正向测试必须证明退出成功且 0 error，而非仅看不含某错误串。"""
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        report = json.loads(proc.stdout)
+        self.assertEqual(report["validation"]["errors"], 0,
+                         json.dumps(report["validation"]["issues"], ensure_ascii=False))
 
     def _write_exceptions(self, td, entries, raw=None):
         p = Path(td) / "exceptions.json"
@@ -1071,6 +1104,7 @@ class ExceptionScopeTests(unittest.TestCase):
                                     ["claim.varieties.no-absolute-data"],
                                     {"wcr-varieties-catalog": "fact-extraction-rewrite"})
             proc = self._run(c, m, exceptions=ef2, purpose="commercial-product")
+            self._assert_ok(proc)
             self.assertNotIn("exception-out-of-scope", proc.stdout)
 
     # ---- 6) 有效例外只在批准范围内生效
@@ -1144,12 +1178,231 @@ class ExceptionScopeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             c, m = self._one_sample(td, ["fda-caffeine"], ["claim.health.fda-400"],
                                     {"fda-caffeine": "fact-extraction-rewrite"})
-            proc = self._run(c, m, exceptions=None, purpose=None)
-            self.assertNotIn("source-requires-human-exception", proc.stdout)
-            self.assertNotIn("exception-out-of-scope", proc.stdout)
+            proc = self._run(c, m, exceptions=None, purpose="noncommercial-research")
+            self._assert_ok(proc)
             c, m = self._one_sample(td, ["sca-digital-store"], [], {})
             proc = self._run(c, m, exceptions=None, purpose="commercial-product")
+            self.assertEqual(proc.returncode, 1)
             self.assertIn("source-blocked-status", proc.stdout)
+
+
+class DualDimLicenseTests(unittest.TestCase):
+    """阶段四点六：商业授权必须独立检查 commercialUse 与 derivatives 两个维度。
+
+    使用合成 registry fixture（来源 ID 带 synthetic- 前缀，不触碰正式注册表，
+    不伪造任何现有来源的许可状态）。
+    """
+
+    SYN_SRC = "synthetic-source-1"
+    SYN_CLAIM = "claim.synthetic.test"
+
+    def _registry_file(self, td, commercialUse, derivatives):
+        reg = {"sources": [{
+            "sourceId": self.SYN_SRC, "status": "active",
+            "license": {"status": "see-source-terms",
+                        "commercialUse": commercialUse, "derivatives": derivatives},
+        }]}
+        p = Path(td) / "registry.json"
+        p.write_text(json.dumps(reg), encoding="utf-8")
+        return p
+
+    def _exception(self, purposes, basis="registry-sanctioned-use", evidence="ref-001"):
+        return {"sourceId": self.SYN_SRC, "usage": "fact-extraction-rewrite",
+                "reason": "测试例外", "approved_by": "人工审核人（测试占位）",
+                "approved_at": "2026-10-14", "scope": "测试",
+                "deployment_purposes": purposes,
+                "allowed_sample_ids": ["sa1"],
+                "allowed_claim_ids": [self.SYN_CLAIM],
+                "license_basis": {"basis": basis, "evidence_ref": evidence}}
+
+    def _admit(self, td, commercialUse, derivatives, purposes, basis, evidence,
+               purpose="commercial-product"):
+        """直接调用 source_admission_issues（合成 registry 注入），返回 (codes, ok)。"""
+        sys.path.insert(0, str(SCRIPTS))
+        from coffeeai_common import source_admission_issues
+        registry = {self.SYN_SRC: {
+            "status": "active", "license_status": "see-source-terms",
+            "commercialUse": commercialUse, "derivatives": derivatives}}
+        exceptions = {self.SYN_SRC: self._exception(purposes, basis, evidence)}
+        issues = source_admission_issues(
+            [self.SYN_SRC], registry,
+            {self.SYN_SRC: "fact-extraction-rewrite"},
+            exceptions=exceptions,
+            deployment_purpose=purpose,
+            sample={"sample_id": "sa1", "topic": "t",
+                    "claim_ids": [self.SYN_CLAIM]})
+        codes = [i["code"] for i in issues]
+        return codes, len(issues) == 0
+
+    def test_commercial_allowed_derivatives_not_allowed_blocks(self):
+        codes, ok = self._admit(tempfile.mkdtemp(), "allowed", "not-allowed",
+                                ["commercial-product"],
+                                "registry-sanctioned-use", "ref-001")
+        self.assertFalse(ok)
+        self.assertIn("exception-out-of-scope", codes)
+
+    def test_commercial_allowed_derivatives_unclear_blocks_without_grant(self):
+        codes, ok = self._admit(tempfile.mkdtemp(), "allowed", "unclear",
+                                ["commercial-product"], "internal-review", "ref-001")
+        self.assertFalse(ok)
+        self.assertIn("exception-out-of-scope", codes)
+
+    def test_unclear_commercial_allowed_derivatives_blocks_without_grant(self):
+        codes, ok = self._admit(tempfile.mkdtemp(), "unclear", "allowed",
+                                ["commercial-product"], "internal-review", "ref-001")
+        self.assertFalse(ok)
+        self.assertIn("exception-out-of-scope", codes)
+
+    def test_missing_field_fails_closed(self):
+        codes, ok = self._admit(tempfile.mkdtemp(), "allowed", None,
+                                ["commercial-product"], "registry-sanctioned-use", "ref-001")
+        self.assertFalse(ok)
+        self.assertIn("exception-out-of-scope", codes)
+
+    def test_both_restricted_with_licensor_grant_passes_scope(self):
+        codes, ok = self._admit(tempfile.mkdtemp(), "not-allowed", "unclear",
+                                ["commercial-product"], "licensor-grant",
+                                "permissions/grant-2026.pdf")
+        self.assertTrue(ok, codes)
+
+    def test_both_allowed_needs_no_grant(self):
+        codes, ok = self._admit(tempfile.mkdtemp(), "allowed", "allowed",
+                                ["commercial-product"], "registry-sanctioned-use", "ref-001")
+        self.assertTrue(ok, codes)
+
+    def test_noncommercial_purpose_unaffected_by_dims(self):
+        """非商业用途不触发双维度商业检查（既有政策不变）。"""
+        codes, ok = self._admit(tempfile.mkdtemp(), "not-allowed", "not-allowed",
+                                ["noncommercial-research"],
+                                "registry-sanctioned-use", "ref-001",
+                                purpose="noncommercial-research")
+        self.assertTrue(ok, codes)
+
+    def test_end_to_end_with_synthetic_registry_file(self):
+        """e2e：合成 registry 通过 --registry 注入 CLI 全流程，双维度检查生效。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            reg = self._registry_file(td, "allowed", "not-allowed")
+            msgs = [{"role": "user", "content": "问题？"},
+                    {"role": "assistant",
+                     "content": "足够长的回答内容，用来通过最短长度检查的全部要求。"}]
+            write_jsonl(td / "s.jsonl", [{"sample_id": "sa1", "group_id": "g",
+                                          "messages": msgs}])
+            sys.path.insert(0, str(SCRIPTS))
+            from coffeeai_common import (messages_fingerprint,
+                                         reviewed_record_sha256)
+            meta = {"sample_id": "sa1", "group_id": "g", "topic": "t",
+                    "source_doc": "t", "source_ids": [self.SYN_SRC],
+                    "claim_ids": [self.SYN_CLAIM],
+                    "license_status": "own-original", "review_status": "approved",
+                    "data_version": "v", "dedup_fingerprint": "a" * 64,
+                    "reviewed_content_sha256": messages_fingerprint(msgs),
+                    "source_usage": {self.SYN_SRC: "fact-extraction-rewrite"}}
+            meta["reviewed_record_sha256"] = reviewed_record_sha256(meta, msgs)
+            write_jsonl(td / "s.meta.jsonl", [meta])
+            exc = td / "exc.json"
+            exc.write_text(json.dumps({"exceptions": [self._exception(
+                ["noncommercial-research", "commercial-product"])]}), encoding="utf-8")
+            # 非商业用途 → 通过
+            proc = run_script("validate_data.py", "--corpus", td / "s.jsonl",
+                              "--meta", td / "s.meta.jsonl", "--for-training",
+                              "--registry", reg, "--source-exceptions", exc,
+                              "--deployment-purpose", "noncommercial-research",
+                              "--json")
+            self._assert_ok_style(proc)
+            # 商业用途 + derivatives not-allowed + 内部审批 → 阻断
+            proc = run_script("validate_data.py", "--corpus", td / "s.jsonl",
+                              "--meta", td / "s.meta.jsonl", "--for-training",
+                              "--registry", reg, "--source-exceptions", exc,
+                              "--deployment-purpose", "commercial-product",
+                              "--json")
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("exception-out-of-scope", proc.stdout)
+            self.assertIn("licensor-grant", proc.stdout)
+
+    def _assert_ok_style(self, proc):
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        report = json.loads(proc.stdout)
+        self.assertEqual(report["validation"]["errors"], 0)
+
+
+class RecordBindingTests(unittest.TestCase):
+    """阶段四点六：审核记录摘要绑定 messages + 准入元数据；改动任一即阻断。"""
+
+    def _approved_split(self, td):
+        return _build_approved_split(td)
+
+    def _tamper_split_meta(self, out, mutate):
+        for name in ("train.meta.jsonl", "valid.meta.jsonl", "test.meta.jsonl"):
+            p = out / name
+            rows = [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines()
+                    if l.strip()]
+            rows = [mutate(r) for r in rows]
+            p.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n",
+                         encoding="utf-8")
+
+    def test_license_status_tamper_blocked(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = self._approved_split(td)
+            self._tamper_split_meta(out, lambda r: {**r, "license_status": "ok"})
+            proc = run_script("validate_data.py", "--check-admission", out, "--json")
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("admission-record-mismatch", proc.stdout)
+
+    def test_source_ids_tamper_blocked(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = self._approved_split(td)
+            self._tamper_split_meta(
+                out, lambda r: {**r, "source_ids": ["fda-caffeine"]})
+            proc = run_script("validate_data.py", "--check-admission", out, "--json")
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("admission-record-mismatch", proc.stdout)
+
+    def test_topic_tamper_blocked(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = self._approved_split(td)
+            self._tamper_split_meta(out, lambda r: {**r, "topic": "changed"})
+            proc = run_script("validate_data.py", "--check-admission", out, "--json")
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("admission-record-mismatch", proc.stdout)
+
+    def test_waiver_removal_blocked(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = self._approved_split(td)
+            self._tamper_split_meta(
+                out, lambda r: {**r, "source_waiver": "被改过的豁免理由"})
+            proc = run_script("validate_data.py", "--check-admission", out, "--json")
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("admission-record-mismatch", proc.stdout)
+
+    def test_corpus_level_record_mismatch_blocked(self):
+        """corpus 层：审核后改 topic 但保留原审核记录摘要 → for-training 阻断。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            out = self._approved_split(td)
+            # 从 splits 取一条 meta，改 topic 后与 jsonl 组成独立 corpus
+            meta_row = json.loads((out / "train.meta.jsonl").read_text(
+                encoding="utf-8").splitlines()[0])
+            jsonl_row = None
+            for name in ("train.jsonl", "valid.jsonl", "test.jsonl"):
+                for l in (out / name).read_text(encoding="utf-8").splitlines():
+                    d = json.loads(l)
+                    if d.get("sample_id") == meta_row["sample_id"]:
+                        jsonl_row = d
+            jsonl_row["messages"][1]["topic_hint"] = "x"  # 保持 messages 不变
+            write_jsonl(td / "c.jsonl", [jsonl_row])
+            meta_row["topic"] = "changed-after-review"
+            write_jsonl(td / "c.meta.jsonl", [meta_row])
+            proc = run_script("validate_data.py", "--corpus", td / "c.jsonl",
+                              "--meta", td / "c.meta.jsonl", "--for-training",
+                              "--json")
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("reviewed-record-mismatch", proc.stdout)
+
+    def test_unmodified_samples_pass(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = self._approved_split(td)
+            run_script("validate_data.py", "--check-admission", out, "--json", expect=0)
 
 
 class RepoIntegrityTests(unittest.TestCase):
