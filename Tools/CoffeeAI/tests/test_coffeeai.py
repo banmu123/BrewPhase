@@ -361,8 +361,13 @@ class RunTrainTests(unittest.TestCase):
 
     def test_dry_run_reports_blockers_when_data_missing(self):
         """数据未就绪时 dry-run 必须如实列出阻断项（而不是假装可训练）。"""
-        proc = run_script("run_train.py", "--dry-run",
-                          "--config", COFFEEAI / "configs" / "smoke.yaml")
+        # 六点九-E：正式 splits 已存在，显式传空数据目录构造「数据缺失」场景
+        with tempfile.TemporaryDirectory() as td:
+            empty_dir = Path(td) / "splits"
+            empty_dir.mkdir()
+            proc = run_script("run_train.py", "--dry-run",
+                              "--config", COFFEEAI / "configs" / "smoke.yaml",
+                              "--data-dir", empty_dir)
         self.assertEqual(proc.returncode, 1)
         self.assertIn("缺少 train.jsonl", proc.stdout)
         self.assertIn("尚未下载", proc.stdout)
@@ -454,9 +459,19 @@ class ReviewQueueTests(unittest.TestCase):
         report = json.loads(proc.stdout)
         for f in report["validation"]["corpus_files"] + report["validation"]["meta_files"]:
             self.assertNotIn("review_queue", f)
-        # 2) 默认划分仍然拒绝（0 条 approved）
-        run_script("split_dataset.py", "--out", COFFEEAI / "data" / "splits", expect=1)
-        self.assertFalse((COFFEEAI / "data" / "splits" / "train.jsonl").exists())
+        # 2) 默认划分仍然拒绝（0 条 approved），且不得在任何输出目录留下 train.jsonl
+        #    （六点九-E：data/splits 已有正式划分，改用临时目录验证，不碰真实产物）
+        with tempfile.TemporaryDirectory() as td:
+            out_dir = Path(td) / "splits"
+            run_script("split_dataset.py", "--out", out_dir, expect=1)
+            self.assertFalse((out_dir / "train.jsonl").exists())
+        # 2b) 正式划分（若存在）必须只含 approved 样本——未审核样本进不了训练集
+        train_meta = COFFEEAI / "data" / "splits" / "train.meta.jsonl"
+        if train_meta.exists():
+            for line in train_meta.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    self.assertEqual(json.loads(line).get("review_status"), "approved",
+                                     "训练集出现未审核样本")
         # 3) batch1 显式校验通过
         run_script("validate_data.py", "--corpus", self.BATCH_CORPUS,
                    "--meta", self.BATCH_META, expect=0)
@@ -2096,6 +2111,63 @@ class TestBatch2bInteractionQuality(unittest.TestCase):
         self.assertNotIn("direct-parameter-answer", codes)
         self.assertNotIn("uncertainty-expression-missing", codes)
         self.assertNotIn("health-boundary-missing", codes)
+
+
+class ExceptionTopicCoverageTests(unittest.TestCase):
+    """阶段六点九-E：多来源样本的例外 allowed_topics 覆盖治理（GPT 指定 3 case）。
+
+    背景：batch2b 落库时发现多来源样本的 topic 必须同时落在每个命中例外的
+    allowed_topics 内（check_exception_scope 逐例外独立检查、无并集——fail-closed
+    是有意设计，GPT 裁定不改为并集语义）。本测试固化该语义，避免再依赖人工发现。
+    """
+
+    @staticmethod
+    def _registry(*source_ids):
+        return {sid: {"status": "active", "license_status": "see-source-terms",
+                      "commercialUse": "unclear", "derivatives": "unclear"}
+                for sid in source_ids}
+
+    @staticmethod
+    def _exception(source_id, topics, samples):
+        return {"sourceId": source_id, "usage": "fact-extraction-rewrite",
+                "deployment_purposes": ["noncommercial-research"],
+                "allowed_topics": list(topics), "allowed_sample_ids": list(samples),
+                "allowed_claim_ids": ["claim.test.generic"]}
+
+    def _admit(self, source_ids, exceptions, topic="brewing"):
+        sys.path.insert(0, str(SCRIPTS))
+        from coffeeai_common import source_admission_issues
+        return source_admission_issues(
+            source_ids, self._registry(*source_ids),
+            {sid: "fact-extraction-rewrite" for sid in source_ids},
+            exceptions=exceptions, deployment_purpose="noncommercial-research",
+            sample={"sample_id": "t-multi", "topic": topic, "claim_ids": ["claim.test.generic"]})
+
+    def _exc_map(self, *excs):
+        return {e["sourceId"]: e for e in excs}
+
+    def test_case1_intersecting_topics_pass(self):
+        """case1：两来源 topics 有交集 → PASS。"""
+        excs = self._exc_map(
+            self._exception("src-a", ["brewing", "espresso"], ["t-multi"]),
+            self._exception("src-b", ["brewing", "health"], ["t-multi"]))
+        self.assertEqual(self._admit(["src-a", "src-b"], excs), [])
+
+    def test_case2_disjoint_topics_block(self):
+        """case2：两来源 topics 无交集 → BLOCK（fail-closed，不得改并集语义）。"""
+        excs = self._exc_map(
+            self._exception("src-a", ["brewing"], ["t-multi"]),
+            self._exception("src-b", ["health"], ["t-multi"]))
+        issues = self._admit(["src-a", "src-b"], excs)
+        self.assertTrue(any(i["code"] == "exception-out-of-scope" for i in issues),
+                        f"无交集必须 BLOCK：{issues}")
+
+    def test_case3_topic_extension_resolves(self):
+        """case3：对齐扩展第二来源 topics 后 → PASS（六点九-E 修正版方案 A 模式）。"""
+        excs = self._exc_map(
+            self._exception("src-a", ["brewing"], ["t-multi"]),
+            self._exception("src-b", ["health", "brewing"], ["t-multi"]))
+        self.assertEqual(self._admit(["src-a", "src-b"], excs), [])
 
 
 class RepoIntegrityTests(unittest.TestCase):

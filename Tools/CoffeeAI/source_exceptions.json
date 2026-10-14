@@ -123,7 +123,7 @@
   {
    "sourceId": "baratza-documents",
    "usage": "fact-extraction-rewrite",
-   "reason": "Baratza 官方文档库（b1-009/017 审核链核验 manual-not-recipe 表述一致）；仅独立提取与改写，不复制原文；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-004（仅样本范围对齐，allowed_claim_ids 未变）",
+   "reason": "Baratza 官方文档库（b1-009/017 审核链核验 manual-not-recipe 表述一致）；仅独立提取与改写，不复制原文；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-004（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-14 六点九-E topics 对齐扩展（GPT 修正版方案 A：来源授权语义与样本实际能力标签对齐）：topics+pour-over diagnosis",
    "approved_by": "banmu123 (project owner)",
    "approved_at": "2026-10-14",
    "scope": "仅非商业研究训练样本；claim 清单限定；不复制原文；核验需记录具体文档标题与日期",
@@ -138,7 +138,8 @@
    ],
    "allowed_topics": [
     "grinding",
-    "brewing"
+    "brewing",
+    "pour-over diagnosis"
    ],
    "allowed_claim_ids": [
     "claim.grinding.manual-not-recipe"
@@ -188,7 +189,7 @@
   {
    "sourceId": "nca-aboutcoffee",
    "usage": "fact-extraction-rewrite",
-   "reason": "NCA Storage and shelf life 页面已逐句核验（2026-10-14，external_evidence_packet.md + claim_source_audit.md）：失鲜时机/储存敌人/峰值后衰退/冷冻分歧/保鲜期表全部一致；仅独立提取与改写，不复制原文；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-005（仅样本范围对齐，allowed_claim_ids 未变）",
+   "reason": "NCA Storage and shelf life 页面已逐句核验（2026-10-14，external_evidence_packet.md + claim_source_audit.md）：失鲜时机/储存敌人/峰值后衰退/冷冻分歧/保鲜期表全部一致；仅独立提取与改写，不复制原文；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-005（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-14 六点九-E topics 对齐扩展（GPT 修正版方案 A：来源授权语义与样本实际能力标签对齐）：topics+pour-over diagnosis",
    "approved_by": "banmu123 (project owner)",
    "approved_at": "2026-10-14",
    "scope": "仅非商业研究训练样本；claim 清单限定为 5 条 nca-freshness claims（bean-is-seed 未核验，不在范围内）；不复制原文",
@@ -201,7 +202,8 @@
     "b2b-005"
    ],
    "allowed_topics": [
-    "freshness"
+    "freshness",
+    "pour-over diagnosis"
    ],
    "allowed_claim_ids": [
     "claim.freshness.nca-lose-freshness-immediately",
@@ -244,7 +246,7 @@
   {
    "sourceId": "hario-v60-hoffmann",
    "usage": "fact-extraction-rewrite",
-   "reason": "Hario UK 博客 Hoffmann 配方访谈已逐项核验（2026-10-14，external_evidence_packet.md：30g/500mL/97°C/45s 逐项一致）；GPT 批准清单第 2 项：允许配方数字事实与不同配方并存，禁止黄金比例/最佳参数/行业标准；dv=not-allowed，商业用途必须 licensor-grant，本例外不预授权；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-003（仅样本范围对齐，allowed_claim_ids 未变）",
+   "reason": "Hario UK 博客 Hoffmann 配方访谈已逐项核验（2026-10-14，external_evidence_packet.md：30g/500mL/97°C/45s 逐项一致）；GPT 批准清单第 2 项：允许配方数字事实与不同配方并存，禁止黄金比例/最佳参数/行业标准；dv=not-allowed，商业用途必须 licensor-grant，本例外不预授权；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-003（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-002（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-14 六点九-E topics 对齐扩展（GPT 修正版方案 A：来源授权语义与样本实际能力标签对齐）：topics+brewing,brewing-troubleshooting",
    "approved_by": "banmu123 (project owner)",
    "approved_at": "2026-10-14",
    "scope": "仅非商业研究训练样本；Hoffmann 配方是署名作者的语境化配方（特定器具与水量），不得表述为行业标准；不复制原文",
@@ -253,10 +255,13 @@
    ],
    "allowed_sample_ids": [
     "b1-025",
-    "b2b-003"
+    "b2b-003",
+    "b2b-002"
    ],
    "allowed_topics": [
-    "uncertainty"
+    "uncertainty",
+    "brewing",
+    "brewing-troubleshooting"
    ],
    "allowed_claim_ids": [
     "claim.pourover.v60-hoffmann-recipe",

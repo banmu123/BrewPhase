@@ -52,17 +52,30 @@ SOURCE_FIX = {
     },
 }
 
-# topic 对齐（仅 meta 分类标签对齐例外既有 allowed_topics，消息内容零改动）：
-# b2b-008 单来源 ucdavis（topics=['pour-over diagnosis']），对齐先例 b2a-005/008。
+# topic 对齐（仅 meta 分类标签对齐来源授权语义，消息内容零改动；GPT 修正版方案 A）：
+# b2b-008 ucdavis 对齐先例 b2a-005/008；b2b-002/003 对齐 hario-expert 既有 topics
+# （hoffmann topics 按 GPT 裁定扩展后覆盖同值）；b2b-005 对齐 ucdavis 既有 topics
+# （nca topics 按 GPT 裁定扩展后覆盖同值；NCA claim 承担该样本路径一实质证据，非背景）。
 TOPIC_FIX = {
+    "b2b-002": "brewing-troubleshooting",
+    "b2b-003": "brewing",
+    "b2b-005": "pour-over diagnosis",
     "b2b-008": "pour-over diagnosis",
 }
 
-# 步骤 1：例外 allowed_sample_ids 扩展（GPT 拍板清单 B）
+# 步骤 1b：例外 allowed_topics 对齐扩展（GPT 修正版方案 A，2026-10-14 裁定：
+# 「来源授权语义与样本实际能力标签对齐」，非「覆盖方便」式扩权；不采用方案 B）
+EXC_TOPICS_EXTEND = {
+    "hario-v60-hoffmann": ["brewing", "brewing-troubleshooting"],
+    "baratza-documents": ["pour-over diagnosis"],
+    "nca-aboutcoffee": ["pour-over diagnosis"],
+}
+
+# 步骤 1：例外 allowed_sample_ids 扩展（GPT 拍板清单 B + 修正版方案 A 连带）
 EXC_EXTEND = {
     "ucdavis-coffee-center": ["b2b-001", "b2b-004", "b2b-005", "b2b-008"],
     "hario-v60-expert-guide": ["b2b-002", "b2b-003"],
-    "hario-v60-hoffmann": ["b2b-003"],
+    "hario-v60-hoffmann": ["b2b-002", "b2b-003"],
     "baratza-documents": ["b2b-004"],
     "nca-aboutcoffee": ["b2b-005"],
     "fellow-espresso-basics": ["b2b-006"],
@@ -74,18 +87,23 @@ def extend_exceptions():
     changed = []
     for exc in data["exceptions"]:
         sid = exc["sourceId"]
-        if sid not in EXC_EXTEND:
-            continue
-        add = [s for s in EXC_EXTEND[sid] if s not in (exc.get("allowed_sample_ids") or [])]
-        if not add:
-            continue
-        exc.setdefault("allowed_sample_ids", []).extend(add)
-        exc["reason"] = (exc.get("reason") or "") + (
-            f"；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）："
-            f"+{','.join(add)}（仅样本范围对齐，allowed_claim_ids 未变）")
-        changed.append(f"{sid}:+{','.join(add)}")
+        add = [s for s in EXC_EXTEND.get(sid, []) if s not in (exc.get("allowed_sample_ids") or [])]
+        if add:
+            exc.setdefault("allowed_sample_ids", []).extend(add)
+            exc["reason"] = (exc.get("reason") or "") + (
+                f"；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）："
+                f"+{','.join(add)}（仅样本范围对齐，allowed_claim_ids 未变）")
+            changed.append(f"{sid}:+{','.join(add)}")
+        tadd = [t for t in EXC_TOPICS_EXTEND.get(sid, [])
+                if t not in (exc.get("allowed_topics") or [])]
+        if tadd:
+            exc.setdefault("allowed_topics", []).extend(tadd)
+            exc["reason"] = (exc.get("reason") or "") + (
+                f"；2026-10-14 六点九-E topics 对齐扩展（GPT 修正版方案 A：来源授权语义与"
+                f"样本实际能力标签对齐）：topics+{','.join(tadd)}")
+            changed.append(f"{sid}:topics+{','.join(tadd)}")
     EXC_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-    print("例外扩展:", "; ".join(changed))
+    print("例外扩展:", "; ".join(changed) if changed else "(无变更——已应用)")
 
 
 def build_candidates():
@@ -166,7 +184,34 @@ def build_manifest(sample_ids):
     print("manifest: batch2b-approved-r1（8 samples）")
 
 
+def fix_b1_025_topic():
+    """b1-025 存量一致性修复（GPT 修正版方案 A）：仅 topic 对齐，不批准、保持 unreviewed。
+
+    b1-025（双来源 hario-expert + hoffmann）topic 'uncertainty' 与 hario-expert
+    既有 topics 无交集——GPT 裁定「例外存在 + 样本未落库 + 未来必撞」应提前修；
+    hoffmann topics 对齐扩展后，交集 = {'brewing', 'brewing-troubleshooting'}，
+    取 'brewing'（Hoffmann 配方语境属冲煮主题）。allowed_sample_ids 两例外均已含。
+    """
+    p = HERE / "batch1_candidates.meta.jsonl"
+    rows = [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
+    hit = False
+    for m in rows:
+        if m["sample_id"] == "b1-025":
+            if m.get("topic") != "brewing":
+                assert m.get("review_status") == "unreviewed", "b1-025 状态异常，停止修复"
+                m["topic"] = "brewing"
+                m["notes"] = (m.get("notes") or "") + (
+                    "；2026-10-14 阶段六点九-E topic 对齐（GPT 修正版方案 A：修 b1-025 存量"
+                    "一致性——双来源例外 topics 交集；仅改分类标签，不批准、保持 unreviewed）")
+                hit = True
+            break
+    p.write_text("\n".join(json.dumps(m, ensure_ascii=False) for m in rows) + "\n",
+                 encoding="utf-8")
+    print("b1-025 topic 对齐:", "完成（uncertainty → brewing，保持 unreviewed）" if hit else "（无需变更）")
+
+
 if __name__ == "__main__":
     extend_exceptions()
+    fix_b1_025_topic()
     ids = build_candidates()
     build_manifest(ids)
