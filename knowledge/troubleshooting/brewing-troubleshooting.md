@@ -16,8 +16,8 @@
 | 手冲**水流过慢** | 研磨偏细 | 观察 | 磨粗 | high（官方） | `hario-v60-expert-guide` |
 | 意式**流太快** | 研磨偏粗 | shot time | 磨细 | high（官方） | `fellow-espresso-basics`、`lamarzocco-linea-micra-zh` |
 | 意式**流太慢** | 研磨偏细 | shot time | 磨粗 | high（官方） | `fellow-espresso-basics` |
-| 意式**发酸/咸/空洞** | 研磨偏粗 | 味觉 + 流速 | 磨细 | medium（厂商近似） | `fellow-espresso-basics` |
-| 意式**发苦/发涩** | 研磨偏细 | 味觉 + 流速 | 磨粗 | medium（厂商近似） | `fellow-espresso-basics` |
+| 意式**发酸/咸/寡淡（原文 weak）** | 研磨偏粗 | 味觉 + 流速 | 磨细 | medium（厂商近似） | `fellow-espresso-basics` |
+| 意式**发苦/粉感（原文 chalky，非收敛性涩感）** | 研磨偏细 | 味觉 + 流速 | 磨粗 | medium（厂商近似） | `fellow-espresso-basics` |
 | 意式**太凉** | 机器未预热 | 时间 | 充分预热（Gaggia 给 6 分钟） | high（官方） | `gaggia-classic-manual` |
 | 意式**几乎无 crema** | 粉太粗 / 未填压 / 豆太老过干 | 对照更换豆子 | 调研磨填压、换新豆 | medium（官方列举） | `gaggia-classic-manual` |
 | 咖啡**不流出** | 滤网堵塞（粉太细/压太紧）/ 分水网需清洁 / 水箱无水 | 逐项排除 | 清洁 + 调研磨 | high（官方） | `gaggia-classic-manual` |

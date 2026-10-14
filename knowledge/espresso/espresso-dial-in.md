@@ -14,7 +14,7 @@
 |---|---|---|---|
 | Shot 流得太快 | 研磨偏粗 | **磨细** | `fellow-espresso-basics` |
 | Shot 流得太慢 | 研磨偏细 | **磨粗**（微调即有很大差别） | `fellow-espresso-basics` |
-| Shot 发酸 / 咸 / 空洞 | 研磨偏粗 | 磨细 | `fellow-espresso-basics` |
+| Shot 发酸 / 咸 / 寡淡（原文 weak，勿译「空洞」） | 研磨偏粗 | 磨细 | `fellow-espresso-basics` |
 | Shot 发苦 / 发涩 | 研磨偏细 | 磨粗 | `fellow-espresso-basics` |
 | 奶泡太多、太蓬 | 进气过多 / 卷入时机不对 | 确保形成漩涡，**更早把奶缸上提** | `fellow-espresso-basics` |
 | 出液过快 / 过慢（通用） | 研磨 | 调整研磨细度 | `lamarzocco-linea-micra-zh` |

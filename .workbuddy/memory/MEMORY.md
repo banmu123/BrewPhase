@@ -39,3 +39,7 @@
 * 纯逻辑放 `Core/`（Foundation），视图放 `Shared/Components/` 与 `Features/`。
 * 结构化事实（`fact:*`）可以自带 `AnswerMarkup` 排版标记，界面按它分层渲染；
   引用编号由回答层统一加，事实本身不写 `[n]`。
+
+## 工作流程约定（2026-10-14 起）
+
+* **修改完成 → 先 push 远程 → 再询问 GPT**：问 GPT（ChatGPT《检查黄金风味代码》对话）前必须先把改动 commit + push 到 GitHub main，并要求 GPT 先看代码库再结合报告提问。GPT 的提示词按循环执行：执行 → push → 回报 → 问下一步。

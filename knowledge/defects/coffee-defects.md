@@ -15,7 +15,7 @@
 | claim.defects.sensory-threshold-research | UC Davis Coffee Center 与 Coffee Science Foundation 合作研究**绿咖啡物理缺陷如何影响风味**；目标是**为缺陷识别建立感官阈值**，进而改进分级标准与品质评估。 | `ucdavis-research-index` |
 | claim.defects.cqi-training | CQI 的 Q 课程考核包含**绿咖啡缺陷识别**，说明缺陷识别是专业能力的可考项。 | `cqi-q-grader-faq` |
 | claim.defects.bh-qc-course | Barista Hustle 有 **Coffee Quality Control** 课程（46 课），从「**熟豆缺陷**」到「班次内饮品质量评估」。 | `barista-hustle` |
-| claim.defects.roast-level-acrid | Fellow 官方配方语境的调参方向：意式「发苦/发涩」→ 磨粗（属**冲煮变量**，非豆子缺陷）。 | `fellow-espresso-basics` |
+| claim.defects.roast-level-acrid | Fellow 官方配方语境的调参方向：意式「发苦/粉感（原文 chalky，非收敛性涩感）」→ 磨粗（属**冲煮变量**，非豆子缺陷）。 | `fellow-espresso-basics` |
 | claim.defects.gaggia-old-bean | Gaggia 故障排除：意式几乎无 crema 的可能原因包含「**咖啡太老或过干**」——这是**豆子状态**导致的缺陷表现。 | `gaggia-classic-manual` |
 
 ## 归因边界（本知识库的强制分类）

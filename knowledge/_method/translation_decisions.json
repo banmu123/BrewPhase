@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "purpose": "咖啡感官术语的中文映射决策记录（阶段五点二）。规则：感官词必须保留语境，不做脱离语境的单一『标准译法』；每条记录列出推荐译法、避免译法与理由；修正知识库 claim 层时以此为准。",
+  "updated": "2026-10-14",
+  "decisions": [
+    {
+      "term": "weak",
+      "coffee_context": "espresso",
+      "source": "fellow-espresso-basics",
+      "source_quote": "If your shot tastes sour, salty, or weak, try grinding your coffee slightly finer.",
+      "recommended_translation": ["寡淡", "浓度不足", "风味强度不足"],
+      "avoid_translation": ["空洞"],
+      "reason": "espresso 感官语境里的 weak 指风味强度不足、口感单薄（浓度维度），不等于结构上的『空空如也』；『空洞』在中文里更接近 hollow，容易让读者误解为『中段无内容』的抽象品鉴语，超出原文语义。",
+      "status": "decided",
+      "decided_by": "试点审核（batch1_pilot_audit.md）+ 人工确认链（ChatGPT 阶段五点二提示词）",
+      "decided_at": "2026-10-14",
+      "applied_to": [
+        "knowledge/espresso/espresso-dial-in.md",
+        "knowledge/troubleshooting/troubleshooting.json (rule.fellow.shot-sour)",
+        "knowledge/troubleshooting/brewing-troubleshooting.md",
+        "knowledge/extraction/extraction-science.md (claim.extraction.channeling-vendor)"
+      ]
+    },
+    {
+      "term": "chalky",
+      "coffee_context": "espresso",
+      "source": "fellow-espresso-basics",
+      "source_quote": "If your shot tastes chalky or bitter, try grinding your coffee slightly coarser.",
+      "recommended_translation": ["粉感", "粉笔感", "干燥粉质口感"],
+      "avoid_translation": ["发涩（作为 chalky 的对应词）"],
+      "reason": "chalky 描述干燥的粉质口感（powdery/chalk-like mouthfeel），与 astringent（涩感、收敛感）是两类感官：涩感是口腔收敛性刺激，粉感是颗粒/干燥质地。混译会让读者把研磨问题误判为萃取收敛性问题。中文咖啡口语里常把这类口感统称『涩』，因此回答用户时可注明『俗称发涩，严格说是粉感（chalky）』。",
+      "status": "decided",
+      "decided_by": "试点审核（batch1_pilot_audit.md）+ 人工确认链（ChatGPT 阶段五点二提示词）",
+      "decided_at": "2026-10-14",
+      "applied_to": [
+        "knowledge/espresso/espresso-dial-in.md",
+        "knowledge/troubleshooting/troubleshooting.json (rule.fellow.shot-bitter)",
+        "knowledge/troubleshooting/brewing-troubleshooting.md",
+        "knowledge/extraction/extraction-science.md (claim.extraction.channeling-vendor)",
+        "knowledge/defects/coffee-defects.md (claim.defects.roast-level-acrid)"
+      ]
+    },
+    {
+      "term": "astringent / astringency",
+      "coffee_context": "generic",
+      "source": null,
+      "recommended_translation": ["涩感", "收敛感"],
+      "avoid_translation": [],
+      "reason": "astringent 保留『涩感/收敛感』译法；它描述的是口腔收敛性刺激（多酚类引起），与 chalky（粉感）明确区分。此条仅用于防止 future 混译，当前无知识库 claim 需要修正。",
+      "status": "reference",
+      "decided_by": "阶段五点二 chalky 决策的配套区分",
+      "decided_at": "2026-10-14",
+      "applied_to": []
+    }
+  ],
+  "note": "本文件是翻译决策记录，不进入训练集；术语决策也可能被后续证据推翻——推翻时新增带新日期的记录，不删除历史记录。"
+}

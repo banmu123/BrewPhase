@@ -4,7 +4,7 @@
     "zh-Hans": "BrewPhase 知识库 v2：每条内容都可追溯到 knowledge/SOURCE_REGISTRY.json 中的具体来源，并标注权威等级、适用范围与知识实体。不是抓取的原文，而是基于来源的独立改写。涉及设备操作与健康的内容请以该型号官方手册与监管机构信息为准。",
     "en": "The BrewPhase knowledge base, v2: every entry traces back to a specific source in knowledge/SOURCE_REGISTRY.json, annotated with an authority tier, applicability and knowledge entities. Nothing here is scraped text; it is source-backed rewriting. For device operation and health, defer to that model's official manual and to regulator guidance."
   },
-  "generatedAt": "2026-09-30",
+  "generatedAt": "2026-10-14",
   "documents": [
     {
       "id": "kb.fundamentals.two-species",

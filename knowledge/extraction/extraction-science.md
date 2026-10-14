@@ -16,7 +16,7 @@
 | claim.extraction.bh-advanced-goal | Advanced Coffee Making 的教学目标是「更深入理解萃取与**均匀度（evenness）**」，并使用**咖啡折射仪（refractometer）**。 | `barista-hustle` | high |
 | claim.extraction.ucdavis-brewing-chart | UC Davis Coffee Center 用多年数据**更新了沿用数十年的 Brewing Control Chart**，新版为「Sensory and Consumer Brewing Control Chart」，结合新咖啡科学与消费者研究、更易用。 | `ucdavis-research-index` | high |
 | claim.extraction.tds-measured | UC Davis 的冷萃研究用 **TDS、titratable acidity、pH** 三类指标量化样品，说明 TDS 是行业标准测量量。 | `ucdavis-coldbrew-2025` | high |
-| claim.extraction.channeling-vendor | Fellow 官方把「shot 风味发酸/咸/空洞」归入**研磨偏粗**一类处理路径，把「发苦/发涩」归入**研磨偏细**，是厂商层面的第一近似（非完整因果模型）。 | `fellow-espresso-basics` | medium |
+| claim.extraction.channeling-vendor | Fellow 官方把「shot 风味发酸/咸/寡淡（原文 weak）」归入**研磨偏粗**一类处理路径，把「发苦/粉感（原文 chalky，非收敛性涩感）」归入**研磨偏细**，是厂商层面的第一近似（非完整因果模型）。 | `fellow-espresso-basics` | medium |
 
 ## 计划覆盖（尚缺来源，见 REVIEW_QUEUE P1）
 
