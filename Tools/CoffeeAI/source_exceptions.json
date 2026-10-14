@@ -167,6 +167,36 @@
         "evidence_ref": "Tools/CoffeeAI/review_queue/batch2a_source_exception_proposal.md 提案3 + external_evidence_packet.md（Muriama 文章核验）"
       },
       "valid_until": "2027-10-14"
+    },
+    {
+      "sourceId": "nca-aboutcoffee",
+      "usage": "fact-extraction-rewrite",
+      "reason": "NCA Storage and shelf life 页面已逐句核验（2026-10-14，external_evidence_packet.md + claim_source_audit.md）：失鲜时机/储存敌人/峰值后衰退/冷冻分歧/保鲜期表全部一致；仅独立提取与改写，不复制原文",
+      "approved_by": "banmu123 (project owner)",
+      "approved_at": "2026-10-14",
+      "scope": "仅非商业研究训练样本；claim 清单限定为 5 条 nca-freshness claims（bean-is-seed 未核验，不在范围内）；不复制原文",
+      "deployment_purposes": [
+        "noncommercial-research"
+      ],
+      "allowed_sample_ids": [
+        "b2a-009",
+        "b2a-010"
+      ],
+      "allowed_topics": [
+        "freshness"
+      ],
+      "allowed_claim_ids": [
+        "claim.freshness.nca-lose-freshness-immediately",
+        "claim.freshness.nca-storage-enemies",
+        "claim.freshness.nca-peak-decline-stale",
+        "claim.freshness.nca-freeze-divergent",
+        "claim.freshness.nca-duration-table"
+      ],
+      "license_basis": {
+        "basis": "registry-sanctioned-use",
+        "evidence_ref": "Tools/CoffeeAI/review_queue/claim_source_audit.md §一（NCA 逐句核验）+ batch2a_claim_audit_report.md"
+      },
+      "valid_until": "2027-10-14"
     }
   ]
 }
