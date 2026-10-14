@@ -1,15 +1,10 @@
 {
  "b2b-001": {
-  "verdict": "BLOCK",
+  "verdict": "PASS",
   "sources": [
    "ucdavis-coffee-center"
   ],
-  "issues": [
-   {
-    "code": "exception-out-of-scope",
-    "message": "来源 ucdavis-coffee-center 的人工例外不覆盖当前样本/用途: 样本 b2b-001 不在例外允许的样本范围 ['b2a-005', 'b2a-008'] 内"
-   }
-  ]
+  "issues": []
  },
  "b2b-002": {
   "verdict": "BLOCK",
@@ -19,7 +14,7 @@
   "issues": [
    {
     "code": "exception-out-of-scope",
-    "message": "来源 hario-v60-expert-guide 的人工例外不覆盖当前样本/用途: 样本 b2b-002 不在例外允许的样本范围 ['b1-006', 'b1-012', 'b1-013', 'b1-025', 'b2a-006'] 内"
+    "message": "来源 hario-v60-expert-guide 的人工例外不覆盖当前样本/用途: 样本主题 'pour-over diagnosis' 不在例外允许的主题范围 ['brewing-troubleshooting', 'brewing'] 内"
    }
   ]
  },
@@ -32,11 +27,11 @@
   "issues": [
    {
     "code": "exception-out-of-scope",
-    "message": "来源 hario-v60-expert-guide 的人工例外不覆盖当前样本/用途: 样本 b2b-003 不在例外允许的样本范围 ['b1-006', 'b1-012', 'b1-013', 'b1-025', 'b2a-006'] 内"
+    "message": "来源 hario-v60-expert-guide 的人工例外不覆盖当前样本/用途: 样本主题 'recipe interpretation' 不在例外允许的主题范围 ['brewing-troubleshooting', 'brewing'] 内"
    },
    {
     "code": "exception-out-of-scope",
-    "message": "来源 hario-v60-hoffmann 的人工例外不覆盖当前样本/用途: 样本 b2b-003 不在例外允许的样本范围 ['b1-025'] 内"
+    "message": "来源 hario-v60-hoffmann 的人工例外不覆盖当前样本/用途: 样本主题 'recipe interpretation' 不在例外允许的主题范围 ['uncertainty'] 内"
    }
   ]
  },
@@ -49,11 +44,7 @@
   "issues": [
    {
     "code": "exception-out-of-scope",
-    "message": "来源 ucdavis-coffee-center 的人工例外不覆盖当前样本/用途: 样本 b2b-004 不在例外允许的样本范围 ['b2a-005', 'b2a-008'] 内"
-   },
-   {
-    "code": "exception-out-of-scope",
-    "message": "来源 baratza-documents 的人工例外不覆盖当前样本/用途: 样本 b2b-004 不在例外允许的样本范围 ['b2a-006', 'b1-009', 'b1-017'] 内"
+    "message": "来源 baratza-documents 的人工例外不覆盖当前样本/用途: 样本主题 'pour-over diagnosis' 不在例外允许的主题范围 ['grinding', 'brewing'] 内"
    }
   ]
  },
@@ -66,25 +57,16 @@
   "issues": [
    {
     "code": "exception-out-of-scope",
-    "message": "来源 ucdavis-coffee-center 的人工例外不覆盖当前样本/用途: 样本 b2b-005 不在例外允许的样本范围 ['b2a-005', 'b2a-008'] 内"
-   },
-   {
-    "code": "exception-out-of-scope",
-    "message": "来源 nca-aboutcoffee 的人工例外不覆盖当前样本/用途: 样本 b2b-005 不在例外允许的样本范围 ['b2a-009', 'b2a-010'] 内"
+    "message": "来源 ucdavis-coffee-center 的人工例外不覆盖当前样本/用途: 样本主题 'freshness' 不在例外允许的主题范围 ['pour-over diagnosis'] 内"
    }
   ]
  },
  "b2b-006": {
-  "verdict": "BLOCK",
+  "verdict": "PASS",
   "sources": [
    "fellow-espresso-basics"
   ],
-  "issues": [
-   {
-    "code": "exception-out-of-scope",
-    "message": "来源 fellow-espresso-basics 的人工例外不覆盖当前样本/用途: 样本 b2b-006 不在例外允许的样本范围 ['b1-014', 'b1-015', 'b1-016', 'b2a-001', 'b2a-002', 'b2a-003', 'b2a-004'] 内"
-   }
-  ]
+  "issues": []
  },
  "b2b-007": {
   "verdict": "PASS",
@@ -101,7 +83,7 @@
   "issues": [
    {
     "code": "exception-out-of-scope",
-    "message": "来源 ucdavis-coffee-center 的人工例外不覆盖当前样本/用途: 样本 b2b-008 不在例外允许的样本范围 ['b2a-005', 'b2a-008'] 内"
+    "message": "来源 ucdavis-coffee-center 的人工例外不覆盖当前样本/用途: 样本主题 'sensory' 不在例外允许的主题范围 ['pour-over diagnosis'] 内"
    }
   ]
  }
