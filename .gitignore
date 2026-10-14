@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+
+# Python（仅限本仓库内）
+__pycache__/
+*.pyc
+
+# CommitBrew Coffee AI —— 训练产物不入公开仓库（模型权重/缓存/日志/评测输出/派生数据）
+Tools/CoffeeAI/runs/
+Tools/CoffeeAI/data/splits/
+Tools/CoffeeAI/**/*.safetensors
+Tools/CoffeeAI/**/*.gguf
