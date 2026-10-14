@@ -24,7 +24,7 @@
 | claim.health.efsa-daily-400 | EFSA：**每日 ≤400 mg**（约 5.7 mg/kg bw/天）不引起非孕健康成人安全担忧。 | `efsa-caffeine-opinion` | 非孕成人 |
 | claim.health.efsa-pregnancy-200 | EFSA：孕/哺乳期妇女每日 ≤200 mg 不引起对胎儿/母乳婴儿的安全担忧。 | `efsa-caffeine-opinion` | 孕期/哺乳 |
 | claim.health.efsa-children-3mg | EFSA：儿童青少年的**习惯性**摄入可按 **3 mg/kg bw/天**；该水平亦可用于急性的单次剂量推导。 | `efsa-caffeine-opinion` | 儿童/青少年 |
-| claim.health.efsa-sleep-100 | EFSA：**单次 100 mg**（约 1.4 mg/kg bw）**可能影响部分成人的睡眠时长与模式**，尤其在临睡前进食时。 | `efsa-caffeine-opinion` | 成人 |
+| ~~claim.health.efsa-sleep-100~~ | **已移除（2026-10-14，阶段六点六-B）**：EFSA 摘要页核验时未逐句核到「单次 100mg 影响睡眠」，属来源不确定的健康阈值——按「健康内容标准更高：宁愿少一个知识点，也不留来源不确定的数字」原则删除；睡眠敏感话题在产品中只作无数字的个体差异表述（P/I 层）。详见 `Tools/CoffeeAI/review_queue/b1_029_finalization_report.md`。 | — | — |
 | claim.health.efsa-exercise | EFSA：单次 ≤200 mg 在**运动前 2 小时内**摄入，在正常环境条件下不引起安全担忧。 | `efsa-caffeine-opinion` | 成人 |
 | claim.health.efsa-alcohol | EFSA：酒精（至 0.65 g/kg bw，约 BAC 0.08%）不影响 ≤200 mg 单次咖啡因的安全性；且该剂量下咖啡因**不太可能掩盖**酒精中毒的主观知觉。 | `efsa-caffeine-opinion` | 成人 |
 | claim.health.efsa-refs | EFSA 主题页给出参考含量：espresso(60ml)≈80mg、滤泡咖啡(200ml)≈90mg、红茶(220ml)≈50mg、可乐(355ml)≈40mg、能量饮料(250ml)≈80mg、黑巧克力(50g)≈25mg、牛奶巧克力(50g)≈10mg。 | `efsa-caffeine-topic` | 全体 |

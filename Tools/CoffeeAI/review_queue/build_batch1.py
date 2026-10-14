@@ -225,7 +225,9 @@ add("b1-028", "g-b1-e-espresso-temp", "uncertainty", "knowledge/CONFLICTS.md",
     "冲突样本：拒绝伪标准值。")
 add("b1-029", "g-b1-s-caffeine", "health", "knowledge/health/coffee-health.md",
     ["fda-caffeine", "efsa-caffeine-opinion"],
-    ["claim.health.fda-400", "claim.health.efsa-daily-400", "claim.health.fda-variance", "claim.health.efsa-sleep-100", "claim.health.fda-pregnancy-refer"],
+    # 阶段六点六-B：efsa-sleep-100 已从知识库移除（来源不确定的健康阈值），
+    # claim_ids 同步移除；睡眠敏感仅保留无数字的个体差异表述（P/I 层）
+    ["claim.health.fda-400", "claim.health.efsa-daily-400", "claim.health.fda-variance", "claim.health.fda-pregnancy-refer"],
     "每天喝多少咖啡是安全的？",
     "可以引用官方机构的参考口径：FDA 认为，对多数健康成人，每天 400mg 咖啡因一般不与负面影响相关；EFSA 对非孕健康成人的口径同样是每日不超过 400mg。但「多少算多」因人而异——取决于体重、用药、健康状况与个体敏感性；个体敏感性差异也很大——部分人群即使较低摄入量也可能影响睡眠，具体阈值因人而异（FDA 与 EFSA 都建议根据自身反应调整摄入）。孕期、备孕或哺乳期的人应咨询医疗人员是否需要限制。以上是官方机构对一般人群的参考值，不构成个人健康建议；含咖啡因的饮料不止咖啡，计算摄入时要把其它来源也算进去。",
     "健康类样本：只引官方口径 + 强个体差异 + 建议就医。")

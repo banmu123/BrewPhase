@@ -23,6 +23,10 @@
 
 ## 官方配方对照（同一品牌内部亦不同 → 支撑 conflict.v60.official-recipes-differ）
 
+| claim id | 事实 | sourceId |
+|---|---|---|
+| conflict.v60.official-recipes-differ | 同一品牌（Hario）体系内的 V60 配方**并不统一**：官方 Expert 指南（15g/250g、92–96°C、约 2.5 min）与署名专家 Hoffmann 配方（30g/500mL、97°C、约 2:00–3:00）在粉水比、水温与总时长上均不同——不存在唯一的「标准 V60 配方」，配方是「来源+作者+器具+语境」的组合。 | `hario-v60-expert-guide`、`hario-v60-hoffmann`（对照表数值全部来自两来源已核验页面） |
+
 | 来源 | 器具 | 粉/水 | 水温 | 时间 | 等级 |
 |---|---|---|---|---|---|
 | `hario-v60-expert-guide` | V60 02 | 15g / 250g | 92–96°C | ≈2.5 min | Tier 2 |
