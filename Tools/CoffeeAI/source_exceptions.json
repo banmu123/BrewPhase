@@ -74,6 +74,99 @@
         "evidence_ref": "Tools/CoffeeAI/review_queue/source_exception_proposal.md（方案A，负责人批准）+ Tools/CoffeeAI/review_queue/external_evidence_packet.md §2"
       },
       "valid_until": "2027-10-14"
+    },
+    {
+      "sourceId": "gaggia-classic-manual",
+      "usage": "fact-extraction-rewrite",
+      "reason": "Gaggia Classic 2019 官方手册（b1-026 审核链核验除垢冲突口径；crema/豆子状态 claim 出自本手册）；仅独立提取与改写，不复制原文",
+      "approved_by": "banmu123 (project owner)",
+      "approved_at": "2026-10-14",
+      "scope": "仅非商业研究训练样本；claim 清单限定；不复制原文；绑定 2019 版 Rev-00",
+      "deployment_purposes": [
+        "noncommercial-research"
+      ],
+      "allowed_sample_ids": [
+        "b2a-004",
+        "b1-026"
+      ],
+      "allowed_topics": [
+        "espresso",
+        "cleaning-maintenance"
+      ],
+      "allowed_claim_ids": [
+        "rule.gaggia.no-crema",
+        "conflict.gaggia.classic-descale-interval",
+        "claim.water.gaggia-vinegar-ban"
+      ],
+      "license_basis": {
+        "basis": "registry-sanctioned-use",
+        "evidence_ref": "Tools/CoffeeAI/review_queue/batch2a_source_exception_proposal.md 提案1（负责人批准）"
+      },
+      "valid_until": "2027-10-14"
+    },
+    {
+      "sourceId": "baratza-documents",
+      "usage": "fact-extraction-rewrite",
+      "reason": "Baratza 官方文档库（b1-009/017 审核链核验 manual-not-recipe 表述一致）；仅独立提取与改写，不复制原文",
+      "approved_by": "banmu123 (project owner)",
+      "approved_at": "2026-10-14",
+      "scope": "仅非商业研究训练样本；claim 清单限定；不复制原文；核验需记录具体文档标题与日期",
+      "deployment_purposes": [
+        "noncommercial-research"
+      ],
+      "allowed_sample_ids": [
+        "b2a-006",
+        "b1-009",
+        "b1-017"
+      ],
+      "allowed_topics": [
+        "grinding",
+        "brewing"
+      ],
+      "allowed_claim_ids": [
+        "claim.grinding.manual-not-recipe"
+      ],
+      "license_basis": {
+        "basis": "registry-sanctioned-use",
+        "evidence_ref": "Tools/CoffeeAI/review_queue/batch2a_source_exception_proposal.md 提案2（负责人批准）"
+      },
+      "valid_until": "2027-10-14"
+    },
+    {
+      "sourceId": "fellow-brew-talks",
+      "usage": "fact-extraction-rewrite",
+      "reason": "Fellow Brew Talks 博客（列表页+Muriama Dark Roast 批次文章 2026-10-14 逐句核验：5-7 days off roast 逐字一致）；仅独立提取与改写，不复制原文",
+      "approved_by": "banmu123 (project owner)",
+      "approved_at": "2026-10-14",
+      "scope": "仅非商业研究训练样本；claim 清单限定为已核验条目（light-roast-rest-4-6w 未核验，不在范围内）；不复制原文",
+      "deployment_purposes": [
+        "noncommercial-research"
+      ],
+      "allowed_sample_ids": [
+        "b2a-009",
+        "b1-019",
+        "b1-020",
+        "b1-023",
+        "b1-028",
+        "b1-009"
+      ],
+      "allowed_topics": [
+        "freshness",
+        "uncertainty",
+        "espresso",
+        "cold-brew",
+        "brewing"
+      ],
+      "allowed_claim_ids": [
+        "claim.freshness.dark-roast-rest-5-7d",
+        "claim.freshness.resting-varies-by-roast",
+        "claim.coldbrew.roast-x-temp-interaction"
+      ],
+      "license_basis": {
+        "basis": "registry-sanctioned-use",
+        "evidence_ref": "Tools/CoffeeAI/review_queue/batch2a_source_exception_proposal.md 提案3 + external_evidence_packet.md（Muriama 文章核验）"
+      },
+      "valid_until": "2027-10-14"
     }
   ]
 }
