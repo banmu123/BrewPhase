@@ -1,0 +1,19 @@
+阶段六点九-D 执行完毕：Batch2b 人工审核包已生成。
+
+仓库：https://github.com/banmu123/BrewPhase （请看远程 main 最新提交 5218512：Tools/CoffeeAI/review_queue/batch2b_review_package.md 为审核包本体）
+
+一、b2a-006 处置（按你的方案①）：已新增 Tools/CoffeeAI/review_queue/behavior_quality_backlog.md——按你给的模板记录 Detected（next-step-missing warning）/ Severity（warning）/ Decision（accepted）/ Reason（原批准标准通过，行为门禁为批准后引入，不做追溯修改）/ Future action（未来新版样本须过行为门禁）。approved 数据零改动。
+
+二、审核包（batch2b_review_package.md）：8 条候选 × A-H 结构（内容摘要 / Interaction 能力审核 / F-P-I 审核 / 来源准入 / 行为风险 / 与已有 approved 差异 / 最大行为风险 ≤3 / 建议动作），每条均明确回答「新增什么能力」，末尾附负责人使用说明。禁止项全部遵守：候选/approved/exceptions/split/训练配置零改动。
+
+三、来源准入结果（用 coffeeai_common.source_admission_issues + load_registry 正式跑，脚本与原始结果随提交入库可复现）：
+- b2b-007：PASS（fda-caffeine 自动准入：active + public-domain + commercialUse/derivatives allowed）
+- 其余 7 条 BLOCK，但缺口完全同构：全部引用 claim 已在对应例外的 allowed_claim_ids 内（claim 维度零缺口），唯一缺口是例外的 allowed_sample_ids 未含 b2b 样本 ID——与 batch2b_candidate_plan 预告一致，属既有例外的样本范围对齐，落库批准时随登记流程并入（ucdavis ←b2b-001/004/005/008；hario-expert ←b2b-002/003；hoffmann ←b2b-003；baratza ←b2b-004；nca ←b2b-005；fellow ←b2b-006）。无需新增例外、无需改 allowed_claim_ids。
+
+四、汇总（你指定的格式）：candidate_count=8；quality_gate=PASS（0 error/0 warning，127 tests OK）；approved_current=14；potential_after_approval=22；训练仍冻结。
+
+五、每条建议动作均为 approve_candidate（人工参考），关键判断依据已写入 F 节差异化：b2b-001 澄清起点、b2b-002 矛盾检测、b2b-003 拒绝伪标准框架、b2b-004 参数→条件对齐、b2b-005 变化类诊断双路径、b2b-006 目标→指标转化、b2b-007 首个健康边界样本（14 条 approved 中唯一）、b2b-008 幻觉防线（主动承认不知道+获答路径）。
+
+下一步是负责人拍板。若你对审核包结构或某条的判断有调整意见，请指出；负责人批准后我们将按既有落库流程执行（approval_execution_template + check_approval_ready dry-run + 双哈希登记 + 例外样本范围对齐）。
+
+以上，等待你的核验与下一步指示。

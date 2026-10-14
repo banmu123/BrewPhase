@@ -1,0 +1,25 @@
+阶段六点九-C 执行完毕：Batch2b Quality Gate 行为能力增强。
+
+仓库：https://github.com/banmu123/BrewPhase （请看远程 main 最新提交 a0957de：Tools/CoffeeAI/review_queue/batch2b_quality_gate_report.md 为完整报告，check_candidate_quality.py 与 test_coffeeai.py 为本轮仅有的两个工程文件改动）
+
+一、新增规则（你指定的 5 项全部落地，外加 case5 所需的独立健康边界规则）：
+1. missing_information_check → error：interaction_skill ∈ {clarification / uncertainty_handling / multi_variable_reasoning / condition_based_advice}（你说的 clarification/uncertainty/diagnosis 三类映射到本项目枚举）的回答缺「还需要知道」或等价信息收集段即 error
+2. direct_parameter_answer_check → error：用户消息含参数请求信号（黄金比例/参数多少/多少度/卡在…共 20 个模式）且回答无来源语境/条件限制/多方案标记
+3. next_step_recommendation_check → warning：诊断类回答只解释原因、无下一步行动建议
+4. uncertainty_expression_check → error：uncertainty_handling 样本必须含「当前信息不足/需要更多信息/无法判断唯一原因」等限定表达
+5. strong_claim_context_check（overconfidence）：强断言词表扩展至 11 个（一定是/肯定是/唯一原因/一定有效/黄金参数/黄金比例/最佳参数/最佳比例/必然/永远/一定），按你指定的语义判定：肯定句式推荐（「黄金参数是 X」）→ error 阻断；否定/纠偏语境 → pass；无语境 → warning 交人工。--json 输出 samples[].strong_claim_contexts（keyword/context/severity/verdict），已正式写入 gate，不再需要每次人工解释
+附：health_boundary_check → error：topic=health 但回答无非医疗建议边界声明（支撑 case5）
+
+兼容性：行为类检查只对声明了 interaction_skill 的样本（Batch2b 起）生效，Batch2a 及更早样本自动跳过，历史数据回归不受影响。
+
+二、测试：118 → 127 tests OK（新增 TestBatch2bInteractionQuality 9 用例，你的 7 个 case 全部覆盖 + next-step warning case + 真实草稿回归 case）。build_kb --check OK。
+
+三、b2b-001~008 检查结果：PASSED（checked=8, errors=0, warnings=0）。六点九-B 报告中请你确认的 3 处否定语境禁用词（b2b-003「没有……黄金参数」、b2b-001/008「无法判断唯一原因」），现在由 strong_claim_context_check 自动判定为 negation-context pass，无需人工解释——验证了你的语义判定设计。
+
+四、需要你裁定的一个发现：Batch2a 历史草稿回归 0 error，但新检查在已 approved 的 b2a-006 上发现 1 条 next-step-missing warning（诊断类回答缺下一步行动建议）。历史数据本轮未动——请指示：① 接受为已知历史问题，仅约束未来批次；② 还是需要在六点九-D 之后安排一次 b2a-006 的行为补写？我们倾向 ①（approved 数据不动，教训写入规范）。
+
+五、未修改文件证明：batch2b_candidates_draft.jsonl（候选内容零改动）、approved 文件、source_exceptions.json、review_status、split、knowledge/** 全部未触碰；本轮仅改 check_candidate_quality.py（只读工具）+ test_coffeeai.py（+9 测试）+ 新增 batch2b_quality_gate_report.md。
+
+请核验后给出指示。如无调整，建议进入阶段六点九-D：Batch2b 人工审核包生成。
+
+以上，等待你的核验与下一步指示。

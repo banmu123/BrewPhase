@@ -1,0 +1,29 @@
+阶段六点九-B 执行完毕：Batch2b 草稿生成（8 条）。
+
+仓库：https://github.com/banmu123/BrewPhase （请先看远程 main 最新提交 2491311 与其中文件，再结合本报告核验）
+
+产出（提交 2491311，已推送）：
+1. Tools/CoffeeAI/review_queue/batch2b_candidates_draft.jsonl —— 8 条草稿（b2b-001~008），按你的要求分两批生成：先低风险 001/002/004/006（各跑门禁），后高风险 003/005/007/008（追加后全量复跑门禁）
+2. Tools/CoffeeAI/review_queue/batch2b_draft_generation_report.md —— 完整报告（8 条生成情况/门禁结果/风险分类/未修改文件证明）
+3. build_batch2b_draft_batch1.py / build_batch2b_draft_batch2.py —— 可复跑生成脚本
+
+要点核对（对照你的六点九-B 提示词）：
+- 附加规则 1–6 全部落实：首句判断边界（如 b2b-001 首句「仅凭『酸』这个描述还不能判断具体原因」）；每条含「还需要知道」信息收集段；建议全部条件化（「如果观察到 X，可以尝试 Y；如果情况不同，需要重新判断」），无万能调整动作作唯一建议
+- b2b-003 特殊规则：未回答「推荐 X:1」；说明配方存在语境；提供两个已核验起点——Hario Expert 指南 15g/250g、约 92–96°C 与 Hoffmann 30g/500mL、97°C，均带来源与语境；Hoffmann 明确标注为署名作者方法、非行业标准
+- b2b-007 特殊规则：FDA 400mg 参考口径 + 个体差异声明 + 非医疗建议边界三要素齐备；未引用任何 efsa-* claim（只用 fda-caffeine）
+- b2b-008 特殊规则：明确「当前信息不足」；列出所需信息（产地/处理法/烘焙度/干香湿香）；零编造——无化合物/温度/萃取率机理表述；「不知道」表述为能力而非缺陷
+- 新元数据 100% 落位：interaction_skill（严格枚举内取值）/ missing_information_handling / reasoning_level / risk_notes / training_value
+- claim_ids 与 batch2b_candidate_plan.md 逐条比对一致（14 个 claim 全部已核验存在于知识库）；F 有 claim_id、P 带经验标记、I 带限定词
+- 术语冻结遵守：weak→寡淡、chalky→粉感，avoid 词「空洞」「发涩」零出现
+
+验证结果：
+- 质量门禁 check_candidate_quality.py：PASSED（checked=8, errors=0, warnings=0）。批1 单独跑时曾有 1 条 warning（b2b-002「不必然」命中强断言词扫描），已改写为「研磨只是待验证的方向之一」后清零
+- 回归：118 tests OK（Python 3.13.12）；build_kb --check OK（51 sources / 122 entities / 19 docs）
+- 禁用表述自检：黄金参数/最佳比例/一定有效/唯一原因 四词全文扫描，3 处命中均为否定/边界语境且与已验收 plan 原文措辞一致（plan answer_structure 原句「没有适用于所有豆子的黄金参数」、plan 规则原文「允许『当前信息不足，无法判断唯一原因』」），无一处作肯定答案使用——请确认此处理是否可接受
+- 未修改文件证明：approved 文件、approved_batch_manifest*、source_exceptions.json、review_status、split、knowledge/** 全部未触碰；build_kb 以 --check 模式运行（no file written）
+
+遗留事项（批准落库时处理，非本轮动作）：b2b-002/003 落库登记时需把样本 ID 并入 hario-v60-expert-guide / hario-v60-hoffmann 例外的 allowed_sample_ids（属既有例外的样本范围对齐，非新授权）。
+
+请核验后给出下一步指示。如无调整，建议按你预告进入阶段六点九-C（Batch2b quality gate 规则增强复盘：① 无信息追问 ② 直接给参数 ③ 缺下一步建议 ④ 过度确定词）。
+
+以上，等待你的核验与下一步指示。

@@ -40,54 +40,50 @@
 - **消息文件惯例**：`/tmp/gpt_<阶段>_done.txt`（我方报告）、`/tmp/gpt_next<N>.md`（GPT 回复）
 - **任务空间**：每次交互独立 taskSpace，结束 `task.finish({ keep: [] })`
 
-## 三、当前状态快照（2026-10-14 21:00）
+## 三、当前状态快照（2026-10-14 22:20，六点九-D 完成）
 
 | 指标 | 值 |
 |---|---|
 | approved | **14**（batch1 5：b1-012/013/014/015/016；batch2a 9：b2a-001/002/003/004/005/006/008/009/010） |
-| 例外 | **9**（fellow-espresso-basics / hario-v60-expert-guide / gaggia / baratza / fellow-brew-talks / nca / stumptown / hario-v60-hoffmann / ucdavis——全部 noncommercial-research + fact-extraction-rewrite + claim 限定） |
+| 例外 | **9**（同前；b2b 落库时仅需把样本 ID 并入既有例外 allowed_sample_ids，claim 维度零缺口） |
 | 合并划分 | train 11 / valid 2 / test 1（无泄漏） |
-| 测试 | **118 tests OK**（Python 3.13.12） |
+| 测试 | **127 tests OK**（六点九-C 新增 TestBatch2bInteractionQuality 9 用例） |
 | 训练 | **冻结**（阈值 approved≥25 / train≥15 未达；未装 mlx-lm、未下模型） |
-| drafts | batch2a 9 条（已全部落库批准）；**batch2b 0/8（六点九-B 被中断，未写入任何文件）** |
-| Git | main = origin/main = `32e1863`（全部已推送） |
+| drafts | batch2a 9 条（已落库批准）；**batch2b 8/8 草稿已生成并过门禁（0/0），待负责人拍板** |
+| Git | main = origin/main = `5218512`（六点九-B/C/D 三个提交：2491311 / a0957de / 5218512，全部已推送） |
 
-## 四、中断点与恢复步骤（当前待办：阶段六点九-B）
+## 四、中断点与恢复步骤（当前待办：负责人拍板 → 六点九-E 落库）
 
-**中断点**：六点九-B（Batch2b 草稿生成）刚开始写第一批（b2b-001/002）即被中断，
-**batch2b_candidates_draft.jsonl 未创建**——从零开始即可，无半成品。
+**中断点**：六点九-B（草稿 8 条）✅ → 六点九-C（门禁行为增强）✅ → 六点九-D（审核包）✅
+→ **等待负责人（用户）按拍板清单批准 Batch2b**。GPT 已确认「审核包达到拍板标准，
+无需返工」。
 
-**GPT 六点九-B 提示词要点**（全文备份：本机 `/tmp/gpt_next24.md` 与
-`/tmp/gpt_next24_backup.md`）：
+**GPT 拍板清单要点**（全文：`gpt_replies/gpt_reply_69d_approval_69e_prompt.md`）：
+- A. 8 条全部建议 approve（b2b-008 最高优先级；b2b-003 次之；b2b-001/005 构成诊断入口）
+- B. 例外扩展**仅增加 allowed_sample_ids**（不动 allowed_claim_ids/topics/新来源授权）：
+  ucdavis ←b2b-001/004/005/008；hario-v60-expert-guide ←b2b-002/003；
+  hario-v60-hoffmann ←b2b-003；baratza-documents ←b2b-004；nca-aboutcoffee ←b2b-005；
+  fellow-espresso-basics ←b2b-006（GPT 清单写作 fellow-brew-talks 系笔误，以 plan
+  与例外表为准：fellow-espresso-basics）
+- C. 训练保持冻结（mlx-lm 未装、模型未下载）
+- **正确顺序（GPT 强调，不要提前改例外表）**：负责人批准 → 例外 allowed_sample_ids
+  扩展 → 落库 → check_approval_ready
 
-- 输出 `Tools/CoffeeAI/review_queue/batch2b_candidates_draft.jsonl`，8 条：
-  b2b-001~008（选题设计见 `batch2b_candidate_plan.md`，claim 已全部验证存在）
-- **分两批生成**：第一批低风险 b2b-001/002/004/006（验证追问能力/参数边界）→
-  第二批高风险 b2b-003/005/007/008（重点人工检查：是否像普通 ChatGPT 回答 vs 体现
-  BrewPhase 判断框架）
-- 每条结构 **A 直接结论 → B 原因解释 → C 条件限制 → D 下一步建议**；第一段必须避免
-  单因素结论（规则 1：第一句体现判断边界）；必须包含「还需要知道」信息收集（规则 2）；
-  禁止万能调整动作作唯一建议（规则 3）
-- b2b-003 特殊：不能回答「推荐 15:1」——说明配方存在语境、可提供起点（Hario 官方
-  15g/250g 与 Hoffmann 30g/500mL 均已核验）但不是所有咖啡的最佳答案
-- b2b-007 特殊：健康回答必须含参考信息+个体差异+非医疗建议边界；禁健康承诺/疾病判断
-- b2b-008 特殊（最高风险）：必须明确「当前信息不足」+列所需信息（产地/处理法/烘焙度/
-  冲煮方式）；**禁止编造**茉莉香的化合物/温度/萃取率机理
-- 元数据字段：`interaction_skill`（枚举：clarification / multi_variable_reasoning /
-  uncertainty_handling / boundary_setting / condition_based_advice）、
-  `missing_information_handling`、`reasoning_level`、`risk_notes`、`training_value`
-- F 必须有 claim_id；P 标经验/常见做法；I 用「可能/通常/倾向于/需要进一步确认」限定词；
-  禁止：黄金参数 / 最佳比例 / 一定有效 / 唯一原因
-- 完成后：`check_candidate_quality.py --input batch2b_candidates_draft.jsonl`（门禁）+
-  118 tests + build_kb --check + 输出报告 `batch2b_draft_generation_report.md`
-  （8 条生成情况/门禁结果/风险分类/未修改文件证明）→ push → 报告 GPT
-- 禁令：不批准、不写 approved 文件、不更新 review_status、不改例外表、不 split、不训练
-- GPT 预告的下一阶段：**六点九-C 门禁规则增强复盘**（新增检查：无信息追问/直接给参数/
-  缺下一步建议/过度确定词）——草稿完成后再向 GPT 确认
+**六点九-E 提示词要点**（负责人批准后执行；全文同上存档 + `/tmp/gpt_next27.md`）：
+① 更新例外 allowed_sample_ids → ② candidates.jsonl draft→approved → ③ meta 写
+reviewed_by/reviewed_at/content_sha256/record_sha256 → ④ manifest: batch2b-approved-r1
+→ ⑤ check_approval_ready → ⑥ validate --for-training → ⑦ split → ⑧ 更新数量报告。
+禁止：自动批准剩余候选、改知识库、开始训练。
 
-**恢复步骤**：① 读本文档与 `batch2b_candidate_plan.md` → ② 按上述要点生成
-`batch2b_candidates_draft.jsonl`（先批 1 后批 2，各跑门禁）→ ③ 回归 + push →
-④ 报告 GPT（附仓库地址）→ ⑤ 按回复继续。
+**恢复步骤**：① 读本文档与 `batch2b_review_package.md` → ② 等负责人对 8 条拍板 →
+③ 按六点九-E 要点执行落库 → ④ 回归（127 tests + build_kb --check + 门禁）→ push →
+⑤ 报告 GPT（附仓库地址）→ ⑥ 按回复继续（GPT 预告：达到阈值后做第一次 mlx-lm
+dry-run，不要无限扩 Batch2c）。
+
+**经验教训（本会话新增）**：BSD grep 交替用 `grep -E 'a|b'`；ego-browser 复杂脚本
+用 heredoc 传；ChatGPT 页面 WS 断连会导致轮询空等——轮询 90 秒无变化自动 reload
+一次即可自愈；来源准入检查必须用 `coffeeai_common.load_registry()`（展平嵌套
+license），不要直接读 SOURCE_REGISTRY.json 原始结构。
 
 ## 五、阶段历史索引（全部已推送 GitHub main）
 
@@ -103,6 +99,7 @@
 | 六点六-A/B/C/D | UC Davis 5 claim → b1-029 最终化 + Hoffmann 提案 → b1-006 提案 + UC Davis 提案 + 恢复报告 → **例外落地 6→9** + b2a-005/008 草稿 | 7af461e / a6586e4 / 2c0b6b3 / 4c95554 |
 | 六点七/六点八 | 第二轮审核包（8 条 A-H）→ **b2a-005/008 批准落库（approved 14）** | d00f7dd / d283bcc |
 | 六点九 | Batch2b 选题设计（8 条，18 claim 验证存在）→ **六点九-B 草稿生成（待恢复）** | 32e1863 / — |
+| 六点九-B/C/D | **草稿 8 条生成（2491311）→ 门禁行为增强 +9 测试（a0957de）→ 人工审核包 + b2a-006 审计记录（5218512）**——GPT 三轮全部通过，待负责人拍板 | 2491311 / a0957de / 5218512 |
 
 ## 六、关键决策记录（GPT 已拍板，供后续引用）
 
