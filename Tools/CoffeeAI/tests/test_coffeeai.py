@@ -1837,6 +1837,127 @@ class BoundarySchemaTests(unittest.TestCase):
         self.assertTrue(ok, reasons)
 
 
+class QualityGateTests(unittest.TestCase):
+    """阶段六点三：候选写作质量门禁（术语冻结/F-P-I/诊断链/数字扫描）。"""
+
+    DRAFT_TOOL = COFFEEAI / "review_queue" / "check_candidate_quality.py"
+
+    def _run_gate(self, rows, expect=None):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "draft.jsonl"
+            p.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n",
+                         encoding="utf-8")
+            return self._gate_cmd(p, expect)
+
+    def _gate_cmd(self, input_path, expect=None):
+        proc = subprocess.run([PY, str(self.DRAFT_TOOL), "--input", str(input_path), "--json"],
+                              capture_output=True, text=True, timeout=120, cwd=str(REPO))
+        if expect is not None:
+            self.assertEqual(proc.returncode, expect,
+                             f"exit={proc.returncode}\n--- STDOUT ---\n{proc.stdout}\n--- STDERR ---\n{proc.stderr}")
+        return proc
+
+    def _row(self, **overrides):
+        row = {
+            "sample_id": "t-001", "topic": "espresso",
+            "messages": [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "q?"},
+                {"role": "assistant",
+                 "content": "Fellow 官方口径把发苦对应研磨偏细，方向磨粗。验证方法是观察流速。"},
+            ],
+            "claim_ids": ["rule.fellow.shot-bitter"], "source_ids": ["fellow-espresso-basics"],
+            "reasoning_level": "F",
+        }
+        row.update(overrides)
+        return row
+
+    def test_avoid_word_kongdong_fails(self):
+        """用例 1：含 avoid 词「空洞」必须失败。"""
+        row = self._row()
+        row["messages"][-1]["content"] += " 中段空洞通常是萃取不足。"
+        proc = self._run_gate([row], expect=1)
+        self.assertEqual(proc.returncode, 1)
+        report = json.loads(proc.stdout)
+        self.assertFalse(report["passed"])
+        codes = [i["code"] for s in report["samples"] for i in s["issues"]]
+        self.assertIn("term-freeze-violation", codes)
+        msg = " ".join(i["message"] for s in report["samples"] for i in s["issues"])
+        self.assertIn("空洞", msg)
+        self.assertIn("寡淡", msg, "应给出推荐替代表达")
+
+    def test_fase_as_chalky_translation_fails(self):
+        """用例 2：chalky 误写成「发涩」（非解释性上下文）必须失败。"""
+        row = self._row()
+        row["messages"][-1]["content"] += " 这就是发涩的来源。"
+        proc = self._run_gate([row], expect=1)
+        self.assertEqual(proc.returncode, 1)
+        report = json.loads(proc.stdout)
+        codes = [i["code"] for s in report["samples"] for i in s["issues"]]
+        self.assertIn("term-freeze-violation", codes)
+
+    def test_explanatory_fase_mention_exempt(self):
+        """解释性提及（俗称发涩，严格说是粉感）豁免——b1-015 补丁模式。"""
+        row = self._row()
+        row["messages"][-1]["content"] += " 粉感（原文 chalky，俗称发涩，严格说是干燥粉质口感）。"
+        proc = self._run_gate([row])
+        self.assertEqual(proc.returncode, 0)
+        report = json.loads(proc.stdout)
+        self.assertTrue(report["passed"])
+
+    def test_correct_fenggan_passes(self):
+        """用例 3：正确使用「粉感」通过。"""
+        row = self._row()
+        row["messages"][-1]["content"] += " 粉感是干燥粉质口感。"
+        proc = self._run_gate([row])
+        self.assertEqual(proc.returncode, 0)
+
+    def test_f_without_claim_fails(self):
+        """用例 4：reasoning_level 含 F 但 claim_ids 为空必须失败。"""
+        row = self._row(claim_ids=[])
+        proc = self._run_gate([row], expect=1)
+        self.assertEqual(proc.returncode, 1)
+        codes = [i["code"] for s in json.loads(proc.stdout)["samples"] for i in s["issues"]]
+        self.assertIn("f-without-claim", codes)
+
+    def test_i_without_qualifier_fails(self):
+        """用例 5：reasoning_level 含 I 但回答无限定词必须失败。"""
+        row = self._row()
+        row["reasoning_level"] = "F+I"
+        row["messages"][-1]["content"] = "Fellow 官方口径把发苦对应研磨偏细。烘焙度也有关。验证方法是观察流速。"
+        proc = self._run_gate([row], expect=1)
+        self.assertEqual(proc.returncode, 1)
+        codes = [i["code"] for s in json.loads(proc.stdout)["samples"] for i in s["issues"]]
+        self.assertIn("i-without-qualifier", codes)
+
+    def test_diagnostic_chain_missing_warning(self):
+        """用例 6：诊断类主题回答缺少验证步骤 → warning（不 error）。"""
+        row = self._row()
+        row["messages"][-1]["content"] = "Fellow 官方口径把发苦对应研磨偏细，方向是磨粗。"
+        proc = self._run_gate([row])
+        report = json.loads(proc.stdout)
+        codes = [i["code"] for s in report["samples"] for i in s["issues"]]
+        self.assertIn("diagnostic-chain-incomplete", codes)
+        self.assertTrue(report["passed"], "warning 不阻断")
+        self.assertEqual(report["errors"], 0)
+
+    def test_numeric_without_claim_fails(self):
+        """用例 7：回答含数字但 claim_ids 为空 → error。"""
+        row = self._row(claim_ids=[])
+        row["messages"][-1]["content"] += " 水温用 92°C 比较稳妥。"
+        proc = self._run_gate([row], expect=1)
+        self.assertEqual(proc.returncode, 1)
+        codes = [i["code"] for s in json.loads(proc.stdout)["samples"] for i in s["issues"]]
+        self.assertIn("numeric-claim-missing-context", codes)
+
+    def test_real_batch2a_drafts_pass(self):
+        """回归：真实 Batch2a 草稿（b2a-002/003）必须通过门禁。"""
+        proc = self._gate_cmd(COFFEEAI / "review_queue" / "batch2a_candidates_draft.jsonl", expect=0)
+        report = json.loads(proc.stdout)
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["errors"], 0)
+
+
 class RepoIntegrityTests(unittest.TestCase):
     def test_existing_kb_build_check_still_passes(self):
         """验收 9：不影响既有工程——知识库校验脚本仍通过。"""
