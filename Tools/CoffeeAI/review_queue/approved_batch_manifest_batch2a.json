@@ -1,0 +1,11 @@
+{
+ "batch_id": "batch2a-approved-r1",
+ "created_at": "2026-10-14",
+ "approved_samples": ["b2a-001", "b2a-002", "b2a-003", "b2a-004", "b2a-006", "b2a-009", "b2a-010"],
+ "approved_by": "banmu123 (project owner)",
+ "approved_at": "2026-10-14",
+ "deployment_purpose": "noncommercial-research",
+ "decision_reference": "Tools/CoffeeAI/review_queue/batch2a_approval_aid.md + batch2a_review_package.md；负责人 2026-10-14 拍板：b2a-001/002/003/004/006/009 按辅助表建议保留批准；b2a-010 选方案 A（删除 CO₂/排气/氧化机理细节后批准）",
+ "source_exception_reference": "Tools/CoffeeAI/source_exceptions.json（6 条例外：fellow-espresso-basics/hario-v60-expert-guide 本轮按 GPT 提案扩展 Batch2a 范围；gaggia/baratza/fellow-brew-talks/nca 此前已登记）",
+ "notes": "Batch2a 首轮 7 条全部批准。b2a-010 方案 A：回答不含机理细节，机理话题保持回避直至有核验来源。批准后 train 总量仍 <15（GPT 阈值），训练保持冻结。"
+}

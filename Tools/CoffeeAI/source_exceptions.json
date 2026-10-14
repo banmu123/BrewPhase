@@ -20,19 +20,21 @@
     {
       "sourceId": "hario-v60-expert-guide",
       "usage": "fact-extraction-rewrite",
-      "reason": "Hario UK 官方 V60 指南已逐句核验（2026-10-14，见 external_evidence_packet.md）：调参方向/配方参数/洗滤纸理由与 claim 一致；仅用于独立事实提取与改写，不复制原文",
+      "reason": "Hario UK 官方 V60 指南已逐句核验（2026-10-14，见 external_evidence_packet.md）：调参方向/配方参数/洗滤纸理由与 claim 一致；仅用于独立事实提取与改写，不复制原文；2026-10-14 负责人批准 Batch2a 扩展（b2a-006，主题 brewing）：too-weak 口径同页已核验",
       "approved_by": "banmu123 (project owner)",
       "approved_at": "2026-10-14",
-      "scope": "仅非商业研究训练样本；逐条人工审核；claim 清单限定；不复制原文",
+      "scope": "仅非商业研究训练样本；逐条人工审核；claim 清单限定（Batch1 两条 + Batch2a 一条）；不复制原文",
       "deployment_purposes": [
         "noncommercial-research"
       ],
       "allowed_sample_ids": [
         "b1-012",
-        "b1-013"
+        "b1-013",
+        "b2a-006"
       ],
       "allowed_topics": [
-        "brewing-troubleshooting"
+        "brewing-troubleshooting",
+        "brewing"
       ],
       "allowed_claim_ids": [
         "rule.hario.v60.too-weak",
@@ -48,17 +50,21 @@
     {
       "sourceId": "fellow-espresso-basics",
       "usage": "fact-extraction-rewrite",
-      "reason": "Fellow Espresso Basics PDF 已逐句核验（2026-10-14，见 external_evidence_packet.md）：酸/咸/weak→磨细、chalky/bitter→磨粗、微调提示、18g/90° 填压与 claim 一致；仅用于独立事实提取与改写，不复制原文",
+      "reason": "Fellow Espresso Basics PDF 已逐句核验（2026-10-14，见 external_evidence_packet.md）：酸/咸/weak→磨细、chalky/bitter→磨粗、微调提示、18g/90° 填压与 claim 一致；仅用于独立事实提取与改写，不复制原文；2026-10-14 负责人批准 Batch2a 扩展（b2a-001/002/003/004）：新增 claim 均已核验（shot-slow=官方「流得太慢→磨粗」、ratio-1to3=官方配方比例、roast-level-acrid=配方语境调参方向）",
       "approved_by": "banmu123 (project owner)",
       "approved_at": "2026-10-14",
-      "scope": "仅非商业研究训练样本；逐条人工审核；claim 清单限定；不复制原文",
+      "scope": "仅非商业研究训练样本；逐条人工审核；claim 清单限定（Batch1 五条 + Batch2a 四条）；不复制原文",
       "deployment_purposes": [
         "noncommercial-research"
       ],
       "allowed_sample_ids": [
         "b1-014",
         "b1-015",
-        "b1-016"
+        "b1-016",
+        "b2a-001",
+        "b2a-002",
+        "b2a-003",
+        "b2a-004"
       ],
       "allowed_topics": [
         "espresso",
@@ -67,7 +73,10 @@
       "allowed_claim_ids": [
         "rule.fellow.shot-sour",
         "rule.fellow.shot-bitter",
-        "claim.extraction.channeling-vendor"
+        "rule.fellow.shot-slow",
+        "claim.extraction.channeling-vendor",
+        "claim.espresso.fellow-ratio-1to3",
+        "claim.defects.roast-level-acrid"
       ],
       "license_basis": {
         "basis": "registry-sanctioned-use",

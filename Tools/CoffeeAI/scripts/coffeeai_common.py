@@ -238,10 +238,14 @@ def source_auto_allow(info):
             and info.get("derivatives") == "allowed")
 
 
-def check_exception_scope(exc, registry_info, sample, deployment_purpose):
+def check_exception_scope(exc, registry_info, sample, deployment_purpose,
+                          extra_allowed_claims=None):
     """阶段四点五/六：验证当前样本与训练用途是否落在例外批准的范围内。
 
     sample: {"sample_id", "topic", "claim_ids"}；deployment_purpose 为当前任务声明的用途。
+    extra_allowed_claims: 多来源样本的 claim 并集（阶段六点五-C）——样本引用的
+    claim 由「各命中例外的 allowed_claim_ids 并集」共同覆盖；单来源样本行为不变
+    （并集 = 自身集合）。只应由 source_admission_issues 传入，其它调用方保持 None。
     返回 (ok, reason)。
     """
     sid = exc.get("sourceId")
@@ -295,19 +299,27 @@ def check_exception_scope(exc, registry_info, sample, deployment_purpose):
         cited = set(sample.get("claim_ids") or [])
         if not cited:
             return False, "样本未引用任何 claim，无法核对例外允许的 claim 范围"
-        outside = sorted(cited - set(allowed_claims))
+        permitted = set(allowed_claims) | {c for c in (extra_allowed_claims or [])
+                                           if isinstance(c, str)}
+        outside = sorted(cited - permitted)
         if outside:
-            return False, (f"样本引用的 claim 超出例外允许范围: {outside}")
+            return False, (f"样本引用的 claim 超出例外允许范围（含多来源例外并集）: {outside}")
     return True, ""
 
 
 def source_admission_issues(source_ids, registry, source_usage, exceptions=None,
                             deployment_purpose=None, sample=None):
-    """对一条样本引用的外部来源做训练准入检查（默认拒绝 + 范围约束）。返回 error 级列表。"""
+    """对一条样本引用的外部来源做训练准入检查（默认拒绝 + 范围约束）。返回 error 级列表。
+
+    阶段六点五-C：多来源样本的 claim 范围按「各命中例外的 allowed_claim_ids 并集」
+    核对（单来源样本行为不变）。此前单例外合取语义会让多来源样本永远交叉越界
+    （来源 A 的例外不可能覆盖来源 B 贡献的 claim）。
+    """
     issues = []
     usage = source_usage or {}
     exceptions = exceptions or {}
     sample = sample or {}
+    hit_exceptions = []  # [(sid, exc, info)]：命中例外的来源，第二遍统一做 scope 检查
     for sid in source_ids:
         info = registry.get(sid)
         if info is None:
@@ -347,7 +359,16 @@ def source_admission_issues(source_ids, registry, source_usage, exceptions=None,
             issues.append({"level": "error", "code": "source-requires-human-exception",
                            "message": f"来源 {sid} 的人工例外 usage 非法"})
             continue
-        ok, reason = check_exception_scope(exc, info, sample, deployment_purpose)
+        hit_exceptions.append((sid, exc, info))
+    # 第二遍：claim 并集 = 本样本所有命中例外的 allowed_claim_ids（阶段六点五-C）
+    claim_union = set()
+    for _, exc, _ in hit_exceptions:
+        cl = exc.get("allowed_claim_ids")
+        if isinstance(cl, list):
+            claim_union |= {c for c in cl if isinstance(c, str)}
+    for sid, exc, info in hit_exceptions:
+        ok, reason = check_exception_scope(exc, info, sample, deployment_purpose,
+                                           extra_allowed_claims=claim_union)
         if not ok:
             issues.append({"level": "error", "code": "exception-out-of-scope",
                            "message": f"来源 {sid} 的人工例外不覆盖当前样本/用途: {reason}"})

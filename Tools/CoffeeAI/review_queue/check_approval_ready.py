@@ -42,6 +42,11 @@ def load_jsonl(p):
 def main():
     ap = argparse.ArgumentParser(description="Approved 落库前 dry-run 校验（只读）")
     ap.add_argument("--manifest", required=True, help="approved manifest JSON 路径")
+    ap.add_argument("--corpus", default=None,
+                    help="候选 corpus jsonl 路径（默认 review_queue/batch1_candidates.jsonl；"
+                         "Batch2a 用 review_queue/batch2a_candidates.jsonl）")
+    ap.add_argument("--meta", default=None,
+                    help="候选 meta jsonl 路径（默认 review_queue/batch1_candidates.meta.jsonl）")
     ap.add_argument("--registry", default=None, help="SOURCE_REGISTRY.json 路径（默认正式注册表）")
     ap.add_argument("--json", action="store_true", help="JSON 输出")
     args = ap.parse_args()
@@ -72,8 +77,10 @@ def main():
         issues.append({"level": "warning", "code": "exception-invalid",
                        "message": f"例外条目无效（未生效）: {r.get('sourceId')}: {r['reason']}"})
 
-    candidates = load_jsonl(HERE / "batch1_candidates.jsonl")
-    metas = load_jsonl(HERE / "batch1_candidates.meta.jsonl")
+    corpus_path = Path(args.corpus) if args.corpus else HERE / "batch1_candidates.jsonl"
+    meta_path = Path(args.meta) if args.meta else HERE / "batch1_candidates.meta.jsonl"
+    candidates = load_jsonl(corpus_path)
+    metas = load_jsonl(meta_path)
 
     # ---- 2/3/4) 逐样本校验
     for sid in samples or []:
@@ -83,7 +90,7 @@ def main():
         if c is None or meta is None:
             issues.append({"level": "error", "code": "sample-missing",
                            "sample_id": sid,
-                           "message": f"{sid}: 候选或元数据不存在于 batch1 队列"})
+                           "message": f"{sid}: 候选或元数据不存在于指定队列（{corpus_path.name}）"})
             continue
         if meta.get("review_status") != REVIEW_APPROVED:
             issues.append({"level": "error", "code": "not-yet-approved",

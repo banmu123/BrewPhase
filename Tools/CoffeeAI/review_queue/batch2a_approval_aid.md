@@ -3,6 +3,22 @@
 > 日期：2026-10-14 ｜ 依据：GPT 建议（模型行为风险视角）
 > 配合 `batch2a_review_package.md` 使用。**拍板动作只能由负责人执行。**
 
+## 〇、拍板结果（2026-10-14，负责人执行记录）
+
+- **b2a-010：选方案 A**（删除 CO₂/排气/氧化机理细节后批准）——已执行：回答中机理
+  I 层标注改为「具体变化路径与速度因豆子、包装与储存而异，尚无核验来源（推断），
+  此处不作机理解释」，不含任何 CO₂/排气/氧化字样；reasoning_level / risk_notes 同步更新。
+- **b2a-001/002/003/004/006/009：按辅助表建议保留批准**。
+- 3 原则随批准确认：F/P/I 划分口径（CLAIM_POLICY）、厂商经验不升级行业标准、
+  noncommercial-research 来源范围。
+- 执行链已按第四节完成：7 条落库 `batch2a_candidates.jsonl/.meta.jsonl`（approved +
+  三指纹 + reviewed_by/at）→ `approved_batch_manifest_batch2a.json`（batch2a-approved-r1）→
+  `check_approval_ready` ready=true, errors=0 → 合并 12 条 approved 划分
+  （train 10 / valid 1 / test 1，无泄漏；train <15，训练保持冻结）。
+- 配套范围修正：fellow-espresso-basics 例外扩展（+b2a-001/002/003/004、+shot-slow/
+  ratio-1to3/roast-level-acrid）、hario 例外扩展（+b2a-006、+brewing 主题）；
+  `source_admission_issues` 修复多来源样本 claim 并集语义（单来源行为不变）。
+
 ## 一、7 条草稿：训练价值 / 最大行为风险 / 批准建议
 
 | sample | 训练价值 | 最大风险（模型可能学成的坏习惯） | 批准建议 |
