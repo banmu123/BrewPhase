@@ -1,0 +1,38 @@
+# LoRA dry-run 配置（阶段七-C，GPT 指定参数；本配置在阶段七-D 前不得执行）
+# 目标：验证 pipeline 与数据格式，不是收敛。iters=50 ≤ GPT 上限 100。
+# 基座：Qwen2.5-3B-Instruct（mlx-community 4bit 量化版，阶段七-D 才下载）。
+
+model: "mlx-community/Qwen2.5-3B-Instruct-4bit"
+train: true
+fine_tune_type: "lora"
+seed: 0
+
+# GPT C-3 指定参数
+num_layers: 8            # GPT: lora_layers=8（不 full fine tune）
+batch_size: 1            # 数据仅 20 条 train，小 batch 便于观察变化
+iters: 50                # GPT: 不超过 100 steps；首次目的是验证 pipeline
+learning_rate: 0.00001   # 1e-5，避免小数据直接记忆
+max_seq_length: 2048
+
+# 评测/报告
+val_batches: 1
+steps_per_report: 1
+steps_per_eval: 25
+test: false
+test_batches: 100
+
+# 输出
+adapter_path: "Tools/CoffeeAI/runs/lora_dryrun_adapter"
+save_every: 1000
+grad_checkpoint: true
+grad_accumulation_steps: 1
+
+# LoRA 参数（GPT 未指定 rank/scale，采用保守默认）
+lora_parameters:
+  keys: ["self_attn.q_proj", "self_attn.v_proj"]
+  rank: 8
+  scale: 10.0
+  dropout: 0.0
+
+# 数据：prepare_lora_dataset.py 产出的 LoRA chat 格式（metadata 不进 prompt）
+data: "Tools/CoffeeAI/training/data/lora"
