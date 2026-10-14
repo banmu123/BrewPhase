@@ -25,7 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from coffeeai_common import (  # noqa: E402
-    COFFEEAI_ROOT, DEFAULT_CORPUS_GLOB, DEFAULT_META_GLOB,
+    COFFEEAI_ROOT, DEFAULT_CORPUS_GLOB, DEFAULT_META_GLOB, REPO_ROOT,
     LICENSES_ALLOW_TRAIN, REVIEW_APPROVED, corpus_sha256, expand_globs,
     load_jsonl, load_registry, message_texts, near_duplicate_pairs,
     text_similarity,
@@ -199,7 +199,8 @@ def main(argv=None):
     # ---- 写文件
     out = Path(args.out)
     if not out.is_absolute():
-        out = COFFEEAI_ROOT.parent / out  # 相对路径一律基于仓库根
+        out = REPO_ROOT / out  # 相对路径一律基于仓库根（六点九-F：修复此前
+        # COFFEEAI_ROOT.parent = Tools/ 被当作仓库根导致 Tools/Tools/ 重复拼接）
     out.mkdir(parents=True, exist_ok=True)
 
     counts = {"train": 0, "valid": 0, "test": 0}
