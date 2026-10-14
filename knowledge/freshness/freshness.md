@@ -17,6 +17,11 @@
 | claim.freshness.dark-roast-rest-5-7d | 在具体批次语境下，深烘肯尼亚豆的**峰值风味推荐养豆期为烘焙后 5–7 天**（Fellow × Counter Culture 配方备注）。 | `fellow-brew-talks` |
 | claim.freshness.light-roast-rest-4-6w | 在同一厂商配方库中，某些浅烘/实验处理豆的峰值被标为**烘焙后 4–6 周**（People Possession Arcadia / Elysium 备注）。 | `fellow-brew-talks` |
 | claim.freshness.resting-varies-by-roast | 上述两条并列出现，说明**养豆期随烘焙度与处理法差异可达数周量级**，不存在统一天数。 | `fellow-brew-talks` |
+| claim.freshness.nca-lose-freshness-immediately | NCA 指出**咖啡在烘焙后几乎立即开始失去新鲜度**，建议小批量频繁购买（一至两周量）。 | `nca-aboutcoffee` |
+| claim.freshness.nca-storage-enemies | NCA 归纳储存的四大敌人：**空气、湿气、热、光**；建议：取出零售包装改用**密封容器**、使用**不透明**容器、置于**阴凉避光**处、**即磨即冲**。 | `nca-aboutcoffee` |
+| claim.freshness.nca-peak-decline-stale | NCA：新鲜度峰值之后，多数烘焙豆**并不会变得不安全**（除非受潮霉变），但品质会持续下降——香气明显流失、颜色变浅、冲煮后风味不足、口感陈化（stale）。 | `nca-aboutcoffee` |
+| claim.freshness.nca-freeze-divergent | NCA：**冷冻/冷藏存在分歧观点**；咖啡吸湿且吸附异味（hygroscopic），家用容器仍会透入少量氧气；若冷冻须真正密封，并按周取用避免冷凝。 | `nca-aboutcoffee` |
+| claim.freshness.nca-duration-table | NCA 保鲜期参考（**密封容器前提下，取决于形态、包装与储存方式**）：烘焙豆室温 1–3 周、冷藏 2 周、冷冻 3–4 个月、研磨粉 1–2 周；未开封包装至 best-by 日期。 | `nca-aboutcoffee` |
 
 ## Variables
 
