@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""run_source_admission_b2b.py — 六点九-D 审核包 D 节：8 条 Batch2b 草稿来源准入检查（只读）。"""
+"""run_source_admission_b2b.py — 来源准入检查（只读）。默认 b2b 草稿；--input 指定其它 jsonl。"""
 import json
 import sys
 from pathlib import Path
@@ -14,8 +14,10 @@ exc_data = json.loads((REPO / "Tools/CoffeeAI/source_exceptions.json").read_text
 exc_list = exc_data.get("exceptions", exc_data if isinstance(exc_data, list) else [])
 exceptions = {e["sourceId"]: e for e in exc_list}
 
+in_path = Path(sys.argv[sys.argv.index("--input") + 1]) if "--input" in sys.argv else HERE / "batch2b_candidates_draft.jsonl"
+tag = in_path.stem.replace("batch", "b").replace("_candidates_draft", "")
 out = {}
-rows = [json.loads(l) for l in (HERE / "batch2b_candidates_draft.jsonl").read_text().splitlines() if l.strip()]
+rows = [json.loads(l) for l in in_path.read_text(encoding="utf-8").splitlines() if l.strip()]
 for r in rows:
     issues = source_admission_issues(
         r["source_ids"], reg, r.get("source_usage"), exceptions=exceptions,
@@ -28,6 +30,6 @@ for r in rows:
     for i in issues:
         print("   ", i["code"], ":", i["message"][:120])
 
-(HERE / "_b2b_source_admission_result.json").write_text(
+(HERE / f"_{tag}_source_admission_result.json").write_text(
     json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
-print("saved _b2b_source_admission_result.json")
+print(f"saved _{tag}_source_admission_result.json")

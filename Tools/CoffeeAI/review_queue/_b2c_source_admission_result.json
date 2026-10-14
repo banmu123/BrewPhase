@@ -1,0 +1,48 @@
+{
+ "b2c-001": {
+  "verdict": "BLOCK",
+  "sources": [
+   "ucdavis-coffee-center"
+  ],
+  "issues": [
+   {
+    "code": "exception-out-of-scope",
+    "message": "来源 ucdavis-coffee-center 的人工例外不覆盖当前样本/用途: 样本 b2c-001 不在例外允许的样本范围 ['b2a-005', 'b2a-008', 'b2b-001', 'b2b-004', 'b2b-005', 'b2b-008'] 内"
+   }
+  ]
+ },
+ "b2c-002": {
+  "verdict": "BLOCK",
+  "sources": [
+   "ucdavis-coffee-center",
+   "baratza-documents",
+   "nca-aboutcoffee"
+  ],
+  "issues": [
+   {
+    "code": "exception-out-of-scope",
+    "message": "来源 ucdavis-coffee-center 的人工例外不覆盖当前样本/用途: 样本 b2c-002 不在例外允许的样本范围 ['b2a-005', 'b2a-008', 'b2b-001', 'b2b-004', 'b2b-005', 'b2b-008'] 内"
+   },
+   {
+    "code": "exception-out-of-scope",
+    "message": "来源 baratza-documents 的人工例外不覆盖当前样本/用途: 样本 b2c-002 不在例外允许的样本范围 ['b2a-006', 'b1-009', 'b1-017', 'b2b-004'] 内"
+   },
+   {
+    "code": "exception-out-of-scope",
+    "message": "来源 nca-aboutcoffee 的人工例外不覆盖当前样本/用途: 样本 b2c-002 不在例外允许的样本范围 ['b2a-009', 'b2a-010', 'b2b-005'] 内"
+   }
+  ]
+ },
+ "b2c-003": {
+  "verdict": "BLOCK",
+  "sources": [
+   "ucdavis-coffee-center"
+  ],
+  "issues": [
+   {
+    "code": "exception-out-of-scope",
+    "message": "来源 ucdavis-coffee-center 的人工例外不覆盖当前样本/用途: 样本 b2c-003 不在例外允许的样本范围 ['b2a-005', 'b2a-008', 'b2b-001', 'b2b-004', 'b2b-005', 'b2b-008'] 内"
+   }
+  ]
+ }
+}
