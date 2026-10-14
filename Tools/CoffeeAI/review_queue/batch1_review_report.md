@@ -62,3 +62,21 @@
 | ex-010 | 「矿物质影响萃取口感」的知识库核验点在设备结垢方向；「多项研究支持」表述过强（SCA Water Handbook 为付费墙） | **修改**（弱化或补证） |
 
 汇总：**6 条建议修改、4 条建议通过**。全部保持 `unreviewed`，等你按清单逐条确认。
+
+---
+
+## 阶段三复核（2026-10-14，代码复查与安全修复）
+
+在不改变任何 `review_status` 的前提下，对候选做了事实锚点复核与修订：
+
+| 样本 | 修订 | 说明 |
+|---|---|---|
+| b1-007 | meta 补 `claim.processing.php-scientific` + 来源 `cqi-php` | 回答中「CQI 把处理视为需风险控制的过程」原无对应 claim 锚点，现已对齐 |
+| b1-026 | meta 补 `conflict.gaggia.classic-descale-interval` + `claim.water.gaggia-vinegar-ban` | 「同厂商不同代际手册不一致」「Gaggia 禁醋」两处事实此前缺锚点 |
+| b1-028 | meta 补 `claim.espresso.fellow-ratio-1to3` | 「93°C」出自该 claim（94°C 已有 fellow-ratio-example） |
+| b1-027 | **文本修订** | 原句「若采用，应确保密封完好、远离易碎容器」可能被读成「照做即安全」；改为「本知识库无法保证任何操作方式的安全，是否采用由你自行判断，采用前自行评估密封、器具与烫伤风险，并以官方安全说明为准」 |
+| 全部 30 条 | meta 补 `source_usage = {sourceId: fact-extraction-rewrite}` | 落实来源级准入政策（见 coffeeai_common.EXTERNAL_SOURCE_POLICY） |
+
+**逐条复核结论**：阶段二报告标注的重点样本中，b1-004/005/011/019/022/025/029 的回答文本与知识库 claim 表逐字核对一致，无需修订；b1-016 的「明亮酸质是风格而非缺陷」仍属弱支撑表述（保留在通过项里，靠人工裁决）；b1-017 的「一次一变量」保持无独立 claim 的如实标注。
+
+**残余风险（须人工对照外部原文）**：本环境的网络无法访问 WCR/Fellow/Hario/UC Davis 原始页面，所有 claim 锚点只验证了「知识库内部存在且语义对应」，**未**重新核对知识库对外部来源的转述是否准确。人工审核时请对 b1-019/022/025/026 的具体数字做外部抽查。

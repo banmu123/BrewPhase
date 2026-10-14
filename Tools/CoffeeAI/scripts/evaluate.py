@@ -39,6 +39,36 @@ REVIEW_DIMENSIONS = [
     "总体判断：微调版回答质量是否真的优于基础模型（逐题给出你的结论）",
 ]
 
+# 与训练样本一致的 system 指令（评测输入 = system + user，走模型聊天模板）
+TRAINING_SYSTEM = "你是咖啡领域助手。回答需区分事实与推断，资料不足时明确说明，不编造来源。"
+
+# 接口依据（阶段三核对，2026-10-14）：mlx-lm main 分支 mlx_lm/generate.py
+#   - 默认对 prompt 应用模型自带 chat template（--ignore-chat-template 为退出项，本工具不使用）
+#   - --system-prompt 注入 system 角色；--adapter-path 加载微调适配器
+#   - --verbose False 只打印回答文本，便于直接落盘
+INTERFACE_NOTE = (
+    "mlx_lm.generate 默认使用基础模型 tokenizer 的 chat template 渲染 "
+    "system+user 输入；基础模型与微调模型使用完全相同的命令行参数，"
+    "唯一差异是 --adapter-path。模板行为以 mlx-lm main 分支 generate.py 为准。"
+)
+
+
+def build_generate_cmd(entry, model, adapter, system_prompt, user_prompt,
+                       max_tokens, temp, seed):
+    """构造生成命令。base 与 finetuned 共用本函数：除 adapter 外逐参数一致。"""
+    cmd = list(entry) + [
+        "--model", model,
+        "--system-prompt", system_prompt,
+        "--prompt", user_prompt,
+        "--max-tokens", str(max_tokens),
+        "--temp", str(temp),
+        "--seed", str(seed),
+        "--verbose", "False",
+    ]
+    if adapter:
+        cmd += ["--adapter-path", adapter]
+    return cmd
+
 
 def first_user_prompt(messages):
     for m in messages:
@@ -47,13 +77,7 @@ def first_user_prompt(messages):
     return None
 
 
-def generate(entry, model, prompt, adapter, max_tokens, temp, seed):
-    cmd = list(entry) + [
-        "--model", model, "--prompt", prompt,
-        "--max-tokens", str(max_tokens), "--temp", str(temp), "--seed", str(seed),
-    ]
-    if adapter:
-        cmd += ["--adapter-path", adapter]
+def generate(cmd):
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
     return proc.returncode, (proc.stdout or ""), (proc.stderr or "")
 
@@ -63,6 +87,8 @@ def main(argv=None):
     p.add_argument("--base-model", required=True, help="基础模型 HF id 或本地路径")
     p.add_argument("--adapter-path", default=None, help="微调适配器目录；不给则只评测基础模型")
     p.add_argument("--questions", default="Tools/CoffeeAI/data/splits/test.jsonl")
+    p.add_argument("--system-prompt", default=TRAINING_SYSTEM,
+                   help="评测输入的 system 指令（默认与训练样本完全一致）")
     p.add_argument("--limit", type=int, default=10)
     p.add_argument("--max-tokens", type=int, default=512)
     p.add_argument("--temp", type=float, default=0.2)
@@ -95,7 +121,7 @@ def main(argv=None):
         d = json.loads(line)
         prompt = first_user_prompt(d.get("messages") or [])
         if prompt:
-            questions.append(prompt)
+            questions.append({"sample_id": d.get("sample_id"), "prompt": prompt})
     if args.limit:
         questions = questions[: args.limit]
     if not questions:
@@ -126,6 +152,9 @@ def main(argv=None):
         "questions_file": str(qpath),
         "n_questions": len(questions),
         "max_tokens": args.max_tokens, "temp": args.temp, "seed": args.seed,
+        "system_prompt": args.system_prompt,
+        "template_mode": "model-chat-template (mlx-lm 默认；未使用 --ignore-chat-template)",
+        "interface_note": INTERFACE_NOTE,
         "mlx_lm_version": info["mlx_lm_version"],
         "host": {"chip": info["chip"], "memory_gb": info["memory_gb"]},
         "policy": "回答仅供人工审核；本工具不做自动打分，不宣称微调优于基础模型。",
@@ -136,12 +165,18 @@ def main(argv=None):
     answers = {}
     for tag, model, adapter in runs:
         rows = []
-        for i, q in enumerate(questions, 1):
+        for i, qd in enumerate(questions, 1):
+            q = qd["prompt"]
             print(f"[CoffeeAI] ({tag}) {i}/{len(questions)}: {q[:40]}...")
-            code, stdout, stderr = generate(gen_entry, model, q, adapter,
-                                            args.max_tokens, args.temp, args.seed)
+            cmd = build_generate_cmd(gen_entry, model, adapter, args.system_prompt,
+                                     q, args.max_tokens, args.temp, args.seed)
+            code, stdout, stderr = generate(cmd)
             rows.append({
-                "idx": i, "prompt": q,
+                "idx": i,
+                "sample_id": qd.get("sample_id"),
+                "input": {"system_prompt": args.system_prompt, "user_prompt": q,
+                          "template_mode": meta["template_mode"]},
+                "gen_params": {"max_tokens": args.max_tokens, "temp": args.temp, "seed": args.seed},
                 "answer_raw_stdout": stdout,
                 "exit_code": code,
                 "stderr_tail": stderr[-500:] if code else "",
@@ -157,6 +192,7 @@ def main(argv=None):
           f"- 基础模型: `{args.base_model}`",
           f"- 适配器: `{args.adapter_path or '（未提供，仅基础模型）'}`",
           f"- 测试集: `{qpath}`（独立于训练集）",
+          f"- 输入构造: system+user 经模型聊天模板渲染（两组模型参数一致，仅 adapter 不同）",
           f"- 参数: max_tokens={args.max_tokens}, temp={args.temp}, seed={args.seed}",
           "",
           f"> {meta['policy']}", "",
@@ -164,8 +200,8 @@ def main(argv=None):
     for i, d in enumerate(REVIEW_DIMENSIONS, 1):
         md.append(f"{i}. {d}")
     md += ["", "## 逐题回答", ""]
-    for i, q in enumerate(questions):
-        md.append(f"### Q{i + 1}: {q}")
+    for i, qd in enumerate(questions):
+        md.append(f"### Q{i + 1} ({qd.get('sample_id') or 'no-id'}): {qd['prompt']}")
         for tag, _m, _a in runs:
             row = answers[tag][i]
             body = (row["answer_raw_stdout"] or "").strip()

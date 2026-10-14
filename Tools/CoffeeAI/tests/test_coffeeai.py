@@ -232,7 +232,8 @@ class SplitTests(unittest.TestCase):
             m = td / "tiny.meta.jsonl"
             write_jsonl(m, [{"sample_id": "t1", "topic": "t", "license_status": "own-original",
                              "review_status": "approved", "data_version": "v",
-                             "dedup_fingerprint": "a" * 64}])
+                             "dedup_fingerprint": "a" * 64,
+                             "source_waiver": "测试样本：无外部事实来源。"}])
             out = td / "out"
             proc = run_script("split_dataset.py", "--corpus", c, "--meta", m,
                               "--out", out, expect=1)
@@ -438,6 +439,245 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertIn("- [ ] 通过", text)
         self.assertIn("- [ ] 拒绝", text)
         self.assertIn("不产生任何自动效果", text)
+
+
+class TrainingAdmissionTests(unittest.TestCase):
+    """阶段三 P0：--include-unreviewed 的产物进不了正式训练。"""
+
+    MSG_OK = [{"role": "user", "content": "问题？"},
+              {"role": "assistant", "content": "足够长的回答内容，用来通过最短长度检查的全部要求。"}]
+
+    _CONTENT = [
+        ("V60 滤杯的肋骨有什么作用？",
+         "肋骨影响水流与排气路径，不同滤杯设计的流速差异明显。冲煮时应以实际滴滤速度为准做对比，参数只是起点。"),
+        ("意式粉饼为什么要压平？",
+         "平整的粉床有助于水流均匀通过，减少通道效应。官方建议填压后粉面与滤杯刻痕对齐，具体手法以机型说明为准。"),
+        ("冷萃和冰滴是一回事吗？",
+         "两者都是低温萃取，但制作方式不同：浸泡式冷萃把粉长时间泡在水里，冰滴则是让冷水缓慢滴过粉层。风味取向与设备都不同。"),
+        ("为什么磨豆机用久了要清理？",
+         "残粉滞留会影响出粉量与新豆风味，厂商也把清洁不足列为保修除外情形。定期清理并用部件图定位零件是推荐做法。"),
+        ("咖啡果皮能利用吗？",
+         "咖啡加工副产物包括果肉、果壳等，行业有循环利用的研究与讨论；具体利用方式与效果请参考专门资料，不要凭印象断言。"),
+    ]
+
+    def _mixed_corpus(self, td):
+        c, m = Path(td) / "mixed.jsonl", Path(td) / "mixed.meta.jsonl"
+        rows_c, rows_m = [], []
+        plan = [("adm-a1", "g-adm-1", "approved"), ("adm-a2", "g-adm-2", "approved"),
+                ("adm-a3", "g-adm-3", "approved"), ("adm-u1", "g-adm-4", "unreviewed"),
+                ("adm-u2", "g-adm-5", "unreviewed")]
+        for i, (sid, gid, status) in enumerate(plan):
+            q, a = self._CONTENT[i]
+            msgs = [{"role": "user", "content": q},
+                    {"role": "assistant", "content": a}]
+            rows_c.append({"sample_id": sid, "group_id": gid, "messages": msgs})
+            rows_m.append({"sample_id": sid, "group_id": gid, "topic": "t",
+                           "source_doc": "t", "source_ids": [], "claim_ids": [],
+                           "license_status": "own-original", "review_status": status,
+                           "data_version": "v", "dedup_fingerprint": "a" * 64,
+                           "source_waiver": "测试样本：行为演示，无外部事实来源。"})
+        write_jsonl(c, rows_c)
+        write_jsonl(m, rows_m)
+        return c, m
+
+    def test_include_unreviewed_splits_blocked_from_formal_training(self):
+        """完整模拟：--include-unreviewed 生成划分 → 正式训练被阻断。"""
+        with tempfile.TemporaryDirectory() as td:
+            c, m = self._mixed_corpus(td)
+            out = Path(td) / "splits"
+            run_script("split_dataset.py", "--corpus", c, "--meta", m,
+                       "--out", out, "--include-unreviewed", expect=0)
+            # 划分确实产出了含未审核样本的文件
+            meta_rows = load_meta(out / "train.meta.jsonl") + \
+                load_meta(out / "valid.meta.jsonl") + load_meta(out / "test.meta.jsonl")
+            self.assertEqual(len(meta_rows), 5)
+            self.assertTrue(any(r["review_status"] == "unreviewed" for r in meta_rows))
+            # 正式训练必须被准入复查阻断
+            proc = run_script("run_train.py", "--train",
+                              "--config", COFFEEAI / "configs" / "smoke.yaml",
+                              "--data-dir", out)
+            self.assertEqual(proc.returncode, 1)
+            combined = proc.stdout + proc.stderr
+            self.assertIn("准入复查未通过", combined)
+            self.assertIn("unreviewed", combined)
+            self.assertFalse(any((COFFEEAI / "runs").glob("train_*")),
+                             "不得产生任何训练运行目录")
+            self.assertFalse((COFFEEAI / "runs" / "adapters").exists())
+
+    def test_check_admission_cli(self):
+        """准入复查 CLI：合格划分通过；含未审核样本的划分被拒。"""
+        with tempfile.TemporaryDirectory() as td:
+            c, m = self._mixed_corpus(td)
+            out_bad = Path(td) / "splits_bad"
+            run_script("split_dataset.py", "--corpus", c, "--meta", m,
+                       "--out", out_bad, "--include-unreviewed", expect=0)
+            proc = run_script("validate_data.py", "--check-admission", out_bad, "--json")
+            report = json.loads(proc.stdout)
+            self.assertEqual(proc.returncode, 1)
+            codes = {i["code"] for i in report["admission"]["issues"]}
+            self.assertIn("admission-not-approved", codes)
+
+    def test_admission_requires_metadata_one_to_one(self):
+        """缺 meta 行 / meta 多行都要被拦。"""
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            out = td / "splits"
+            out.mkdir()
+            (out / "train.jsonl").write_text(
+                json.dumps({"sample_id": "x1", "messages": self.MSG_OK}, ensure_ascii=False) + "\n",
+                encoding="utf-8")
+            # 缺 train.meta.jsonl
+            proc = run_script("validate_data.py", "--check-admission", out, "--json")
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("admission-meta-missing", proc.stdout)
+            # meta 有但 sample_id 对不上
+            (out / "train.meta.jsonl").write_text(
+                json.dumps({"sample_id": "OTHER", "review_status": "approved",
+                            "license_status": "own-original", "data_version": "v",
+                            "dedup_fingerprint": "a" * 64,
+                            "source_waiver": "w"}, ensure_ascii=False) + "\n",
+                encoding="utf-8")
+            proc = run_script("validate_data.py", "--check-admission", out, "--json")
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("admission-meta-missing", proc.stdout)
+
+
+class SourceAdmissionTests(unittest.TestCase):
+    """阶段三 P1：来源级训练准入（真实来源 ID，不虚构）。"""
+
+    def _one_sample(self, td, source_ids, claim_ids, usage=None, waiver=None,
+                    review="approved", license_status="own-original"):
+        c = Path(td) / "s.jsonl"
+        m = Path(td) / "s.meta.jsonl"
+        msgs = [{"role": "user", "content": "问题？"},
+                {"role": "assistant", "content": "足够长的回答内容，用来通过最短长度检查的全部要求。"}]
+        write_jsonl(c, [{"sample_id": "sa1", "group_id": "g-sa", "messages": msgs}])
+        meta = {"sample_id": "sa1", "group_id": "g-sa", "topic": "t", "source_doc": "t",
+                "source_ids": source_ids, "claim_ids": claim_ids,
+                "license_status": license_status, "review_status": review,
+                "data_version": "v", "dedup_fingerprint": "a" * 64}
+        if usage is not None:
+            meta["source_usage"] = usage
+        if waiver is not None:
+            meta["source_waiver"] = waiver
+        write_jsonl(m, [meta])
+        return c, m
+
+    def _for_training(self, c, m):
+        return run_script("validate_data.py", "--corpus", c, "--meta", m, "--for-training")
+
+    def test_pending_verification_source_blocks_training(self):
+        """真实存在的待核验来源（wcr-sensory-lexicon）必须阻断训练。"""
+        with tempfile.TemporaryDirectory() as td:
+            c, m = self._one_sample(td, ["wcr-sensory-lexicon"], [], {})
+            proc = self._for_training(c, m)
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("source-blocked-pending", proc.stdout)
+
+    def test_paywalled_and_restricted_sources_block_training(self):
+        """付费墙（sca-digital-store）与受限资产（sca-flavor-wheel-2016）阻断。"""
+        for sid in ("sca-digital-store", "sca-flavor-wheel-2016"):
+            with tempfile.TemporaryDirectory() as td:
+                c, m = self._one_sample(td, [sid], [], {sid: "fact-extraction-rewrite"})
+                proc = self._for_training(c, m)
+                self.assertEqual(proc.returncode, 1, sid)
+                self.assertIn("source-license-blocked", proc.stdout, sid)
+
+    def test_see_source_terms_requires_usage_declaration(self):
+        """see-source-terms 来源：有 usage 声明+claim 关联才可训练。"""
+        with tempfile.TemporaryDirectory() as td:
+            # 无声明 → 阻断
+            c, m = self._one_sample(td, ["sca-coffee-standards"],
+                                    ["claim.sensory.cva-four"], {})
+            proc = self._for_training(c, m)
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("source-usage-undeclared", proc.stdout)
+            # 有声明 + claim 关联 → 该项通过（剩余 error 只能是 unreviewed 之外的）
+            c, m = self._one_sample(td, ["sca-coffee-standards"],
+                                    ["claim.sensory.cva-four"],
+                                    {"sca-coffee-standards": "fact-extraction-rewrite"})
+            proc = self._for_training(c, m)
+            self.assertNotIn("source-usage-undeclared", proc.stdout)
+
+    def test_claim_linkage_required_when_sources_cited(self):
+        with tempfile.TemporaryDirectory() as td:
+            c, m = self._one_sample(td, ["sca-coffee-standards"], [],
+                                    {"sca-coffee-standards": "fact-extraction-rewrite"})
+            proc = self._for_training(c, m)
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("missing-claim-linkage", proc.stdout)
+
+    def test_waiver_required_when_no_sources(self):
+        with tempfile.TemporaryDirectory() as td:
+            c, m = self._one_sample(td, [], [], waiver=None)
+            proc = self._for_training(c, m)
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("missing-source-waiver", proc.stdout)
+            c, m = self._one_sample(td, [], [],
+                                    waiver="行为规范样本：无外部事实来源。")
+            proc = self._for_training(c, m)
+            self.assertNotIn("missing-source-waiver", proc.stdout)
+
+    def test_unreviewed_blocks_before_source_noise(self):
+        """未审核样本：阻断原因是 not-approved，不再叠加来源检查。"""
+        with tempfile.TemporaryDirectory() as td:
+            c, m = self._one_sample(td, ["wcr-sensory-lexicon"], [], review="unreviewed")
+            proc = self._for_training(c, m)
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("not-approved", proc.stdout)
+            self.assertNotIn("source-blocked-pending", proc.stdout)
+
+
+class AllowDownloadTests(unittest.TestCase):
+    """阶段三 P1：--allow-download 只对 --train 生效。"""
+
+    def test_smoke_never_downloads_even_with_flag(self):
+        proc = run_script("run_train.py", "--smoke",
+                          "--config", COFFEEAI / "configs" / "smoke.yaml",
+                          "--allow-download")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("烟测不下载", proc.stdout + proc.stderr)
+
+    def test_resolve_model_flag_semantics(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import run_train
+        status, detail = run_train.resolve_model("nonexistent-org/never-cached", False)
+        self.assertEqual(status, "needs-download")
+        status, detail = run_train.resolve_model("nonexistent-org/never-cached", True)
+        self.assertEqual(status, "needs-download")
+        self.assertIn("显式允许", detail.get("note", ""))
+        status, detail = run_train.resolve_model("/definitely/not/a/model/dir", False)
+        self.assertEqual(status, "invalid")
+
+    def test_train_without_flag_still_blocked(self):
+        """回归：不传 --allow-download 时正式训练仍被拒且不联网。"""
+        proc = run_script("run_train.py", "--train",
+                          "--config", COFFEEAI / "configs" / "smoke.yaml")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("绝不", proc.stderr)
+
+
+class EvaluateCommandTests(unittest.TestCase):
+    """阶段三 P1：评测输入构造（聊天模板 + 双模型参数一致）。"""
+
+    def test_cmd_symmetry_and_template(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import evaluate
+        base = evaluate.build_generate_cmd(["E"], "M", None, "SYS", "Q", 512, 0.2, 0)
+        ft = evaluate.build_generate_cmd(["E"], "M", "ADP", "SYS", "Q", 512, 0.2, 0)
+        self.assertEqual(ft, base + ["--adapter-path", "ADP"])
+        self.assertIn("--system-prompt", base)
+        self.assertIn("--verbose", base)
+        self.assertEqual(base[base.index("--verbose") + 1], "False")
+        self.assertNotIn("--ignore-chat-template", base)
+        self.assertIn("--temp", base)
+        self.assertIn("--seed", base)
+
+    def test_default_system_prompt_matches_training(self):
+        sys.path.insert(0, str(SCRIPTS))
+        import evaluate
+        self.assertEqual(evaluate.TRAINING_SYSTEM,
+                         "你是咖啡领域助手。回答需区分事实与推断，资料不足时明确说明，不编造来源。")
 
 
 class RepoIntegrityTests(unittest.TestCase):

@@ -35,6 +35,53 @@ LICENSES_BLOCK_TRAIN = {
 REVIEW_APPROVED = "approved"
 VALID_REVIEW_STATUS = {"approved", "unreviewed", "needs-review", "rejected"}
 
+# ---------------------------------------------------------------- 来源级训练准入政策（阶段三）
+# 依据 knowledge/SOURCE_REGISTRY.md 的项目纪律：
+#   - pending-verification 来源未取得官方可访问 URL，禁止作为事实来源（注册表 §0.1）；
+#   - license unknown = 来源没有自述许可，不许默认可复制（§0.2）；
+#   - 付费数字产品正文不得复制（§2）；
+#   - restricted 资产（如 SCA 风味轮）不得改编；
+#   - 其余外部来源只允许「事实提取 + 独立改写 + 署名」——样本必须显式声明该用法。
+SOURCE_STATUS_BLOCKED = {"pending-verification"}
+SOURCE_LICENSE_BLOCKED = {"unknown", "proprietary-paywalled"}
+ALLOWED_SOURCE_USAGE = {"fact-extraction-rewrite"}  # 外部来源唯一允许的用法
+EXTERNAL_SOURCE_POLICY = (
+    "外部来源仅允许「事实提取 + 独立改写 + 署名」；训练样本须在元数据 "
+    "source_usage 中为每个引用来源显式声明 usage=fact-extraction-rewrite，"
+    "并提供 claim 关联。pending-verification / license unknown / 付费墙来源禁止引用。"
+)
+
+
+def source_admission_issues(source_ids, registry, source_usage):
+    """对一条样本引用的外部来源做训练准入检查。返回 issue 列表（均为 error 级）。"""
+    issues = []
+    usage = source_usage or {}
+    for sid in source_ids:
+        info = registry.get(sid)
+        if info is None:
+            issues.append({"level": "error", "code": "unknown-source-id",
+                           "message": f"引用了未注册来源: {sid}"})
+            continue
+        if info.get("status") in SOURCE_STATUS_BLOCKED:
+            issues.append({"level": "error", "code": "source-blocked-pending",
+                           "message": f"来源 {sid} 状态为 pending-verification，禁止作为事实来源"})
+            continue
+        if info.get("status") == "restricted":
+            issues.append({"level": "error", "code": "source-license-blocked",
+                           "message": f"来源 {sid} 为 restricted 资产（禁止改编），禁止用于训练样本"})
+            continue
+        lic = str(info.get("license_status") or "").lower()
+        if lic in SOURCE_LICENSE_BLOCKED:
+            issues.append({"level": "error", "code": "source-license-blocked",
+                           "message": f"来源 {sid} 许可为 {lic}，禁止用于训练样本"})
+            continue
+        declared = usage.get(sid)
+        if declared not in ALLOWED_SOURCE_USAGE:
+            issues.append({"level": "error", "code": "source-usage-undeclared",
+                           "message": f"来源 {sid} 未显式声明用法（source_usage.{sid} 必须为 "
+                                      f"fact-extraction-rewrite）。{EXTERNAL_SOURCE_POLICY}"})
+    return issues
+
 REQUIRED_META_FIELDS = [
     "sample_id", "topic", "license_status", "review_status",
     "data_version", "dedup_fingerprint",
@@ -188,7 +235,7 @@ def check_messages(rec, max_chars=12000, min_answer_chars=20):
     return issues
 
 
-def check_meta(rec, registry_sources=None):
+def check_meta(rec, registry_sources=None, for_training=False):
     """检查单条元数据。返回 (issues, meta_or_None)。"""
     data = rec["data"]
     sid = data.get("sample_id", f"<line {rec['line_no']}>")
@@ -210,6 +257,15 @@ def check_meta(rec, registry_sources=None):
     if fp is not None and (not isinstance(fp, str) or len(fp) < 16):
         issues.append({**where, "level": "warning", "code": "bad-fingerprint",
                        "message": "dedup_fingerprint 应为 sha256 十六进制串或 null"})
+    # 可选扩展字段（阶段三）：类型检查
+    waiver = data.get("source_waiver")
+    if waiver is not None and (not isinstance(waiver, str) or not waiver.strip()):
+        issues.append({**where, "level": "error", "code": "bad-source-waiver",
+                       "message": "source_waiver 必须是非空字符串（豁免原因）"})
+    usage = data.get("source_usage")
+    if usage is not None and not isinstance(usage, dict):
+        issues.append({**where, "level": "error", "code": "bad-source-usage",
+                       "message": "source_usage 必须是 {sourceId: usage} 形式的对象"})
     # 来源注册表核对
     if registry_sources is not None:
         for src in data.get("source_ids") or []:
@@ -218,8 +274,16 @@ def check_meta(rec, registry_sources=None):
                 issues.append({**where, "level": "error", "code": "unknown-source-id",
                                "message": f"source_ids 引用了未注册来源: {src}"})
             elif info.get("status") == "pending-verification":
-                issues.append({**where, "level": "warning", "code": "pending-source",
-                               "message": f"source_ids 引用了 pending-verification 来源: {src}（不可作为事实来源）"})
+                # 训练模式：approved 样本引用 pending 来源 → 阻断；
+                # 未审核样本只保留 not-approved 阻断（避免噪音），普通模式 → 警告。
+                if for_training and review == REVIEW_APPROVED:
+                    issues.append({**where, "level": "error", "code": "source-blocked-pending",
+                                   "message": f"source_ids 引用了 pending-verification 来源: {src}"
+                                              "——训练阻断（不可作为事实来源）"})
+                elif not for_training:
+                    issues.append({**where, "level": "warning", "code": "pending-source",
+                                   "message": f"source_ids 引用了 pending-verification 来源: {src}"
+                                              "（不可作为事实来源）"})
     return issues, data
 
 

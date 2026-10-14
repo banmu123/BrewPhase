@@ -204,9 +204,16 @@ def main(argv=None):
             for d in groups[k]["records"]:
                 records.append(d)
         records.sort(key=lambda d: str(d.get("sample_id")))
+        # jsonl 行携带 sample_id：MLX-LM 官方文档明确「loader 会忽略每行中
+        # 它不需要的键」，因此不影响训练，却让审计可精确到样本级。
         with (out / f"{split}.jsonl").open("w", encoding="utf-8") as f:
             for d in records:
-                f.write(json.dumps({"messages": d["messages"]}, ensure_ascii=False) + "\n")
+                f.write(json.dumps({
+                    "sample_id": d.get("sample_id"),
+                    "messages": d["messages"],
+                }, ensure_ascii=False) + "\n")
+        # meta 行 = 训练准入复查（check_training_admission）的唯一依据，
+        # 必须快照审核/许可/来源/指纹，不依赖生成时的任何标志。
         with (out / f"{split}.meta.jsonl").open("w", encoding="utf-8") as f:
             for d in records:
                 sid = d.get("sample_id")
@@ -219,6 +226,11 @@ def main(argv=None):
                     "review_status": meta.get("review_status"),
                     "license_status": meta.get("license_status"),
                     "data_version": meta.get("data_version"),
+                    "dedup_fingerprint": meta.get("dedup_fingerprint"),
+                    "source_ids": meta.get("source_ids") or [],
+                    "claim_ids": meta.get("claim_ids") or [],
+                    "source_usage": meta.get("source_usage"),
+                    "source_waiver": meta.get("source_waiver"),
                 }, ensure_ascii=False) + "\n")
         counts[split] = len(records)
 
@@ -244,6 +256,7 @@ def main(argv=None):
         "counts": counts,
         "group_assignment": group_to_split,
         "insufficient_data": counts["train"] < args.min_train_warn,
+        "includes_unreviewed": bool(args.include_unreviewed),
         "warnings": warnings,
         "outputs": {s: str(out / f"{s}.jsonl") for s in counts},
     }

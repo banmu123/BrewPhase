@@ -83,8 +83,8 @@ add("b1-006", "g-b1-s-paper-rinse", "brewing", "knowledge/brewing/pour-over.md",
 
 # ---- B. 对比和解释 ----
 add("b1-007", "g-b1-b-factors", "origins-variability", "knowledge/origins/coffee-origins.md",
-    ["wcr-varieties-catalog", "wcr-varieties-catalog-fields"],
-    ["claim.origin.env-factors", "claim.varieties.no-absolute-data"],
+    ["wcr-varieties-catalog", "wcr-varieties-catalog-fields", "cqi-php"],
+    ["claim.origin.env-factors", "claim.varieties.no-absolute-data", "claim.processing.php-scientific"],
     "品种、产区和处理法，分别能说明一杯咖啡的什么？",
     "三个标签说明的是不同层面的信息：品种描述的是植株层面的特性（生长、抗病、产量潜力等，且按 WCR 的体系只能相对参照地描述）；产区背后是环境变量——海拔、土壤、天气、树龄与农场管理——它们与品种共同塑造原料基础；处理法是采收后的转化环节，能够塑造风味方向，但被专业教育体系（如 CQI）视为需要风险控制的过程，而不是风味的保证。任何一个标签单独都不能「决定」杯中表现，把它们叠加起来也只是缩小范围，不是答案。",
     "训练多因素归因的边界意识。")
@@ -204,7 +204,9 @@ add("b1-025", "g-b1-e-v60-recipes", "uncertainty", "knowledge/brewing/pour-over.
     "冲突样本：参数分歧的正当性。")
 add("b1-026", "g-b1-e-descale", "cleaning-maintenance", "knowledge/cleaning-maintenance/cleaning-maintenance.md",
     ["sage-bes875-ug-i23", "gaggia-classic-manual"],
-    ["conflict.descaling.no-universal-cycle", "claim.cleaning.no-universal-cycle", "claim.cleaning.follow-manual", "claim.cleaning.cleaning-vs-descaling"],
+    ["conflict.descaling.no-universal-cycle", "conflict.gaggia.classic-descale-interval",
+     "claim.cleaning.no-universal-cycle", "claim.cleaning.follow-manual",
+     "claim.cleaning.cleaning-vs-descaling", "claim.water.gaggia-vinegar-ban"],
     "咖啡机多久除垢一次？有没有通用的周期？",
     "不存在通用除垢周期。已核验的厂商口径差异很大：Sage 按水硬度建议 60–90 天（并用滤芯时另有滤芯周期），Gaggia Classic（2019 版手册）是 2 个月，Nespresso 按胶囊数或半年计，De'Longhi 按水硬度设置提示——同一厂商的不同代际手册甚至也不一致。另外清洗（backflush）与除垢是两件事，周期与耗材都不同。正确做法是：查你手上那台机器对应型号与代际的手册，使用厂商指定的除垢产品（Gaggia 明文禁止用醋），按机器的提示而非固定日历操作。",
     "冲突样本：跨品牌周期不可比。")
@@ -212,11 +214,12 @@ add("b1-027", "g-b1-e-inverted", "uncertainty", "knowledge/brewing/immersion-aer
     ["aeropress-manual-inverted"],
     ["conflict.aeropress.inverted-method", "claim.aeropress.inverted-not-recommended"],
     "AeroPress 倒置法到底能不能用？",
-    "这是一个立场分层问题，不是简单的事实矛盾。官方说明书明确不推荐倒置法，理由是稳定性差、有倾覆后热水喷溅烫伤的风险——这是厂商对安全责任的立场。社区实践中确实有人为了浸泡控制而选择倒置，但社区来源在知识库中被标记为轶事级、且来源状态为待核验，只能作为「存在这种实践」的证据。如果你考虑倒置，需要理解官方反对的是风险而不是风味：若采用，应确保密封完好、远离易碎容器。本知识库不给出「应该用哪种」的单一结论。",
+    "这是一个立场分层问题，不是简单的事实矛盾。官方说明书明确不推荐倒置法，理由是稳定性差、有倾覆后热水喷溅烫伤的风险——这是厂商对安全责任的立场。社区实践中确实有人为了浸泡控制而选择倒置，但社区来源在知识库中被标记为轶事级、且来源状态为待核验，只能作为「存在这种实践」的证据。官方反对的是风险而不是风味；本知识库无法保证任何操作方式的安全，是否采用由你自行判断——采用前请自行评估密封状态、器具稳固性与烫伤风险，并以官方安全说明为准。本知识库不给出「应该用哪种」的单一结论。",
     "冲突样本：官方立场 vs 社区实践的分层呈现。")
 add("b1-028", "g-b1-e-espresso-temp", "uncertainty", "knowledge/CONFLICTS.md",
     ["fellow-brew-talks"],
-    ["conflict.espresso.brew-temperature-defaults", "claim.espresso.fellow-ratio-example"],
+    ["conflict.espresso.brew-temperature-defaults", "claim.espresso.fellow-ratio-example",
+     "claim.espresso.fellow-ratio-1to3"],
     "意式萃取的标准温度是多少度？",
     "不存在单一的「标准温度」。已核验的厂商默认值本身就不一致：Fellow 的不同配方分别用 94°C 和 93°C；第三方教育资料常给一个区间而非固定值。可以成立的表述只有两种：「某机型的官方默认是 X°C」（绑定型号的事实），以及「实际温度是配方变量，受豆子、烘焙度、研磨与目标风味影响」。任何「意式最佳温度是 X°C」的说法都把配方变量说成了普适结论。",
     "冲突样本：拒绝伪标准值。")
@@ -304,6 +307,8 @@ def main():
             "claim_ids": s["claim_ids"], "license_status": "own-original",
             "review_status": "unreviewed", "data_version": DATA_VERSION,
             "dedup_fingerprint": messages_fingerprint(messages),
+            # 阶段三：来源级用途声明（外部来源唯一允许的用法，见 coffeeai_common 政策）
+            "source_usage": {sid: "fact-extraction-rewrite" for sid in s["source_ids"]},
             "notes": f"阶段二候选（{s['notes']}）",
         }, ensure_ascii=False))
     out_corpus.write_text("\n".join(corpus_lines) + "\n", encoding="utf-8")

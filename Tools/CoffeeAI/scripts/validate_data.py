@@ -32,6 +32,7 @@ from coffeeai_common import (  # noqa: E402
     LICENSES_ALLOW_TRAIN, LICENSES_BLOCK_TRAIN, REVIEW_APPROVED,
     check_messages, check_meta, corpus_sha256, expand_globs, load_jsonl,
     load_registry, message_texts, messages_fingerprint, near_duplicate_pairs,
+    source_admission_issues,
 )
 
 
@@ -45,6 +46,8 @@ def build_arg_parser():
                    help="训练前置模式：仅接受 review_status=approved 且许可明确的样本")
     p.add_argument("--check-splits", metavar="DIR",
                    help="检查 train/valid/test.jsonl 的跨集合泄漏")
+    p.add_argument("--check-admission", metavar="DIR",
+                   help="P0：对已生成 splits 做正式训练准入复查（审核状态/许可/来源级）")
     p.add_argument("--max-chars", type=int, default=12000)
     p.add_argument("--min-answer-chars", type=int, default=20)
     p.add_argument("--sim-threshold", type=float, default=0.92)
@@ -121,7 +124,7 @@ def validate(corpus_patterns, meta_patterns, registry_path=None,
     # ---- 元数据
     meta_by_id = {}
     for rec in meta_recs:
-        meta_issues, meta = check_meta(rec, reg)
+        meta_issues, meta = check_meta(rec, reg, for_training=for_training)
         issues.extend(meta_issues)
         sid = (meta or {}).get("sample_id")
         if isinstance(sid, str) and sid:
@@ -166,6 +169,7 @@ def validate(corpus_patterns, meta_patterns, registry_path=None,
                 issues.append({"level": "error", "code": "not-approved",
                                "sample_id": sid,
                                "message": f"review_status={m.get('review_status')!r}，未经审核禁止训练"})
+                continue  # 未审核样本以 not-approved 为唯一阻断项，不再叠加来源噪音
             lic = str(m.get("license_status", "")).lower()
             if lic in LICENSES_BLOCK_TRAIN:
                 issues.append({"level": "error", "code": "license-blocked",
@@ -179,6 +183,22 @@ def validate(corpus_patterns, meta_patterns, registry_path=None,
                 issues.append({"level": "error", "code": "missing-fingerprint",
                                "sample_id": sid,
                                "message": "训练样本缺少去重指纹"})
+            # ---- 阶段三：来源级准入（不因样本自身 own-original 而豁免来源限制）
+            src_ids = m.get("source_ids") or []
+            src_issues = source_admission_issues(src_ids, reg or {}, m.get("source_usage"))
+            for si in src_issues:
+                issues.append({"level": "error", "code": si["code"],
+                               "sample_id": sid, "message": si["message"]})
+            if src_ids:
+                if not m.get("claim_ids"):
+                    issues.append({"level": "error", "code": "missing-claim-linkage",
+                                   "sample_id": sid,
+                                   "message": "样本引用了外部事实来源但缺少 claim 关联（claim_ids 为空）"})
+            elif not (m.get("source_waiver") or "").strip():
+                issues.append({"level": "error", "code": "missing-source-waiver",
+                               "sample_id": sid,
+                               "message": "无外部来源的样本必须提供 source_waiver（豁免原因），"
+                                          "说明为何不需要事实来源"})
 
     summary = {
         "corpus_files": [str(p) for p in corpus_paths],
@@ -268,11 +288,134 @@ def check_splits_dir(d, sim_threshold=0.92):
     return issues, summary
 
 
+def check_training_admission(splits_dir, registry_path=None):
+    """P0：正式训练/烟测前的划分产物准入复查（不信任划分时的标志）。
+
+    独立重读 {train,valid,test}.meta.jsonl 与 {train,valid,test}.jsonl，逐条确认：
+      1. 每条 jsonl 样本都有对应元数据（按 sample_id 1:1，数量一致）；
+      2. review_status == approved（未审核/拒绝一律阻断）；
+      3. license_status 通过严格训练准入；
+      4. 来源级准入（pending/unknown/付费墙阻断、usage 声明、claim 关联、豁免）；
+      5. sample_id 不跨集合。
+    返回 (issues, summary)。任何 error 都应阻断正式训练。
+    """
+    issues = []
+    d = Path(splits_dir)
+    reg = load_registry(registry_path) if registry_path else load_registry()
+    if reg is None:
+        issues.append({"level": "error", "code": "registry-unreadable",
+                       "message": "SOURCE_REGISTRY.json 不可读，无法做来源级准入检查（阻断）"})
+
+    seen_ids = {}
+    counts = {}
+    for split in ("train", "valid", "test"):
+        jsonl_f = d / f"{split}.jsonl"
+        meta_f = d / f"{split}.meta.jsonl"
+        if not jsonl_f.is_file():
+            issues.append({"level": "error", "code": "split-file-missing",
+                           "message": f"缺少 {jsonl_f}"})
+            counts[split] = 0
+            continue
+        recs, errs = load_jsonl([jsonl_f])
+        issues.extend(errs)
+        counts[split] = len(recs)
+        if not meta_f.is_file():
+            issues.append({"level": "error", "code": "admission-meta-missing",
+                           "message": f"缺少 {meta_f}：划分产物必须携带审计元数据"})
+            continue
+        meta_rows, meta_errs = load_jsonl([meta_f])
+        issues.extend(meta_errs)
+        meta_by_id = {}
+        for row in meta_rows:
+            m = row["data"]
+            sid = m.get("sample_id")
+            if not sid:
+                issues.append({"level": "error", "code": "admission-meta-incomplete",
+                               "message": f"{meta_f.name} 存在缺少 sample_id 的行"})
+                continue
+            if sid in meta_by_id:
+                issues.append({"level": "error", "code": "admission-meta-incomplete",
+                               "message": f"{meta_f.name} 中 sample_id 重复: {sid}"})
+            meta_by_id[sid] = m
+
+        # jsonl ↔ meta 1:1
+        jsonl_ids = [r["data"].get("sample_id") for r in recs]
+        if any(not s for s in jsonl_ids):
+            issues.append({"level": "error", "code": "admission-jsonl-no-id",
+                           "message": f"{jsonl_f.name} 存在缺少 sample_id 的行（需重新运行 split_dataset.py）"})
+            jsonl_ids = [s for s in jsonl_ids if s]
+        for sid in jsonl_ids:
+            if sid in seen_ids:
+                issues.append({"level": "error", "code": "sample-cross-split",
+                               "message": f"sample_id 跨集合: {sid}（已在 {seen_ids[sid]} 出现过）"})
+            else:
+                seen_ids[sid] = split
+        missing = [s for s in jsonl_ids if s not in meta_by_id]
+        if missing:
+            issues.append({"level": "error", "code": "admission-meta-missing",
+                           "message": f"{split}: {len(missing)} 条样本没有对应元数据，例: {missing[:5]}"})
+        extra = [s for s in meta_by_id if s not in set(jsonl_ids)]
+        if extra:
+            issues.append({"level": "error", "code": "admission-meta-extra",
+                           "message": f"{split}: 元数据中有 {len(extra)} 条不在 jsonl 中（过期 meta?），例: {extra[:5]}"})
+
+        # 逐条元数据准入
+        for sid in jsonl_ids:
+            m = meta_by_id.get(sid)
+            if m is None:
+                continue
+            for field in ("review_status", "license_status", "data_version", "dedup_fingerprint"):
+                if not m.get(field):
+                    issues.append({"level": "error", "code": "admission-meta-incomplete",
+                                   "sample_id": sid,
+                                   "message": f"{split}/{sid} 缺少 {field}"})
+            if m.get("review_status") != REVIEW_APPROVED:
+                issues.append({"level": "error", "code": "admission-not-approved",
+                               "sample_id": sid,
+                               "message": f"{split}/{sid} review_status="
+                                          f"{m.get('review_status')!r}——未经审核，阻断训练"})
+                continue  # 未审核样本不再叠加来源检查（避免噪音）
+            lic = str(m.get("license_status", "")).lower()
+            if lic in LICENSES_BLOCK_TRAIN:
+                issues.append({"level": "error", "code": "admission-license-blocked",
+                               "sample_id": sid,
+                               "message": f"{split}/{sid} license_status={lic}，阻断"})
+            elif lic not in LICENSES_ALLOW_TRAIN:
+                issues.append({"level": "error", "code": "admission-license-unclear",
+                               "sample_id": sid,
+                               "message": f"{split}/{sid} license_status={lic!r} 不在白名单，阻断"})
+            src_ids = m.get("source_ids") or []
+            src_issues = source_admission_issues(src_ids, reg or {}, m.get("source_usage"))
+            for si in src_issues:
+                issues.append({"level": "error", "code": si["code"],
+                               "sample_id": sid,
+                               "message": f"{split}/{sid}: {si['message']}"})
+            if src_ids and not m.get("claim_ids"):
+                issues.append({"level": "error", "code": "missing-claim-linkage",
+                               "sample_id": sid,
+                               "message": f"{split}/{sid}: 引用外部来源但缺少 claim 关联"})
+            if not src_ids and not (m.get("source_waiver") or "").strip():
+                issues.append({"level": "error", "code": "missing-source-waiver",
+                               "sample_id": sid,
+                               "message": f"{split}/{sid}: 无来源样本缺少 source_waiver"})
+
+    summary = {"splits_dir": str(d), "counts": counts,
+               "n_samples": sum(counts.values()),
+               "errors": sum(1 for x in issues if x["level"] == "error"),
+               "warnings": sum(1 for x in issues if x["level"] == "warning"),
+               "issues": issues}
+    return issues, summary
+
+
 def main(argv=None):
     args = build_arg_parser().parse_args(argv)
+
     report = {"tool": "validate_data", "mode": "for-training" if args.for_training else "check"}
 
-    if args.check_splits:
+    if args.check_admission:
+        issues, summary = check_training_admission(args.check_admission)
+        report["admission"] = summary
+    elif args.check_splits:
         issues, summary = check_splits_dir(args.check_splits, args.sim_threshold)
         report["splits_check"] = summary
     else:
@@ -281,8 +424,8 @@ def main(argv=None):
             args.min_answer_chars, args.sim_threshold, args.for_training)
         report["validation"] = summary
 
-    errors = report.get("validation", report.get("splits_check", {})).get("errors", 0)
-    warnings = report.get("validation", report.get("splits_check", {})).get("warnings", 0)
+    errors = sum(1 for i in issues if i.get("level") == "error")
+    warnings = sum(1 for i in issues if i.get("level") == "warning")
 
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -297,6 +440,8 @@ def main(argv=None):
             print(f"语料指纹 : {v['corpus_sha256']}")
         if "splits_check" in report:
             print(f"splits   : {report['splits_check']['counts']}")
+        if "admission" in report:
+            print(f"准入复查 : {report['admission']['counts']}  样本数 {report['admission']['n_samples']}")
         print(f"结果     : {errors} 个 error, {warnings} 个 warning")
         print("-" * 62)
         for i in issues:

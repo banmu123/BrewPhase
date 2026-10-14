@@ -11,11 +11,21 @@
 > 全部锚定真实 claim/rule/conflict ID）+ 存量 10 条示例的审查结论 + 逐条人工审核清单。
 > 候选池共 40 条，全部 `unreviewed`，与正式语料目录隔离。审核流程见
 > `review_queue/batch1_review_report.md` 与 `review_queue/COVERAGE_REPORT.md`。
+>
+> **阶段三（2026-10-14）**：训练安全修复 —— ① 正式训练/烟测前对划分产物做**独立准入复查**
+> （重读 meta，未审核/许可不明/来源不合规一律阻断，`--include-unreviewed` 产物不再可能
+> 进入训练）；② 来源级准入政策落地（pending-verification/付费墙/受限资产阻断训练，
+> 外部来源必须声明 `fact-extraction-rewrite` 用法并提供 claim 关联）；③ `--allow-download`
+> 仅对 `--train` 生效，烟测与 dry-run 绝不下载；④ 评测改用模型聊天模板
+> （`--system-prompt` + 默认模板，双模型参数一致）。测试 27 → **41 项**。
 
 ## 0. 红线（先读）
 
 1. **未经人工审核（`review_status: approved`）的样本，任何脚本都不会放进训练集**——
-   这是硬编码行为，不是约定（见 `split_dataset.py` / `validate_data.py --for-training`）。
+   这是硬编码行为，不是约定：划分脚本默认排除；即使有人用 `--include-unreviewed`
+   生成划分，`run_train.py` 在正式训练/烟测前会**独立重读划分产物元数据做准入复查**
+   （`validate_data.check_training_admission`），发现任何未审核/许可不明/来源不合规/
+   元数据不全的样本即拒绝启动。
 2. 许可纪律沿用 `knowledge/SOURCE_REGISTRY.md`：WCR/SCA 风味轮为 CC BY-NC-ND
    （不得改编复制）；SCA Handbooks、Barista Hustle 为付费内容（只记书目）；
    `license: unknown` 一律不得默认可复制；厂商手册只能「事实提取 + 独立改写 + 署名」。
@@ -107,9 +117,10 @@ python3 Tools/CoffeeAI/scripts/run_train.py --dry-run            # 只预览，�
 # 4) 安装依赖（需要联网，你手动执行；依赖约 0.3–0.6GB）
 pip install "mlx-lm[train]"
 
-# 5) 下载模型（需要联网，约 2.4–2.6GB，以模型卡为准；二选一）
+# 5) 下载模型（需要联网，约 2.4–2.6GB，以模型卡为准；推荐先手动下载）
 huggingface-cli download mlx-community/Qwen3-4B-Instruct-2507-4bit
-#   或训练时显式允许： run_train.py --train --allow-download
+#   或正式训练时显式允许下载： run_train.py --train --allow-download
+#   （--allow-download 仅对 --train 生效；--dry-run 与 --smoke 即使传入也绝不下载）
 
 # 6) 烟测（2 iters，只验证管线，不代表质量）
 python3 Tools/CoffeeAI/scripts/run_train.py --smoke --config Tools/CoffeeAI/configs/smoke.yaml
@@ -117,11 +128,14 @@ python3 Tools/CoffeeAI/scripts/run_train.py --smoke --config Tools/CoffeeAI/conf
 # 7) 正式训练（preflight 全过后才启动；结束后写 runs/<run_id>/run_manifest.json）
 python3 Tools/CoffeeAI/scripts/run_train.py --train --config Tools/CoffeeAI/configs/m2_16gb_qwen3_4b_qlora.yaml
 
-# 8) 对比评测（基础 vs 微调；输出待人工审核的回答对，不做自动打分）
+# 8) 对比评测（基础 vs 微调；system+user 经模型聊天模板渲染，双模型参数一致）
 python3 Tools/CoffeeAI/scripts/evaluate.py \
   --base-model mlx-community/Qwen3-4B-Instruct-2507-4bit \
   --adapter-path Tools/CoffeeAI/runs/adapters \
   --questions Tools/CoffeeAI/data/splits/test.jsonl --limit 10
+
+# 9) 划分产物准入复查（正式训练前会被 run_train 自动执行，也可手动跑）
+python3 Tools/CoffeeAI/scripts/validate_data.py --check-admission Tools/CoffeeAI/data/splits
 ```
 
 训练配置严格落在当前版本 MLX-LM 官方 `examples/lora_config.yaml` 字段内
@@ -162,7 +176,7 @@ grad_checkpoint 的保守配置余量充足；1B–2B 模型只作为内存不�
 | 9 | 不影响 iOS 工程与现有测试 | ✅ `test_existing_kb_build_check_still_passes`（`build_kb.py --check` 通过）；未改动 `BrewPhase/` 任何文件 |
 | 10 | README 结果对应真实执行 | 本表全部来自上面实际运行的测试与命令 |
 
-**测试汇总：`python3 Tools/CoffeeAI/tests/test_coffeeai.py` → Ran 22 tests, OK**（Python 3.13.12）。
+**测试汇总**：阶段一 22 项 → 阶段二 27 项 → **阶段三 41 项（2026-10-14 实测：Ran 41 tests, OK，Python 3.13.12）**。新增覆盖：`--include-unreviewed` 产物阻断、准入复查 CLI、来源级准入（pending/付费墙/受限/未声明用法/缺 claim 关联/缺豁免）、`--allow-download` 模式门控、评测命令对称性与模板语义。
 
 ## 6. 已知限制
 

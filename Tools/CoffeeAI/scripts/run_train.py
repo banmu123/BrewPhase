@@ -30,7 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import env_check  # noqa: E402
-from validate_data import check_splits_dir  # noqa: E402
+from validate_data import check_splits_dir, check_training_admission  # noqa: E402
 
 COFFEEAI = Path(__file__).resolve().parents[1]
 REPO_ROOT = COFFEEAI.parent.parent
@@ -186,23 +186,44 @@ def preflight(config_path, model_override, data_override, mode, allow_download):
             errs = [i for i in issues if i["level"] == "error"]
             if errs:
                 hard.append("数据集跨集合泄漏/结构错误: " + "; ".join(i["message"] for i in errs[:3]))
+            # ---- P0：训练准入复查（独立重读 meta，不信任划分时的任何标志）。
+            # --include-unreviewed 的产物在此被硬性拒绝：只要 meta 里存在
+            # 非 approved / 许可不明 / 来源不合规 / 元数据不全的样本，一律阻断。
+            a_issues, a_summary = check_training_admission(data_dir)
+            report["admission"] = {"counts": a_summary["counts"],
+                                   "n_samples": a_summary["n_samples"],
+                                   "errors": a_summary["errors"]}
+            a_errs = [i for i in a_issues if i["level"] == "error"]
+            if a_errs:
+                head = "; ".join(f"[{i.get('code')}] {i.get('sample_id', '')} {i['message']}"
+                                 for i in a_errs[:4])
+                hard.append(f"训练准入复查未通过（P0，{len(a_errs)} 项）: {head}")
             report["split_dir_sha256"] = {
                 n: hashlib.sha256((data_dir / f"{n}.jsonl").read_bytes()).hexdigest()[:16]
                 for n in ("train", "valid", "test") if (data_dir / f"{n}.jsonl").is_file()
             }
 
-    # 4) 模型
-    status, detail = resolve_model(str(model_ref), allow_download)
+    # 4) 模型。--allow-download 仅对 --train 生效：dry-run 与烟测绝不下载。
+    effective_allow = bool(allow_download) and mode == "train"
+    report["allow_download_effective"] = effective_allow
+    status, detail = resolve_model(str(model_ref), effective_allow)
     report["model_status"] = status
     report["model_detail"] = detail
     if status == "invalid":
         hard.append(f"模型不可用: {detail}")
     elif status == "needs-download":
         if mode == "dry-run":
-            soft.append(f"模型尚未下载——dry-run 不下载。正式训练前请显式 --allow-download 或先手动下载。{detail.get('note', '')}")
+            soft.append(f"模型尚未下载——dry-run 不下载。正式训练前请先手动下载到本地 HF 缓存"
+                        f"（或正式训练时显式传 --allow-download）。{detail.get('note', '')}")
+        elif mode == "smoke":
+            hard.append("烟测不下载：模型不在本地缓存。请先手动下载（huggingface-cli download …）；"
+                        "--allow-download 对烟测无效。")
+        elif effective_allow:
+            soft.append("用户已显式 --allow-download：正式训练启动时将由 mlx-lm 下载该模型"
+                        "（约 2.4–2.6GB，以模型卡为准；联网）。")
         else:
             hard.append("模型不在本地。本工具绝不擅自下载；如确认要下载请加 --allow-download"
-                        f"（约 2.4–2.6GB，以模型卡为准）。{detail.get('note', '')}")
+                        f"（仅 --train 生效，约 2.4–2.6GB，以模型卡为准）。{detail.get('note', '')}")
 
     # 5) 磁盘
     model_gb = float(detail.get("size_gb") or 3.0) if status in ("local", "hf-cache") else 3.0
@@ -266,7 +287,8 @@ def main(argv=None):
     p.add_argument("--model", default=None, help="覆盖配置中的 model")
     p.add_argument("--data-dir", default=None, help="覆盖配置中的 data")
     p.add_argument("--allow-download", action="store_true",
-                   help="显式允许在训练时下载缺失的基础模型（绝不默认）")
+                   help="显式允许在【正式训练】时下载缺失的基础模型；--dry-run 与 --smoke "
+                        "即使传入也绝不下载（烟测要求模型已在本地缓存）")
     args = p.parse_args(argv)
 
     modes = [m for m in ("dry-run", "smoke", "train") if getattr(args, m.replace("-", "_"))]
