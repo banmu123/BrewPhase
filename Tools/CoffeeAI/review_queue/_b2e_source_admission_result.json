@@ -1,0 +1,103 @@
+{
+ "b2e-001": {
+  "verdict": "BLOCK",
+  "sources": [
+   "hario-v60-expert-guide"
+  ],
+  "issues": [
+   {
+    "code": "exception-out-of-scope",
+    "message": "来源 hario-v60-expert-guide 的人工例外不覆盖当前样本/用途: 样本 b2e-001 不在例外允许的样本范围 ['b1-006', 'b1-012', 'b1-013', 'b1-025', 'b2a-006', 'b2b-002', 'b2b-003', 'b2d-006', 'b2d-007'] 内"
+   }
+  ]
+ },
+ "b2e-002": {
+  "verdict": "BLOCK",
+  "sources": [
+   "fellow-brew-talks"
+  ],
+  "issues": [
+   {
+    "code": "exception-out-of-scope",
+    "message": "来源 fellow-brew-talks 的人工例外不覆盖当前样本/用途: 样本 b2e-002 不在例外允许的样本范围 ['b2a-009', 'b1-019', 'b1-020', 'b1-023', 'b1-028', 'b1-009'] 内"
+   }
+  ]
+ },
+ "b2e-003": {
+  "verdict": "BLOCK",
+  "sources": [
+   "fellow-espresso-basics",
+   "gaggia-classic-manual"
+  ],
+  "issues": [
+   {
+    "code": "exception-out-of-scope",
+    "message": "来源 fellow-espresso-basics 的人工例外不覆盖当前样本/用途: 样本 b2e-003 不在例外允许的样本范围 ['b1-014', 'b1-015', 'b1-016', 'b2a-001', 'b2a-002', 'b2a-003', 'b2a-004', 'b2b-006', 'b2d-008'] 内"
+   },
+   {
+    "code": "exception-out-of-scope",
+    "message": "来源 gaggia-classic-manual 的人工例外不覆盖当前样本/用途: 样本 b2e-003 不在例外允许的样本范围 ['b2a-004', 'b1-026'] 内"
+   }
+  ]
+ },
+ "b2e-004": {
+  "verdict": "BLOCK",
+  "sources": [
+   "ucdavis-coffee-center"
+  ],
+  "issues": [
+   {
+    "code": "exception-out-of-scope",
+    "message": "来源 ucdavis-coffee-center 的人工例外不覆盖当前样本/用途: 样本 b2e-004 不在例外允许的样本范围 ['b2a-005', 'b2a-008', 'b2b-001', 'b2b-004', 'b2b-005', 'b2b-008', 'b2c-001', 'b2c-002', 'b2c-003', 'b2d-003', 'b2d-004', 'b2d-010'] 内"
+   }
+  ]
+ },
+ "b2e-005": {
+  "verdict": "BLOCK",
+  "sources": [
+   "ucdavis-coffee-center"
+  ],
+  "issues": [
+   {
+    "code": "exception-out-of-scope",
+    "message": "来源 ucdavis-coffee-center 的人工例外不覆盖当前样本/用途: 样本 b2e-005 不在例外允许的样本范围 ['b2a-005', 'b2a-008', 'b2b-001', 'b2b-004', 'b2b-005', 'b2b-008', 'b2c-001', 'b2c-002', 'b2c-003', 'b2d-003', 'b2d-004', 'b2d-010'] 内"
+   }
+  ]
+ },
+ "b2e-006": {
+  "verdict": "BLOCK",
+  "sources": [
+   "hario-v60-hoffmann"
+  ],
+  "issues": [
+   {
+    "code": "exception-out-of-scope",
+    "message": "来源 hario-v60-hoffmann 的人工例外不覆盖当前样本/用途: 样本 b2e-006 不在例外允许的样本范围 ['b1-025', 'b2b-003', 'b2b-002'] 内"
+   }
+  ]
+ },
+ "b2e-007": {
+  "verdict": "BLOCK",
+  "sources": [
+   "fellow-brew-talks"
+  ],
+  "issues": [
+   {
+    "code": "exception-out-of-scope",
+    "message": "来源 fellow-brew-talks 的人工例外不覆盖当前样本/用途: 样本 b2e-007 不在例外允许的样本范围 ['b2a-009', 'b1-019', 'b1-020', 'b1-023', 'b1-028', 'b1-009'] 内"
+   }
+  ]
+ },
+ "b2e-008": {
+  "verdict": "BLOCK",
+  "sources": [
+   "gaggia-classic-manual"
+  ],
+  "issues": [
+   {
+    "code": "exception-out-of-scope",
+    "message": "来源 gaggia-classic-manual 的人工例外不覆盖当前样本/用途: 样本 b2e-008 不在例外允许的样本范围 ['b2a-004', 'b1-026'] 内"
+   }
+  ]
+ }
+}
