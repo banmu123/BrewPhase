@@ -1,5 +1,10 @@
-# Batch2e 人工审核包 v5（阶段七-G 后续，2026-10-15）
+# Batch2e 人工审核包 v6（阶段七-G 后续，2026-10-15）
 
+> **v6 修订依据**：GPT 对 draft v5 的复核（存档
+> `gpt_replies/gpt_reply_batch2e_draftv5_review.md`）——6 项定点修改全部落实、结构
+> 全过，残余 5 条样本 6 处标层（b2e-002 信息收集做法标 P、b2e-004 选择题段标 P、
+> b2e-006 引用规范拆 P/I、b2e-007「不能一概而论」并入 I、b2e-008 两句并入 I/P）。
+> v6 逐项落实，重跑全绿。
 > **v5 修订依据**：GPT 对 draft v4 的终复核（存档
 > `gpt_replies/gpt_reply_batch2e_draftv4_review.md`）——结构性标层通过（成对、零
 > 残留确认），但逐句语义核对发现 6 条样本仍有实质内容未标层，给出定点修订清单。
@@ -12,10 +17,10 @@
 > 语义。
 > 定位（GPT 终裁）：**追问能力数据侧验证批次**。禁止：批准、落库、更新
 > allowed_sample_ids/manifest、重新划分、训练。
-> 检查链（v5 重跑）：quality gate **PASSED**（checked=8, errors=0, warnings=0）；标记
-> 严格自查 **ALL_OK**（逐条计数：b2e-001 F1/P1/I1、b2e-002 F1/P1/I3、b2e-003
-> F1/P2/I1、b2e-004 F1/P1/I2、b2e-005 F3/P1/I3、b2e-006 F1/P2/I2、b2e-007 F3/P2/I2、
-> b2e-008 F2/P4/I1；单独注释残留 0）；admission **8 BLOCK**（同构预期）；143 tests OK。
+> 检查链（v6 重跑）：quality gate **PASSED**（checked=8, errors=0, warnings=0）；标记
+> 严格自查 **ALL_OK**（逐条计数：b2e-001 F1/P1/I1、b2e-002 F1/P2/I3、b2e-003
+> F1/P2/I1、b2e-004 F1/P2/I2、b2e-005 F3/P1/I3、b2e-006 F1/P3/I3、b2e-007 F3/P2/I3、
+> b2e-008 F2/P5/I2；单独注释残留 0）；admission **8 BLOCK**（同构预期）；143 tests OK。
 
 ## 汇总
 
