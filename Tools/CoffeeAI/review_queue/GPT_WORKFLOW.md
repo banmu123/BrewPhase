@@ -78,17 +78,16 @@ reviewed_by/reviewed_at/content_sha256/record_sha256 → ④ manifest: batch2b-a
 → ⑤ check_approval_ready → ⑥ validate --for-training → ⑦ split → ⑧ 更新数量报告。
 禁止：自动批准剩余候选、改知识库、开始训练。
 
-**中断点（2026-10-15 晚二次更新）**：GPT 批准启动实验 C（回复存档
-`gpt_replies/gpt_reply_stage7g0_approved_start_C.md`）。已按 G-1→G-2→G-3 执行：
-G-1 基线 20 题生成并归档（/tmp/experiment_C_baseline/ + SHA256SUMS）→ G-2 训练
-完成（train_20261015_192808，exit 0，4m15s，manifest 复核：参数冻结一致、keys=list、
-准入 0 错误、hf-cache 无下载；执行环境=隔离 venv python，系统 python 首次尝试被
-preflight 正确拦截）→ G-3 评测 40 份生成 → 逐题对比与评分。
-**实验 C 结果：未判成功**——行为分 7/10 达线、两项历史事实错误均消失、无模板化；
-但自然度 -1.5（门线 ≤1）且新增 nat_q7 机理编造/nat_q4 失实；追问能力仍 0 分
-（三实验一致，疑为数据缺口）。报告：`training/experiment_C_report.md`（含给 GPT
-的三个裁定请求）。**下一步**：等 GPT 裁定（新错误严重性 / 追问数据侧方向 /
-是否冻结 3B 实验线）。
+**中断点（2026-10-15 晚最终更新）**：GPT 终裁——**Experiment C 不通过，冻结当前
+训练线**（裁定存档 `gpt_replies/gpt_reply_stage7g_experimentC_failed_freeze.md`）：
+① nat_q7/nat_q4 = 重大事实回归（触发失败条件）；gov_q9 来源归属**勘误**（AHA
+2026-07 科学声明确有 400mg 通常安全口径——归属可成立，残留问题是「建议」式措辞
+应为「通常认为安全」）；② 追问缺口走数据侧：建议约 8 条 clarification 候选
+（一半追问/一半直答防模板化），走现有候选→审核→批准流程，35 条/例外/28-4-3
+不变；③ 冻结 A/B/C 线：不部署 C、不加强度、不升 7B；归档结论 =「训练链路验证
+完成，目标行为局部改善，未通过产品质量验收」。**已完成 GPT 指示的文档勘误**
+（experiment_C_report.md 补充说明节，原记录与哈希不动）。**下一步（等负责人
+决定）**：是否开展 clarification 候选数据批次（GPT 建议先 8 条供审查）。
 
 **恢复步骤（旧版存档，供追溯）**：① 读本文档与 `batch2b_review_package.md` → ② 等负责人对 8 条拍板 →
 ③ 按六点九-E 要点执行落库 → ④ 回归（127 tests + build_kb --check + 门禁）→ push →
@@ -132,7 +131,8 @@ license），不要直接读 SOURCE_REGISTRY.json 原始结构。
 | 七-A~七-E | 数据审计（72059b1）→ mlx-lm 环境隔离 venv（2773fc8）→ 基座决策+数据转换+10 题评测集（d67e924）→ **首次 LoRA dry-run 闭环+3 链路 bug 修复**（887ed5c）→ 实验敏感性（aad73ea：B 实验 6/10，对齐↑幻觉↑并存） | 72059b1 / 2773fc8 / d67e924 / 887ed5c / aad73ea |
 | 七-F | Batch2d 选题（e9c135f）→ 草稿+门禁（f518d7d）→ 审核包（b9777d9）→ GPT 核验（7cebb70）→ **落库 approved 25→35、train 28/4/3**（67442a2）；报告 3 次 Model not found 后于 16:03 额度刷新后重发成功 | e9c135f / f518d7d / b9777d9 / 7cebb70 / 67442a2 |
 | 七-G-0 | **实验 C 启动前配置核验与评测冻结（GPT 裁定先于训练）**：YAML 数组解析修复+7 测试、实验 C 独立配置、转换文档修正（system 进训练）、评测一致性修复（system+显式 ChatML，tokenizer 交叉校验 True）+N5 v2+冻结文档+6 测试、只读验证全过（143 tests / leakage=0 / dry-run Preflight 通过）；preflight 报告 = experiment_C_preflight_report.md | 180e012 |
-| 七-G | **Experiment C 执行**（GPT 批准）：G-1 基线归档（20 题+SHA256）→ G-2 训练（train_20261015_192808，exit 0，4m15s，keys=list/准入 0/无下载）→ G-3 评测 40 份 → 报告 experiment_C_report.md：**未判成功**——行为 7/10 达线、两项历史事实错误消失、无模板化；但自然度 -1.5、nat_q7 机理编造/nat_q4 失实、追问仍 0 分（疑数据缺口） | （本次提交） |
+| 七-G | **Experiment C 执行**（GPT 批准）：G-1 基线归档（20 题+SHA256）→ G-2 训练（train_20261015_192808，exit 0，4m15s，keys=list/准入 0/无下载）→ G-3 评测 40 份 → 报告 experiment_C_report.md：**未判成功**——行为 7/10 达线、两项历史事实错误消失、无模板化；但自然度 -1.5、nat_q7 机理编造/nat_q4 失实、追问仍 0 分（疑数据缺口） | 0913b5e |
+| 七-G 终裁 | **GPT：Experiment C 不通过，冻结当前训练线**——nat_q7/nat_q4 重大事实回归；gov_q9 勘误（AHA 2026-07 声明确有 400mg 口径）；追问走数据侧（建议 8 条候选）；归档「链路验证完成、局部改善、未过质量验收」；报告已补勘误说明 | （本次提交） |
 
 ## 六、关键决策记录（GPT 已拍板，供后续引用）
 
