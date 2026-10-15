@@ -1,15 +1,17 @@
-# Batch2e 人工审核包 v2（阶段七-G 后续，2026-10-15）
+# Batch2e 人工审核包 v3（阶段七-G 后续，2026-10-15）
 
-> **v2 修订依据**：GPT 对 draft v1 的复核（存档
-> `gpt_replies/gpt_reply_batch2e_draft_revision_required.md`）——格式门禁通过但事实
-> 语义 8 条全部需修订。v2 逐条落实修订要求，并按复核要求完成两项一致性检查：
-> ① fact_stability_risk 重新定级并写明理由（不再机械全 low）；② F/P/I 标记统一为
-> 对称格式【F】…【/F】/【P】…【/P】/【I】…【/I】，F 句零夹带推断（脚本自查通过）。
+> **v3 修订依据**：GPT 对 draft v2 的复核（存档
+> `gpt_replies/gpt_reply_batch2e_draftv2_review.md`）——主要事实问题已修正，剩两处
+> 闭环：① b2e-004 正文「同豆不同萃」句混入未列入 claim_ids 的
+> claim.sensory.same-bean-different-brew 内容（GPT 倾向删句保持 plan 原设计——已删，
+> F 层仅保留 chart-profiles 框架句，落点判断移入【I】）；② F/P/I 全量标层——单独
+> 注释形式（【I：…】）改对称成对，成对标记之外的混层清理（b2e-005 化合物影响解释
+> 移入【I】、b2e-006 参数联动建议标【P】等），自查脚本验证 8 条全对称+无残留。
+> **v2 修订依据**：GPT 对 draft v1 的复核（`gpt_reply_batch2e_draft_revision_required.md`）。
 > 定位（GPT 终裁）：**追问能力数据侧验证批次**。禁止：批准、落库、更新
 > allowed_sample_ids/manifest、重新划分、训练。
-> 检查链（v2 修订后重跑）：quality gate **PASSED**（checked=8, errors=0, warnings=0，
-> 首跑曾抓到 b2e-005 缺限定词并已补）；admission **8 BLOCK**（唯一缺口=
-> allowed_sample_ids，同构预期）；143 tests OK。
+> 检查链（v3 重跑）：quality gate **PASSED**（checked=8, errors=0, warnings=0）；admission
+> **8 BLOCK**（唯一缺口=allowed_sample_ids，同构预期）；143 tests OK。
 
 ## 汇总
 
@@ -22,7 +24,7 @@
 | approved_current / potential | 35 → **43**（clarification 2→6） |
 | 训练状态 | **冻结**（GPT 终裁：即使 43 条也不自动批准新一轮 3B 训练） |
 | 回归 | 143 tests OK；build_kb --check OK |
-| v1→v2 正文修订 | 8/8 条落实 GPT 修订要求（详见各条 risk_notes 与下表） |
+| v1→v3 正文修订 | 8/8 条落实 GPT 两轮修订要求（v1 事实语义 8 条 → v2 逐条修订 → v3 两处闭环：b2e-004 删混入 claim 句、F/P/I 全量标层无混层）；标记自查：8 条成对标记全对称+单独注释残留为零（脚本验证） |
 
 ## fact_stability_risk 重新定级（GPT 复核要求：反映实际正文并写明理由）
 
@@ -148,10 +150,14 @@ BLOCK（exception-out-of-scope：fellow-espresso-basics + gaggia-classic-manual�
 ### B. Interaction 能力审核
 - interaction_skill=clarification ✅：两步推进（阶段记录 → A–D 选择）✅
 - v2 修订：「指向的环节不同」已改为「有助于描述和后续排查」——无诊断映射暗示 ✅
+- v3 修订（GPT 裁定方案一）：删除「同一批豆子改变研磨与萃取方式…不同位置」句（混入
+  未列入 claim_ids 的 same-bean-different-brew 内容）——F 层仅保留 chart-profiles
+  框架句，落点判断移入【I】
 
 ### C. F-P-I 审核 + 事实保护
-- F：brewing-chart-profiles（多维框架层）；I：「气味到原因的归因——此类多因解释与
-  判别方法在本知识库中尚待补证，此处只做描述辅助，不下因果结论」
+- F：brewing-chart-profiles（仅框架层口径「风味表现由 TDS 与萃取率划分」——与
+  claim_ids 完全对齐）；I：气味归因「尚未核验…可能无法立即给出因果结论」+ 落点判断
+  「待参数信息，不作定论」
 - **fact_stability_risk: low**（理由见定级表）
 
 ### D. Source Admission
