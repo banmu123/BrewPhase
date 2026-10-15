@@ -1,0 +1,43 @@
+# LoRA Experiment C 配置（阶段七-G，GPT 提示词指定；独立文件——不覆盖/不改动
+# lora_dry_run_config.yaml 与 lora_experiment_B_config.yaml 的历史记录）。
+# 目标：100 iterations / 1e-5 的中等强度复训——在实验 B（200 iters / 2e-5，
+# 行为分 6/10，幻觉劣化与对齐增强并存）基础上观察更低强度是否保留收益、
+# 消除两项事实错误。评测重点与门线见 experiment_C_preflight_report.md。
+# 基座：Qwen2.5-3B-Instruct（mlx-community 4bit 量化版；已在本地 HF 缓存，
+# 阶段七-D 下载；--train 不加 --allow-download）。
+
+model: "mlx-community/Qwen2.5-3B-Instruct-4bit"
+train: true
+fine_tune_type: "lora"
+seed: 0
+
+# GPT 阶段七-G-0 指定参数
+num_layers: 8            # 同实验 B：lora_layers=8（不 full fine tune）
+batch_size: 1            # 同实验 B：小 batch
+iters: 100               # 实验 C（GPT 阶段七-G-0 冻结）：100 iterations
+learning_rate: 0.00001   # 实验 C（GPT 阶段七-G-0 冻结）：1e-5
+max_seq_length: 2048     # 沿用已验证值（同实验 B）
+
+# 评测/报告（与实验 B 保持一致，保证三版可比）
+val_batches: 1
+steps_per_report: 1
+steps_per_eval: 25
+test: false
+test_batches: 100
+
+# 输出
+adapter_path: "Tools/CoffeeAI/runs/lora_experiment_C_adapter"
+save_every: 1000
+grad_checkpoint: true
+grad_accumulation_steps: 1
+
+# LoRA 参数（与实验 B 完全一致：rank=8 / scale=10.0 / dropout=0.0，
+# 仅调 q_proj/v_proj——GPT 未要求改动，不动）
+lora_parameters:
+  keys: ["self_attn.q_proj", "self_attn.v_proj"]
+  rank: 8
+  scale: 10.0
+  dropout: 0.0
+
+# 数据：prepare_lora_dataset.py 产出的 LoRA chat 格式（35 条，train 28/valid 4/test 3）
+data: "Tools/CoffeeAI/training/data/lora"

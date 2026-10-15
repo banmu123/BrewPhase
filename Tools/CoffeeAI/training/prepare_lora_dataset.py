@@ -2,8 +2,12 @@
 """prepare_lora_dataset.py — 阶段七-C：approved 数据 → LoRA chat 格式（只读转换）。
 
 GPT 指示（六点九-C 阶段七-C）：
-- 不直接使用 approved jsonl，转换为 chat format（仅 user/assistant，system 不进训练
-  ——GPT 给出的格式不含 system）；
+- 不直接使用 approved jsonl，转换为 chat format。**保留完整 messages（含 system
+  消息）**——审核指纹绑定审核时的完整对话，去掉 system 会触发
+  admission-content-mismatch（治理红线：不允许自动重算放行）；且 system prompt
+  是 BrewPhase 行为对齐核心（区分事实与推断/资料不足时明确说明/不编造来源）。
+  阶段七-G-0（GPT 裁定）修正：本文档早期「system 不进训练」的说法与实现不符，
+  以实现为准——system 消息确实进入训练；
 - metadata（sample_id / interaction_skill / reasoning_level）**保留为行级字段但不进
   prompt**——避免模型学习「看到标签所以表演行为」而非自然产生行为；
 - 输出 Tools/CoffeeAI/training/data/lora/{train,valid,test}.jsonl。

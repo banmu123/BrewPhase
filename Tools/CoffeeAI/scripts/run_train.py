@@ -51,7 +51,7 @@ def parse_simple_yaml(path):
             continue
         if line.startswith("  ") and current_key:
             k, v = line.strip().split(":", 1)
-            cfg[current_key][k.strip()] = _scalar(v.strip())
+            cfg[current_key][k.strip()] = _scalar(v.strip(), key=k.strip())
         elif ":" in line:
             k, v = line.split(":", 1)
             k, v = k.strip(), v.strip()
@@ -59,14 +59,32 @@ def parse_simple_yaml(path):
                 cfg[k] = {}
                 current_key = k
             else:
-                cfg[k] = _scalar(v)
+                cfg[k] = _scalar(v, key=k)
                 current_key = None
     return cfg
 
 
-def _scalar(v):
+def _scalar(v, key=None):
+    ctx = f"（键 {key!r}）" if key else ""
     if v.startswith(('"', "'")):
         return json.loads(v.replace("'", '"'))
+    if v.startswith("["):
+        # 阶段七-D 修复：YAML flow sequence（如 lora_parameters.keys）此前被读成
+        # 字符串，导致 effective_config 里 keys 变成字符串、mlx-lm 子串匹配把
+        # TransformerBlock 当成转换目标而报错。flow 数组是合法 JSON，直接解析。
+        # 阶段七-G-0（GPT 裁定）：以 "[" 开头的值一律视为数组声明——无法解析时
+        # 必须明确报错，绝不静默降级为字符串（静默降级会让训练用到错误配置）。
+        if not v.endswith("]"):
+            raise ValueError(
+                f"配置值{ctx}以 '[' 开头但未以 ']' 结束，疑似未闭合的 flow 数组: "
+                f"{v!r}——请写成单行 JSON 风格数组，如 [\"a\", \"b\"]")
+        try:
+            return json.loads(v)
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"配置值{ctx}声明为 flow 数组但不是合法 JSON: {v!r}"
+                f"（{e.msg}，位置 {e.pos}）——数组元素必须带引号，如 "
+                "[\"self_attn.q_proj\", \"self_attn.v_proj\"]") from e
     if v.lower() in ("true", "false"):
         return v.lower() == "true"
     if v.lower() in ("null", "~"):

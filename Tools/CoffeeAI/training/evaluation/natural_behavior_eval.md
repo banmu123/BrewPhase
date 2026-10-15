@@ -33,3 +33,11 @@
 - 本集（10 题）：测**自然度**（直接帮助/不过度谨慎/不像模板）——体验向
 - 两者必须同时达标：只有治理分 = 情况 A 风险（万事追问的模板机）；只有自然分 =
   治理目标失败。GPT 明确「不需要追问的问题」必须直接解释。
+
+> **阶段七-G-0 追记（2026-10-15，不改动上表历史记录）**：实验 B 中 N5
+> 「推荐一个 V60 参数」因题面缺手冲语境双双跑题（base→华为耳机、adapterB→
+> 60Ah 电池，见 lora_experiment_B_report.md N5 行）。Experiment C 起改用 v2
+> 题面「手冲咖啡用 Hario V60 滤杯，参数上有什么推荐？」（手冲语境明确），
+> 评测输入策略同步修复（system-prompt + 显式 ChatML），冻结版见
+> experiment_C_eval_set.md 与 run_eval_generation_c.py（test_coffeeai.py
+> EvalPromptConsistencyTests 锁定）。N5 新旧题面结果不作严格分数对比。

@@ -44,19 +44,18 @@
   （本轮曾积压 5 个空间，已全部 finish 清理；后台轮询任务会被 finish 终止，属预期）。
 - **任务空间**：每次交互独立 taskSpace，结束 `task.finish({ keep: [] })`
 
-## 三、当前状态快照（2026-10-14 22:20，六点九-D 完成）
+## 三、当前状态快照（2026-10-15 19:40，七-G-0 完成）
 
 | 指标 | 值 |
 |---|---|
-| approved | **14**（batch1 5：b1-012/013/014/015/016；batch2a 9：b2a-001/002/003/004/005/006/008/009/010） |
-| 例外 | **9**（同前；b2b 落库时仅需把样本 ID 并入既有例外 allowed_sample_ids，claim 维度零缺口） |
-| 合并划分 | train 11 / valid 2 / test 1（无泄漏） |
-| 测试 | **127 tests OK**（六点九-C 新增 TestBatch2bInteractionQuality 9 用例） |
-| 训练 | **冻结**（阈值 approved≥25 / train≥15 未达；未装 mlx-lm、未下模型） |
-| drafts | batch2a 9 条（已落库批准）；**batch2b 8/8 草稿已生成并过门禁（0/0），待负责人拍板** |
-| Git | main = origin/main = `5218512`（六点九-B/C/D 三个提交：2491311 / a0957de / 5218512，全部已推送） |
+| approved | **35**（b1 5 + b2a 9 + b2b 8 + b2c 3 + b2d 10） |
+| 合并划分 | train 28 / valid 4 / test 3（leakage=0） |
+| 测试 | **143 tests OK**（七-G-0 新增 TrainConfigYamlTests 7 + EvalPromptConsistencyTests 6） |
+| 训练 | 冻结中待启动：实验 C 配置与评测已冻结（G-0 全部硬性检查通过），**等负责人确认启动**；基座 Qwen2.5-3B-4bit 已在 HF 缓存 |
+| 评测 | 实验 C 输入策略修复（system+显式 ChatML+greedy），tokenizer 交叉校验 True；N5 题面 v2（手冲语境） |
+| Git | main = origin/main（G-0 提交） |
 
-## 四、中断点与恢复步骤（当前待办：负责人拍板 → 六点九-E 落库）
+## 四、中断点与恢复步骤（当前待办：负责人确认 → 启动实验 C）
 
 **中断点**：六点九-B（草稿 8 条）✅ → 六点九-C（门禁行为增强）✅ → 六点九-D（审核包）✅
 → **等待负责人（用户）按拍板清单批准 Batch2b**。GPT 已确认「审核包达到拍板标准，
@@ -79,7 +78,21 @@ reviewed_by/reviewed_at/content_sha256/record_sha256 → ④ manifest: batch2b-a
 → ⑤ check_approval_ready → ⑥ validate --for-training → ⑦ split → ⑧ 更新数量报告。
 禁止：自动批准剩余候选、改知识库、开始训练。
 
-**恢复步骤**：① 读本文档与 `batch2b_review_package.md` → ② 等负责人对 8 条拍板 →
+**中断点（2026-10-15 晚更新）**：GPT 已核验七-F-4 通过（67442a2），并裁定先执行
+**阶段七-G-0（实验 C 启动前配置核验与评测冻结）**。G-0 六项任务已全部完成
+（详见 `Tools/CoffeeAI/training/experiment_C_preflight_report.md`）：
+① YAML 数组解析修复+7 测试（main 实际已含七-D 数组分支——GPT 静态核验与 main
+现状不符已在报告记录；补齐了缺失的往返测试与非法数组明确报错）；② 实验 C 独立
+配置（iters=100/lr=1e-5）；③ prepare_lora_dataset 文档修正（system 实际进训练）+
+35 条/28-4-3/skill 映射验证；④ 评测一致性修复（system+显式 ChatML+tokenizer 交叉
+校验 True+N5 v2 手冲语境）+ 评测冻结文档 + 6 测试；⑤ 只读验证全过（143 tests、
+leakage=0、dry-run Preflight 通过不下载）。
+**下一步**：负责人确认后启动实验 C——`run_train.py --train --config
+lora_experiment_C_config.yaml --deployment-purpose noncommercial-research`（不加
+--allow-download；模型已在缓存）→ 三版并列评测（base[C策略重跑]/B 趋势参考/C）→
+报告 GPT。GPT 裁定原文存档：`gpt_replies/gpt_reply_stage7f4_approved_7g0_prompt.md`。
+
+**恢复步骤（旧版存档，供追溯）**：① 读本文档与 `batch2b_review_package.md` → ② 等负责人对 8 条拍板 →
 ③ 按六点九-E 要点执行落库 → ④ 回归（127 tests + build_kb --check + 门禁）→ push →
 ⑤ 报告 GPT（附仓库地址）→ ⑥ 按回复继续（GPT 预告：达到阈值后做第一次 mlx-lm
 dry-run，不要无限扩 Batch2c）。
@@ -118,6 +131,9 @@ license），不要直接读 SOURCE_REGISTRY.json 原始结构。
 | 管线修复 | split_dataset.py 默认输出路径基于仓库根（原 Tools/Tools/ 拼接 bug，GPT 要求单独 commit） | 1de659f |
 | 六点九-F/G | **Batch2c 补齐**：plan（a383816）→ 草稿 b2c-001~003（5554d86）→ 审核包（27291d2）——GPT 全程通过 | a383816 / 5554d86 / 27291d2 |
 | 六点九-H | **Batch2c 落库（0884d88）**：GPT 裁定修订（b2c-002 设备 F/P 拆分、b2c-003 interaction_skill=uncertainty_handling）+ 例外 allowed_sample_ids 扩展 + manifest batch2c-approved-r1；**approved 22→25（阈值达成）、train 20/3/2**；130 tests OK | 0884d88 |
+| 七-A~七-E | 数据审计（72059b1）→ mlx-lm 环境隔离 venv（2773fc8）→ 基座决策+数据转换+10 题评测集（d67e924）→ **首次 LoRA dry-run 闭环+3 链路 bug 修复**（887ed5c）→ 实验敏感性（aad73ea：B 实验 6/10，对齐↑幻觉↑并存） | 72059b1 / 2773fc8 / d67e924 / 887ed5c / aad73ea |
+| 七-F | Batch2d 选题（e9c135f）→ 草稿+门禁（f518d7d）→ 审核包（b9777d9）→ GPT 核验（7cebb70）→ **落库 approved 25→35、train 28/4/3**（67442a2）；报告 3 次 Model not found 后于 16:03 额度刷新后重发成功 | e9c135f / f518d7d / b9777d9 / 7cebb70 / 67442a2 |
+| 七-G-0 | **实验 C 启动前配置核验与评测冻结（GPT 裁定先于训练）**：YAML 数组解析修复+7 测试、实验 C 独立配置、转换文档修正（system 进训练）、评测一致性修复（system+显式 ChatML，tokenizer 交叉校验 True）+N5 v2+冻结文档+6 测试、只读验证全过（143 tests / leakage=0 / dry-run Preflight 通过）；preflight 报告 = experiment_C_preflight_report.md | （本次提交） |
 
 ## 六、关键决策记录（GPT 已拍板，供后续引用）
 

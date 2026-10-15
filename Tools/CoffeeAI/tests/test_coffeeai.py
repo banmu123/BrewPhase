@@ -377,6 +377,189 @@ class RunTrainTests(unittest.TestCase):
         self.assertIn("Preflight", proc.stdout)
 
 
+class TrainConfigYamlTests(unittest.TestCase):
+    """阶段七-G-0①（GPT 裁定）：run_train 的极简 YAML 解析必须把 flow 数组
+    解析为 Python list 并保证「解析→写回→再解析」往返一致；以 '[' 开头却无法
+    解析的值必须明确报错，绝不静默降级为字符串。
+
+    历史证据：runs/train_20261015_010930（阶段七-D 修复前的失败运行，
+    无 manifest）的 effective_config.yaml 里 lora_parameters.keys 是字符串——
+    即本组测试要永久锁死的缺陷；实验 A（011345，iters=20）与实验 B
+    （012812，iters=200/lr=2e-5）的 manifest 中 keys 均为 list，未受影响。"""
+
+    REAL_CONFIG = COFFEEAI / "training" / "lora_dry_run_config.yaml"
+    EXPECTED_KEYS = ["self_attn.q_proj", "self_attn.v_proj"]
+
+    @staticmethod
+    def _rt():
+        sys.path.insert(0, str(SCRIPTS))
+        import run_train
+        return run_train
+
+    def test_flow_array_parses_as_list(self):
+        """GPT 验收硬性要求：keys == ["self_attn.q_proj", "self_attn.v_proj"]。"""
+        rt = self._rt()
+        cfg = rt.parse_simple_yaml(self.REAL_CONFIG)
+        keys = cfg["lora_parameters"]["keys"]
+        self.assertIsInstance(keys, list)
+        self.assertEqual(keys, self.EXPECTED_KEYS)
+
+    def test_roundtrip_preserves_all_types(self):
+        """解析 → dump_yaml 写出 → 再解析，全字段类型与值一致。"""
+        rt = self._rt()
+        cfg1 = rt.parse_simple_yaml(self.REAL_CONFIG)
+        text = rt.dump_yaml(cfg1)
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "roundtrip.yaml"
+            p.write_text(text, encoding="utf-8")
+            cfg2 = rt.parse_simple_yaml(p)
+        self.assertEqual(cfg1, cfg2)
+        self.assertIsInstance(cfg2["lora_parameters"]["keys"], list)
+        self.assertEqual(cfg2["lora_parameters"]["keys"], self.EXPECTED_KEYS)
+
+    def test_effective_config_write_keeps_keys_list(self):
+        """正式训练 effective_config.yaml 的真实写回路径（write_effective_config）
+        之后，keys 必须仍是 list——这正是 010930 失败运行暴露的链路。"""
+        rt = self._rt()
+        cfg = rt.parse_simple_yaml(self.REAL_CONFIG)
+        with tempfile.TemporaryDirectory() as td:
+            eff = rt.write_effective_config(cfg, Path(td) / "eff.yaml")
+            cfg2 = rt.parse_simple_yaml(eff)
+        self.assertIsInstance(cfg2["lora_parameters"]["keys"], list)
+        self.assertEqual(cfg2["lora_parameters"]["keys"], self.EXPECTED_KEYS)
+
+    def test_unclosed_array_raises_not_string(self):
+        """keys: ["a", "b"（缺右括号）——旧解析静默降级为字符串，现必须报错。"""
+        rt = self._rt()
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "bad.yaml"
+            p.write_text('lora_parameters:\n  keys: ["a", "b"\n  rank: 8\n',
+                         encoding="utf-8")
+            with self.assertRaises(ValueError) as cm:
+                rt.parse_simple_yaml(p)
+        self.assertIn("未闭合", str(cm.exception))
+
+    def test_non_json_array_raises_with_key_context(self):
+        """[a, b] 是合法 YAML flow 数组但不是合法 JSON——明确报错且带键名上下文。"""
+        rt = self._rt()
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "bad2.yaml"
+            p.write_text('lora_parameters:\n  keys: [a, b]\n', encoding="utf-8")
+            with self.assertRaises(ValueError) as cm:
+                rt.parse_simple_yaml(p)
+        self.assertIn("'keys'", str(cm.exception))
+        self.assertIn("flow 数组", str(cm.exception))
+
+    def test_block_array_fails_loudly(self):
+        """块数组（- 项）不在支持范围——必须显式失败（ValueError），不允许任何
+        静默降级路径把 keys 变成字符串。"""
+        rt = self._rt()
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "block.yaml"
+            p.write_text("lora_parameters:\n  keys:\n    - a\n    - b\n  rank: 8\n",
+                         encoding="utf-8")
+            with self.assertRaises(ValueError):
+                rt.parse_simple_yaml(p)
+
+    def test_scalar_behaviors_preserved(self):
+        """回归：引号字符串/布尔/空值/整数/浮点/裸字符串的解析行为不变。"""
+        rt = self._rt()
+        cases = [
+            ('"mlx-community/Qwen2.5-3B-Instruct-4bit"',
+             "mlx-community/Qwen2.5-3B-Instruct-4bit"),
+            ("'lit'", "lit"),
+            ("true", True), ("false", False),
+            ("null", None), ("~", None),
+            ("42", 42), ("1e-05", 1e-05), ("10.0", 10.0),
+            ("plain", "plain"),
+        ]
+        for raw, want in cases:
+            self.assertEqual(rt._scalar(raw), want, f"_scalar({raw!r})")
+
+
+class EvalPromptConsistencyTests(unittest.TestCase):
+    """阶段七-G-0④（GPT 裁定）：Experiment C 评测输入必须与训练分布一致——
+    system-prompt 与训练数据相同、chat-template 显式且 base/adapter 同路径；
+    N5 题面补手冲语境（实验 B 中 base 答华为耳机、adapterB 答电池，双双跑题）。"""
+
+    @staticmethod
+    def _ev():
+        sys.path.insert(0, str(COFFEEAI / "training"))
+        import run_eval_generation_c
+        return run_eval_generation_c
+
+    def test_system_prompt_matches_training_data(self):
+        """SYSTEM_PROMPT 必须与 35 条训练样本的 system 逐字一致（评测输入=训练分布）。"""
+        ev = self._ev()
+        systems = set()
+        n = 0
+        for split in ("train", "valid", "test"):
+            f = COFFEEAI / "training" / "data" / "lora" / f"{split}.jsonl"
+            for line in f.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                msgs = json.loads(line)["messages"]
+                systems.add(next(m["content"] for m in msgs if m["role"] == "system"))
+                n += 1
+        self.assertEqual(n, 35, "训练样本应为 35 条")
+        self.assertEqual(len(systems), 1, "训练数据 system 应统一")
+        self.assertEqual(ev.SYSTEM_PROMPT, systems.pop())
+
+    def test_chat_prompt_structure(self):
+        """显式 ChatML：system 段与 user 段以 <|im_end|>\\n 结尾，末尾 assistant
+        生成起点（与 Qwen2.5 内置模板 / mlx_lm.lora 训练侧模板一致的结构）。"""
+        ev = self._ev()
+        p = ev.build_chat_prompt("SYS", "Q")
+        self.assertEqual(
+            p,
+            "<|im_start|>system\nSYS<|im_end|>\n"
+            "<|im_start|>user\nQ<|im_end|>\n"
+            "<|im_start|>assistant\n")
+        self.assertTrue(p.startswith("<|im_start|>system\n"))
+        self.assertTrue(p.endswith("<|im_start|>assistant\n"))
+        self.assertEqual(p.count("<|im_end|>"), 2)
+
+    def test_base_and_adapter_share_generation_path(self):
+        """gen() 对 base 与 adapter 必须走同一 prompt 构造与推理参数
+        （--ignore-chat-template 显式补全、greedy --temp 0）。"""
+        import inspect
+        ev = self._ev()
+        src = inspect.getsource(ev.gen)
+        self.assertIn("build_chat_prompt(SYSTEM_PROMPT, user_prompt)", src)
+        self.assertIn('"--ignore-chat-template"', src)
+        self.assertIn('"--temp", "0"', src)
+        # adapter 只允许通过 --adapter-path 注入，不得改变 prompt 构造
+        self.assertIn('"--adapter-path", adapter', src)
+        self.assertNotIn("if adapter:", src.split("cmd = [")[1].split("]")[0])
+
+    def test_n5_question_has_pour_over_context(self):
+        """N5 v2 题面必须含手冲语境（GPT：题目必须明确处于手冲咖啡语境）。"""
+        ev = self._ev()
+        n5 = ev.NATURAL_QUESTIONS[4]
+        self.assertIn("V60", n5)
+        self.assertIn("手冲", n5)
+        self.assertNotEqual(n5, "推荐一个 V60 参数", "不得沿用跑题的旧题面")
+
+    def test_fact_error_probes_present(self):
+        """实验 B 两项事实错误的核对题必须保留在评测集中（GPT 验收项）。"""
+        ev = self._ev()
+        self.assertIn(ev.FACT_ERROR_PROBES["gov_q8"], ev.GOV_QUESTIONS)
+        self.assertIn(ev.FACT_ERROR_PROBES["nat_q4"], ev.NATURAL_QUESTIONS)
+
+    def test_questions_frozen_to_docs(self):
+        """治理 10 题与 dry_run_eval_set.md 逐字一致；自然度题除 N5 修正外
+        与 natural_behavior_eval.md 一致——评测题冻结，不自创。"""
+        ev = self._ev()
+        gov_doc = (COFFEEAI / "training" / "dry_run_eval_set.md").read_text(encoding="utf-8")
+        for q in ev.GOV_QUESTIONS:
+            self.assertIn(q, gov_doc, f"治理题未在 dry_run_eval_set.md 冻结: {q}")
+        nat_doc = (COFFEEAI / "training" / "evaluation" / "natural_behavior_eval.md").read_text(encoding="utf-8")
+        for i, q in enumerate(ev.NATURAL_QUESTIONS, 1):
+            if i == 5:
+                continue  # N5 v2 修正题面，见 experiment_C_eval_set.md
+            self.assertIn(q, nat_doc, f"自然度题未在 natural_behavior_eval.md 冻结: {q}")
+
+
 class EvaluateTests(unittest.TestCase):
     def test_evaluate_refuses_without_mlx_or_model(self):
         """验收 8：评测守卫生效（本机无 mlx / 无模型缓存 → 拒绝而非假装成功）。"""
