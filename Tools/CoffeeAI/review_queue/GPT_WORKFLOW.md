@@ -89,6 +89,15 @@ dry-run，不要无限扩 Batch2c）。
 一次即可自愈；来源准入检查必须用 `coffeeai_common.load_registry()`（展平嵌套
 license），不要直接读 SOURCE_REGISTRY.json 原始结构。
 
+**发送验证与 Model not found（2026-10-15 补充）**：发送成功验证必须检查
+**main 对话区**是否出现报告独有词 + 输入框已清空——`document.body.innerText`
+会匹配到输入框残留/瞬态内容导致误报（已踩两次）。ChatGPT 免费版会出现
+「Model not found」服务端故障：消息发出后 3 秒内报错 + 出现「重试」按钮，
+**消息不持久化（刷新即消失）**——对话看起来正常但 GPT 永远收不到。判据：
+发送后 main 尾部出现「Model not found」。处置：等待免费版时段额度刷新后重发
+（报告文本保存在 /tmp/gpt_stage7f<N>_done.txt），或升级订阅；无法从该 UI 切换
+模型（composer 无模型选择器）。
+
 ## 五、阶段历史索引（全部已推送 GitHub main）
 
 | 阶段 | 内容 | 提交 |
