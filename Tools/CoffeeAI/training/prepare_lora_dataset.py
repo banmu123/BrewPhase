@@ -14,6 +14,7 @@ GPT 指示（六点九-C 阶段七-C）：
 
 本脚本只读 approved 语料（review_queue 的落库产物），不修改任何 approved 数据。
 """
+import argparse
 import json
 from pathlib import Path
 
@@ -22,7 +23,7 @@ Q = HERE.parent / "review_queue"
 SPLITS = HERE.parent / "data" / "splits"
 OUT = HERE / "data" / "lora"
 BATCHES = ("batch1_candidates", "batch2a_candidates", "batch2b_candidates",
-           "batch2c_candidates", "batch2d_candidates")
+           "batch2c_candidates", "batch2d_candidates", "batch2e_candidates")
 
 
 def load_meta():
@@ -48,12 +49,13 @@ def skill_of(m):
     return mt.group(1) if mt else ""
 
 
-def convert():
-    OUT.mkdir(parents=True, exist_ok=True)
+def convert(splits_dir=SPLITS, out_dir=OUT, expected_total=35):
+    splits_dir, out_dir = Path(splits_dir), Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
     meta = load_meta()
     counts = {}
     for split in ("train", "valid", "test"):
-        src = SPLITS / f"{split}.jsonl"
+        src = splits_dir / f"{split}.jsonl"
         rows, metas = [], []
         for line in src.read_text(encoding="utf-8").splitlines():
             if not line.strip():
@@ -94,16 +96,24 @@ def convert():
                 "interaction_skill": skill_of(m),
                 "lora_split": split,
             })
-        out = OUT / f"{split}.jsonl"
+        out = out_dir / f"{split}.jsonl"
         out.write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in rows) + "\n", encoding="utf-8")
-        mout = OUT / f"{split}.meta.jsonl"
+        mout = out_dir / f"{split}.meta.jsonl"
         mout.write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in metas) + "\n", encoding="utf-8")
         counts[split] = len(rows)
         print(f"{split}: {len(rows)} 条 → {out}（+ meta）")
     total = sum(counts.values())
-    print(f"合计 {total} 条（预期 35：b1 5 + b2a 9 + b2b 8 + b2c 3 + b2d 10）")
-    assert total == 35, f"转换后总数异常: {total} != 35"
+    print(f"合计 {total} 条（预期 {expected_total}）")
+    assert total == expected_total, f"转换后总数异常: {total} != {expected_total}"
 
 
 if __name__ == "__main__":
-    convert()
+    ap = argparse.ArgumentParser(description="approved 数据 → LoRA chat 格式（只读转换）")
+    ap.add_argument("--splits", default=str(SPLITS),
+                    help="train/valid/test.jsonl 所在目录（默认 data/splits）")
+    ap.add_argument("--out", default=str(OUT),
+                    help="LoRA 输出目录（默认 training/data/lora）")
+    ap.add_argument("--expected-total", type=int, default=35,
+                    help="预期样本总数（默认 35 = v0.2-batch2d；v0.2-batch2e 为 43）")
+    a = ap.parse_args()
+    convert(a.splits, a.out, a.expected_total)

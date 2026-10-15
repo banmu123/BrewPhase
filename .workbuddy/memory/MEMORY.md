@@ -45,8 +45,11 @@
 * **修改完成 → 先 push 远程 → 再询问 GPT**：问 GPT（ChatGPT《检查黄金风味代码》对话）前必须先把改动 commit + push 到 GitHub main，并要求 GPT 先看代码库再结合报告提问。GPT 的提示词按循环执行：执行 → push → 回报 → 问下一步。
 * 询问 GPT 时**必须附上仓库地址** https://github.com/banmu123/BrewPhase （GPT 无需搜索即可核对远程 main；仓库对 GPT 可见）。
 
-## CoffeeAI × ChatGPT 循环——会话交接（2026-10-14 晚）
+## CoffeeAI × ChatGPT 循环——会话交接（2026-10-15 晚更新）
 
-* **唯一权威交接文档：`Tools/CoffeeAI/review_queue/GPT_WORKFLOW.md`**（新会话必读）——含交互循环规范、ChatGPT 对话技术与选择器、状态快照（approved=14/例外=9/train 11/118 tests）、恢复步骤、阶段历史与关键决策。
-* 中断点：阶段六点九-B（Batch2b 8 条草稿生成）未开始写文件；GPT 提示词全文在 /tmp/gpt_next24.md（备份 /tmp/gpt_next24_backup.md）与交接文档附录要点。
-* 恢复动作：按 GPT_WORKFLOW.md「四」生成 batch2b_candidates_draft.jsonl（两批：低风险 001/002/004/006 → 高风险 003/005/007/008）→ 门禁 → push → 附仓库地址报告 GPT《检查黄金风味代码》对话。
+* **唯一权威交接文档：`Tools/CoffeeAI/review_queue/GPT_WORKFLOW.md`**（新会话必读）——含交互循环规范、ChatGPT 对话技术与选择器、状态快照、恢复步骤、阶段历史与关键决策。
+* 当前状态：**阶段七-G 终裁落地——Experiment C 不通过，A/B/C 训练线冻结**（approved 35 / train 28-4-3 / 143 tests；训练链路验证完成、目标行为局部改善、未过质量验收）。中断点与下一步见交接文档「四」。
+* 待负责人决策：是否开展 clarification 候选数据批次（GPT 建议先 8 条：一半「信息不足先问关键问题」、一半「信息足够直答」防模板化，走现有候选→审核→批准流程，35 条 approved/例外/划分不变）。
+* 关键坑：**run_train.py 训练/烟测必须用隔离 venv python**（`~/.workbuddy/binaries/python/envs/default/bin/python3`，系统 python 无 mlx-lm，preflight 会拦截）；评测脚本（run_eval_generation_c.py）用系统 python 跑即可（内部 subprocess 调 venv 的 mlx_lm.generate）。
+* ChatGPT 免费版额度每日 16:03（GMT+8）重置；发送验证必须查 **main 对话区独有词 + 输入框清空**（不能只看 body.innerText）；「Model not found」= 服务端故障消息不持久化，等额度刷新后重发。
+* ego-browser 任务空间纪律：单空间复用（taskSpace("chatgpt-coffeeai")）+ 每轮结束 `task.finish({ keep: [] })`。

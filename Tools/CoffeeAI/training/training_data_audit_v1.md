@@ -1,8 +1,30 @@
-# Training Data Audit（阶段七-A v1，2026-10-14；v2 增量更新 2026-10-15）
+# Training Data Audit（阶段七-A v1，2026-10-14；v2/v3 增量更新 2026-10-15）
 
 > 依据：GPT 阶段七-A 指示（回复存档 `review_queue/gpt_replies/gpt_reply_69h_approved_stage7a_prompt.md`）；
 > v2 更新依据：GPT 阶段七-F-4 冻结顺序（gpt_replies/gpt_reply_stage7f3_approved_7f4.md）——
 > Batch2d 批准落库后更新本审计。
+> v3 更新依据：GPT 阶段七-G 终裁（gpt_replies/gpt_reply_stage7g_experimentC_failed_freeze.md）
+> ——Batch2e 批准落库后更新本审计。
+
+## 0.4 v3 增量（2026-10-15，Batch2e 落库后——clarification 批次）
+
+- **依据**：GPT 阶段七-G 终裁（Experiment C 不通过、追问能力走数据侧）——Batch2e
+  8 条候选经 plan v1→v3 + draft v1→v6 六轮 GPT 复核收敛后，负责人拍板 8 条全部批准。
+- **落库**：build_batch2e_approval.py → batch2e-approved-r1（manifest + 双哈希
+  messages_fingerprint / reviewed_record_sha256，reviewed_at=2026-10-15）。
+- **新数据版本**：`data/splits-v3-batch2e/`（43 条 → **train 35 / valid 4 / test 4**，
+  seed=42，仅收 approved；历史 `data/splits/` 28/4/3 保留不覆盖）→ LoRA 转换
+  `training/data/lora-v3-batch2e/`（43 条，skill 全就位）。
+- **能力矩阵（43 条）**：clarification **2→6**（本轮主目标）、knowledge_explanation
+  2→5、condition_based_advice 3→4、boundary_setting 4、uncertainty_handling 8、
+  multi_variable_reasoning 2、（b1/b2a 早期无标记 14）。追问能力为实验 C 未学出的
+  最大缺口，本批为数据侧验证准备。
+- **来源准入**：admission 8 BLOCK→allowed_sample_ids 并入后 8/8 PASS；6 来源 / 9 次
+  引用零新增授权；新 topic cleaning-maintenance 首次覆盖（gaggia 来源激活 2 claim）。
+- **治理**：check_approval_ready READY（8, 0/0）；P0 准入复查（splits-v3）全部通过；
+  leakage=0（train 35/valid 4/test 4）；143 tests OK；build_kb --check OK。
+- **训练边界**：GPT 终裁——即使 43 条也不自动批准新一轮 3B 训练，待本审计与评测
+  目标就绪后单独裁定。
 
 ## 0. v2 增量（2026-10-15，Batch2d 落库后）
 

@@ -31,22 +31,17 @@
    },
    {
     "code": "exception-out-of-scope",
-    "message": "来源 hario-v60-hoffmann 的人工例外不覆盖当前样本/用途: 样本主题 'recipe interpretation' 不在例外允许的主题范围 ['uncertainty'] 内"
+    "message": "来源 hario-v60-hoffmann 的人工例外不覆盖当前样本/用途: 样本主题 'recipe interpretation' 不在例外允许的主题范围 ['uncertainty', 'brewing', 'brewing-troubleshooting'] 内"
    }
   ]
  },
  "b2b-004": {
-  "verdict": "BLOCK",
+  "verdict": "PASS",
   "sources": [
    "ucdavis-coffee-center",
    "baratza-documents"
   ],
-  "issues": [
-   {
-    "code": "exception-out-of-scope",
-    "message": "来源 baratza-documents 的人工例外不覆盖当前样本/用途: 样本主题 'pour-over diagnosis' 不在例外允许的主题范围 ['grinding', 'brewing'] 内"
-   }
-  ]
+  "issues": []
  },
  "b2b-005": {
   "verdict": "BLOCK",

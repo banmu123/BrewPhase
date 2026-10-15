@@ -20,7 +20,7 @@
   {
    "sourceId": "hario-v60-expert-guide",
    "usage": "fact-extraction-rewrite",
-   "reason": "Hario UK 官方 V60 指南已逐句核验（2026-10-14，见 external_evidence_packet.md）：调参方向/配方参数/洗滤纸理由与 claim 一致；仅用于独立事实提取与改写，不复制原文；2026-10-14 负责人批准 Batch2a 扩展（b2a-006，主题 brewing）：too-weak 口径同页已核验；2026-10-14 阶段六点六-D 连带扩展（GPT 批准清单）：+b1-006（paper-rinse hario 侧已核验）与 +b1-025（official-expert 配方数字已核验）；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-002,b2b-003（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-15 阶段七-F-4 扩展（GPT 核验 Batch2d 达批准条件，负责人拍板）：+b2d-006,b2d-007（仅样本范围对齐，claim/topics/授权范围未变）",
+   "reason": "Hario UK 官方 V60 指南已逐句核验（2026-10-14，见 external_evidence_packet.md）：调参方向/配方参数/洗滤纸理由与 claim 一致；仅用于独立事实提取与改写，不复制原文；2026-10-14 负责人批准 Batch2a 扩展（b2a-006，主题 brewing）：too-weak 口径同页已核验；2026-10-14 阶段六点六-D 连带扩展（GPT 批准清单）：+b1-006（paper-rinse hario 侧已核验）与 +b1-025（official-expert 配方数字已核验）；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-002,b2b-003（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-15 阶段七-F-4 扩展（GPT 核验 Batch2d 达批准条件，负责人拍板）：+b2d-006,b2d-007（仅样本范围对齐，claim/topics/授权范围未变）；2026-10-15 Batch2e 扩展（GPT 终复核 draft v6 通过，负责人拍板 8 条全部批准）：+b2e-001（仅样本范围对齐，claim/topics/授权范围未变）",
    "approved_by": "banmu123 (project owner)",
    "approved_at": "2026-10-14",
    "scope": "仅非商业研究训练样本；逐条人工审核；claim 清单限定（Batch1 两条 + Batch2a 一条）；不复制原文",
@@ -36,7 +36,8 @@
     "b2b-002",
     "b2b-003",
     "b2d-006",
-    "b2d-007"
+    "b2d-007",
+    "b2e-001"
    ],
    "allowed_topics": [
     "brewing-troubleshooting",
@@ -58,7 +59,7 @@
   {
    "sourceId": "fellow-espresso-basics",
    "usage": "fact-extraction-rewrite",
-   "reason": "Fellow Espresso Basics PDF 已逐句核验（2026-10-14，见 external_evidence_packet.md）：酸/咸/weak→磨细、chalky/bitter→磨粗、微调提示、18g/90° 填压与 claim 一致；仅用于独立事实提取与改写，不复制原文；2026-10-14 负责人批准 Batch2a 扩展（b2a-001/002/003/004）：新增 claim 均已核验（shot-slow=官方「流得太慢→磨粗」、ratio-1to3=官方配方比例、roast-level-acrid=配方语境调参方向）；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-006（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-15 阶段七-F-4 扩展（GPT 核验 Batch2d 达批准条件，负责人拍板）：+b2d-008（仅样本范围对齐，claim/topics/授权范围未变）",
+   "reason": "Fellow Espresso Basics PDF 已逐句核验（2026-10-14，见 external_evidence_packet.md）：酸/咸/weak→磨细、chalky/bitter→磨粗、微调提示、18g/90° 填压与 claim 一致；仅用于独立事实提取与改写，不复制原文；2026-10-14 负责人批准 Batch2a 扩展（b2a-001/002/003/004）：新增 claim 均已核验（shot-slow=官方「流得太慢→磨粗」、ratio-1to3=官方配方比例、roast-level-acrid=配方语境调参方向）；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-006（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-15 阶段七-F-4 扩展（GPT 核验 Batch2d 达批准条件，负责人拍板）：+b2d-008（仅样本范围对齐，claim/topics/授权范围未变）；2026-10-15 Batch2e 扩展（GPT 终复核 draft v6 通过，负责人拍板 8 条全部批准）：+b2e-003（仅样本范围对齐，claim/topics/授权范围未变）",
    "approved_by": "banmu123 (project owner)",
    "approved_at": "2026-10-14",
    "scope": "仅非商业研究训练样本；逐条人工审核；claim 清单限定（Batch1 五条 + Batch2a 四条）；不复制原文",
@@ -74,7 +75,8 @@
     "b2a-003",
     "b2a-004",
     "b2b-006",
-    "b2d-008"
+    "b2d-008",
+    "b2e-003"
    ],
    "allowed_topics": [
     "espresso",
@@ -97,7 +99,7 @@
   {
    "sourceId": "gaggia-classic-manual",
    "usage": "fact-extraction-rewrite",
-   "reason": "Gaggia Classic 2019 官方手册（b1-026 审核链核验除垢冲突口径；crema/豆子状态 claim 出自本手册）；仅独立提取与改写，不复制原文",
+   "reason": "Gaggia Classic 2019 官方手册（b1-026 审核链核验除垢冲突口径；crema/豆子状态 claim 出自本手册）；仅独立提取与改写，不复制原文；2026-10-15 Batch2e 扩展（GPT 终复核 draft v6 通过，负责人拍板 8 条全部批准）：+b2e-003,b2e-008（仅样本范围对齐，claim/topics/授权范围未变）",
    "approved_by": "banmu123 (project owner)",
    "approved_at": "2026-10-14",
    "scope": "仅非商业研究训练样本；claim 清单限定；不复制原文；绑定 2019 版 Rev-00",
@@ -106,7 +108,9 @@
    ],
    "allowed_sample_ids": [
     "b2a-004",
-    "b1-026"
+    "b1-026",
+    "b2e-003",
+    "b2e-008"
    ],
    "allowed_topics": [
     "espresso",
@@ -158,7 +162,7 @@
   {
    "sourceId": "fellow-brew-talks",
    "usage": "fact-extraction-rewrite",
-   "reason": "Fellow Brew Talks 博客（列表页+Muriama Dark Roast 批次文章 2026-10-14 逐句核验：5-7 days off roast 逐字一致）；仅独立提取与改写，不复制原文",
+   "reason": "Fellow Brew Talks 博客（列表页+Muriama Dark Roast 批次文章 2026-10-14 逐句核验：5-7 days off roast 逐字一致）；仅独立提取与改写，不复制原文；2026-10-15 Batch2e 扩展（GPT 终复核 draft v6 通过，负责人拍板 8 条全部批准）：+b2e-002,b2e-007（仅样本范围对齐，claim/topics/授权范围未变）",
    "approved_by": "banmu123 (project owner)",
    "approved_at": "2026-10-14",
    "scope": "仅非商业研究训练样本；claim 清单限定为已核验条目（light-roast-rest-4-6w 未核验，不在范围内）；不复制原文",
@@ -171,7 +175,9 @@
     "b1-020",
     "b1-023",
     "b1-028",
-    "b1-009"
+    "b1-009",
+    "b2e-002",
+    "b2e-007"
    ],
    "allowed_topics": [
     "freshness",
@@ -253,7 +259,7 @@
   {
    "sourceId": "hario-v60-hoffmann",
    "usage": "fact-extraction-rewrite",
-   "reason": "Hario UK 博客 Hoffmann 配方访谈已逐项核验（2026-10-14，external_evidence_packet.md：30g/500mL/97°C/45s 逐项一致）；GPT 批准清单第 2 项：允许配方数字事实与不同配方并存，禁止黄金比例/最佳参数/行业标准；dv=not-allowed，商业用途必须 licensor-grant，本例外不预授权；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-003（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-002（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-14 六点九-E topics 对齐扩展（GPT 修正版方案 A：来源授权语义与样本实际能力标签对齐）：topics+brewing,brewing-troubleshooting",
+   "reason": "Hario UK 博客 Hoffmann 配方访谈已逐项核验（2026-10-14，external_evidence_packet.md：30g/500mL/97°C/45s 逐项一致）；GPT 批准清单第 2 项：允许配方数字事实与不同配方并存，禁止黄金比例/最佳参数/行业标准；dv=not-allowed，商业用途必须 licensor-grant，本例外不预授权；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-003（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-002（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-14 六点九-E topics 对齐扩展（GPT 修正版方案 A：来源授权语义与样本实际能力标签对齐）：topics+brewing,brewing-troubleshooting；2026-10-15 Batch2e 扩展（GPT 终复核 draft v6 通过，负责人拍板 8 条全部批准）：+b2e-006（仅样本范围对齐，claim/topics/授权范围未变）",
    "approved_by": "banmu123 (project owner)",
    "approved_at": "2026-10-14",
    "scope": "仅非商业研究训练样本；Hoffmann 配方是署名作者的语境化配方（特定器具与水量），不得表述为行业标准；不复制原文",
@@ -263,7 +269,8 @@
    "allowed_sample_ids": [
     "b1-025",
     "b2b-003",
-    "b2b-002"
+    "b2b-002",
+    "b2e-006"
    ],
    "allowed_topics": [
     "uncertainty",
@@ -283,7 +290,7 @@
   {
    "sourceId": "ucdavis-coffee-center",
    "usage": "fact-extraction-rewrite",
-   "reason": "UC Davis Coffee Center 两篇文章已逐句核验（2026-10-14，claim_source_audit.md 阶段六点六-A 节：Brewing Control Chart 2025-01-02 + Grounds for Discovery 2024-08-22）；GPT 批准清单第 3 项：只开放 5 条已入库 claim，不顺手开放花香机制/萃取越高越好/EY 单因关系；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-001,b2b-004,b2b-005,b2b-008（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-14 阶段六点九-H 扩展（GPT 拍板 Batch2c 批准落库）：+b2c-001,b2c-002,b2c-003（仅样本范围对齐，claim/topics/授权范围未变）；2026-10-15 阶段七-F-4 扩展（GPT 核验 Batch2d 达批准条件，负责人拍板）：+b2d-003,b2d-004,b2d-010（仅样本范围对齐，claim/topics/授权范围未变）",
+   "reason": "UC Davis Coffee Center 两篇文章已逐句核验（2026-10-14，claim_source_audit.md 阶段六点六-A 节：Brewing Control Chart 2025-01-02 + Grounds for Discovery 2024-08-22）；GPT 批准清单第 3 项：只开放 5 条已入库 claim，不顺手开放花香机制/萃取越高越好/EY 单因关系；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-001,b2b-004,b2b-005,b2b-008（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-14 阶段六点九-H 扩展（GPT 拍板 Batch2c 批准落库）：+b2c-001,b2c-002,b2c-003（仅样本范围对齐，claim/topics/授权范围未变）；2026-10-15 阶段七-F-4 扩展（GPT 核验 Batch2d 达批准条件，负责人拍板）：+b2d-003,b2d-004,b2d-010（仅样本范围对齐，claim/topics/授权范围未变）；2026-10-15 Batch2e 扩展（GPT 终复核 draft v6 通过，负责人拍板 8 条全部批准）：+b2e-004,b2e-005（仅样本范围对齐，claim/topics/授权范围未变）",
    "approved_by": "banmu123 (project owner)",
    "approved_at": "2026-10-14",
    "scope": "仅非商业研究训练样本；claim 清单严格限定 5 条已核验 claim；5 条之外任何 ucdavis 内容（cold brew/color curve 等）需另行核验与提案；不复制原文",
@@ -302,7 +309,9 @@
     "b2c-003",
     "b2d-003",
     "b2d-004",
-    "b2d-010"
+    "b2d-010",
+    "b2e-004",
+    "b2e-005"
    ],
    "allowed_topics": [
     "pour-over diagnosis"

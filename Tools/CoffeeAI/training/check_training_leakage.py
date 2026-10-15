@@ -14,7 +14,9 @@ import re
 import sys
 from pathlib import Path
 
-SPLITS = Path(__file__).resolve().parents[1] / "data" / "splits"
+import argparse
+
+DEFAULT_SPLITS = Path(__file__).resolve().parents[1] / "data" / "splits"
 
 
 def user_prompt(record):
@@ -39,16 +41,16 @@ def interaction_skill_of(meta_row):
     return m.group(1) if m else ""
 
 
-def load_split(name):
+def load_split(name, splits_dir=None):
     corpus = {}
-    p = SPLITS / f"{name}.jsonl"
+    p = (splits_dir or DEFAULT_SPLITS) / f"{name}.jsonl"
     if p.is_file():
         for line in p.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 r = json.loads(line)
                 corpus[r.get("sample_id")] = r
     meta = {}
-    mp = SPLITS / f"{name}.meta.jsonl"
+    mp = (splits_dir or DEFAULT_SPLITS) / f"{name}.meta.jsonl"
     if mp.is_file():
         for line in mp.read_text(encoding="utf-8").splitlines():
             if line.strip():
@@ -58,10 +60,15 @@ def load_split(name):
 
 
 def main():
-    if not (SPLITS / "train.jsonl").is_file():
-        print(f"[error] 未找到 {SPLITS / 'train.jsonl'}——请先运行 split_dataset.py")
+    ap = argparse.ArgumentParser(description="训练集泄漏检查（只读）")
+    ap.add_argument("--splits", default=str(DEFAULT_SPLITS),
+                    help="train/valid/test.jsonl 所在目录（默认 data/splits）")
+    a = ap.parse_args()
+    splits_dir = Path(a.splits)
+    if not (splits_dir / "train.jsonl").is_file():
+        print(f"[error] 未找到 {splits_dir / 'train.jsonl'}——请先运行 split_dataset.py")
         sys.exit(1)
-    splits = {n: load_split(n) for n in ("train", "valid", "test")}
+    splits = {n: load_split(n, splits_dir) for n in ("train", "valid", "test")}
     pairs = [("train", "test"), ("train", "valid"), ("valid", "test")]
     issues = []
 
