@@ -1,0 +1,10 @@
+{
+  "experiment": "D (batch2e)",
+  "model": "mlx-community/Qwen2.5-3B-Instruct-4bit",
+  "repo_commit": "aaeba79f1b21c4e658bba66ab3125c02b1199392",
+  "eval_script": "Tools/CoffeeAI/training/run_eval_generation_c.py",
+  "eval_script_sha256": "dcda6e8cc92cbe385f781812fe4267dc1a466ba6784ea368725f647fbcb9d846",
+  "inference_params": {"system_prompt": "与训练数据逐字一致（EvalPromptConsistencyTests 锁定）", "chat_template": "显式 Qwen ChatML（build_chat_prompt，tokenizer 交叉校验 True）", "decoding": "greedy temp=0", "max_tokens": 350, "generations_per_question": 1},
+  "questions": "治理 10 题（dry_run_eval_set.md）+ 自然度 10 题（natural_behavior_eval.md，N5 v2）",
+  "generated_at": "2026-10-15T23:08:03+0800"
+}

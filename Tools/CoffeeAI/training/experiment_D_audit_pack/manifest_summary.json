@@ -1,0 +1,55 @@
+{
+ "run_id": "train_20261015_230830",
+ "mode": "train",
+ "exit_code": 0,
+ "base_model": "mlx-community/Qwen2.5-3B-Instruct-4bit",
+ "model_source": "hf-cache",
+ "deployment_purpose": "noncommercial-research",
+ "effective_config": {
+  "model": "mlx-community/Qwen2.5-3B-Instruct-4bit",
+  "train": true,
+  "fine_tune_type": "lora",
+  "seed": 0,
+  "num_layers": 8,
+  "batch_size": 1,
+  "iters": 100,
+  "learning_rate": 1e-05,
+  "max_seq_length": 2048,
+  "val_batches": 1,
+  "steps_per_report": 1,
+  "steps_per_eval": 25,
+  "test": false,
+  "test_batches": 100,
+  "adapter_path": "Tools/CoffeeAI/runs/lora_experiment_D_batch2e_adapter",
+  "save_every": 1000,
+  "grad_checkpoint": true,
+  "grad_accumulation_steps": 1,
+  "lora_parameters": {
+   "keys": [
+    "self_attn.q_proj",
+    "self_attn.v_proj"
+   ],
+   "rank": 8,
+   "scale": 10.0,
+   "dropout": 0.0
+  },
+  "data": "Tools/CoffeeAI/training/data/lora-v3-batch2e"
+ },
+ "effective_config_sha256": "54795323841c276a41efb0ee9462c2072791d68a130a137fb2c5962a201111e4",
+ "data_dir": "/Users/banmu/Brew/BrewPhase/Tools/CoffeeAI/training/data/lora-v3-batch2e",
+ "data_counts": {
+  "train": 35,
+  "valid": 4,
+  "test": 4
+ },
+ "admission_errors": 0,
+ "split_files_sha256_16": {
+  "train": "98b827c7979d91cd",
+  "valid": "fd68af7ccba280fe",
+  "test": "030508fa5985f08f"
+ },
+ "adapter_path": "Tools/CoffeeAI/runs/lora_experiment_D_batch2e_adapter",
+ "mlx_lm_version": "0.32.0",
+ "local_log_path": "/Users/banmu/Brew/BrewPhase/Tools/CoffeeAI/runs/logs/train_20261015_230830.log",
+ "local_manifest_path": "Tools/CoffeeAI/runs/train_20261015_230830/run_manifest.json（本地保留，模型权重与日志不入库）"
+}
