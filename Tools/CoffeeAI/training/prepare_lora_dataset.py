@@ -17,7 +17,8 @@ HERE = Path(__file__).resolve().parent
 Q = HERE.parent / "review_queue"
 SPLITS = HERE.parent / "data" / "splits"
 OUT = HERE / "data" / "lora"
-BATCHES = ("batch1_candidates", "batch2a_candidates", "batch2b_candidates", "batch2c_candidates")
+BATCHES = ("batch1_candidates", "batch2a_candidates", "batch2b_candidates",
+           "batch2c_candidates", "batch2d_candidates")
 
 
 def load_meta():
@@ -96,8 +97,8 @@ def convert():
         counts[split] = len(rows)
         print(f"{split}: {len(rows)} 条 → {out}（+ meta）")
     total = sum(counts.values())
-    print(f"合计 {total} 条（预期 25）")
-    assert total == 25, f"转换后总数异常: {total} != 25"
+    print(f"合计 {total} 条（预期 35：b1 5 + b2a 9 + b2b 8 + b2c 3 + b2d 10）")
+    assert total == 35, f"转换后总数异常: {total} != 35"
 
 
 if __name__ == "__main__":

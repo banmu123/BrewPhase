@@ -20,7 +20,7 @@
   {
    "sourceId": "hario-v60-expert-guide",
    "usage": "fact-extraction-rewrite",
-   "reason": "Hario UK 官方 V60 指南已逐句核验（2026-10-14，见 external_evidence_packet.md）：调参方向/配方参数/洗滤纸理由与 claim 一致；仅用于独立事实提取与改写，不复制原文；2026-10-14 负责人批准 Batch2a 扩展（b2a-006，主题 brewing）：too-weak 口径同页已核验；2026-10-14 阶段六点六-D 连带扩展（GPT 批准清单）：+b1-006（paper-rinse hario 侧已核验）与 +b1-025（official-expert 配方数字已核验）；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-002,b2b-003（仅样本范围对齐，allowed_claim_ids 未变）",
+   "reason": "Hario UK 官方 V60 指南已逐句核验（2026-10-14，见 external_evidence_packet.md）：调参方向/配方参数/洗滤纸理由与 claim 一致；仅用于独立事实提取与改写，不复制原文；2026-10-14 负责人批准 Batch2a 扩展（b2a-006，主题 brewing）：too-weak 口径同页已核验；2026-10-14 阶段六点六-D 连带扩展（GPT 批准清单）：+b1-006（paper-rinse hario 侧已核验）与 +b1-025（official-expert 配方数字已核验）；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-002,b2b-003（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-15 阶段七-F-4 扩展（GPT 核验 Batch2d 达批准条件，负责人拍板）：+b2d-006,b2d-007（仅样本范围对齐，claim/topics/授权范围未变）",
    "approved_by": "banmu123 (project owner)",
    "approved_at": "2026-10-14",
    "scope": "仅非商业研究训练样本；逐条人工审核；claim 清单限定（Batch1 两条 + Batch2a 一条）；不复制原文",
@@ -34,7 +34,9 @@
     "b1-025",
     "b2a-006",
     "b2b-002",
-    "b2b-003"
+    "b2b-003",
+    "b2d-006",
+    "b2d-007"
    ],
    "allowed_topics": [
     "brewing-troubleshooting",
@@ -56,7 +58,7 @@
   {
    "sourceId": "fellow-espresso-basics",
    "usage": "fact-extraction-rewrite",
-   "reason": "Fellow Espresso Basics PDF 已逐句核验（2026-10-14，见 external_evidence_packet.md）：酸/咸/weak→磨细、chalky/bitter→磨粗、微调提示、18g/90° 填压与 claim 一致；仅用于独立事实提取与改写，不复制原文；2026-10-14 负责人批准 Batch2a 扩展（b2a-001/002/003/004）：新增 claim 均已核验（shot-slow=官方「流得太慢→磨粗」、ratio-1to3=官方配方比例、roast-level-acrid=配方语境调参方向）；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-006（仅样本范围对齐，allowed_claim_ids 未变）",
+   "reason": "Fellow Espresso Basics PDF 已逐句核验（2026-10-14，见 external_evidence_packet.md）：酸/咸/weak→磨细、chalky/bitter→磨粗、微调提示、18g/90° 填压与 claim 一致；仅用于独立事实提取与改写，不复制原文；2026-10-14 负责人批准 Batch2a 扩展（b2a-001/002/003/004）：新增 claim 均已核验（shot-slow=官方「流得太慢→磨粗」、ratio-1to3=官方配方比例、roast-level-acrid=配方语境调参方向）；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-006（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-15 阶段七-F-4 扩展（GPT 核验 Batch2d 达批准条件，负责人拍板）：+b2d-008（仅样本范围对齐，claim/topics/授权范围未变）",
    "approved_by": "banmu123 (project owner)",
    "approved_at": "2026-10-14",
    "scope": "仅非商业研究训练样本；逐条人工审核；claim 清单限定（Batch1 五条 + Batch2a 四条）；不复制原文",
@@ -71,7 +73,8 @@
     "b2a-002",
     "b2a-003",
     "b2a-004",
-    "b2b-006"
+    "b2b-006",
+    "b2d-008"
    ],
    "allowed_topics": [
     "espresso",
@@ -123,7 +126,7 @@
   {
    "sourceId": "baratza-documents",
    "usage": "fact-extraction-rewrite",
-   "reason": "Baratza 官方文档库（b1-009/017 审核链核验 manual-not-recipe 表述一致）；仅独立提取与改写，不复制原文；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-004（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-14 六点九-E topics 对齐扩展（GPT 修正版方案 A：来源授权语义与样本实际能力标签对齐）：topics+pour-over diagnosis；2026-10-14 阶段六点九-H 扩展（GPT 拍板 Batch2c 批准落库）：+b2c-002（仅样本范围对齐，claim/topics/授权范围未变）",
+   "reason": "Baratza 官方文档库（b1-009/017 审核链核验 manual-not-recipe 表述一致）；仅独立提取与改写，不复制原文；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-004（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-14 六点九-E topics 对齐扩展（GPT 修正版方案 A：来源授权语义与样本实际能力标签对齐）：topics+pour-over diagnosis；2026-10-14 阶段六点九-H 扩展（GPT 拍板 Batch2c 批准落库）：+b2c-002（仅样本范围对齐，claim/topics/授权范围未变）；2026-10-15 阶段七-F-4 扩展（GPT 核验 Batch2d 达批准条件，负责人拍板）：+b2d-010（仅样本范围对齐，claim/topics/授权范围未变）",
    "approved_by": "banmu123 (project owner)",
    "approved_at": "2026-10-14",
    "scope": "仅非商业研究训练样本；claim 清单限定；不复制原文；核验需记录具体文档标题与日期",
@@ -135,7 +138,8 @@
     "b1-009",
     "b1-017",
     "b2b-004",
-    "b2c-002"
+    "b2c-002",
+    "b2d-010"
    ],
    "allowed_topics": [
     "grinding",
@@ -190,7 +194,7 @@
   {
    "sourceId": "nca-aboutcoffee",
    "usage": "fact-extraction-rewrite",
-   "reason": "NCA Storage and shelf life 页面已逐句核验（2026-10-14，external_evidence_packet.md + claim_source_audit.md）：失鲜时机/储存敌人/峰值后衰退/冷冻分歧/保鲜期表全部一致；仅独立提取与改写，不复制原文；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-005（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-14 六点九-E topics 对齐扩展（GPT 修正版方案 A：来源授权语义与样本实际能力标签对齐）：topics+pour-over diagnosis；2026-10-14 阶段六点九-H 扩展（GPT 拍板 Batch2c 批准落库）：+b2c-002（仅样本范围对齐，claim/topics/授权范围未变）",
+   "reason": "NCA Storage and shelf life 页面已逐句核验（2026-10-14，external_evidence_packet.md + claim_source_audit.md）：失鲜时机/储存敌人/峰值后衰退/冷冻分歧/保鲜期表全部一致；仅独立提取与改写，不复制原文；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-005（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-14 六点九-E topics 对齐扩展（GPT 修正版方案 A：来源授权语义与样本实际能力标签对齐）：topics+pour-over diagnosis；2026-10-14 阶段六点九-H 扩展（GPT 拍板 Batch2c 批准落库）：+b2c-002（仅样本范围对齐，claim/topics/授权范围未变）；2026-10-15 阶段七-F-4 扩展（GPT 核验 Batch2d 达批准条件，负责人拍板）：+b2d-009（仅样本范围对齐，claim/topics/授权范围未变）",
    "approved_by": "banmu123 (project owner)",
    "approved_at": "2026-10-14",
    "scope": "仅非商业研究训练样本；claim 清单限定为 5 条 nca-freshness claims（bean-is-seed 未核验，不在范围内）；不复制原文",
@@ -201,7 +205,8 @@
     "b2a-009",
     "b2a-010",
     "b2b-005",
-    "b2c-002"
+    "b2c-002",
+    "b2d-009"
    ],
    "allowed_topics": [
     "freshness",
@@ -278,7 +283,7 @@
   {
    "sourceId": "ucdavis-coffee-center",
    "usage": "fact-extraction-rewrite",
-   "reason": "UC Davis Coffee Center 两篇文章已逐句核验（2026-10-14，claim_source_audit.md 阶段六点六-A 节：Brewing Control Chart 2025-01-02 + Grounds for Discovery 2024-08-22）；GPT 批准清单第 3 项：只开放 5 条已入库 claim，不顺手开放花香机制/萃取越高越好/EY 单因关系；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-001,b2b-004,b2b-005,b2b-008（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-14 阶段六点九-H 扩展（GPT 拍板 Batch2c 批准落库）：+b2c-001,b2c-002,b2c-003（仅样本范围对齐，claim/topics/授权范围未变）",
+   "reason": "UC Davis Coffee Center 两篇文章已逐句核验（2026-10-14，claim_source_audit.md 阶段六点六-A 节：Brewing Control Chart 2025-01-02 + Grounds for Discovery 2024-08-22）；GPT 批准清单第 3 项：只开放 5 条已入库 claim，不顺手开放花香机制/萃取越高越好/EY 单因关系；2026-10-14 阶段六点九-E 扩展（负责人采纳 GPT 拍板清单，Batch2b 批准落库）：+b2b-001,b2b-004,b2b-005,b2b-008（仅样本范围对齐，allowed_claim_ids 未变）；2026-10-14 阶段六点九-H 扩展（GPT 拍板 Batch2c 批准落库）：+b2c-001,b2c-002,b2c-003（仅样本范围对齐，claim/topics/授权范围未变）；2026-10-15 阶段七-F-4 扩展（GPT 核验 Batch2d 达批准条件，负责人拍板）：+b2d-003,b2d-004,b2d-010（仅样本范围对齐，claim/topics/授权范围未变）",
    "approved_by": "banmu123 (project owner)",
    "approved_at": "2026-10-14",
    "scope": "仅非商业研究训练样本；claim 清单严格限定 5 条已核验 claim；5 条之外任何 ucdavis 内容（cold brew/color curve 等）需另行核验与提案；不复制原文",
@@ -294,7 +299,10 @@
     "b2b-008",
     "b2c-001",
     "b2c-002",
-    "b2c-003"
+    "b2c-003",
+    "b2d-003",
+    "b2d-004",
+    "b2d-010"
    ],
    "allowed_topics": [
     "pour-over diagnosis"

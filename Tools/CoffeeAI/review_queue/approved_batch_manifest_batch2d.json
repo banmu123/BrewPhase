@@ -1,0 +1,22 @@
+{
+ "batch_id": "batch2d-approved-r1",
+ "created_at": "2026-10-15",
+ "approved_samples": [
+  "b2d-001",
+  "b2d-002",
+  "b2d-003",
+  "b2d-004",
+  "b2d-005",
+  "b2d-006",
+  "b2d-007",
+  "b2d-008",
+  "b2d-009",
+  "b2d-010"
+ ],
+ "approved_by": "banmu123 (project owner)",
+ "approved_at": "2026-10-15",
+ "deployment_purpose": "noncommercial-research",
+ "decision_reference": "batch2d-approved-r1：b2d-001~010——负责人 2026-10-15 拍板（按 GPT 建议，10 条全部批准）。审核链：batch2d_candidate_plan（七-F 第一步，GPT 五方向 F-001~005 + 事实锚点 2 条）→ 草稿（七-F-2，GPT 三处修正落实 + knowledge_explanation gate 新增）→ 审核包增强版（七-F-3，fact_stability_risk + experiment_target 字段）→ GPT 核验通过（gpt_reply_stage7f3_approved_7f4.md）。GPT 定位：防行为漂移稳定性补强批次（错误前提检查 / 食品安全不判断 / 研究方向边界 / 该直接回答时直接回答）。",
+ "source_exception_reference": "Tools/CoffeeAI/source_exceptions.json（本轮仅扩展 allowed_sample_ids：ucdavis←b2d-003/004/010、hario-v60-expert-guide←b2d-006/007、fellow-espresso-basics←b2d-008、nca←b2d-009、baratza←b2d-010；claim/topics/授权范围未变）。b2d-010 双来源 topic 交集 {'pour-over diagnosis'} 非空；fda-caffeine 为 registry 自动准入来源。",
+ "notes": "batch2d-approved-r1：10 条全部批准（approved 25 → 35）。训练保持冻结直到 audit 更新完成。质量门禁 PASSED（0/0，含 knowledge-explanation gate）；admission 7 BLOCK→例外对齐后消除；GPT 提醒重点样本 b2d-003（温和纠正，保留「不能仅凭当前信息判断」）与 b2d-005（「不能证明 X ≠ X 不存在」）均已在审核包确认满足。落库后：split（seed=42）→ audit 更新 → 阶段七-G 实验 C（iters=100, lr=1e-5, rank=8, layers=8, batch=1；7B 暂缓至 approved ≥100）。"
+}
