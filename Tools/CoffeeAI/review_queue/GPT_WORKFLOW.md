@@ -44,18 +44,18 @@
   （本轮曾积压 5 个空间，已全部 finish 清理；后台轮询任务会被 finish 终止，属预期）。
 - **任务空间**：每次交互独立 taskSpace，结束 `task.finish({ keep: [] })`
 
-## 三、当前状态快照（2026-10-15 20:10，七-G 实验 C 完成）
+## 三、当前状态快照（2026-10-15 22:00，Batch2e draft v6 终复核通过）
 
 | 指标 | 值 |
 |---|---|
 | approved | **35**（b1 5 + b2a 9 + b2b 8 + b2c 3 + b2d 10） |
-| 合并划分 | train 28 / valid 4 / test 3（leakage=0） |
+| 合并划分 | train 28 / valid 4 / test 3（leakage=0；历史版本保留） |
 | 测试 | **143 tests OK** |
-| 实验 C | **已执行完毕**（train_20261015_192808，exit 0，100 iters/1e-5，keys=list，准入 0 错误，无下载）；行为分 7/10（达线）、两项历史事实错误消失、但自然度 -1.5 与新增错误（nat_q7 机理编造/nat_q4 失实）→ **未判成功，等 GPT 裁定** |
-| 训练冻结 | 恢复冻结——是否继续实验等 GPT 指示（追问能力 0 分疑为数据缺口：clarification 仅 2 条） |
-| Git | main = origin/main（实验 C 报告提交） |
+| Batch2e（clarification 批次） | **draft v6 终复核通过，进入负责人逐条拍板**——8 条候选（追问 4 + 直答 4），gate PASSED（8, 0/0）、admission 8 BLOCK（仅缺 allowed_sample_ids）、F/P/I 语义标层经 GPT 四轮复核收敛 |
+| 训练 | **冻结**（GPT 终裁：即使 43 条也不自动批准新一轮 3B 训练，数据版本就绪后单独裁定） |
+| Git | main = origin/main = 7450095 之后（draft v6 系列） |
 
-## 四、中断点与恢复步骤（当前待办：实验 C 报告已发 GPT，等裁定）
+## 四、中断点与恢复步骤（当前待办：负责人对 Batch2e 8 条逐条拍板）
 
 **中断点**：六点九-B（草稿 8 条）✅ → 六点九-C（门禁行为增强）✅ → 六点九-D（审核包）✅
 → **等待负责人（用户）按拍板清单批准 Batch2b**。GPT 已确认「审核包达到拍板标准，
