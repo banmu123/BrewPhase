@@ -1,0 +1,41 @@
+# LoRA Experiment D 配置（Batch2e 追加数据验证，GPT 批准；独立文件——不覆盖
+# Experiment C 配置/适配器/评测输出/历史报告）。
+# 目标（GPT 裁定）：验证在原有训练数据上追加 Batch2e（clarification 4 + 直答 4）后，
+# 3B 模型能否更好地处理信息不足的问题，同时避免变成「万事追问」。
+# 参数：沿用已冻结的 Experiment C（iters=100 / lr=1e-5），不做强度搜索；本轮只允许
+# 训练一次——不得追加迭代、改变学习率、试第二组参数，或把适配器融合进产品。
+
+model: "mlx-community/Qwen2.5-3B-Instruct-4bit"
+train: true
+fine_tune_type: "lora"
+seed: 0
+
+# GPT Experiment D 冻结参数（沿用 Experiment C）
+num_layers: 8
+batch_size: 1
+iters: 100
+learning_rate: 0.00001
+max_seq_length: 2048
+
+# 评测/报告（与 C 一致）
+val_batches: 1
+steps_per_report: 1
+steps_per_eval: 25
+test: false
+test_batches: 100
+
+# 输出
+adapter_path: "Tools/CoffeeAI/runs/lora_experiment_D_batch2e_adapter"
+save_every: 1000
+grad_checkpoint: true
+grad_accumulation_steps: 1
+
+# LoRA 参数（与 Experiment C 相同）
+lora_parameters:
+  keys: ["self_attn.q_proj", "self_attn.v_proj"]
+  rank: 8
+  scale: 10.0
+  dropout: 0.0
+
+# 数据：v0.2-batch2e 新数据版本（43 条 = 原 35 + Batch2e 8；train 35/valid 4/test 4）
+data: "Tools/CoffeeAI/training/data/lora-v3-batch2e"

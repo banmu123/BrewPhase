@@ -27,6 +27,9 @@ vs adapterC。与实验 B 的对比仅作趋势参考，须注明输入策略差
 用法：
   python3 run_eval_generation_c.py                 # base + adapterC 全量 20 题
   python3 run_eval_generation_c.py --base-only     # 只跑 base（新输入策略对照）
+  python3 run_eval_generation_c.py --adapter-path PATH --out-prefix PREFIX
+                                                   # 自定义适配器与输出前缀
+                                                   #（Experiment D 等；默认行为不变）
 """
 import argparse
 import subprocess
@@ -124,6 +127,10 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Experiment C 行为评测生成（只读）")
     ap.add_argument("--base-only", action="store_true",
                     help="只生成 base 对照（不加载 adapter）")
+    ap.add_argument("--adapter-path", dest="adapter_path", default=ADAPTER_C,
+                    help="适配器路径（默认 Experiment C 适配器；Experiment D 等可覆盖）")
+    ap.add_argument("--out-prefix", dest="out_prefix", default="evalC",
+                    help="输出文件前缀（默认 evalC；Experiment D 用 evalD 避免覆盖历史产物）")
     args = ap.parse_args(argv)
 
     if not VENV_MLX.is_file():
@@ -139,11 +146,12 @@ def main(argv=None):
     else:
         print("[模板校验] transformers 不可用，跳过交叉校验（结构由单元测试锁定）")
 
-    adapter = None if args.base_only else ADAPTER_C
+    adapter = None if args.base_only else args.adapter_path
+    tag = "base" if not adapter else "adapter"
     for i, q in enumerate(GOV_QUESTIONS, 1):
-        gen(q, adapter, f"/tmp/evalC_gov_q{i}_{'base' if not adapter else 'adapterC'}.txt")
+        gen(q, adapter, f"/tmp/{args.out_prefix}_gov_q{i}_{tag}.txt")
     for i, q in enumerate(NATURAL_QUESTIONS, 1):
-        gen(q, adapter, f"/tmp/evalC_nat_q{i}_{'base' if not adapter else 'adapterC'}.txt")
+        gen(q, adapter, f"/tmp/{args.out_prefix}_nat_q{i}_{tag}.txt")
     print("ALL_DONE")
 
 
