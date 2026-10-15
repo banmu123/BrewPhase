@@ -1,5 +1,11 @@
-# Batch2e 候选设计 v2（阶段七-G 后续，2026-10-15）
+# Batch2e 候选设计 v3（阶段七-G 后续，2026-10-15）
 
+> **v3 修订依据**：GPT 对 plan v2 的复核（存档
+> `review_queue/gpt_replies/gpt_reply_batch2e_planv2_two_fixes.md`）——v2 基本通过，
+> 进 draft 前两项小修正：① b2e-005 补 claim.roasting.ta-peaks-first-crack（TA 一爆
+> 达峰后下降的方向性依据，UC Davis 例外内）+ 四条答案约束；② 来源统计改为
+> 6 来源/9 次引用口径（补 fellow-espresso-basics）。v3 逐项落实，**待 GPT 批准后
+> 进入 draft**。
 > **v2 修订依据**：GPT 对 v1 plan 的核验（存档
 > `review_queue/gpt_replies/gpt_reply_batch2e_plan_revision_required.md`）——方向与
 > 批次名通过，但暂不批准进 draft，要求修订三项：b2e-003 claim 方向不匹配、
@@ -23,9 +29,11 @@
 
 - 只用已有 9 例外来源，零新增 claim/source/exception/topics；全部 claim 在对应
   例外 allowed_claim_ids 内（逐条标注）；topic 逐条预检在 allowed_topics 内；
-- **来源分布（v2 修正，含此前遗漏的 fellow-espresso-basics）**：
-  fellow-brew-talks 2 / gaggia-classic-manual 2 / ucdavis-coffee-center 2 /
-  hario-v60-expert-guide 1 / hario-v60-hoffmann 1；
+- **来源分布（v3 修正，GPT 复核确认口径）**：**6 个不同来源、9 次样本—来源引用**：
+  fellow-brew-talks 2（b2e-002/007）/ gaggia-classic-manual 2（b2e-008 + b2e-003
+  第二来源）/ ucdavis-coffee-center 2（b2e-004/005）/ hario-v60-expert-guide 1
+  （b2e-001）/ hario-v60-hoffmann 1（b2e-006）/ **fellow-espresso-basics 1（b2e-003
+  第一来源）**——b2e-003 使用两个来源，其余各样本各一个；**零新增授权**；
 - **与知识库的 claim 语义核对（GPT v2 核验要点）**：
   - rule.fellow.shot-slow 支撑的是「流速**过慢**→研磨偏细→磨粗」——v1 误用于
     「流速很快」症状，v2 已改题（见 b2e-003）；
@@ -109,24 +117,28 @@
 
 ### 直答侧（防模板化对照 × 4）
 
-#### b2e-005 ｜ 直答-知识锚点（v2 替换）：「烘焙度越深，咖啡就越不酸吗？」
+#### b2e-005 ｜ 直答-知识锚点（v2 替换 + v3 按 GPT 复核补 claim）：「烘焙度越深，咖啡就越不酸吗？」
 
 - **v2 修订说明（GPT 裁定落实）**: v1 本条为冷萃对比题，但
   claim.coldbrew.roast-x-temp-interaction 在知识库实际归于 ucdavis-coldbrew-2025
   （许可 see-source-terms、商业/衍生使用不明确）——不能归于 fellow-brew-talks，
   **冷萃题暂缓定稿**（若后续澄清该来源许可可恢复）。v2 替换为 ucdavis 已授权
   claim 正确支撑的直答题。
+- **v3 补强（GPT 复核裁定）**: v2 的两条 claim 不足以支撑「烘焙加深时 TA 呈下降
+  趋势」的方向性——加入 **claim.roasting.ta-peaks-first-crack**（TA 在烘焙中上升、
+  一爆附近达峰、随后下降——UC Davis 例外 allowed_claim_ids 内，零新增授权）。
 - **user_scenario**: 信息完整的直接知识解释——与 nat_q2（浅烘一定酸？绝对化纠偏）
   和 b2d-003（豆子无香味？反事实纠错）差异化：本条是 TA-烘焙度关联的**事实锚点
   解释**
-- **answer_structure**: A 直接回答（总体趋势：烘焙加深总酸（TA）降低——按 claim
-  原文表述关联性与条件）→ B 依据（ta-sourness-correlation + roast-controls-flavor）
-  → C 边界（「越…越…」是趋势不是线性定律；酸质感知还受萃取与豆子影响——此句为
-  常识级或标注推断）→ 下一步
-- **claim_ids**: ["claim.roasting.ta-sourness-correlation", "claim.roasting.roast-controls-flavor"]｜
-  **source**: ucdavis-coffee-center（topic=pour-over diagnosis ∈ allowed_topics ✓）
-- **risk_notes**: **零追问**；关联性表述按 claim 原文（相关性而非因果定律）；不
-  编造具体酸度数字
+- **answer_structure（GPT 复核四条约束）**: A 直接回答，但**不把「深烘必然不酸」
+  当成规律** → B 说明研究描述的 TA 变化趋势（ta-peaks-first-crack：上升→一爆达峰
+  →下降）以及感知酸度与 TA 的关联（ta-sourness-correlation）→ C **明确这不足以
+  预测每一杯的酸感**，不能忽略豆子、烘焙和冲煮条件（roast-controls-flavor 支撑
+  烘焙对风味的总体影响）→ 下一步
+- **claim_ids**: ["claim.roasting.ta-peaks-first-crack", "claim.roasting.ta-sourness-correlation",
+  "claim.roasting.roast-controls-flavor"]｜**source**: ucdavis-coffee-center
+  （topic=pour-over diagnosis ∈ allowed_topics ✓）
+- **risk_notes**: **零追问**；不编造具体酸度数值；不将关联表述为无条件的因果定律
 - **interaction_skill**: knowledge_explanation｜**training_value**: ★★★★
 
 #### b2e-006 ｜ 直答-事实锚点：「为什么 V60 的官方配方和别人给的配方数字都不一样？」
@@ -168,8 +180,8 @@
 | 维度 | 结果 |
 |---|---|
 | **数量与双侧比例** | 8 条 = 追问 4（clarification）+ 直答 4（knowledge_explanation 3 + condition_based_advice 1） |
-| **来源分布（v2 修正）** | fellow-brew-talks 2 / gaggia-classic-manual 2 / ucdavis-coffee-center 2 / hario-v60-expert-guide 1 / hario-v60-hoffmann 1——**零新增授权** |
-| **v1→v2 修订清单** | ① b2e-003 改题（流速很快→流速过慢，匹配 rule.fellow.shot-slow）+ 首轮单问题；② b2e-004 删除因果映射、降级为描述辅助+推断标注；③ b2e-005 冷萃题替换（来源许可问题，暂缓）；④ b2e-001/002 分流改「缩小排查范围」、机理标注待验证推断；⑤ b2e-007 加适用范围限定；⑥ b2e-008 加冲突边界；⑦ 来源统计补 fellow-espresso-basics |
+| **来源分布（v3 修正）** | **6 来源 / 9 次引用**：fellow-brew-talks 2 / gaggia-classic-manual 2 / ucdavis-coffee-center 2 / hario-v60-expert-guide 1 / hario-v60-hoffmann 1 / fellow-espresso-basics 1（b2e-003 双来源）——**零新增授权** |
+| **v1→v3 修订清单** | ① b2e-003 改题（流速很快→流速过慢，匹配 rule.fellow.shot-slow）+ 首轮单问题；② b2e-004 删除因果映射、降级为描述辅助+推断标注；③ b2e-005 冷萃题替换（来源许可问题，暂缓）；④ b2e-001/002 分流改「缩小排查范围」、机理标注待验证推断；⑤ b2e-007 加适用范围限定；⑥ b2e-008 加冲突边界；⑦ 来源统计补 fellow-espresso-basics；⑧（v3）b2e-005 补 claim.roasting.ta-peaks-first-crack + 四条答案约束、来源统计改为 6 来源/9 次引用口径 |
 | **skill 分布影响** | 落库后（43 条）：clarification 2→6、knowledge_explanation 2→5、condition_based_advice 3→4 |
 | **风险分级** | 中风险：b2e-001/002/003/004（追问诊断，含推断标注要求）；低风险：b2e-005/006/007/008（直答，claim 支撑扎实） |
 | **数据版本语义** | batch2e 是候选批次名；未来获批后 approved 数据作为**新数据版本**重新生成训练划分，原 35 条与 28/4/3 划分保留为历史版本不覆盖（GPT 裁定） |
