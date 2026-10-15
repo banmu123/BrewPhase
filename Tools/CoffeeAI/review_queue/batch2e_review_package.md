@@ -1,17 +1,19 @@
-# Batch2e 人工审核包 v3（阶段七-G 后续，2026-10-15）
+# Batch2e 人工审核包 v4（阶段七-G 后续，2026-10-15）
 
-> **v3 修订依据**：GPT 对 draft v2 的复核（存档
-> `gpt_replies/gpt_reply_batch2e_draftv2_review.md`）——主要事实问题已修正，剩两处
-> 闭环：① b2e-004 正文「同豆不同萃」句混入未列入 claim_ids 的
-> claim.sensory.same-bean-different-brew 内容（GPT 倾向删句保持 plan 原设计——已删，
-> F 层仅保留 chart-profiles 框架句，落点判断移入【I】）；② F/P/I 全量标层——单独
-> 注释形式（【I：…】）改对称成对，成对标记之外的混层清理（b2e-005 化合物影响解释
-> 移入【I】、b2e-006 参数联动建议标【P】等），自查脚本验证 8 条全对称+无残留。
-> **v2 修订依据**：GPT 对 draft v1 的复核（`gpt_reply_batch2e_draft_revision_required.md`）。
+> **v4 修订依据**：GPT 对 draft v3 的终复核（存档
+> `gpt_replies/gpt_reply_batch2e_draftv3_review.md`）——b2e-004 元数据问题**通过**；
+> F/P/I 实际标层**未通过**（远程文件 P/I 成对 0 对、单独注释 18 处——v3 的自查脚本
+> 存在「全 0 也判对称」的漏洞，正是 GPT 上轮警告的「不要只让成对标记脚本通过」）。
+> v4 按 GPT 示例把标层改为**包住实际内容**的成对标记（【P】实践正文【/P】、【I】推断
+> 正文【/I】），并修复自查脚本（成对计数必须 >0 且相等 + 单独注释残留 = 0）——8 条
+> 全部通过（F/P/I 逐条有实际标记，b2e-004 补 P 层「先记录出现阶段」实践句使声明与
+> 正文对齐）。
+> **v3 修订**：b2e-004 删混入 claim 句（通过）。**v2 修订**：8 条事实语义。
 > 定位（GPT 终裁）：**追问能力数据侧验证批次**。禁止：批准、落库、更新
 > allowed_sample_ids/manifest、重新划分、训练。
-> 检查链（v3 重跑）：quality gate **PASSED**（checked=8, errors=0, warnings=0）；admission
-> **8 BLOCK**（唯一缺口=allowed_sample_ids，同构预期）；143 tests OK。
+> 检查链（v4 重跑）：quality gate **PASSED**（checked=8, errors=0, warnings=0）；标记
+> 严格自查 **ALL_OK**（8 条成对、零残留）；admission **8 BLOCK**（唯一缺口=
+> allowed_sample_ids，同构预期）；143 tests OK。
 
 ## 汇总
 
