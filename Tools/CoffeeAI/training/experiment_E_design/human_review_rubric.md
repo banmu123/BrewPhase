@@ -1,4 +1,8 @@
-# Experiment E 交付物③：多轮轨迹人工审核 Rubric v0.2
+# Experiment E 交付物③：多轮轨迹人工审核 Rubric v0.3
+
+> **v0.3 修订**：按 GPT v0.2 复核——审核记录改**数组结构**（reviewers 各自独立
+> 结论/时间 + owner_ruling 负责人裁定独立字段）；注册表引用改 14 项。v0.1/v0.2
+> 原件保留于 `archive_v01/`、`archive_v02/`。
 
 > **v0.2 修订**：按 GPT v0.1 终审 ③ 项意见——synthetic 标注改机器可查结构
 > （synthetic_fields）；审核角色定义统一（AI 仅生成与机器预检；**两名独立人工审核者**
@@ -21,7 +25,7 @@
 | `synthetic_scenario` | object | 场景合成属性 + **机器可查的合成标记**：`synthetic_fields: ["method", "symptom"]`（逐字段列出合成项；非合成字段不得列入） | ✅ 字段存在性 + 白名单枚举校验 |
 | `claim_ids` | string[] | 助手各轮回答实际使用的已授权 claim；**逐条存在于知识库且来源授权覆盖当前用途** | ✅ 对照知识库脚本 |
 | `interaction_skill` | enum | `clarify` / `direct_answer` / `skip_handling` / `boundary`（沿用既有 skill 词汇） | ✅ 枚举校验 |
-| `review_status` / `reviewed_by` / `reviewed_at` | string/date | `draft → approved | rejected`；双人审核（AI 初审 + 人工终审），终审必须是人 | ✅ 状态机校验 |
+| `review_status` / `reviewers` / `owner_ruling` | string/array/object | `draft → approved | rejected`；**审核者数组**（v0.3）：`reviewers: [{reviewer, verdict, notes, reviewed_at}]`——两名独立人工审核者各自记录结论与时间；分歧时负责人裁定独立记入 `owner_ruling: {ruler, decision, rationale, ruled_at}`——双人工审核在数据中留可审计证据 | ✅ 状态机 + 数组完整性（approved 须 ≥2 条 reviewer 记录） |
 | `split_group_id` | string | **同场景的近似轨迹共组**——数据划分时整组进同一集合（防泄漏，Q3 明确） | ✅ 划分脚本强制 |
 
 **轨迹 → 训练记录的拆分**（E-7 约束③）：一条轨迹按 E-7a 的调用职责拆成多条目标明确的
@@ -47,7 +51,7 @@
 ### 门 3：追问必要性与单问题纪律
 
 - [ ] 追问发生的前提是**信息确实不足以决策**（对照该场景 `synthetic_scenario` 预埋的缺失变量——预埋即金标准）
-- [ ] 每轮至多追问**一个**注册表变量（决策 JSON 的 `missing_variable_id` ∈ 注册表 12 项）
+- [ ] 每轮至多追问**一个**注册表变量（决策 JSON 的 `missing_variable_id` ∈ 注册表 14 项；blocked/design-only 变量按①§2.5.2 准入状态约束场景生成）
 - [ ] 不连续追问同一变量两次；不追问用户已提供过的信息
 - 机器可查：决策 JSON 对照注册表与场景缺失变量标注；文本自然度人工。
 

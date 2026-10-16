@@ -1,9 +1,11 @@
-# Experiment E 交付物①：决策输出 Schema v2 + 变量注册表 v0.2
+# Experiment E 交付物①：决策输出 Schema v2 + 变量注册表 v0.3
 
-> **v0.2 修订依据**：GPT 对 v0.1 的终审（存档
-> `review_queue/gpt_replies/gpt_reply_experiment_E_v01_review_revision_required.md`）——
-> 四项必改之一（注册表渲染与 schema 契约不一致）+ 授权范围问题。v0.1 原件保留于
-> `archive_v01/`，本文件变更全部显式记录，不静默改写已批准契约。
+> **v0.3 修订依据**：GPT 对 v0.2 的复核（存档
+> `review_queue/gpt_replies/gpt_reply_experiment_E_v02_review_v03_required.md`）——
+> claim 授权核验未落实到全部候选。v0.3 新增 **§2.5 锚点准入核验表**（22 锚点逐一
+> 对照 `source_exceptions.json` 实测），未获准锚点降级 design-only/blocked 并替换
+> 授权内等价锚点；`light-roast-rest-4-6w` 维持移出。v0.1/v0.2 原件保留于
+> `archive_v01/`、`archive_v02/`。
 
 ## 〇、v0.1 → v0.2 变更记录（GPT 终审逐项落实）
 
@@ -70,31 +72,31 @@
 - `training-candidate`：事实**可能进入训练轨迹与 RAG 注入**——必须逐条通过
   §2.4 授权核验后才可用于数据生成；核验前一律按未授权处理。
 
-### 2.2 注册表条目
+### 2.2 注册表条目（锚点按 §2.5 核验结果更新，v0.3）
 
-| missing_variable_id | 标准问题（单变量） | 诊断意义锚点（anchor_role） | 适用 |
+| missing_variable_id | 标准问题（单变量） | 诊断意义锚点（全部 ✅ PASS，详见 §2.5） | 适用 |
 |---|---|---|---|
-| `brew_method` | 你用的是什么器具——手冲 V60、法压、爱乐压、摩卡壶还是意式机？ | `claim.extraction.bh-courses`（design-only：萃取按方式分层） | 全部 |
-| `grind_size` | 研磨度大概什么水平——比白砂糖细、接近细盐，还是更粗？（有刻度可顺带告知） | `claim.grinding.aeropress-grind-ref`（training-candidate）、`claim.pourover.v60-official-tuning`（training-candidate）、`claim.extraction.channeling-vendor`（training-candidate） | 全部 |
-| `dose` | 每次用多少克咖啡粉？ | `claim.espresso.fellow-dose-tamp`、`claim.pourover.v60-official-expert`（training-candidate） | 手冲/意式 |
-| `ratio` | 粉水比大概多少——比如 1:15？ | `claim.espresso.fellow-ratio-example`（training-candidate） | 手冲/意式 |
-| `water_temp` | 冲煮水温大概多少度？ | `claim.pourover.v60-official-expert`（training-candidate） | 手冲/意式 |
-| `brew_time` | 从开始注水到结束大概多久？ | `claim.espresso.linea-micra-yield`、`claim.pourover.v60-official-expert`（training-candidate） | 全部 |
-| `shot_yield` | 最后接了多少克咖啡液？ | `claim.espresso.linea-micra-yield`（training-candidate） | 意式 |
-| `bean_roast_level` | 这支豆子是浅烘、中烘还是深烘？ | `claim.roasting.ta-peaks-first-crack`、`claim.roasting.ta-sourness-correlation`、`claim.roasting.roast-controls-flavor`（training-candidate） | 全部 |
+| `brew_method` | 你用的是什么器具——手冲 V60、法压、爱乐压、摩卡壶还是意式机？ | `claim.extraction.bh-courses`（design-only） | 全部 |
+| `grind_size` | 研磨度大概什么水平——比白砂糖细、接近细盐，还是更粗？（有刻度可顺带告知） | `claim.pourover.v60-official-tuning`、`rule.hario.v60.too-weak`、`rule.hario.v60.too-slow`、`rule.fellow.shot-sour`、`rule.fellow.shot-bitter`、`claim.extraction.channeling-vendor`（training-candidate） | 全部 |
+| `dose` | 每次用多少克咖啡粉？ | `claim.pourover.v60-official-expert`（15g/250g）（training-candidate） | 手冲/意式 |
+| `ratio` | 粉水比大概多少——比如 1:15？ | `claim.pourover.v60-official-expert`（1:16.7）、`claim.pourover.v60-hoffmann-recipe`（1:15）、`claim.espresso.fellow-ratio-1to3`（1:3）（training-candidate） | 手冲/意式 |
+| `water_temp` | 冲煮水温大概多少度？ | `claim.pourover.v60-official-expert`（92–96°C）、`claim.pourover.v60-hoffmann-recipe`（97°C）（training-candidate） | 手冲/意式 |
+| `brew_time` | 从开始注水到结束大概多久？ | `claim.pourover.v60-official-expert`（约 2.5 分钟）（training-candidate） | 手冲为主（意式场景暂缓，见 shot_yield） |
+| `shot_yield` | 最后接了多少克咖啡液？ | （原 linea-micra-yield 未获准——**blocked**） | 意式（场景暂缓） |
+| `bean_roast_level` | 这支豆子是浅烘、中烘还是深烘？ | `claim.roasting.ta-peaks-first-crack`、`claim.roasting.ta-sourness-correlation`、`claim.roasting.roast-controls-flavor`、`claim.defects.roast-level-acrid`（training-candidate） | 全部 |
 | `roast_date` | 包装上的烘焙日期是哪天？ | `claim.freshness.resting-varies-by-roast`、`claim.freshness.dark-roast-rest-5-7d`、`claim.freshness.nca-lose-freshness-immediately`（training-candidate） | 全部 |
-| `water_source` | 你用的水是自来水、过滤水还是瓶装水？ | `claim.water.sage-no-bottled`、`claim.water.sage-no-distilled`（training-candidate） | 意式为主 |
-| `water_hardness` | 当地水质偏硬吗（容易结水垢吗）？ | `claim.water.scale-mechanism`、`claim.water.rancilio-filtration`（training-candidate） | 意式为主 |
-| `descale_history` | 机器上一次除垢是什么时候？ | `claim.water.sage-descale-thresholds`、`claim.cleaning.no-universal-cycle`（training-candidate） | 意式 |
-| `cleaning_history` | 磨豆机（或机器）上一次清洁是什么时候？ | `claim.grinding.cleaning-warranty`、`claim.cleaning.parts-diagram`（training-candidate） | 意式/磨豆机 |
-| `taste_detail` | 「怪」更像哪一种——发酸发咸、焦苦发涩、青草青涩，还是说不上来的闷味？ | `claim.extraction.ucdavis-brewing-chart`、`claim.extraction.channeling-vendor`（training-candidate） | 全部（症状澄清） |
+| `water_source` | 你用的水是自来水、过滤水还是瓶装水？ | （sage 系未获准且语义仅涉除垢——**design-only**） | 意式为主（场景暂缓） |
+| `water_hardness` | 当地水质偏硬吗（容易结水垢吗）？ | （scale-mechanism 等未获准——**design-only**） | 意式为主（场景暂缓） |
+| `descale_history` | 机器上一次除垢是什么时候？ | `conflict.gaggia.classic-descale-interval`、`claim.water.gaggia-vinegar-ban`（training-candidate，**限 Gaggia 语境**） | Gaggia 机型 |
+| `cleaning_history` | 磨豆机（或机器）上一次清洁是什么时候？ | （cleaning-warranty / parts-diagram 未获准——**design-only**） | 磨豆机（场景暂缓） |
+| `taste_detail` | 「怪」更像哪一种——发酸发咸、焦苦发涩、青草青涩，还是说不上来的闷味？ | `claim.sensory.brewing-chart-profiles`、`claim.extraction.channeling-vendor`、`rule.fellow.shot-sour`、`rule.fellow.shot-bitter`（training-candidate） | 全部（症状澄清） |
 
 ### 2.3 排除项（不变）
 
 萃取率/TDS（需折射仪，用户不可观测，`claim.extraction.tds-measured` 仅 design-only）；
 健康/医疗变量（走现行 boundary 路径）；豆种/产区（v0.2 不进注册表）。
 
-### 2.4 授权边界（终审问题 4 的核心落实）
+### 2.4 授权边界（终审问题 4 的核心落实；v0.3 授权状态经 §2.5 实测细化）
 
 **现状（2026-10-16 核对 `source_exceptions.json`）**：全部 9 个已授权来源的
 `deployment_purposes` 均仅为 **`noncommercial-research`**；例外范围限「已核验
@@ -111,3 +113,56 @@ claim 清单」。因此：
    数据在完成核验前不得出现在任何训练样本。
 4. 新增训练用途 claim 的流程：知识库补 claim（F 层核验）→ 例外表登记
    （allowed_claim_ids + 用途）→ 注册表更新——顺序不可反。
+
+### 2.5 锚点准入核验表（v0.3 新增，GPT v0.2 复核问题 3 落实）
+
+**核验方法**：逐一对照 `source_exceptions.json` 各来源 `allowed_claim_ids` 实测
+（2026-10-16 运行脚本核对，与 GPT 复核结论一致）。**规则**：training-candidate
+锚点必须 PASS；MISS 锚点降级 design-only 或替换为授权内等价 claim；**无授权锚点
+支撑的变量标 blocked——其专项事实场景不进入数据生成**（中性追问行为样本不受限，
+因问题文本本身不含 claim 事实）。
+
+#### 2.5.1 逐锚点核验结果
+
+| 锚点 | 来源 | allowed_claim_ids 实测 | 处置 |
+|---|---|---|---|
+| claim.pourover.v60-official-tuning | hario-v60-expert-guide | ✅ 在清单 | 保留 training-candidate |
+| claim.extraction.channeling-vendor | fellow-espresso-basics | ✅ 在清单 | 保留 training-candidate |
+| claim.pourover.v60-official-expert | hario-v60-expert-guide | ✅ 在清单 | 保留 training-candidate |
+| claim.roasting.ta-peaks-first-crack | ucdavis-coffee-center | ✅ 在清单 | 保留 training-candidate |
+| claim.roasting.ta-sourness-correlation | ucdavis-coffee-center | ✅ 在清单 | 保留 training-candidate |
+| claim.roasting.roast-controls-flavor | ucdavis-coffee-center | ✅ 在清单 | 保留 training-candidate |
+| claim.freshness.resting-varies-by-roast | fellow-brew-talks | ✅ 在清单 | 保留 training-candidate |
+| claim.freshness.dark-roast-rest-5-7d | fellow-brew-talks | ✅ 在清单 | 保留 training-candidate |
+| claim.freshness.nca-lose-freshness-immediately | nca-aboutcoffee | ✅ 在清单 | 保留 training-candidate |
+| **claim.sensory.brewing-chart-profiles** | ucdavis-coffee-center | ✅ 在清单 | **新增替换**：taste_detail 锚点（替代 MISS 的 extraction.ucdavis-brewing-chart——该 claim 属 ucdavis-research-index，不能用 coffee-center 例外替代） |
+| **rule.hario.v60.too-weak / too-slow** | hario-v60-expert-guide | ✅ 在清单 | **新增**：grind_size 意义锚点（官方调参规则） |
+| **rule.fellow.shot-sour / shot-bitter** | fellow-espresso-basics | ✅ 在清单 | **新增**：grind_size / taste_detail 症状分流锚点 |
+| **claim.espresso.fellow-ratio-1to3** | fellow-espresso-basics | ✅ 在清单 | **新增替换**：ratio 意式侧锚点（替代 MISS 的 fellow-ratio-example） |
+| **claim.pourover.v60-hoffmann-recipe** | hario-v60-hoffmann | ✅ 在清单 | **新增**：ratio / water_temp 锚点（97°C、1:15） |
+| **conflict.gaggia.classic-descale-interval** | gaggia-classic-manual | ✅ 在清单 | **新增**：descale_history 锚点（替代 MISS 的 sage-descale-thresholds） |
+| **claim.water.gaggia-vinegar-ban** | gaggia-classic-manual | ✅ 在清单 | **新增**：descale_history 锚点 |
+| **claim.defects.roast-level-acrid** | fellow-espresso-basics | ✅ 在清单 | **新增**：bean_roast_level 锚点（深烘焦苦语义） |
+| claim.extraction.bh-courses | barista-hustle | ❌ 来源不在例外表 | 维持 design-only（原判不变） |
+| claim.grinding.aeropress-grind-ref | aeropress-how-to-use | ❌ 来源不在例外表 | **降级 design-only** |
+| claim.espresso.fellow-dose-tamp | fellow-espresso-basics | ❌ 不在该来源清单 | **降级 design-only**（dose 改引 v60-official-expert） |
+| claim.espresso.fellow-ratio-example | fellow-brew-talks | ❌ 不在该来源清单 | **移出**（ratio 意式侧改引 fellow-ratio-1to3） |
+| claim.espresso.linea-micra-yield | lamarzocco-* | ❌ 来源不在例外表且许可商业不明 | **降级 design-only**（brew_time 手冲侧、shot_yield 变量受影响见下） |
+| claim.water.sage-no-bottled / sage-no-distilled | sage-bes875-* | ❌ 来源不在例外表 | **降级 design-only**；且 GPT 指出语义仅涉除垢用水——water_source 锚点整体降级 |
+| claim.water.scale-mechanism / rancilio-filtration / sage-descale-thresholds | sage / rancilio | ❌ 来源不在例外表 | **降级 design-only** |
+| claim.cleaning.no-universal-cycle / parts-diagram / claim.grinding.cleaning-warranty | 各来源 | ❌ 不在对应来源清单 | **降级 design-only**（cleaning_history 降级） |
+| claim.extraction.tds-measured | ucdavis-coldbrew-2025 | ❌ 不适用（本就 design-only） | 维持 |
+| claim.freshness.light-roast-rest-4-6w | fellow-brew-talks | ❌ scope 明文未核验 | 维持移出（v0.2 已处理） |
+
+#### 2.5.2 变量级准入状态（v0.3 生效）
+
+| 变量 | 准入状态 | 数据生成约束 |
+|---|---|---|
+| brew_method / grind_size / dose / ratio / water_temp / brew_time / bean_roast_level / roast_date / taste_detail | **training-candidate**（锚点全 PASS） | 正常生成；RAG 证据仅注入上表 ✅ claim |
+| descale_history | **training-candidate（限 Gaggia 场景）** | 仅生成 Gaggia 类机型场景（锚点 conflict.gaggia.* / vinegar-ban 均为 Gaggia 语境）；其他机型暂缓 |
+| shot_yield | **blocked** | 唯一锚点 linea-micra-yield 未获准——专项场景不生成，待 lamarzocco 授权审批 |
+| water_source / water_hardness / cleaning_history | **design-only** | 锚点未获准 + GPT 指出 Sage 语义仅覆盖除垢用水、不支撑风味诊断——专项事实场景暂不生成；变量保留注册表（问题文本中性），授权与语义核验完成后升 |
+
+**约束重申**：核验表随例外表变更同步更新（脚本重跑）；任何 training-candidate
+锚点在使用时仍逐条过交付物③门 1。blocked/design-only 变量**可以出现在对话里**
+（用户自然提及），但其**诊断事实不得成为 RAG 证据或训练目标中的事实**。

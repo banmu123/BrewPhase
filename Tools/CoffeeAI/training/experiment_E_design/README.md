@@ -17,22 +17,26 @@
 
 | # | 交付物 | 文件 | 状态 |
 |---|---|---|---|
-| 1 | 决策输出 schema + 变量注册表 | `decision_schema_and_registry.md` | ✅ **v0.2**（schema v2 去 question 字段+治理记录；14 变量单变量纪律；claim 授权分级 design-only/training-candidate；light-roast-rest-4-6w 移出锚点） |
-| 2 | 候选基座选择方案（零样本筛选设计） | `base_model_selection.md` | ✅ **v0.2**（字典序排序+最低门槛防「从不追问」胜出；Qwen3 生成模式一致性） |
-| 3 | 人工审核 rubric（GPT 六门框架 → 仓库文档） | `human_review_rubric.md` | ✅ **v0.2**（synthetic_fields 机器可查；双人工终审角色定义+分歧流程） |
-| 4 | 冻结评测集规范 + 评分脚本设计（Product Eval v1） | `product_eval_v1_spec.md` | ✅ **v0.2**（评测资产边界表+E1 阶段验证集 40 案例独立闸门；案例唯一目标变量；实际通过数门线；E-e 独立判据；C/D 分型回归） |
-| 5 | E1/E2 训练策略 | `e1_e2_training_strategy.md` | ✅ **v0.2**（第二次调用契约冻结：回答上下文不含内部 JSON；决策记录上下文=渲染后历史；新旧脚本字段映射表；泄漏检查以目标消息为准） |
+| 1 | 决策输出 schema + 变量注册表 | `decision_schema_and_registry.md` | ✅ **v0.3**（schema v2+治理记录；14 变量；**§2.5 锚点准入核验表**——22 锚点逐一实测 allowed_claim_ids，10 变量 training-candidate / 1 blocked / 3 design-only；light-roast-rest-4-6w 维持移出） |
+| 2 | 候选基座选择方案（零样本筛选设计） | `base_model_selection.md` | ✅ **v0.3**（字典序排序+最低门槛+**实际通过数门线**；Qwen3 生成模式一致性） |
+| 3 | 人工审核 rubric（GPT 六门框架 → 仓库文档） | `human_review_rubric.md` | ✅ **v0.3**（synthetic_fields 机器可查；**审核者数组 reviewers[]+owner_ruling** 可审计双人工） |
+| 4 | 冻结评测集规范 + 评分脚本设计（Product Eval v1） | `product_eval_v1_spec.md` | ✅ **v0.3**（评测资产边界+E1 阶段验证集+**e1s 复测规则**；L3 自然度门线正式化——基准模型/配对评分/分项聚合；E-e 按案例目的**分项分母**；C/D 分型回归） |
+| 5 | E1/E2 训练策略 | `e1_e2_training_strategy.md` | ✅ **v0.3**（第二次调用契约冻结；**回答记录补 RAG 证据块**——对齐 App PromptBuilder/BuiltContext [n] 编号结构；E1 闸门=阶段集四指标+**C/D 分型回归+RAG 链路行为检查**；新旧脚本字段映射表） |
 | 6 | 旧样本映射清单（43 条选择性复用） | `legacy_samples_mapping.md` | ✅ v0.1（处置总表/b2e-005~008 复核清单/独立版本溯源；终审未提修改意见） |
 | 7 | 目标 App 运行方案 | `app_runtime_plan.md` | ✅ **v0.2**（行为一致性验收替代逐位校验；内存改规划估算+真机实测方案；Qwen3 模式一致性） |
 
-> **七件套全部产出（2026-10-16）。** 均为 v0.1 草案，统一提交 GPT 复核；其 15:28 后
-> 恢复文件分析可读全文。复核通过 + 负责人确认评测集冻结后，才进入数据生成与
-> 基座筛选执行；训练仍需单独授权。
+> **当前状态（v0.3，2026-10-16）**：七件套主体已修订至 v0.3（GPT v0.1 终审四项必改 +
+> v0.2 复核剩余问题全部落实）；`legacy_samples_mapping.md` 暂维持 v0.1（GPT 两轮均未
+> 提修改意见）。历史版本存档于 `archive_v01/`、`archive_v02/`。**现行有效协议 =
+> Schema v2**（v1 仅作历史裁定保留）；变量注册表 = 14 项。待 GPT 复核 v0.3 → 通过后
+> 负责人冻结 product-eval-v1 → 申请启动数据准备与基座筛选；训练仍未批准。
 
 ## 二、GPT 裁定约束速查（设计时逐条对照）
 
-- **Q1 schema v1**：`{schema_version, action: clarify|answer, missing_variable_id, question, reason_code}`；
-  answer 时 missing_variable_id/question = null；missing_variable_id 必须来自受控变量枚举；
+- **Q1 → 现行 Schema v2**（v0.2 起生效，治理记录见①§1.4；v1 含 question 字段，
+  仅作历史裁定保留）：`{schema_version:"2", action, missing_variable_id, reason_code}`；
+  **模型不输出 question**（问题文本由代码从注册表渲染）；跨字段校验
+  answer ⇔ information_sufficient；missing_variable_id 必须来自受控变量枚举；
   校验通过才呈现追问；解析失败/字段不合法/输出为空 → **fail-closed 降级现行 RAG 直答** + 记录异常；
   变量定义建**独立注册表**，IntelligenceConfig 只放阈值与开关。
 - **Q2 基座**：Qwen2.5-3B-4bit（历史对照）/ Qwen3-4B-4bit（主候选）/ 7B 级 4-bit（上限候选）零样本筛选；
@@ -55,7 +59,7 @@
   **两段式 = 决策阶段与回答阶段分开，不是每次追问后连续两次调用**——追问分支必须
   等真实下一轮用户输入。
 - **E-7b E1 目标序列**：assistant 训练目标 = 纯决策 JSON（无正文、无 XML/Markdown
-  围栏/自然语言包裹）；answer 时 JSON 内 missing_variable_id/question = null。
+  围栏/自然语言包裹）；schema v2 下 answer 时 missing_variable_id = null（v2 无 question 字段）。
 - **三条补充约束**：① **每个用户新回合重新决策**——收到补充/跳过后基于更新后的
   对话历史再次决策调用，校验得到 answer 后才进正文（旧 clarify ≠ 新 answer）；
   ② E2 训练目标按调用职责分开（决策调用目标 JSON / 回答调用目标纯正文），输入模板
