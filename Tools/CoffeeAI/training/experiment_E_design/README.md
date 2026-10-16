@@ -1,4 +1,12 @@
-# Experiment E 设计包（2026-10-16 启动）
+# Experiment E 设计包（v0.2，2026-10-16）
+
+> **v0.2 修订依据**：GPT 对 v0.1 七件套的终审（存档
+> `review_queue/gpt_replies/gpt_reply_experiment_E_v01_review_revision_required.md`）——
+> 方向认可、暂不通过冻结；四项必改（验收集与 E1 闸门分离 / Schema 契约版本化 v2 /
+> E2 记录对齐真实调用序列 / claim 授权分级）+ 逐文档修订意见已全部落实。**v0.1 原件
+> 保留于 `archive_v01/`**，未静默改写任何已批准契约。
+> 依据链：GPT 设计评审裁定（gpt_reply_experiment_E_design_ruling.md）+ E-7a/E-7b
+> 裁定 + 负责人决策修订。完成后统一提交 GPT 复核 v0.2。
 
 > 依据：GPT 设计评审终审裁定（`review_queue/gpt_replies/gpt_reply_experiment_E_design_ruling.md`，
 > Q1–Q6 全部批准进入设计阶段；**训练尚未批准**）+ 负责人决策修订
@@ -9,13 +17,13 @@
 
 | # | 交付物 | 文件 | 状态 |
 |---|---|---|---|
-| 1 | 决策输出 schema + 变量注册表 | `decision_schema_and_registry.md` | ✅ v0.1（12 变量/claim 锚点/校验规则/fail-closed/E-7a 三步） |
-| 2 | 候选基座选择方案（零样本筛选设计） | `base_model_selection.md` | ✅ v0.1（三候选角色/30 案例开发集与验收集隔离/许可证核验记录表/排序规则） |
-| 3 | 人工审核 rubric（GPT 六门框架 → 仓库文档） | `human_review_rubric.md` | ✅ v0.1（六门检查项+七字段数据模型+审核流程） |
-| 4 | 冻结评测集规范 + 评分脚本设计（Product Eval v1） | `product_eval_v1_spec.md` | ✅ v0.1（80 新案例四类+20 回归、三层计分实现、门线草案、冻结流程） |
-| 5 | E1/E2 训练策略 | `e1_e2_training_strategy.md` | ✅ v0.1（轨迹→记录拆分、mask-prompt 目标对齐、双记录防遗忘、失败归因设计） |
-| 6 | 旧样本映射清单（43 条选择性复用） | `legacy_samples_mapping.md` | ✅ v0.1（处置总表/b2e-005~008 复核清单/独立版本溯源） |
-| 7 | 目标 App 运行方案 | `app_runtime_plan.md` | ✅ v0.1（端侧约束/方案②集成架构/验收序列/clarifyEnabled 回退开关） |
+| 1 | 决策输出 schema + 变量注册表 | `decision_schema_and_registry.md` | ✅ **v0.2**（schema v2 去 question 字段+治理记录；14 变量单变量纪律；claim 授权分级 design-only/training-candidate；light-roast-rest-4-6w 移出锚点） |
+| 2 | 候选基座选择方案（零样本筛选设计） | `base_model_selection.md` | ✅ **v0.2**（字典序排序+最低门槛防「从不追问」胜出；Qwen3 生成模式一致性） |
+| 3 | 人工审核 rubric（GPT 六门框架 → 仓库文档） | `human_review_rubric.md` | ✅ **v0.2**（synthetic_fields 机器可查；双人工终审角色定义+分歧流程） |
+| 4 | 冻结评测集规范 + 评分脚本设计（Product Eval v1） | `product_eval_v1_spec.md` | ✅ **v0.2**（评测资产边界表+E1 阶段验证集 40 案例独立闸门；案例唯一目标变量；实际通过数门线；E-e 独立判据；C/D 分型回归） |
+| 5 | E1/E2 训练策略 | `e1_e2_training_strategy.md` | ✅ **v0.2**（第二次调用契约冻结：回答上下文不含内部 JSON；决策记录上下文=渲染后历史；新旧脚本字段映射表；泄漏检查以目标消息为准） |
+| 6 | 旧样本映射清单（43 条选择性复用） | `legacy_samples_mapping.md` | ✅ v0.1（处置总表/b2e-005~008 复核清单/独立版本溯源；终审未提修改意见） |
+| 7 | 目标 App 运行方案 | `app_runtime_plan.md` | ✅ **v0.2**（行为一致性验收替代逐位校验；内存改规划估算+真机实测方案；Qwen3 模式一致性） |
 
 > **七件套全部产出（2026-10-16）。** 均为 v0.1 草案，统一提交 GPT 复核；其 15:28 后
 > 恢复文件分析可读全文。复核通过 + 负责人确认评测集冻结后，才进入数据生成与
@@ -72,6 +80,13 @@ PyTorch 实现。映射关系：
 | ch06（文本分类微调） | E1 决策行为 | clarify/answer 决策的类比：受限输出空间的行为学习；分类微调的数据平衡与评估思路 |
 | ch07/03 模型评测 + 姊妹库 reasoning-from-scratch chF/04（LLM-as-a-Judge） | Product Eval v1 第三层 | 固定裁判 prompt、隐藏身份、分层人工抽检的裁判协议 |
 | ch07/04（DPO 偏好微调，bonus） | 远期备选 | 若 E2 后行为仍不稳，偏好微调是备选路径（记录为远期，不在 E 范围） |
+
+**v0.2 增补（GPT 终审第三节裁定）**：
+- ch07 指令样本格式、训练/验证划分与训练目标构造部分 → 补入 E1/E2 数据构造参照；
+- **MLX-LM 官方文档（chat 数据格式、--mask-prompt、训练命令与版本约束）为实施规范的
+  唯一权威来源**——教学仓库只作机制理解，不作实施依据；
+- ch06 分类微调类比有限决策空间，但**分类任务 ≠ 生成式 JSON 决策**，不照搬训练头
+  与评测形式。
 
 已识别差距：该仓库以单轮 instruction-response 为主，**多轮对话组织无专门章节**——
 E 的多轮 ChatML 轨迹 schema 以 MLX-LM 的 chat 格式约定为准，GPT 裁定的七字段元数据

@@ -1,8 +1,13 @@
-# Experiment E 交付物③：多轮轨迹人工审核 Rubric v0.1
+# Experiment E 交付物③：多轮轨迹人工审核 Rubric v0.2
+
+> **v0.2 修订**：按 GPT v0.1 终审 ③ 项意见——synthetic 标注改机器可查结构
+> （synthetic_fields）；审核角色定义统一（AI 仅生成与机器预检；**两名独立人工审核者**
+> + 分歧处理流程）。v0.1 原件保留于 `archive_v01/`。
 
 > 依据：GPT Q3 裁定——「审核 rubric 由我提供第一版框架（六检查门），你方负责落成
 > 仓库文档，再交我复核」+ Q3 七字段轨迹元数据 + 事实逐 claim 可追溯（轻粒度
-> synthetic 标记）。本文件即六门框架的仓库化落地，v0.1 待 GPT 复核。
+> synthetic 标记）。> 本文件即六门框架的仓库化落地，v0.2 按 GPT v0.1 终审修订（synthetic_fields 机器
+> 可查结构、双人工终审角色定义），待 GPT 复核。
 > 适用范围：Experiment E 训练数据（300–500 条多轮轨迹）的生成→审核→入库全流程。
 
 ## 一、轨迹数据模型（Q3 七字段 + 补充）
@@ -13,7 +18,7 @@
 |---|---|---|---|
 | `trace_id` | string | 唯一，格式 `e2t-<batch><seq>`（如 `e2t-a001`） | ✅ 唯一性脚本 |
 | `behavior_class` | enum | `A`（追问→接续）/ `B`（追问→跳过）/ `C`（直答）/ `D`（特殊防护） | ✅ 枚举校验 |
-| `synthetic_scenario` | object | 用户场景的合成属性：`{method, bean, params, symptom}`，注明哪些字段是构造值 | ✅ 非空校验 |
+| `synthetic_scenario` | object | 场景合成属性 + **机器可查的合成标记**：`synthetic_fields: ["method", "symptom"]`（逐字段列出合成项；非合成字段不得列入） | ✅ 字段存在性 + 白名单枚举校验 |
 | `claim_ids` | string[] | 助手各轮回答实际使用的已授权 claim；**逐条存在于知识库且来源授权覆盖当前用途** | ✅ 对照知识库脚本 |
 | `interaction_skill` | enum | `clarify` / `direct_answer` / `skip_handling` / `boundary`（沿用既有 skill 词汇） | ✅ 枚举校验 |
 | `review_status` / `reviewed_by` / `reviewed_at` | string/date | `draft → approved | rejected`；双人审核（AI 初审 + 人工终审），终审必须是人 | ✅ 状态机校验 |
@@ -76,7 +81,10 @@ AI 辅助生成（场景扩展）→ 机器预检（门 1/3/5 的脚本项）→
 ```
 
 - 机器预检不过的**不进入人工终审**（节约审核精力，也强制生成端质量）。
-- 人工终审**双人**：生成者之外的人（或负责人）复核；分歧记录在轨迹 `review_notes`。
+- **角色定义（v0.2 统一）**：AI 只承担场景生成辅助与机器预检，**不计入审核人数**；
+  终审由**两名相互独立的人工审核者**完成（审核者 A 全量终审 + 审核者 B 独立复核；
+  两人均不得是该轨迹的生成者）。分歧处理：A/B 结论不一致的轨迹提交负责人裁定，
+  裁定结果与理由记入 `review_notes`；裁定案例沉淀为 rubric 补充判例。
 - 拒绝样本保留原样（`review_status=rejected` + 原因），供失败模式分析与 rubric 迭代。
 
 ## 四、与既有治理资产的复用
