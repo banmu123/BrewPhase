@@ -12,8 +12,8 @@
 | 1 | 决策输出 schema + 变量注册表 | `decision_schema_and_registry.md` | ✅ v0.1（12 变量/claim 锚点/校验规则/fail-closed/E-7a 三步） |
 | 2 | 候选基座选择方案（零样本筛选设计） | `base_model_selection.md` | 待产出 |
 | 3 | 人工审核 rubric（GPT 六门框架 → 仓库文档） | `human_review_rubric.md` | ✅ v0.1（六门检查项+七字段数据模型+审核流程） |
-| 4 | 冻结评测集规范 + 评分脚本设计（Product Eval v1） | `product_eval_v1_spec.md` | 待产出 |
-| 5 | E1/E2 训练策略 | `e1_e2_training_strategy.md` | 待产出 |
+| 4 | 冻结评测集规范 + 评分脚本设计（Product Eval v1） | `product_eval_v1_spec.md` | ✅ v0.1（80 新案例四类+20 回归、三层计分实现、门线草案、冻结流程） |
+| 5 | E1/E2 训练策略 | `e1_e2_training_strategy.md` | ✅ v0.1（轨迹→记录拆分、mask-prompt 目标对齐、双记录防遗忘、失败归因设计） |
 | 6 | 旧样本映射清单（43 条选择性复用） | `legacy_samples_mapping.md` | 待产出 |
 | 7 | 目标 App 运行方案 | `app_runtime_plan.md` | 待产出 |
 
