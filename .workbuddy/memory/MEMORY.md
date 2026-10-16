@@ -48,7 +48,7 @@
 ## CoffeeAI × ChatGPT 循环——会话交接（2026-10-15 深夜更新）
 
 * **唯一权威交接文档：`Tools/CoffeeAI/review_queue/GPT_WORKFLOW.md`**（新会话必读）——含交互循环规范、ChatGPT 对话技术与选择器、状态快照、恢复步骤、阶段历史与关键决策。
-* 当前状态：**CoffeeAI 重开——Experiment E 规划阶段（2026-10-16）**——负责人决策修订（owner_decision_revision_experiment_E.md，取代 10-15「不做追问」决策）：做自训练领域模型 + 主动澄清（BrewPhase Coffee Intelligence Model：基座 LoRA/SFT + 行为学习 + RAG 事实层 + 多轮交互 + 独立评测）。GPT 提案存档 gpt_replies/gpt_reply_experiment_E_proposal_owner_chat.md。**先设计不训练**：E 设计文档 + 评测集冻结（60-100 案例，C/D 20 题转回归套件）+ 多轮数据准备（300-500 轨迹、四类行为 A 追问接续/B 追问跳过/C 直答/D 特殊防护）→ GPT 设计评审批准后才开新受控实验；禁止复制 D 参数、禁止 43 条原样重跑。C/D 封存、管线归档状态不变。
+* 当前状态：**Experiment E 设计包阶段（2026-10-16）**——GPT 设计评审终审 Q1–Q6 全部批准（裁定存档 gpt_replies/gpt_reply_experiment_E_design_ruling.md）：Q1 JSON schema v1{action/missing_variable_id/question/reason_code}+fail-closed 降级+变量注册表独立于 IntelligenceConfig；Q2 三候选零样本筛选（Qwen2.5-3B 对照/Qwen3-4B 主候选/7B 上限，开发集≠验收集，许可证前置）；Q3 轻粒度 synthetic+事实逐 claim 可追溯+轨迹七字段元数据；Q4 三层计分+门线（追问≥85%/误追问≤10%/接续≥85%/跳过≥90%/编造0/自然度降幅≤1）；Q5 E1 决策行为→E2 完整多轮（E1 达标≠E2 授权）；Q6 6 条单轮 clarification 不并入。设计包目录 `training/experiment_E_design/`（七件套待产出）。**训练仍未批准**；方法论参考 rasbt/LLMs-from-scratch（LoRA/指令微调/分类微调/裁判评测，概念参照非代码依赖，负责人指定）。GPT 额度 15:28 后恢复文件分析。
 * 关键坑：**run_train.py 训练/烟测必须用隔离 venv python**（系统 python 无 mlx-lm，preflight 会拦截）；评测脚本用系统 python 跑即可。**评测脚本已参数化**（run_eval_generation_c.py --adapter-path/--out-prefix，D 用 evalD 前缀）。语义标层三层：成对格式/无残留（脚本可查）+ 逐句归属（只能语义审核）。
 * ChatGPT 免费版额度每日 16:03（GMT+8）重置；发送验证必须查 **main 对话区独有词 + 输入框清空**；长消息尾部的独有词可能被虚拟列表截断——用消息开头的 commit 号验证。「Model not found」= 服务端故障，等额度刷新重发。
 * ego-browser 任务空间纪律：单空间复用（taskSpace("chatgpt-coffeeai")）+ 每轮结束 `task.finish({ keep: [] })`；GPT 回复提取后**立即存档** gpt_replies/（两次漏存档教训）。

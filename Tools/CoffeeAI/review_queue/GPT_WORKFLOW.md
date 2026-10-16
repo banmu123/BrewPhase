@@ -72,9 +72,20 @@ GPT 提案逐字存档：`gpt_replies/gpt_reply_experiment_E_proposal_owner_chat
 4. 数据规模/基座型号/超参数在 E 设计评审阶段决定，禁止复制 D 参数；
 5. **先设计不训练**：完整多轮样本+独立评测集+训练策略+App 运行方案都有依据后，再审批新受控实验。
 
-**当前中断点**：决策修订文档已 push → 向 GPT 报告修订 + 提交 6 个设计评审
-开放问题（Q1 决策输出格式 / Q2 基座候选 / Q3 多轮数据来源授权边界 / Q4 评测
-计分方式 / Q5 训练分期 vs 联合 / Q6 旧 43 条是否并入 E 数据）→ 等 GPT 裁定。
+**当前中断点（2026-10-16 11:45 更新）**：GPT 设计评审终审已出（Q1–Q6 全部批准进入
+设计阶段，**训练仍未批准**；裁定逐字存档
+`gpt_replies/gpt_reply_experiment_E_design_ruling.md`）——Q1 JSON schema v1 +
+fail-closed 降级 + 变量注册表独立于 IntelligenceConfig；Q2 三候选零样本筛选
+（开发集≠验收集，许可证前置核验）；Q3 轻粒度 synthetic+事实逐 claim 可追溯，
+GPT 出 rubric 六门框架我方落库；Q4 三层计分+门线草案（正确追问 ≥85%/误追问
+≤10%/接续 ≥85%/跳过 ≥90%/编造 0/自然度降幅 ≤1/20）；Q5 E1→E2 分期（E1 达标
+≠E2 授权）；Q6 旧 43 条选择性复用（6 条单轮 clarification 不并入）。
+**新增方法论参考（负责人指定）**：rasbt/LLMs-from-scratch——映射见
+`training/experiment_E_design/README.md` 第三节（LoRA/指令微调/分类微调/裁判评测；
+方法论参照非代码依赖）。
+**下一步**：产出 E 设计包七件套（schema+注册表 → 基座筛选 → rubric → 评测集
+规范 → E1/E2 策略 → 旧样本映射 → App 运行方案），完成后提交 GPT 复核（其额度
+15:28 后恢复文件分析）。
 
 **历史存档（已完成）**：负责人对 Batch2e 8 条逐条拍板 → 全部批准 → 落库
 （aaeba79，approved 43）→ Experiment D（GPT 批准一轮，74cecfd）→ 终审失败封存
