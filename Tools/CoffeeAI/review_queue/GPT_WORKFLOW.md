@@ -44,29 +44,42 @@
   （本轮曾积压 5 个空间，已全部 finish 清理；后台轮询任务会被 finish 终止，属预期）。
 - **任务空间**：每次交互独立 taskSpace，结束 `task.finish({ keep: [] })`
 
-## 三、当前状态快照（2026-10-15 22:00，Batch2e draft v6 终复核通过）
+## 三、当前状态快照（2026-10-16 11:20，负责人决策修订→Experiment E 规划启动）
 
 | 指标 | 值 |
 |---|---|
-| approved | **35**（b1 5 + b2a 9 + b2b 8 + b2c 3 + b2d 10） |
-| 合并划分 | train 28 / valid 4 / test 3（leakage=0；历史版本保留） |
+| approved | **43**（b1 5 + b2a 9 + b2b 8 + b2c 3 + b2d 10 + b2e 8） |
+| 数据版本 | splits-v3-batch2e（train 35 / valid 4 / test 4，leakage=0；历史 28/4/3 保留） |
 | 测试 | **143 tests OK** |
-| Batch2e（clarification 批次） | **draft v6 终复核通过，进入负责人逐条拍板**——8 条候选（追问 4 + 直答 4），gate PASSED（8, 0/0）、admission 8 BLOCK（仅缺 allowed_sample_ids）、F/P/I 语义标层经 GPT 四轮复核收敛 |
-| 训练 | **冻结**（GPT 终裁：即使 43 条也不自动批准新一轮 3B 训练，数据版本就绪后单独裁定） |
-| Git | main = origin/main = 7450095 之后（draft v6 系列） |
+| C/D 实验 | **封存**——D 判定失败（行为分 6.0、追问零学出、事实回归），3B 旧线关闭，管线归档「链路验证完成、质量验收失败」 |
+| **Experiment E（新）** | **规划阶段启动**——负责人 2026-10-16 决策修订：做自训练领域模型 + 主动澄清；修订记录 owner_decision_revision_experiment_E.md（待 GPT 复核）；GPT 提案存档 gpt_reply_experiment_E_proposal_owner_chat.md |
+| 训练 | **冻结**（E 先设计与数据准备，不启动训练；待 GPT 设计评审批准后才开新受控实验） |
+| Git | main = origin/main（决策修订提交之后） |
 
-## 四、中断点与恢复步骤（2026-10-15 深夜：CoffeeAI 微调批次全线收官）
+## 四、中断点与恢复步骤（2026-10-16：CoffeeAI 重开——Experiment E 规划）
 
-**负责人最终产品决策**：「不用追问，就一问一答」——owner_decision_no_clarification.md：
-① 产品形态确定为一问一答（信息不足给条件化建议，不做多轮追问功能）；
-② GPT 批准的 ClarificationPolicy 产品层设计任务取消；
-③ Batch2e 8 条已落库数据保留不回滚（直答样本支撑现有形态）；
-④ LoRA 管线归档状态不变（链路验证完成、质量验收失败），3B 微调线保持关闭。
-已简报 GPT（文本），等其确认后 CoffeeAI 数据批次工作收官。
+**负责人决策修订（2026-10-16）**：推翻 10-15「不做追问」决策——「我认为这条路
+值得做……需要自训练模型和实现主动追问」。新目标：BrewPhase Coffee Intelligence
+Model（基座 LoRA/SFT 微调 + 主动澄清行为 + RAG 事实层 + 多轮交互 + 独立评测）。
+修订记录：`owner_decision_revision_experiment_E.md`（含 C/D 教训、数据规划
+300–500 多轮轨迹四类分布、评测门槛 60–100 冻结案例、运行环境约束、执行红线）；
+GPT 提案逐字存档：`gpt_replies/gpt_reply_experiment_E_proposal_owner_chat.md`。
 
-**历史待办存档（已完成）**：负责人对 Batch2e 8 条逐条拍板 → 全部批准 → 落库
+**GPT 提案五个要点**（负责人转发，2026-10-16）：
+1. 职责分工：模型学行为、RAG 供可追溯事实、代码管对话状态——不把所有问题寄希望于权重；
+2. C/D 失败根因：clarification 仅 6/43 + 训练目标混杂——不能只加数据量重跑；
+3. E 方案四步：冻结评测集（60–100 案例）→ 建多轮训练数据（300–500 轨迹、四类行为）→ 改训练目标（结构化决策输出 answer/clarify，代码校验）→ 先评测达标再谈 App 集成；
+4. 数据规模/基座型号/超参数在 E 设计评审阶段决定，禁止复制 D 参数；
+5. **先设计不训练**：完整多轮样本+独立评测集+训练策略+App 运行方案都有依据后，再审批新受控实验。
+
+**当前中断点**：决策修订文档已 push → 向 GPT 报告修订 + 提交 6 个设计评审
+开放问题（Q1 决策输出格式 / Q2 基座候选 / Q3 多轮数据来源授权边界 / Q4 评测
+计分方式 / Q5 训练分期 vs 联合 / Q6 旧 43 条是否并入 E 数据）→ 等 GPT 裁定。
+
+**历史存档（已完成）**：负责人对 Batch2e 8 条逐条拍板 → 全部批准 → 落库
 （aaeba79，approved 43）→ Experiment D（GPT 批准一轮，74cecfd）→ 终审失败封存
-（22cd5be 归档修订）→ 负责人拍板不做追问（本节）。
+（22cd5be 归档修订）→ 负责人拍板不做追问（10-15，已被本日决策修订取代）→
+GPT 确认收官（e534548）→ **负责人反转决策，Experiment E 启动（本节）**。
 
 **中断点**：六点九-B（草稿 8 条）✅ → 六点九-C（门禁行为增强）✅ → 六点九-D（审核包）✅
 → **等待负责人（用户）按拍板清单批准 Batch2b**。GPT 已确认「审核包达到拍板标准，

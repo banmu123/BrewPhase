@@ -45,11 +45,11 @@
 * **修改完成 → 先 push 远程 → 再询问 GPT**：问 GPT（ChatGPT《检查黄金风味代码》对话）前必须先把改动 commit + push 到 GitHub main，并要求 GPT 先看代码库再结合报告提问。GPT 的提示词按循环执行：执行 → push → 回报 → 问下一步。
 * 询问 GPT 时**必须附上仓库地址** https://github.com/banmu123/BrewPhase （GPT 无需搜索即可核对远程 main；仓库对 GPT 可见）。
 
-## CoffeeAI × ChatGPT 循环——会话交接（2026-10-15 晚更新）
+## CoffeeAI × ChatGPT 循环——会话交接（2026-10-15 深夜更新）
 
 * **唯一权威交接文档：`Tools/CoffeeAI/review_queue/GPT_WORKFLOW.md`**（新会话必读）——含交互循环规范、ChatGPT 对话技术与选择器、状态快照、恢复步骤、阶段历史与关键决策。
-* 当前状态：**阶段七-G 终裁落地——Experiment C 不通过，A/B/C 训练线冻结**（approved 35 / train 28-4-3 / 143 tests；训练链路验证完成、目标行为局部改善、未过质量验收）。中断点与下一步见交接文档「四」。
-* 待负责人决策：是否开展 clarification 候选数据批次（GPT 建议先 8 条：一半「信息不足先问关键问题」、一半「信息足够直答」防模板化，走现有候选→审核→批准流程，35 条 approved/例外/划分不变）。
-* 关键坑：**run_train.py 训练/烟测必须用隔离 venv python**（`~/.workbuddy/binaries/python/envs/default/bin/python3`，系统 python 无 mlx-lm，preflight 会拦截）；评测脚本（run_eval_generation_c.py）用系统 python 跑即可（内部 subprocess 调 venv 的 mlx_lm.generate）。
-* ChatGPT 免费版额度每日 16:03（GMT+8）重置；发送验证必须查 **main 对话区独有词 + 输入框清空**（不能只看 body.innerText）；「Model not found」= 服务端故障消息不持久化，等额度刷新后重发。
-* ego-browser 任务空间纪律：单空间复用（taskSpace("chatgpt-coffeeai")）+ 每轮结束 `task.finish({ keep: [] })`。
+* 当前状态：**CoffeeAI 重开——Experiment E 规划阶段（2026-10-16）**——负责人决策修订（owner_decision_revision_experiment_E.md，取代 10-15「不做追问」决策）：做自训练领域模型 + 主动澄清（BrewPhase Coffee Intelligence Model：基座 LoRA/SFT + 行为学习 + RAG 事实层 + 多轮交互 + 独立评测）。GPT 提案存档 gpt_replies/gpt_reply_experiment_E_proposal_owner_chat.md。**先设计不训练**：E 设计文档 + 评测集冻结（60-100 案例，C/D 20 题转回归套件）+ 多轮数据准备（300-500 轨迹、四类行为 A 追问接续/B 追问跳过/C 直答/D 特殊防护）→ GPT 设计评审批准后才开新受控实验；禁止复制 D 参数、禁止 43 条原样重跑。C/D 封存、管线归档状态不变。
+* 关键坑：**run_train.py 训练/烟测必须用隔离 venv python**（系统 python 无 mlx-lm，preflight 会拦截）；评测脚本用系统 python 跑即可。**评测脚本已参数化**（run_eval_generation_c.py --adapter-path/--out-prefix，D 用 evalD 前缀）。语义标层三层：成对格式/无残留（脚本可查）+ 逐句归属（只能语义审核）。
+* ChatGPT 免费版额度每日 16:03（GMT+8）重置；发送验证必须查 **main 对话区独有词 + 输入框清空**；长消息尾部的独有词可能被虚拟列表截断——用消息开头的 commit 号验证。「Model not found」= 服务端故障，等额度刷新重发。
+* ego-browser 任务空间纪律：单空间复用（taskSpace("chatgpt-coffeeai")）+ 每轮结束 `task.finish({ keep: [] })`；GPT 回复提取后**立即存档** gpt_replies/（两次漏存档教训）。
+* Git 提交：Batch2e 系列 3aa74b6（plan）→ 02afaa9/e05c15d（plan v2/v3）→ 3650c0f/0778eb0/b527561（draft v1-v3）→ c6e6f91（v6 终审通过）→ aaeba79（落库 43 条）→ 74cecfd（Experiment D）→ 22cd5be（终审归档修订）。
