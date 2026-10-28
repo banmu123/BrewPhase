@@ -3,9 +3,9 @@ import SwiftUI
 
 /// 导出 (§34).
 ///
-/// JSON is the complete, restorable backup; CSV is the version you can open in a
-/// spreadsheet. Both are written to a temp folder and handed to the system share
-/// sheet — the app never uploads anything, and it never asks where to put it.
+/// JSON 是全部**文字**记录的可读清单（不含图片）；CSV 是能直接用表格打开的三张表。
+/// 需要连图片一起整机还原时走「完整备份与恢复」（`BackupView`），这里不再冒充它。
+/// 两者都写到临时目录再交给系统分享面板——App 从不上传任何东西。
 struct ExportView: View {
 
     @Environment(\.modelContext) private var context
@@ -104,11 +104,11 @@ struct ExportView: View {
     @ViewBuilder
     private var jsonSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "完整备份")
+            SectionHeader(title: "JSON 备份")
             if let jsonURL {
                 shareRow(
                     title: "导出 JSON",
-                    detail: "包含豆子、冲煮、风味、提醒和窗口规则",
+                    detail: "文字记录，不含图片",
                     url: jsonURL
                 )
             } else {
@@ -173,7 +173,7 @@ struct ExportView: View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: "说明")
             Text(hasData
-                 ? "导出的 JSON 可以完整还原你的记录。CSV 只包含豆子、冲煮和风味三张表，方便做统计。"
+                 ? "导出的 JSON 包含全部文字记录，但不含图片。要连图片一起带走，请用「更多 → 完整备份与恢复」。CSV 只包含豆子、冲煮和风味三张表，方便做统计。"
                  : "现在还没有记录。空数据也可以导出，出来的是一份结构完整、内容为空的文件。")
                 .font(TypeScale.caption)
                 .foregroundStyle(Palette.inkFaint)

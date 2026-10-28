@@ -20,6 +20,7 @@ struct MoreView: View {
     @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
     @State private var pendingReminderCount = 0
     @State private var isExporting = false
+    @State private var isBackingUp = false
     @State private var orphanCount = 0
     @State private var imageBytes: Int64 = 0
     @State private var imageCount = 0
@@ -70,6 +71,9 @@ struct MoreView: View {
             .task { await refreshStatus() }
             .sheet(isPresented: $isExporting) {
                 ExportView()
+            }
+            .sheet(isPresented: $isBackingUp) {
+                NavigationStack { BackupView() }
             }
         }
     }
@@ -201,7 +205,17 @@ struct MoreView: View {
                 Button {
                     isExporting = true
                 } label: {
-                    navRow(title: "导出", detail: "JSON 完整备份 · CSV 表格")
+                    navRow(title: "导出", detail: "JSON · CSV 表格（不含图片）")
+                }
+                .buttonStyle(.plain)
+
+                CardDivider()
+
+                // 完整备份：单文件 + 图片，能整机还原；与上面的「导出」不是一回事。
+                Button {
+                    isBackingUp = true
+                } label: {
+                    navRow(title: "完整备份与恢复", detail: "单文件 · 含图片 · 可整机还原")
                 }
                 .buttonStyle(.plain)
 

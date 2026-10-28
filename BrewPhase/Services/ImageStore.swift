@@ -179,6 +179,24 @@ final class ImageStore: @unchecked Sendable {
         ((try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []).count
     }
 
+    // MARK: - Backup support
+
+    /// 备份恢复时用的缩略图重建：拿已落盘的展示图，生成与 `save` 同规格的缩略图。
+    /// 缩略图是**派生数据**，所以备份里不存它——恢复时在这里重建，失败也不致命
+    /// （`image(named:)` 会自动回退到展示图）。
+    static func thumbnailData(forDisplayImageAt url: URL) -> Data? {
+        guard let image = UIImage(contentsOfFile: url.path),
+              let thumb = downscaled(image, maxDimension: thumbnailDimension) else {
+            return nil
+        }
+        return thumb.jpegData(compressionQuality: jpegQuality)
+    }
+
+    /// 恢复后调用：文件名可能被重新写入，缓存里的旧图不能再被读到。
+    func clearCache() {
+        cache.removeAllObjects()
+    }
+
     // MARK: - Scaling
 
     /// Aspect-fit downscale. Returns the original untouched when it is already

@@ -45,9 +45,11 @@
 "**保持不变**：%@" = "**Keep unchanged**: %@";
 "+%@ 天" = "+%@ days";
 "22 格" = "22 clicks";
+"App 版本" = "App version";
 "BrewPhase 会结合你的咖啡记录和本地知识进行分析，数据不会上传到服务器。" = "BrewPhase works from your coffee records and its built-in knowledge. Nothing is uploaded to a server.";
 "BrewPhase 暂时无法访问已有记录。\n为了避免数据丢失，当前不会保存新的数据。" = "BrewPhase cannot reach your records right now.\nNothing new will be saved, so nothing gets lost.";
-"JSON 完整备份 · CSV 表格" = "Full JSON backup · CSV tables";
+"JSON · CSV 表格（不含图片）" = "JSON · CSV tables (no images)";
+"JSON 备份" = "JSON backup";
 "Ollama 本地服务" = "Ollama local service";
 "Ollama 的回答看不懂：%@" = "Ollama's response made no sense: %@";
 "Ollama 返回了 %@：%@" = "Ollama returned %@: %@";
@@ -117,9 +119,11 @@
 "今天是烘焙后第 %@ 天，处于「%@」。" = "Today is day %@ after roast, in %@.";
 "今天适合%@：%@" = "Today suits %@: %@";
 "从你自己的记录里找答案：什么时候开封的、哪次冲得最好" = "Find the answer in your own records: when it was opened, which brew turned out best";
+"从备份恢复…" = "Restore from backup…";
 "价格" = "Price";
 "优先调整" = "Change first";
 "会把你改过的所有烘焙度都改回默认值。" = "Every roast level you have edited goes back to its default.";
+"会替换当前数据" = "Replaces current data";
 "低一点" = "a bit lower";
 "余韵" = "Aftertaste";
 "余韵 %@" = "aftertaste %@";
@@ -138,6 +142,7 @@
 "保存" = "Save";
 "保存后剩余 %@" = "%@ left after saving";
 "保存后这包豆的总容量会从 %@ 变成 %@。历史记录不受影响。" = "Saving will change the bag size from %@ to %@. History is not affected.";
+"保存完整备份文件" = "Save the backup file";
 "保持不变" = "Keep unchanged";
 "修改这些参数会影响 BrewPhase 对咖啡阶段的判断。" = "Changing these numbers changes how BrewPhase reads every bag's stage.";
 "偏深的烘焙压得住奶，做意式或加奶都不闷。" = "Darker roasts stand up to milk; espresso or milk drinks stay clean.";
@@ -149,6 +154,7 @@
 "先填粉量吧，这样才能从库存里扣掉" = "Fill in the dose first — it is what gets deducted from your stock";
 "先把流速拉回你自己的区间，再谈别的。" = "Get the flow back into your own range first.";
 "先放着养一养。" = "Leaving it to rest for now.";
+"先检查文件，确认后才会替换" = "Checked first; nothing changes until you confirm";
 "先记下第一杯" = "Log the first cup";
 "入口有点闷" = "A bit flat on entry";
 "全部恢复默认" = "Reset everything";
@@ -178,6 +184,7 @@
 "减粉" = "less coffee";
 "分析" = "Analysis";
 "刚开袋，酸质冲一点" = "Just opened; the acidity is a bit sharp";
+"创建时间" = "Created";
 "删除" = "Delete";
 "删除后不可恢复。冲煮记录本身不受影响。" = "This cannot be undone. The brew itself is not affected.";
 "删除后不可恢复。它关联的 %@ 条冲煮记录和 %@ 条风味记录也会一起被删除。" = "This cannot be undone. Its %@ brews and %@ tasting notes will be deleted too.";
@@ -201,10 +208,10 @@
 "加一张包装照片" = "Add a photo of the bag";
 "加入示例数据？" = "Add sample data?";
 "加粉" = "more coffee";
-"包含豆子、冲煮、风味、提醒和窗口规则" = "Beans, brews, tastings, reminders and window rules";
 "包装类型" = "Packaging";
 "升温" = "warmer";
 "半日晒" = "Semi-washed";
+"单文件 · 含图片 · 可整机还原" = "One file · includes images · full restore";
 "卢旺达 · Nyungwe" = "Rwanda · Nyungwe";
 "压力" = "Pressure";
 "厌氧日晒" = "Anaerobic natural";
@@ -242,6 +249,7 @@
 "司令官 C40" = "Comandante C40";
 "同一个做法至少要冲过 %@ 次才能比较；现在有 %@ 次带评分的记录。" = "A method needs at least %@ scored brews before they can be compared; there are %@ so far.";
 "向量模型" = "Embedding model";
+"含图片 · 可在另一台设备恢复" = "Includes images · restores on another device";
 "启程咖啡" = "Qicheng Coffee";
 "味觉细项" = "Taste detail";
 "味道淡了，收进柜子当纪念。" = "The flavour has faded; retiring the bag to the shelf.";
@@ -277,6 +285,18 @@
 "处理法" = "Process";
 "处理法级" = "Process level";
 "处理法：%@" = "Process: %@";
+"备份" = "Backup";
+"备份内容与校验信息不一致，可能已损坏。为安全起见没有做任何修改。" = "The contents do not match the checksums, so the file may be damaged. Nothing was changed.";
+"备份包含的记录数量超出可恢复的范围。" = "This backup holds more records than can be restored safely.";
+"备份摘要" = "Backup summary";
+"备份文件过大，这台设备无法安全地打开它。" = "The backup is too large for this device to open safely.";
+"备份没有完成，请再试一次。" = "The backup did not finish. Please try again.";
+"备份里有重复的记录标识，无法安全恢复。" = "The backup contains duplicate record identifiers, so it cannot be restored safely.";
+"备份里的图片名称不合法，已停止恢复。" = "The backup contains an invalid image name, so restoring stopped.";
+"备份里的图片数据超出可恢复的范围。" = "The images in this backup exceed the size that can be restored.";
+"备份里的记录关联不完整，无法安全恢复。" = "Some records in the backup are not properly linked, so it cannot be restored safely.";
+"备份里缺少必要的数据，无法恢复。" = "The backup is missing required data and cannot be restored.";
+"备份里缺少记录引用的图片，无法完整恢复。" = "The backup is missing images that records point to, so it cannot be restored completely.";
 "备注" = "Notes";
 "备注里出现了干涩这类感觉：%@" = "The note mentions dryness: %@";
 "备注里出现了水感/寡淡这类感觉：%@" = "The note mentions wateriness or flatness: %@";
@@ -286,6 +306,7 @@
 "多一点" = "a bit more";
 "多加一点粉" = "a little more coffee";
 "好" = "OK";
+"好的" = "OK";
 "如果资料不足以回答，就直接说找不到，并说清缺什么。不要用常识补一个听起来合理的答案。" = "If the material is not enough, say plainly that it cannot be found and what is missing. Do not fill the gap with general knowledge and make it sound plausible.";
 "如果问题持续存在，请先确认设备存储空间正常。" = "If this keeps happening, check that your device has enough free space.";
 "它主动告诉你现在最值得关注什么" = "It tells you what matters now, without being asked";
@@ -293,13 +314,15 @@
 "完成" = "Done";
 "完成了：索引里现在有 %@ 条，这次重算了 %@ 条。" = "Done: the index now holds %@ entries, and %@ were recomputed.";
 "完整备份" = "Full backup";
+"完整备份与恢复" = "Full backup & restore";
+"完整备份把豆子、冲煮、风味、提醒、窗口规则和图片打包成一个文件。换手机或重装后，用它一次恢复。文件只保存在你选择的位置，BrewPhase 不会上传。" = "Full backup packs your beans, brews, tastings, reminders, phase rules and photos into one file. Use it to restore everything after switching phones or reinstalling. The file stays wherever you save it; BrewPhase never uploads it.";
 "完整表单" = "Full form";
 "实验性风味预测" = "Experimental flavour prediction";
 "实验预测" = "Experimental prediction";
 "导出" = "Export";
 "导出 JSON" = "Export JSON";
 "导出时出了一点问题，请再试一次" = "Something went wrong while exporting. Please try again";
-"导出的 JSON 可以完整还原你的记录。CSV 只包含豆子、冲煮和风味三张表，方便做统计。" = "The JSON restores your records in full. The CSV holds three tables — beans, brews and tastings — for working with the numbers.";
+"导出的 JSON 包含全部文字记录，但不含图片。要连图片一起带走，请用「更多 → 完整备份与恢复」。CSV 只包含豆子、冲煮和风味三张表，方便做统计。" = "The exported JSON holds every text record but no images. To take the photos too, use More → Full backup & restore. The CSV holds three tables — beans, brews and tastings — for working with the numbers.";
 "导出的文件只保存在这台设备上，通过系统分享面板发给你自己。BrewPhase 不会上传任何东西。" = "Exported files stay on this device and are handed to you through the system share sheet. BrewPhase uploads nothing.";
 "将删除全部示例豆及其冲煮与风味记录。你自己的记录不受影响。" = "Deletes every sample bag along with its brews and tasting notes. Your own records are untouched.";
 "将加入 7 包演示豆（含冲煮与风味记录）。你自己的记录不受影响，之后关闭开关即可整批移除。" = "Adds 7 sample bags with brews and tasting notes. Your own records are untouched; turn the switch off later to remove them all.";
@@ -314,6 +337,7 @@
 "已关联 %@ 条与这包豆子直接相关的知识。" = "Linked %@ entries of knowledge directly relevant to this bag.";
 "已喝完" = "Finished";
 "已填入上次的参数" = "Filled in from your last brew";
+"已恢复 %@ 包豆子、%@ 条冲煮记录、%@ 条风味记录。" = "Restored %@ bags, %@ brews and %@ tastings.";
 "已清理 %@ 个文件" = "Removed %@ files";
 "已经喝完了" = "This bag is finished";
 "已经开袋" = "Already opened";
@@ -355,7 +379,12 @@
 "总时间 %@" = "total time %@";
 "总时间缩短，风味更干净。" = "Shorter total time, cleaner cup.";
 "总次数" = "Brews";
+"恢复" = "Restore";
+"恢复会清空这台设备上的现有记录，并替换成备份里的内容。这一步无法撤销，确认前不会修改任何数据。" = "Restoring clears the records on this device and replaces them with the backup. This cannot be undone; nothing is changed until you confirm.";
 "恢复到在喝" = "Mark as open again";
+"恢复完成" = "Restore complete";
+"恢复时遇到同名但内容不同的图片，已停止恢复。" = "Restoring stopped because an image with the same name but different contents already exists.";
+"恢复没有完成，原有数据保持不动。" = "The restore did not finish. Your existing data is untouched.";
 "恢复默认" = "Reset";
 "恢复默认窗口？" = "Reset the windows?";
 "想记的事情，比如冲煮建议" = "Anything worth noting, e.g. what to change next time";
@@ -377,6 +406,7 @@
 "打开" = "Opening";
 "找到 %@ 条相似记录" = "Found %@ similar records";
 "把总容量调整为 %@" = "Set the bag size to %@";
+"把整个豆仓带走" = "Take the whole shelf with you";
 "把记录带走" = "Take your records with you";
 "抱歉，这次没能生成回答。" = "Sorry, no answer could be generated this time.";
 "拍照" = "Camera";
@@ -415,6 +445,8 @@
 "故障排查" = "Troubleshooting";
 "数据" = "Data";
 "数据只存在这台设备上，没有账号，没有服务器。" = "Your data stays on this device. No account, no server.";
+"文件大小" = "File size";
+"文字记录，不含图片" = "Text records, no images";
 "新记录会从这里开始" = "New brews start from these";
 "新鲜度" = "Freshness";
 "无法打开本地数据" = "Cannot open your local data";
@@ -431,6 +463,7 @@
 "更多" = "More";
 "更多信息" = "More details";
 "更多参数" = "More parameters";
+"替换并恢复" = "Replace and restore";
 "最常用" = "Most used";
 "最近 %@ 天" = "last %@ days";
 "最近 %@ 条" = "last %@";
@@ -472,7 +505,10 @@
 "正在关联知识…" = "Linking knowledge…";
 "正在养豆" = "Resting";
 "正在准备文件…" = "Preparing the files…";
+"正在恢复…" = "Restoring…";
+"正在打包…" = "Packing…";
 "正在找相关知识与记录…" = "Looking for related knowledge and records…";
+"正在检查备份…" = "Checking backup…";
 "正在翻你的记录…" = "Looking through your records…";
 "正在讨论：%@" = "Discussing: %@";
 "正在重建…" = "Rebuilding…";
@@ -517,6 +553,7 @@
 "没能保存" = "Could not save";
 "没能保存下来，请再试一次" = "Could not save. Please try again";
 "没能删除，请再试一次" = "Could not delete. Please try again";
+"没能打开这个文件，请再选一次。" = "That file could not be opened. Please choose it again.";
 "沿用上一轮：%@" = "Carried over from the previous turn: %@";
 "沿用你上一次冲的参数" = "Reusing your last brew";
 "沿用这包豆上一次的参数" = "Reusing the last brew of this bag";
@@ -565,6 +602,7 @@
 "甜感低于你自己好喝的那几杯。" = "Less sweet than your own better cups.";
 "甜感偏低" = "Low sweetness";
 "甜感和香气更容易出来。" = "Sweetness and aroma come out more easily.";
+"生成完整备份" = "Create full backup";
 "用 Apple 的端侧模型生成，需要支持的设备和已开启的 Apple 智能" = "Generated by Apple's on-device model; needs supported hardware with Apple Intelligence switched on";
 "用你设的默认参数" = "Using your default parameters";
 "用合成数据训练的模型估算每包豆子的最佳风味窗口" = "Estimate each bag's best flavour window with a model trained on synthetic data";
@@ -635,6 +673,7 @@
 "细一档" = "one step finer";
 "细一点" = "a bit finer";
 "给它起个名字吧" = "Give it a name";
+"继续会用它替换这台设备上的全部记录。现有数据不会保留，也无法撤销。" = "Continuing replaces every record on this device with this backup. Current data will not be kept, and this cannot be undone.";
 "继续记几杯，BrewPhase 会用你自己的数据给出建议。" = "Keep logging a few more cups; BrewPhase will advise from your own data.";
 "维护" = "Maintenance";
 "编辑冲煮" = "Edit brew";
@@ -737,7 +776,9 @@
 "这一轮在问：%@" = "This turn asks about: %@";
 "这一轮在问：%@（%@）" = "This turn asks about: %@ (%@)";
 "这一轮没有足够把握给出单向的调整建议。" = "Not enough confidence this time to point at a single adjustment.";
+"这不是一份完整的 BrewPhase 备份，文件可能已损坏。" = "This is not a complete BrewPhase backup; the file may be damaged.";
 "这个回答引擎现在用不了：%@" = "That answer engine is unavailable right now: %@";
+"这个文件打不开，可能已经被移动或删除。" = "This file cannot be opened. It may have been moved or deleted.";
 "这些内容模型不认识，没有参与预测：%@" = "The model did not recognise these, so they took no part in the estimate: %@";
 "这些数字只是「%@」，不是保质期，也不会说某包豆子过期了。" = "These figures are only “%@”. They are not a use-by date, and the app will never call a bag expired.";
 "这些数字只是估算" = "These numbers are estimates";
@@ -745,6 +786,7 @@
 "这些记录的平均评分是 %@ 分。" = "These records average %@.";
 "这些资料 App 还没有，已用模型训练时的典型值补上：%@" = "BrewPhase has no field for these yet, so typical training values stood in: %@";
 "这些选项影响问一问与洞察的检索方式；不改也完全能用。" = "These affect how Ask and Insights search. The defaults work fine.";
+"这份备份来自更新版本的 BrewPhase，请先升级 App 再恢复。" = "This backup comes from a newer version of BrewPhase. Update the app before restoring.";
 "这包可能喝不完黄金风味期时提醒" = "When the bag might not finish its peak window";
 "这包豆" = "this bag";
 "这包豆 + %@" = "this bag + %@";

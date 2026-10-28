@@ -257,6 +257,10 @@ EN: dict[str, str] = {
     "导出": "Export",
     "导出 JSON": "Export JSON",
     "JSON 完整备份 · CSV 表格": "Full JSON backup · CSV tables",
+    "JSON 备份": "JSON backup",
+    "文字记录，不含图片": "Text records, no images",
+    "导出的 JSON 包含全部文字记录，但不含图片。要连图片一起带走，请用「更多 → 完整备份与恢复」。CSV 只包含豆子、冲煮和风味三张表，方便做统计。":
+        "The exported JSON holds every text record but no images. To take the photos too, use More → Full backup & restore. The CSV holds three tables — beans, brews and tastings — for working with the numbers.",
     "完整备份": "Full backup",
     "表格": "Tables",
     "可以用 Excel 打开": "Opens in Excel",
@@ -1137,4 +1141,60 @@ EN: dict[str, str] = {
         "Sample data loaded: 7 bags covering the full lifecycle, from resting to finished.",
     "示例数据已移除，你的记录未受影响。":
         "Sample data removed. Your own records are untouched.",
+
+    # MARK: 完整备份与恢复
+    "完整备份与恢复": "Full backup & restore",
+    "单文件 · 含图片 · 可整机还原": "One file · includes images · full restore",
+    "JSON · CSV 表格（不含图片）": "JSON · CSV tables (no images)",
+    "把整个豆仓带走": "Take the whole shelf with you",
+    "完整备份把豆子、冲煮、风味、提醒、窗口规则和图片打包成一个文件。换手机或重装后，用它一次恢复。文件只保存在你选择的位置，BrewPhase 不会上传。":
+        "Full backup packs your beans, brews, tastings, reminders, phase rules and photos into one file. Use it to restore everything after switching phones or reinstalling. The file stays wherever you save it; BrewPhase never uploads it.",
+    "备份": "Backup",
+    "生成完整备份": "Create full backup",
+    "含图片 · 可在另一台设备恢复": "Includes images · restores on another device",
+    "正在打包…": "Packing…",
+    "保存完整备份文件": "Save the backup file",
+    "备份没有完成，请再试一次。": "The backup did not finish. Please try again.",
+    "恢复": "Restore",
+    "会替换当前数据": "Replaces current data",
+    "从备份恢复…": "Restore from backup…",
+    "先检查文件，确认后才会替换": "Checked first; nothing changes until you confirm",
+    "正在检查备份…": "Checking backup…",
+    "恢复会清空这台设备上的现有记录，并替换成备份里的内容。这一步无法撤销，确认前不会修改任何数据。":
+        "Restoring clears the records on this device and replaces them with the backup. This cannot be undone; nothing is changed until you confirm.",
+    "备份摘要": "Backup summary",
+    "创建时间": "Created",
+    "App 版本": "App version",
+    "文件大小": "File size",
+    "替换并恢复": "Replace and restore",
+    "继续会用它替换这台设备上的全部记录。现有数据不会保留，也无法撤销。":
+        "Continuing replaces every record on this device with this backup. Current data will not be kept, and this cannot be undone.",
+    "正在恢复…": "Restoring…",
+    "恢复完成": "Restore complete",
+    "已恢复 %@ 包豆子、%@ 条冲煮记录、%@ 条风味记录。":
+        "Restored %@ bags, %@ brews and %@ tastings.",
+    "好的": "OK",
+    "没能打开这个文件，请再选一次。": "That file could not be opened. Please choose it again.",
+    "这个文件打不开，可能已经被移动或删除。": "This file cannot be opened. It may have been moved or deleted.",
+    "备份文件过大，这台设备无法安全地打开它。": "The backup is too large for this device to open safely.",
+    "这不是一份完整的 BrewPhase 备份，文件可能已损坏。":
+        "This is not a complete BrewPhase backup; the file may be damaged.",
+    "这份备份来自更新版本的 BrewPhase，请先升级 App 再恢复。":
+        "This backup comes from a newer version of BrewPhase. Update the app before restoring.",
+    "备份里缺少必要的数据，无法恢复。": "The backup is missing required data and cannot be restored.",
+    "备份内容与校验信息不一致，可能已损坏。为安全起见没有做任何修改。":
+        "The contents do not match the checksums, so the file may be damaged. Nothing was changed.",
+    "备份里有重复的记录标识，无法安全恢复。":
+        "The backup contains duplicate record identifiers, so it cannot be restored safely.",
+    "备份里的记录关联不完整，无法安全恢复。":
+        "Some records in the backup are not properly linked, so it cannot be restored safely.",
+    "备份里缺少记录引用的图片，无法完整恢复。":
+        "The backup is missing images that records point to, so it cannot be restored completely.",
+    "备份里的图片名称不合法，已停止恢复。":
+        "The backup contains an invalid image name, so restoring stopped.",
+    "备份里的图片数据超出可恢复的范围。": "The images in this backup exceed the size that can be restored.",
+    "备份包含的记录数量超出可恢复的范围。": "This backup holds more records than can be restored safely.",
+    "恢复时遇到同名但内容不同的图片，已停止恢复。":
+        "Restoring stopped because an image with the same name but different contents already exists.",
+    "恢复没有完成，原有数据保持不动。": "The restore did not finish. Your existing data is untouched.",
 }
