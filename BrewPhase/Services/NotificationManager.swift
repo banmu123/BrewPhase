@@ -13,18 +13,21 @@ final class NotificationManager {
 
     static let shared = NotificationManager()
 
-    private let center = UNUserNotificationCenter.current()
+    private let scheduler: NotificationScheduling
 
     /// Last known permission state, for the settings screen to explain itself.
     private(set) var status: UNAuthorizationStatus = .notDetermined
 
-    private init() {}
+    /// 默认走系统通知中心；测试可以注入一个只记账的替身，验证「清了哪些、
+    /// 排了哪些」而不真的触碰模拟器的通知状态。
+    init(scheduler: NotificationScheduling? = nil) {
+        self.scheduler = scheduler ?? SystemNotificationScheduler()
+    }
 
     // MARK: - Permission
 
     func refreshStatus() async {
-        let settings = await center.notificationSettings()
-        status = settings.authorizationStatus
+        status = await scheduler.notificationStatus()
     }
 
     /// Asks once. Never crashes when permission is refused — a denied app just
@@ -42,7 +45,7 @@ final class NotificationManager {
             guard !defaults.bool(forKey: PrefKey.askedForNotifications) else { return false }
             defaults.set(true, forKey: PrefKey.askedForNotifications)
             do {
-                let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
+                let granted = try await scheduler.requestAuthorization(options: [.alert, .sound, .badge])
                 await refreshStatus()
                 AppLog.notifications.info("authorization granted: \(granted)")
                 return granted
@@ -92,7 +95,7 @@ final class NotificationManager {
         now: Date = Date()
     ) async {
         let ids = NotificationPlanner.allIdentifiers(beanID: bean.id)
-        center.removePendingNotificationRequests(withIdentifiers: ids)
+        scheduler.removePending(identifiers: ids)
 
         // Forget what we previously intended for this bag.
         for row in bean.reminders ?? [] { context.delete(row) }
@@ -130,7 +133,7 @@ final class NotificationManager {
 
         for plan in planned {
             do {
-                try await center.add(plan.makeRequest(beanName: bean.name))
+                try await scheduler.add(plan.makeRequest(beanName: bean.name))
                 let row = PhaseReminder(kind: plan.kind, fireDate: plan.fireDate,
                                         identifier: plan.identifier, bean: bean)
                 context.insert(row)
@@ -146,7 +149,7 @@ final class NotificationManager {
     /// Removes a bag's reminders, both from the system and from the store. Called
     /// before a bean is deleted so no notification arrives for a bag that is gone.
     func cancel(bean: Bean, context: ModelContext) {
-        center.removePendingNotificationRequests(withIdentifiers: NotificationPlanner.allIdentifiers(beanID: bean.id))
+        scheduler.removePending(identifiers: NotificationPlanner.allIdentifiers(beanID: bean.id))
         for row in bean.reminders ?? [] { context.delete(row) }
         bean.reminders = []
         commit(context, note: "cancelled reminders for \(bean.name)")
@@ -156,13 +159,13 @@ final class NotificationManager {
     /// 随级联删除走了，不需要（也不能）再动上下文。
     func unschedule(identifiers: [String]) {
         guard !identifiers.isEmpty else { return }
-        center.removePendingNotificationRequests(withIdentifiers: identifiers)
+        scheduler.removePending(identifiers: identifiers)
     }
 
     /// Drops every identifier for every bag. Used by "turn reminders off" and by
     /// the settings screen when permission is revoked.
     func cancelAll() {
-        center.removeAllPendingNotificationRequests()
+        scheduler.removeAllPending()
     }
 
     // MARK: - Launch refresh
@@ -172,9 +175,13 @@ final class NotificationManager {
     /// This is also the recovery path for a bag whose window moved because the
     /// user edited its rule, and for stale reminders left over from a previous
     /// version of the rules.
-    func refreshAll(beans: [Bean], book: PhaseRuleBook, context: ModelContext) async {
+    func refreshAll(
+        beans: [Bean],
+        book: PhaseRuleBook,
+        context: ModelContext,
+        preferences: ReminderPreferences = .current()
+    ) async {
         await refreshStatus()
-        let preferences = ReminderPreferences.current()
 
         for bean in beans where !bean.isFinished {
             guard bean.roastDate != nil else { continue }
@@ -187,9 +194,45 @@ final class NotificationManager {
         }
     }
 
+    // MARK: - 恢复备份之后
+
+    /// 用备份替换数据库之后重建提醒。
+    ///
+    /// 必须由调用方在**数据库保存成功之后**调用：这里的每一步都会动系统状态，
+    /// 恢复失败时提前清通知会让用户丢掉原本还会响的提醒。
+    ///
+    /// 备份里的 `PhaseReminder` 行是派生数据——每次启动都会按当时的规则与偏好
+    /// 整体重排，所以不能因为备份里有这些行就认为系统通知已恢复。次序：
+    /// 1. 清掉本 App 的全部待送达请求（已删除豆子的旧提醒也在这里被清掉；
+    ///    `refreshAll` 只遍历现存豆子，做不到这件事）；
+    /// 2. 删除所有提醒行——包括已结束、没有烘焙日期的豆子，`refreshAll` 会跳过
+    ///    它们，若不清就会留下与规则不一致的陈旧行；
+    /// 3. 按恢复后的豆子、规则、偏好与当前授权状态重新排程。未授权时只清不排，
+    ///    不触发权限申请。
+    func reconcileAfterRestore(
+        beans: [Bean],
+        book: PhaseRuleBook,
+        context: ModelContext,
+        preferences: ReminderPreferences = .current()
+    ) async {
+        await refreshStatus()
+        AppLog.notifications.info("reconciling notifications after restore")
+
+        cancelAll()
+
+        for bean in beans {
+            for row in bean.reminders ?? [] { context.delete(row) }
+            bean.reminders = []
+        }
+        commit(context, note: "cleared derived reminders after restore")
+
+        await refreshAll(beans: beans, book: book, context: context, preferences: preferences)
+        AppLog.notifications.info("notification reconciliation finished")
+    }
+
     /// How many reminders are actually waiting, for the settings screen.
     func pendingCount() async -> Int {
-        await center.pendingNotificationRequests().count
+        await scheduler.pendingCount()
     }
 
     // MARK: - Writing
@@ -232,5 +275,50 @@ extension PlannedReminder {
         )
         let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
         return UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+    }
+}
+
+/// `UNUserNotificationCenter` 的最小可替身接口。
+///
+/// 只抽恢复流程需要的那几个动作，不重写提醒系统：生产用系统实现，测试用记账
+/// 替身验证「清了什么、排了什么」。权限查询与申请也在这里，方便断言
+/// 「未授权时不排程、也绝不申请权限」。
+@MainActor
+protocol NotificationScheduling: AnyObject {
+    func notificationStatus() async -> UNAuthorizationStatus
+    func requestAuthorization(options: UNAuthorizationOptions) async throws -> Bool
+    func removeAllPending()
+    func removePending(identifiers: [String])
+    func add(_ request: UNNotificationRequest) async throws
+    func pendingCount() async -> Int
+}
+
+@MainActor
+final class SystemNotificationScheduler: NotificationScheduling {
+
+    private let center = UNUserNotificationCenter.current()
+
+    func notificationStatus() async -> UNAuthorizationStatus {
+        await center.notificationSettings().authorizationStatus
+    }
+
+    func requestAuthorization(options: UNAuthorizationOptions) async throws -> Bool {
+        try await center.requestAuthorization(options: options)
+    }
+
+    func removeAllPending() {
+        center.removeAllPendingNotificationRequests()
+    }
+
+    func removePending(identifiers: [String]) {
+        center.removePendingNotificationRequests(withIdentifiers: identifiers)
+    }
+
+    func add(_ request: UNNotificationRequest) async throws {
+        try await center.add(request)
+    }
+
+    func pendingCount() async -> Int {
+        await center.pendingNotificationRequests().count
     }
 }

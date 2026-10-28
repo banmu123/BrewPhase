@@ -96,7 +96,9 @@ final class BackupTests: XCTestCase {
 
         sourceContext.insert(PhaseReminder(kind: .windowOpens,
                                            fireDate: Date(timeIntervalSince1970: 1_700_500_000),
-                                           identifier: "reminder-1", enabled: false, bean: bean))
+                                           identifier: NotificationPlanner.identifier(
+                                               beanID: bean.id, kind: .windowOpens),
+                                           enabled: false, bean: bean))
 
         try sourceContext.save()
         return bean
@@ -112,17 +114,28 @@ final class BackupTests: XCTestCase {
         try data.write(to: directory.appendingPathComponent(name))
     }
 
+    /// 测试默认用「全部未设置」的偏好：v2 要求每个白名单键都有交代。
+    private func allUnsetPreferences() -> BackupPreferences {
+        BackupPreferences(values: [:], unset: BackupPreferenceKeys.all)
+    }
+
     private func makeBackup(now: Date = Date(),
-                            preferences: BackupPreferences = BackupPreferences(values: [:]))
+                            preferences: BackupPreferences? = nil)
     throws -> (file: BackupFile, url: URL) {
         let data = BackupManager.snapshot(
             beans: try sourceContext.fetch(FetchDescriptor<Bean>()),
             rules: try sourceContext.fetch(FetchDescriptor<PhaseRule>())
         )
-        let url = try BackupManager.write(data, preferences: preferences,
+        let url = try BackupManager.write(data,
+                                          preferences: preferences ?? allUnsetPreferences(),
                                           appVersion: "test-1.0",
                                           imagesDirectory: sourceImages, now: now)
         return (try BackupManager.read(from: url), url)
+    }
+
+    private func rehash(_ file: inout BackupFile) throws {
+        file.manifest.dataDigest = try BackupManager.contentDigest(
+            data: file.data, preferences: file.preferences ?? .empty)
     }
 
     private func targetBeans() throws -> [Bean] {
@@ -192,7 +205,8 @@ final class BackupTests: XCTestCase {
 
         XCTAssertEqual(restored.reminders?.count, 1)
         let reminder = try XCTUnwrap(restored.reminders?.first)
-        XCTAssertEqual(reminder.identifier, "reminder-1")
+        XCTAssertEqual(reminder.identifier,
+                       NotificationPlanner.identifier(beanID: restored.id, kind: .windowOpens))
         XCTAssertFalse(reminder.enabled)
 
         let restoredRules = try ModelContext(target).fetch(FetchDescriptor<PhaseRule>())
@@ -264,12 +278,17 @@ final class BackupTests: XCTestCase {
         sourceDefaults.set(false, forKey: PrefKey.askEnabled)
         sourceDefaults.set(false, forKey: PrefKey.reminderEnabled(.windowOpens))
 
+        // 目标设备上预先存在的、备份里未设置的值，恢复后应回到「未设置」。
+        targetDefaults.set(300.0, forKey: PrefKey.defaultWaterG)
+        targetDefaults.set("随便写的", forKey: "brewphase.device.only")
+
         try seedBean()
         let preferences = BackupManager.preferences(from: sourceDefaults)
         let (file, _) = try makeBackup(preferences: preferences)
 
         XCTAssertEqual(file.preferences?.values[PrefKey.defaultMethod],
                        BackupPreferenceValue.string("爱乐压"))
+        XCTAssertTrue(file.preferences?.unset.contains(PrefKey.defaultWaterG) ?? false)
 
         _ = try BackupRestorer.restore(file, into: target, imagesDirectory: targetImages,
                                        defaults: targetDefaults)
@@ -278,24 +297,96 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(targetDefaults.double(forKey: PrefKey.defaultDoseG), 18)
         XCTAssertFalse(targetDefaults.bool(forKey: PrefKey.askEnabled))
         XCTAssertFalse(targetDefaults.bool(forKey: PrefKey.reminderEnabled(.windowOpens)))
-        // 没有被备份显式设置的键不该凭空出现。
-        XCTAssertNil(targetDefaults.object(forKey: PrefKey.defaultWaterG))
+        XCTAssertNil(targetDefaults.object(forKey: PrefKey.defaultWaterG),
+                     "备份时没有设置过的键，恢复后必须回到未设置")
+        XCTAssertEqual(targetDefaults.string(forKey: "brewphase.device.only"), "随便写的",
+                       "白名单之外的设备状态不受恢复影响")
+    }
+
+    /// 备份之后再改默认值，恢复旧备份应回到旧备份的状态。
+    func testRestoringOldBackupRestoresItsDoseValue() throws {
+        let name = "BackupTests-dose-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+
+        defaults.set(18.0, forKey: PrefKey.defaultDoseG)
+        try seedBean()
+        let (file, _) = try makeBackup(preferences: BackupManager.preferences(from: defaults))
+
+        defaults.set(25.0, forKey: PrefKey.defaultDoseG)
+        _ = try BackupRestorer.restore(file, into: target, imagesDirectory: targetImages,
+                                       defaults: defaults)
+
+        XCTAssertEqual(defaults.double(forKey: PrefKey.defaultDoseG), 18)
+    }
+
+    /// 偏好也被摘要覆盖：改了值但不改摘要，必须拒绝。
+    func testTamperedPreferencesAreRejectedByChecksum() throws {
+        try seedBean()
+        var (file, _) = try makeBackup()
+        file.preferences?.values[PrefKey.defaultDoseG] = .number(99)
+        file.preferences?.unset.removeAll { $0 == PrefKey.defaultDoseG }
+        try expectFailure(file, "偏好被改动后摘要必须对不上", expecting: .checksumMismatch)
     }
 
     func testUnknownPreferenceKeyIsRejected() throws {
         try seedBean()
         var (file, _) = try makeBackup()
-        file.preferences = BackupPreferences(values: ["brewphase.unknown": .string("x")])
-        try expectFailure(file, "白名单之外的偏好键必须拒绝")
+        var preferences = file.preferences ?? .empty
+        preferences.values["brewphase.unknown"] = .string("x")
+        file.preferences = preferences
+        try rehash(&file)
+        try expectFailure(file, "白名单之外的偏好键必须拒绝",
+                          expecting: .invalidValue("preferences.brewphase.unknown"))
+    }
+
+    func testPreferenceWithWrongTypeIsRejected() throws {
+        try seedBean()
+        var (file, _) = try makeBackup()
+        var preferences = file.preferences ?? .empty
+        preferences.values[PrefKey.defaultDoseG] = .string("18")
+        preferences.unset.removeAll { $0 == PrefKey.defaultDoseG }
+        file.preferences = preferences
+        try rehash(&file)
+        try expectFailure(file, "数值键写成字符串必须拒绝",
+                          expecting: .invalidValue("preferences.\(PrefKey.defaultDoseG)"))
+    }
+
+    func testPreferenceOutOfRangeIsRejected() throws {
+        try seedBean()
+        var (file, _) = try makeBackup()
+        var preferences = file.preferences ?? .empty
+        preferences.values[PrefKey.defaultWaterTemp] = .number(200)
+        preferences.unset.removeAll { $0 == PrefKey.defaultWaterTemp }
+        file.preferences = preferences
+        try rehash(&file)
+        try expectFailure(file, "水温超出 0…100 必须拒绝",
+                          expecting: .invalidValue("preferences.\(PrefKey.defaultWaterTemp)"))
+    }
+
+    func testMissingPreferenceEntryIsRejected() throws {
+        try seedBean()
+        var (file, _) = try makeBackup()
+        file.preferences?.unset.removeAll { $0 == PrefKey.defaultMethod }
+        try rehash(&file)
+        try expectFailure(file, "白名单键既没有值也不在 unset 里，必须拒绝", expecting: .missingData)
     }
 
     // MARK: - 异常备份
 
-    private func expectFailure(_ file: BackupFile, _ description: String) throws {
-        XCTAssertThrowsError(
-            try BackupRestorer.restore(file, into: target, imagesDirectory: targetImages),
-            description
-        )
+    private func expectFailure(_ file: BackupFile,
+                               _ description: String,
+                               expecting expected: BackupError? = nil) throws {
+        do {
+            _ = try BackupRestorer.restore(file, into: target, imagesDirectory: targetImages)
+            XCTFail("应当失败：\(description)")
+        } catch let error as BackupError {
+            if let expected {
+                XCTAssertEqual(error, expected, description)
+            }
+        } catch {
+            XCTFail("错误类型不对（\(error)）：\(description)")
+        }
     }
 
     func testUnsupportedFutureVersionIsRejected() throws {
@@ -317,7 +408,7 @@ final class BackupTests: XCTestCase {
         var (file, _) = try makeBackup()
         file.data.brews[1].id = file.data.brews[0].id
         // 重算摘要，确保拒绝的原因确实是重复 ID，而不是校验和不匹配。
-        file.manifest.dataDigest = try BackupManager.sha256(BackupManager.canonicalEncoding(file.data))
+        try rehash(&file)
         try expectFailure(file, "同一类型里的重复 ID 必须拒绝")
     }
 
@@ -326,7 +417,7 @@ final class BackupTests: XCTestCase {
         var (file, _) = try makeBackup()
         file.data.tastings[0].brewID = UUID()
         // 关系破坏的同时摘要也变了；先重算摘要，确保拒绝的原因是关联而不是校验和。
-        file.manifest.dataDigest = try BackupManager.sha256(BackupManager.canonicalEncoding(file.data))
+        try rehash(&file)
         try expectFailure(file, "指向不存在的冲煮必须拒绝")
     }
 
@@ -349,7 +440,7 @@ final class BackupTests: XCTestCase {
         var (file, _) = try makeBackup()
         file.attachments[0].name = "../escape.jpg"
         file.data.beans[0].imagePath = "../escape.jpg"
-        file.manifest.dataDigest = try BackupManager.sha256(BackupManager.canonicalEncoding(file.data))
+        try rehash(&file)
         try expectFailure(file, "带路径分隔符的附件名必须拒绝")
     }
 
@@ -405,6 +496,174 @@ final class BackupTests: XCTestCase {
         XCTAssertTrue(try targetBeans().isEmpty, "失败时不得写入任何数据")
     }
 
+    // MARK: - 版本与逐字段校验
+
+    func testLegacyVersionIsRejected() throws {
+        try seedBean()
+        var (file, _) = try makeBackup()
+        file.manifest.schemaVersion = 1
+        try expectFailure(file, "v1 的摘要不覆盖偏好，必须拒绝", expecting: .legacyVersion(1))
+    }
+
+    func testInvalidBrewScoreIsRejected() throws {
+        try seedBean()
+        var (file, _) = try makeBackup()
+        file.data.brews[0].score = 6
+        try rehash(&file)
+        try expectFailure(file, "评分只能是 0…5", expecting: .invalidValue("brew.score"))
+    }
+
+    func testNegativeBrewWeightIsRejected() throws {
+        try seedBean()
+        var (file, _) = try makeBackup()
+        file.data.brews[0].coffeeG = -1
+        try rehash(&file)
+        try expectFailure(file, "", expecting: .invalidValue("brew.coffeeG"))
+    }
+
+    func testNegativeTastingDayIsRejected() throws {
+        try seedBean()
+        var (file, _) = try makeBackup()
+        file.data.tastings[0].dayAfterRoast = -1
+        try rehash(&file)
+        try expectFailure(file, "", expecting: .invalidValue("tasting.dayAfterRoast"))
+    }
+
+    func testRuleWithEmptyWindowIsRejected() throws {
+        try seedBean()
+        _ = try rules()
+        var (file, _) = try makeBackup()
+        file.data.phaseRules[0].peakEndDay = file.data.phaseRules[0].peakStartDay
+        try rehash(&file)
+        try expectFailure(file, "", expecting: .invalidValue("rule.peakEndDay"))
+    }
+
+    func testRuleWithReversedRestWindowIsRejected() throws {
+        try seedBean()
+        _ = try rules()
+        var (file, _) = try makeBackup()
+        file.data.phaseRules[0].restMaxDays = file.data.phaseRules[0].restMinDays - 1
+        try rehash(&file)
+        try expectFailure(file, "", expecting: .invalidValue("rule.restMaxDays"))
+    }
+
+    func testReminderIdentifierMustMatchItsBean() throws {
+        try seedBean()
+        var (file, _) = try makeBackup()
+        file.data.reminders[0].identifier = NotificationPlanner.identifier(
+            beanID: UUID(), kind: .windowOpens)
+        try rehash(&file)
+        try expectFailure(file, "", expecting: .invalidValue("reminder.identifier"))
+    }
+
+    func testNegativeBeanWeightIsRejected() throws {
+        try seedBean()
+        var (file, _) = try makeBackup()
+        file.data.beans[0].weightG = -1
+        try rehash(&file)
+        try expectFailure(file, "", expecting: .invalidValue("bean.weightG"))
+    }
+
+    // MARK: - 体积策略
+
+    private func snapshot() throws -> BackupData {
+        BackupManager.snapshot(
+            beans: try sourceContext.fetch(FetchDescriptor<Bean>()),
+            rules: try sourceContext.fetch(FetchDescriptor<PhaseRule>())
+        )
+    }
+
+    /// 纯函数边界：单张、总量、最终文件三个闸门各测一次，不用分配大内存。
+    func testSizePolicyBoundaries() {
+        let limits = BackupSizeLimits(maxFileBytes: 1_000, maxAttachmentBytes: 600,
+                                      maxSingleAttachmentBytes: 300, overheadBytes: 0)
+
+        XCTAssertNoThrow(try BackupSizePolicy.validate(
+            attachmentBytes: 300, largestAttachmentBytes: 300, dataBytes: 100, limits: limits))
+
+        XCTAssertThrowsError(try BackupSizePolicy.validate(
+            attachmentBytes: 700, largestAttachmentBytes: 300, dataBytes: 0, limits: limits)
+        ) { XCTAssertEqual($0 as? BackupError, .attachmentTooLarge) }
+
+        XCTAssertThrowsError(try BackupSizePolicy.validate(
+            attachmentBytes: 100, largestAttachmentBytes: 400, dataBytes: 0, limits: limits)
+        ) { XCTAssertEqual($0 as? BackupError, .attachmentTooLarge) }
+
+        XCTAssertThrowsError(try BackupSizePolicy.validate(
+            attachmentBytes: 600, largestAttachmentBytes: 300, dataBytes: 300, limits: limits)
+        ) { XCTAssertEqual($0 as? BackupError, .fileTooLarge) }
+    }
+
+    func testGeneratedFileFitsReaderLimitAndReadsBack() throws {
+        try seedBean()
+        let url = try BackupManager.write(try snapshot(),
+                                          preferences: allUnsetPreferences(),
+                                          appVersion: "test-1.0",
+                                          imagesDirectory: sourceImages)
+        let size = try XCTUnwrap(url.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+        XCTAssertLessThanOrEqual(size, BackupSizeLimits.standard.maxFileBytes)
+        XCTAssertNoThrow(try BackupManager.read(from: url))
+    }
+
+    func testOversizedBackupIsRejectedWithoutLeavingAFile() throws {
+        let name = "\(UUID().uuidString).jpg"
+        try writeImage(named: name, into: sourceImages)
+        try seedBean(imageName: name)
+
+        let limits = BackupSizeLimits(maxFileBytes: 500, maxAttachmentBytes: 10_000,
+                                      maxSingleAttachmentBytes: 10_000, overheadBytes: 0)
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BrewPhaseBackup", isDirectory: true)
+        let before = Set((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [])
+
+        XCTAssertThrowsError(try BackupManager.write(try snapshot(),
+                                                     preferences: allUnsetPreferences(),
+                                                     appVersion: "test-1.0",
+                                                     imagesDirectory: sourceImages,
+                                                     limits: limits)) { error in
+            XCTAssertEqual(error as? BackupError, .fileTooLarge)
+        }
+
+        let after = Set((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [])
+        XCTAssertEqual(before, after, "超限失败不得留下半成品")
+    }
+
+    func testTwoBackupsInTheSameSecondDoNotCollide() throws {
+        try seedBean()
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let data = try snapshot()
+        let first = try BackupManager.write(data, preferences: allUnsetPreferences(),
+                                            appVersion: "t", imagesDirectory: sourceImages, now: now)
+        let second = try BackupManager.write(data, preferences: allUnsetPreferences(),
+                                             appVersion: "t", imagesDirectory: sourceImages, now: now)
+        defer {
+            try? FileManager.default.removeItem(at: first)
+            try? FileManager.default.removeItem(at: second)
+        }
+
+        XCTAssertNotEqual(first, second, "同一秒生成两份不能互相覆盖")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: first.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: second.path))
+    }
+
+    // MARK: - 设备状态不进入备份
+
+    func testDeviceOnlyStateIsNotCaptured() throws {
+        let name = "BackupTests-device-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+
+        defaults.set("en", forKey: "brewphase.language")
+        defaults.set(true, forKey: PrefKey.askedForNotifications)
+        defaults.set(true, forKey: PrefKey.didShowPrefillHint)
+
+        let preferences = BackupManager.preferences(from: defaults)
+        for key in ["brewphase.language", PrefKey.askedForNotifications, PrefKey.didShowPrefillHint] {
+            XCTAssertFalse(preferences.values.keys.contains(key), "\(key) 不该进备份")
+            XCTAssertFalse(preferences.unset.contains(key), "\(key) 连占位都不该有")
+        }
+    }
+
     /// 失败路径不能留下半成品文件。
     func testFailedRestoreLeavesNoNewImageFiles() throws {
         let name = "\(UUID().uuidString).jpg"
@@ -417,5 +676,51 @@ final class BackupTests: XCTestCase {
 
         let leftovers = try FileManager.default.contentsOfDirectory(atPath: targetImages.path)
         XCTAssertTrue(leftovers.isEmpty, "校验失败的备份不应在图片目录留下文件")
+    }
+
+    /// 进程中断留下的孤儿图片不该影响恢复后的数据，成功恢复后应被清理。
+    func testRestoreCleansInterruptedOrphans() throws {
+        try seedBean()
+        let (file, _) = try makeBackup()
+
+        try writeImage(named: "\(UUID().uuidString).jpg", into: targetImages)
+        _ = try BackupRestorer.restore(file, into: target, imagesDirectory: targetImages)
+
+        XCTAssertEqual(try targetBeans().count, 1)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: targetImages.path).isEmpty,
+                      "成功恢复后，无人引用的孤儿图片应被清理")
+    }
+
+    // MARK: - 保存失败
+
+    func testSaveFailureLeavesDataPreferencesAndImagesUntouched() throws {
+        let name = "\(UUID().uuidString).jpg"
+        try writeImage(named: name, into: sourceImages)
+        try seedBean(imageName: name)
+        let (file, _) = try makeBackup()
+
+        let existingContext = ModelContext(target)
+        existingContext.insert(Bean(name: "原有豆子", roastLevel: .dark,
+                                    roastDate: Date(timeIntervalSince1970: 1_700_000_000)))
+        try existingContext.save()
+
+        let suiteName = "BackupTests-save-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(15.0, forKey: PrefKey.defaultDoseG)
+
+        let filesBefore = Set(try FileManager.default.contentsOfDirectory(atPath: targetImages.path))
+
+        struct SaveFailed: Error {}
+        XCTAssertThrowsError(try BackupRestorer.restore(
+            file, into: target, imagesDirectory: targetImages, defaults: defaults,
+            save: { _ in throw SaveFailed() }
+        ))
+
+        XCTAssertEqual(try targetBeans().map(\.name), ["原有豆子"], "保存失败后原有数据必须还在")
+        XCTAssertEqual(defaults.double(forKey: PrefKey.defaultDoseG), 15,
+                       "偏好只能在数据库替换成功之后写回")
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: targetImages.path)),
+                       filesBefore, "失败时新增图片要回收，已有文件不动")
     }
 }

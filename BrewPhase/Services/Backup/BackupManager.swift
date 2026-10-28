@@ -102,30 +102,34 @@ enum BackupManager {
 
     // MARK: - 偏好
 
-    /// 收集白名单内的用户偏好。只取实际存在的键：没设过的不写，
-    /// 恢复时也就不会把别人的默认值硬塞进来。
+    /// 收集白名单内的用户偏好。**每个白名单键都要有交代**：设过就是值，
+    /// 没设过进 `unset`，恢复时据此移除目标设备上的同名键——否则「备份里没有」
+    /// 会退化成「目标设备原有的值恰好留着」，同一个备份在另一台设备上恢复出
+    /// 不同状态。
     static func preferences(from defaults: UserDefaults = .standard) -> BackupPreferences {
         var values: [String: BackupPreferenceValue] = [:]
+        var unset: [String] = []
+
+        func note(_ key: String, _ value: BackupPreferenceValue?) {
+            if let value { values[key] = value } else { unset.append(key) }
+        }
 
         for key in BackupPreferenceKeys.strings {
-            if let value = defaults.string(forKey: key) { values[key] = .string(value) }
+            note(key, defaults.string(forKey: key).map(BackupPreferenceValue.string))
         }
         for key in BackupPreferenceKeys.numbers {
-            if defaults.object(forKey: key) != nil {
-                values[key] = .number(defaults.double(forKey: key))
-            }
+            note(key, defaults.object(forKey: key) != nil
+                 ? .number(defaults.double(forKey: key)) : nil)
         }
         for key in BackupPreferenceKeys.integers {
-            if defaults.object(forKey: key) != nil {
-                values[key] = .integer(defaults.integer(forKey: key))
-            }
+            note(key, defaults.object(forKey: key) != nil
+                 ? .integer(defaults.integer(forKey: key)) : nil)
         }
         for key in BackupPreferenceKeys.flags {
-            if defaults.object(forKey: key) != nil {
-                values[key] = .flag(defaults.bool(forKey: key))
-            }
+            note(key, defaults.object(forKey: key) != nil
+                 ? .flag(defaults.bool(forKey: key)) : nil)
         }
-        return BackupPreferences(values: values)
+        return BackupPreferences(values: values, unset: unset)
     }
 
     // MARK: - 写
@@ -136,10 +140,11 @@ enum BackupManager {
     /// 任何一步失败都会删掉半成品——不留下「看起来成功」的残缺备份。
     static func write(
         _ data: BackupData,
-        preferences: BackupPreferences = BackupPreferences(values: [:]),
+        preferences: BackupPreferences = .empty,
         appVersion: String,
         imagesDirectory: URL,
-        now: Date = Date()
+        now: Date = Date(),
+        limits: BackupSizeLimits = .standard
     ) throws -> URL {
         // 空字符串在模型里等同「没有图片」（ImageStore 也是这样判断的），不算附件。
         let names = Set(data.beans.compactMap(\.imagePath)).filter { !$0.isEmpty }.sorted()
@@ -148,6 +153,7 @@ enum BackupManager {
         // 第一遍只算摘要与体积，不把图片留在内存里。
         var hashes: [String: String] = [:]
         var totalBytes = 0
+        var largestBytes = 0
         for name in names {
             guard BackupFormat.isSafeAttachmentName(name) else {
                 throw BackupError.invalidAttachmentName
@@ -157,13 +163,17 @@ enum BackupManager {
                 throw BackupError.missingAttachment
             }
             totalBytes += bytes.count
-            guard totalBytes <= BackupFormat.maxAttachmentBytes else {
-                throw BackupError.attachmentTooLarge
-            }
+            largestBytes = max(largestBytes, bytes.count)
             hashes[name] = sha256(bytes)
         }
 
         let dataBytes = try canonicalEncoding(data)
+        // 预检：保证写出来的文件一定能被同一个读取端读回（Base64 会放大体积）。
+        try BackupSizePolicy.validate(attachmentBytes: totalBytes,
+                                      largestAttachmentBytes: largestBytes,
+                                      dataBytes: dataBytes.count,
+                                      limits: limits)
+
         let digestLines = names.compactMap { name in hashes[name].map { "\(name):\($0)" } }
             .sorted()
             .joined(separator: "\n")
@@ -182,7 +192,7 @@ enum BackupManager {
                 attachments: names.count,
                 attachmentBytes: totalBytes
             ),
-            dataDigest: sha256(dataBytes),
+            dataDigest: try contentDigest(data: data, preferences: preferences),
             attachmentDigest: sha256(Data(digestLines.utf8))
         )
 
@@ -213,6 +223,11 @@ enum BackupManager {
 
             try handle.write(contentsOf: Data("]}".utf8))
             try handle.close()
+
+            // 估计值只是挡在前面的一道闸；真实大小以磁盘为准。
+            let written = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            try BackupSizePolicy.validateFinalFileSize(written, limits: limits)
+
             AppLog.export.info("backup written: \(data.beans.count) bean(s), \(names.count) image(s)")
             return url
         } catch {
@@ -225,14 +240,13 @@ enum BackupManager {
     // MARK: - 读
 
     /// 读取并校验。返回的 `BackupFile` 一定已经通过 `validate`。
-    static func read(from url: URL) throws -> BackupFile {
+    static func read(from url: URL, limits: BackupSizeLimits = .standard) throws -> BackupFile {
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
 
         let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-        guard size > 0, size <= BackupFormat.maxFileBytes else {
-            throw size > BackupFormat.maxFileBytes ? BackupError.fileTooLarge : BackupError.unreadableFile
-        }
+        guard size > 0 else { throw BackupError.unreadableFile }
+        guard size <= limits.maxFileBytes else { throw BackupError.fileTooLarge }
         guard let bytes = try? Data(contentsOf: url, options: .mappedIfSafe) else {
             throw BackupError.unreadableFile
         }
@@ -251,16 +265,21 @@ enum BackupManager {
     // MARK: - 校验
 
     /// 恢复前必须走完的检查。顺序按「越便宜越先做」：
-    /// 版本 → 规模 → 摘要 → ID → 关系 → 附件。
+    /// 版本 → 规模 → 摘要 → 偏好 → ID → 关系 → 逐实体取值 → 附件。
     static func validate(_ file: BackupFile) throws {
         let manifest = file.manifest
         guard manifest.format == BackupFormat.identifier else { throw BackupError.malformed }
         guard manifest.schemaVersion >= 1 else { throw BackupError.malformed }
+        guard manifest.schemaVersion >= BackupFormat.currentSchemaVersion else {
+            // v1 的摘要不覆盖偏好，不能被当作完整的完整性校验。
+            throw BackupError.legacyVersion(manifest.schemaVersion)
+        }
         guard manifest.schemaVersion <= BackupFormat.currentSchemaVersion else {
             throw BackupError.unsupportedVersion(manifest.schemaVersion)
         }
 
         let data = file.data
+        let preferences = file.preferences ?? .empty
         let counts = BackupSummary(
             beans: data.beans.count, brews: data.brews.count, tastings: data.tastings.count,
             reminders: data.reminders.count, phaseRules: data.phaseRules.count,
@@ -272,14 +291,35 @@ enum BackupManager {
         for count in [counts.beans, counts.brews, counts.tastings, counts.reminders, counts.phaseRules] {
             guard count <= BackupFormat.maxRecordsPerEntity else { throw BackupError.tooManyRecords }
         }
-        guard counts.attachments <= BackupFormat.maxAttachments,
-              counts.attachmentBytes <= BackupFormat.maxAttachmentBytes else {
+        guard counts.attachments <= BackupFormat.maxAttachments else {
             throw BackupError.attachmentTooLarge
         }
+        let largest = file.attachments.map(\.data.count).max() ?? 0
 
-        // 摘要：数据部分与附件部分都要对得上，任何一处被改过都拒绝。
-        guard sha256(try canonicalEncoding(data)) == manifest.dataDigest else {
+        // 摘要覆盖 data + preferences：改一个默认粉量也逃不过完整性检查。
+        guard try contentDigest(data: data, preferences: preferences) == manifest.dataDigest else {
             throw BackupError.checksumMismatch
+        }
+        // 规模放在摘要之后也行，但体积问题给出更具体的错误更有用。
+        try BackupSizePolicy.validate(attachmentBytes: counts.attachmentBytes,
+                                      largestAttachmentBytes: largest,
+                                      dataBytes: try canonicalEncoding(data).count)
+
+        // 偏好：白名单、类型、范围、以及「每个键都要有交代」。
+        let allowed = Set(BackupPreferenceKeys.all)
+        let valueKeys = Set(preferences.values.keys)
+        let unsetKeys = Set(preferences.unset)
+        for key in valueKeys.union(unsetKeys) where !allowed.contains(key) {
+            throw BackupError.invalidValue("preferences.\(key)")
+        }
+        guard valueKeys.isDisjoint(with: unsetKeys) else {
+            throw BackupError.invalidValue("preferences.keys")
+        }
+        guard valueKeys.union(unsetKeys) == allowed else {
+            throw BackupError.missingData
+        }
+        for (key, value) in preferences.values {
+            try BackupPreferenceSchema.validate(value, for: key)
         }
 
         var names = Set<String>()
@@ -326,40 +366,156 @@ enum BackupManager {
             throw BackupError.brokenReference
         }
 
-        // 枚举与数值：宁可拒绝，也不把未知值静默落成默认值。
-        guard data.beans.allSatisfy({ bean in
-            RoastLevel(rawValue: bean.roastLevelRaw) != nil
-                && BeanStatus(rawValue: bean.statusRaw) != nil
-                && [bean.weightG, bean.remainingG, bean.price].allSatisfy(\.isFinite)
-                && bean.weightG >= 0 && bean.remainingG >= 0 && bean.price >= 0
-                && [bean.roastDate, bean.purchaseDate, bean.openDate].allSatisfy {
-                    $0.map { $0.isFinite } ?? true
-                }
-        }) else { throw BackupError.missingData }
-
-        guard data.tastings.allSatisfy({ TastingSource(rawValue: $0.sourceRaw) != nil }),
-              data.reminders.allSatisfy({ ReminderKind(rawValue: $0.kindRaw) != nil }),
-              data.phaseRules.allSatisfy({ RoastLevel(rawValue: $0.roastLevelRaw) != nil }) else {
-            throw BackupError.missingData
-        }
+        try validateBeans(data.beans)
+        try validateBrews(data.brews)
+        try validateTastings(data.tastings)
+        try validateReminders(data.reminders)
+        try validateRules(data.phaseRules)
 
         // 图片引用必须能在附件里找到——缺图的备份不是完整备份。
         let imageNames = Set(data.beans.compactMap(\.imagePath))
         guard imageNames.allSatisfy({ $0.isEmpty || names.contains($0) }) else {
             throw BackupError.missingAttachment
         }
+    }
 
-        // 偏好只允许白名单键；数值必须是有限数。未知键按坏数据处理，
-        // 而不是「悄悄跳过」——真出现未知键，说明这份文件不属于当前版本。
-        if let preferences = file.preferences {
-            let allowed = Set(BackupPreferenceKeys.all)
-            for (key, value) in preferences.values {
-                guard allowed.contains(key) else { throw BackupError.missingData }
-                if case .number(let number) = value, !number.isFinite {
-                    throw BackupError.missingData
-                }
+    // MARK: - 逐实体取值
+
+    /// 所有用于计算、排序、排程或展示的数值都按真实模型约束校验。
+    /// 失败时抛出具体字段名，测试与日志能直接指出是哪一项。
+    private static func validateBeans(_ beans: [BackupBean]) throws {
+        for bean in beans {
+            guard RoastLevel(rawValue: bean.roastLevelRaw) != nil else {
+                throw BackupError.invalidValue("bean.roastLevelRaw")
+            }
+            guard BeanStatus(rawValue: bean.statusRaw) != nil else {
+                throw BackupError.invalidValue("bean.statusRaw")
+            }
+            guard bean.weightG.isFinite, (0...100_000).contains(bean.weightG) else {
+                throw BackupError.invalidValue("bean.weightG")
+            }
+            guard bean.remainingG.isFinite, (0...100_000).contains(bean.remainingG) else {
+                throw BackupError.invalidValue("bean.remainingG")
+            }
+            guard bean.price.isFinite, (0...10_000_000).contains(bean.price) else {
+                throw BackupError.invalidValue("bean.price")
+            }
+            for (label, date) in [("bean.roastDate", bean.roastDate),
+                                  ("bean.purchaseDate", bean.purchaseDate),
+                                  ("bean.openDate", bean.openDate)] {
+                if let date, !date.isFinite { throw BackupError.invalidValue(label) }
+            }
+            guard bean.createdAt.isFinite, bean.updatedAt.isFinite else {
+                throw BackupError.invalidValue("bean.timestamps")
             }
         }
+    }
+
+    private static func validateBrews(_ brews: [BackupBrew]) throws {
+        for brew in brews {
+            guard brew.date.isFinite, brew.createdAt.isFinite else {
+                throw BackupError.invalidValue("brew.timestamps")
+            }
+            guard brew.waterTemp.isFinite, (0...100).contains(brew.waterTemp) else {
+                throw BackupError.invalidValue("brew.waterTemp")
+            }
+            guard brew.coffeeG.isFinite, (0...500).contains(brew.coffeeG) else {
+                throw BackupError.invalidValue("brew.coffeeG")
+            }
+            guard brew.waterG.isFinite, (0...5_000).contains(brew.waterG) else {
+                throw BackupError.invalidValue("brew.waterG")
+            }
+            guard (0...7_200).contains(brew.timeSeconds) else {
+                throw BackupError.invalidValue("brew.timeSeconds")
+            }
+            // StarRatingInput 只能取 0…5；越界值会让界面画出第六颗星或负数。
+            for (label, score) in [("brew.score", brew.score),
+                                   ("brew.acidity", brew.acidity),
+                                   ("brew.sweetness", brew.sweetness),
+                                   ("brew.bitterness", brew.bitterness),
+                                   ("brew.body", brew.body),
+                                   ("brew.aftertaste", brew.aftertaste)] {
+                guard (0...5).contains(score) else { throw BackupError.invalidValue(label) }
+            }
+        }
+    }
+
+    private static func validateTastings(_ tastings: [BackupTasting]) throws {
+        for tasting in tastings {
+            guard TastingSource(rawValue: tasting.sourceRaw) != nil else {
+                throw BackupError.invalidValue("tasting.sourceRaw")
+            }
+            guard tasting.date.isFinite, tasting.createdAt.isFinite else {
+                throw BackupError.invalidValue("tasting.timestamps")
+            }
+            guard (0...36_500).contains(tasting.dayAfterRoast) else {
+                throw BackupError.invalidValue("tasting.dayAfterRoast")
+            }
+            guard (0...5).contains(tasting.score) else {
+                throw BackupError.invalidValue("tasting.score")
+            }
+        }
+    }
+
+    private static func validateReminders(_ reminders: [BackupReminder]) throws {
+        for reminder in reminders {
+            guard ReminderKind(rawValue: reminder.kindRaw) != nil else {
+                throw BackupError.invalidValue("reminder.kindRaw")
+            }
+            guard reminder.fireDate.isFinite, reminder.createdAt.isFinite else {
+                throw BackupError.invalidValue("reminder.timestamps")
+            }
+            // 标识由豆子 ID + 类型确定；对不上说明这条提醒会被挂到别的豆子名下。
+            guard reminder.identifier == NotificationPlanner.identifier(
+                beanID: reminder.beanID,
+                kind: ReminderKind(rawValue: reminder.kindRaw) ?? .windowOpens
+            ) else {
+                throw BackupError.invalidValue("reminder.identifier")
+            }
+        }
+    }
+
+    private static func validateRules(_ rules: [BackupPhaseRule]) throws {
+        for rule in rules {
+            guard RoastLevel(rawValue: rule.roastLevelRaw) != nil else {
+                throw BackupError.invalidValue("rule.roastLevelRaw")
+            }
+            guard rule.updatedAt.isFinite else {
+                throw BackupError.invalidValue("rule.updatedAt")
+            }
+            for (label, days) in [("rule.restMinDays", rule.restMinDays),
+                                  ("rule.restMaxDays", rule.restMaxDays),
+                                  ("rule.peakStartDay", rule.peakStartDay),
+                                  ("rule.peakEndDay", rule.peakEndDay),
+                                  ("rule.declineStartDay", rule.declineStartDay)] {
+                guard (0...3_650).contains(days) else { throw BackupError.invalidValue(label) }
+            }
+            // 与 PhaseRuleData 的语义一致：窗口必须存在，排气结束不早于开始，
+            // 衰退不早于峰值开始。
+            guard rule.restMinDays <= rule.restMaxDays else {
+                throw BackupError.invalidValue("rule.restMaxDays")
+            }
+            guard rule.peakStartDay >= 1 else { throw BackupError.invalidValue("rule.peakStartDay") }
+            guard rule.peakEndDay > rule.peakStartDay else {
+                throw BackupError.invalidValue("rule.peakEndDay")
+            }
+            guard rule.declineStartDay >= rule.peakStartDay else {
+                throw BackupError.invalidValue("rule.declineStartDay")
+            }
+        }
+    }
+
+    // MARK: - 摘要覆盖
+
+    /// 摘要覆盖的全部可恢复内容：五类记录 + 偏好。
+    /// 附件不在其中——它们各自有摘要，整体另有 `attachmentDigest`。
+    private struct DigestCoverage: Codable {
+        var data: BackupData
+        var preferences: BackupPreferences
+    }
+
+    static func contentDigest(data: BackupData, preferences: BackupPreferences) throws -> String {
+        sha256(try canonicalEncoding(DigestCoverage(data: data, preferences: preferences)))
     }
 
     // MARK: - 摘要与编码
@@ -378,8 +534,10 @@ enum BackupManager {
     private static func destinationURL(for date: Date) throws -> URL {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd-HHmm"
-        let name = "brewphase-backup-\(formatter.string(from: date)).\(BackupFormat.fileExtension)"
+        // 精确到秒 + 随机后缀：同一秒内连续生成两份也不会互相覆盖。
+        formatter.dateFormat = "yyyy-MM-dd-HHmmss"
+        let suffix = UUID().uuidString.prefix(6).lowercased()
+        let name = "brewphase-backup-\(formatter.string(from: date))-\(suffix).\(BackupFormat.fileExtension)"
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("BrewPhaseBackup", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -1182,6 +1182,9 @@ EN: dict[str, str] = {
     "这份备份来自更新版本的 BrewPhase，请先升级 App 再恢复。":
         "This backup comes from a newer version of BrewPhase. Update the app before restoring.",
     "备份里缺少必要的数据，无法恢复。": "The backup is missing required data and cannot be restored.",
+    "这份备份由旧版本生成，无法校验偏好是否完整，请重新生成一份备份。":
+        "This backup was made by an older version and its preferences cannot be verified. Please create a new backup.",
+    "备份里有不合理的数据，无法恢复。": "The backup contains a value that cannot be used. Nothing was restored.",
     "备份内容与校验信息不一致，可能已损坏。为安全起见没有做任何修改。":
         "The contents do not match the checksums, so the file may be damaged. Nothing was changed.",
     "备份里有重复的记录标识，无法安全恢复。":

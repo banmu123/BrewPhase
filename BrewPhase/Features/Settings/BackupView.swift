@@ -346,6 +346,19 @@ struct BackupView: View {
                 let result = try await Task.detached(priority: .userInitiated) {
                     try BackupRestorer.restore(item.file, into: container, imagesDirectory: images)
                 }.value
+
+                // 数据库已经替换成功；现在才动系统通知。
+                // 用一个全新的上下文读取恢复结果，避免主上下文尚未合并时
+                // 拿旧豆子去重建（那会把该排的提醒清掉却不补回来）。
+                let reconcile = ModelContext(container)
+                let beans = (try? reconcile.fetch(FetchDescriptor<Bean>())) ?? []
+                let rules = (try? reconcile.fetch(FetchDescriptor<PhaseRule>())) ?? []
+                await NotificationManager.shared.reconcileAfterRestore(
+                    beans: beans,
+                    book: PhaseRuleBook.make(stored: rules),
+                    context: reconcile
+                )
+
                 outcome = result
             } catch {
                 restoreFailure = (error as? BackupError)?.localizedDescription

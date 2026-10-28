@@ -33,7 +33,8 @@ enum BackupRestorer {
         _ file: BackupFile,
         into container: ModelContainer,
         imagesDirectory: URL,
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        save: (ModelContext) throws -> Void = { try $0.save() }
     ) throws -> Outcome {
         try BackupManager.validate(file)
 
@@ -69,7 +70,7 @@ enum BackupRestorer {
                         ImageStore.fileName(for: attachment.name, thumbnail: true)), options: .atomic)
             }
 
-            let outcome = try replaceDatabase(file, in: container)
+            let outcome = try replaceDatabase(file, in: container, save: save)
 
             // 偏好放在数据提交之后：数据是主，设置是辅；设置写失败也不该
             // 让一次已经成功的恢复变成「失败」。
@@ -105,7 +106,8 @@ enum BackupRestorer {
     @discardableResult
     private static func replaceDatabase(
         _ file: BackupFile,
-        in container: ModelContainer
+        in container: ModelContainer,
+        save: (ModelContext) throws -> Void
     ) throws -> Outcome {
         let context = ModelContext(container)
         context.autosaveEnabled = false
@@ -208,7 +210,7 @@ enum BackupRestorer {
             }
 
             // 一次提交：删除与写入在同一个事务里，要么全成，要么全不成。
-            try context.save()
+            try save(context)
 
             return Outcome(
                 beans: file.data.beans.count, brews: file.data.brews.count,
@@ -223,9 +225,14 @@ enum BackupRestorer {
 
     // MARK: - 偏好
 
-    /// 只写白名单键，值按各自类型写回；`@AppStorage` 会据此即时刷新界面。
+    /// 只写白名单键，值按各自类型写回；备份时没有设置过的键要移除，
+    /// 这样「恢复成备份时的状态」在另一台设备上也成立。
+    /// `@AppStorage` 会据此即时刷新界面。
     private static func applyPreferences(_ preferences: BackupPreferences?, to defaults: UserDefaults) {
         guard let preferences else { return }
+        for key in preferences.unset {
+            defaults.removeObject(forKey: key)
+        }
         for (key, value) in preferences.values {
             switch value {
             case .string(let string): defaults.set(string, forKey: key)

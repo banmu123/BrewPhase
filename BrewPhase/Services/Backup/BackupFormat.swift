@@ -13,19 +13,15 @@ enum BackupFormat {
     /// 文件里的格式标记。防止把一个随便的 JSON 当成本应用的备份。
     static let identifier = "brewphase-backup"
 
-    /// 当前写入的版本。新增字段走可选值 + 默认值，不轻易升版本。
-    static let currentSchemaVersion = 1
+    /// 当前写入的版本。
+    ///
+    /// v1（同日早先的提交）的 `dataDigest` 只覆盖 `data`，偏好不在摘要里，
+    /// 改一个默认粉量不会被发现。v1 没有发布给任何外部用户（功能尚未上线），
+    /// 因此这里提升到 v2 并把偏好纳入摘要，而不是悄悄改变 v1 的语义：
+    /// 读到 v1 文件会明确拒绝并提示重新生成。
+    static let currentSchemaVersion = 2
 
     static let fileExtension = "brewphasebackup"
-
-    /// 单文件上限。超过它的备份在解码前就拒绝，避免把设备内存打满。
-    /// 解码时文件、Base64 字符串与解码后的图片会同时存在，峰值约为文件大小的
-    /// 2–3 倍；256 MB 对应的峰值仍在近年 iPhone 可承受的范围内。
-    static let maxFileBytes = 256 * 1024 * 1024
-
-    /// 附件总量与数量上限。图片是唯一的外部文件，单独设限便于给出清楚的提示。
-    static let maxAttachmentBytes = 256 * 1024 * 1024
-    static let maxAttachments = 5_000
 
     /// 单类实体上限，防止畸形文件把恢复过程拖死。
     static let maxRecordsPerEntity = 100_000
@@ -38,6 +34,9 @@ enum BackupFormat {
         guard !stem.isEmpty, stem.count <= 64 else { return false }
         return stem.allSatisfy { $0.isHexDigit || $0 == "-" }
     }
+
+    /// 附件数量上限。体积上限见 `BackupSizeLimits`。
+    static let maxAttachments = 5_000
 }
 
 // MARK: - 文件结构
@@ -65,6 +64,152 @@ enum BackupPreferenceValue: Codable, Equatable {
 
 struct BackupPreferences: Codable, Equatable {
     var values: [String: BackupPreferenceValue]
+    /// 备份时**没有设置**的白名单键。恢复时要把目标设备上的同名键移除，
+    /// 这样「生成备份时的状态」才是可还原的，而不是「只要备份里有值就覆盖、
+    /// 没有就碰巧留着目标设备的值」。
+    var unset: [String]
+
+    static let empty = BackupPreferences(values: [:], unset: [])
+
+    func value(for key: String) -> BackupPreferenceValue? { values[key] }
+
+    /// v1 的偏好段只有 `values`。这里给 `unset` 一个空默认值，让旧文件能解出
+    /// 结构、再由 `validate` 按版本明确拒绝，而不是在解码阶段变成「文件损坏」。
+    init(values: [String: BackupPreferenceValue], unset: [String]) {
+        self.values = values
+        self.unset = unset
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        values = try container.decode([String: BackupPreferenceValue].self, forKey: .values)
+        unset = try container.decodeIfPresent([String].self, forKey: .unset) ?? []
+    }
+}
+
+enum BackupPreferenceKind: Equatable {
+    case string
+    case number
+    case integer
+    case flag
+}
+
+/// 每个白名单键的预期类型与合理范围。
+///
+/// 只有键名白名单不够：`defaultDoseG` 被写成字符串、`askEnabled` 被写成数字，
+/// 都会在恢复时把错误类型塞进 UserDefaults。范围取自现有实现——
+/// 冲煮表单允许 0 表示「没填」；问答条数在 `RAGSettings` 里被夹在 3…20，
+/// 超出范围的值恢复后会被静默夹紧，所以这里直接拒绝。
+enum BackupPreferenceSchema {
+
+    static func kind(for key: String) -> BackupPreferenceKind? {
+        if BackupPreferenceKeys.strings.contains(key) { return .string }
+        if BackupPreferenceKeys.numbers.contains(key) { return .number }
+        if BackupPreferenceKeys.integers.contains(key) { return .integer }
+        if BackupPreferenceKeys.flags.contains(key) { return .flag }
+        return nil
+    }
+
+    /// 数值偏好的合理区间。字符串只有长度上限（自由文本不设业务限制）。
+    static func range(for key: String) -> ClosedRange<Double>? {
+        switch key {
+        case PrefKey.defaultDoseG: return 0...200
+        case PrefKey.defaultWaterG: return 0...5_000
+        case PrefKey.defaultWaterTemp: return 0...100
+        case PrefKey.askPassageLimit: return 3...20
+        default: return nil
+        }
+    }
+
+    static func validate(_ value: BackupPreferenceValue, for key: String) throws {
+        guard let kind = kind(for: key) else {
+            throw BackupError.invalidValue("preferences.\(key)")
+        }
+        switch (kind, value) {
+        case (.string, .string(let text)):
+            guard text.count <= 512 else { throw BackupError.invalidValue("preferences.\(key)") }
+            if key == PrefKey.askEmbeddingBackend {
+                guard EmbeddingBackend(rawValue: text) != nil else {
+                    throw BackupError.invalidValue("preferences.\(key)")
+                }
+            }
+            if key == PrefKey.askAnswerEngine {
+                guard AnswerEngine(rawValue: text) != nil else {
+                    throw BackupError.invalidValue("preferences.\(key)")
+                }
+            }
+        case (.number, .number(let number)):
+            guard number.isFinite,
+                  let range = range(for: key), range.contains(number) else {
+                throw BackupError.invalidValue("preferences.\(key)")
+            }
+        case (.integer, .integer(let integer)):
+            guard let range = range(for: key), range.contains(Double(integer)) else {
+                throw BackupError.invalidValue("preferences.\(key)")
+            }
+        case (.flag, .flag):
+            break
+        default:
+            // 类型与键不匹配：字符串键塞了数字、开关键塞了文本，都在这里拒绝。
+            throw BackupError.invalidValue("preferences.\(key)")
+        }
+    }
+}
+
+/// 备份文件的体积策略。
+///
+/// 三个数字必须分开看：附件原始字节、JSON 文件实际字节（Base64 会放大约 4/3）、
+/// 读取时的内存峰值（文件 + 解码结果，约 2 倍）。写入前先用保守估计挡住明显
+/// 超限的组合，写完后再次核对真实文件大小——保证「写成功的备份一定读得回来」。
+struct BackupSizeLimits: Equatable {
+    /// 读取端硬上限，也是生成端的最终上限。
+    var maxFileBytes: Int
+    /// 附件原始字节总和。
+    var maxAttachmentBytes: Int
+    /// 单张图片上限，避免一次解码就把内存顶满。
+    var maxSingleAttachmentBytes: Int
+    /// JSON 结构本身的余量（键名、标点、记录字段）。测试可设为 0 精确验证边界。
+    var overheadBytes: Int
+
+    static let standard = BackupSizeLimits(
+        maxFileBytes: 256 * 1024 * 1024,
+        maxAttachmentBytes: 160 * 1024 * 1024,
+        maxSingleAttachmentBytes: 32 * 1024 * 1024,
+        overheadBytes: 8 * 1024
+    )
+}
+
+enum BackupSizePolicy {
+
+    /// Base64 每 3 字节变 4 字符，另加记录结构与 JSON 标点的余量。
+    static func estimatedJSONBytes(attachmentBytes: Int,
+                                   dataBytes: Int,
+                                   overheadBytes: Int = BackupSizeLimits.standard.overheadBytes) -> Int {
+        let encoded = (attachmentBytes / 3 + 1) * 4
+        return dataBytes + encoded + overheadBytes
+    }
+
+    static func validate(attachmentBytes: Int,
+                         largestAttachmentBytes: Int,
+                         dataBytes: Int,
+                         limits: BackupSizeLimits = .standard) throws {
+        guard largestAttachmentBytes <= limits.maxSingleAttachmentBytes else {
+            throw BackupError.attachmentTooLarge
+        }
+        guard attachmentBytes <= limits.maxAttachmentBytes else {
+            throw BackupError.attachmentTooLarge
+        }
+        guard estimatedJSONBytes(attachmentBytes: attachmentBytes,
+                                 dataBytes: dataBytes,
+                                 overheadBytes: limits.overheadBytes) <= limits.maxFileBytes else {
+            throw BackupError.fileTooLarge
+        }
+    }
+
+    /// 写完之后核对真实文件大小：估计再保守，也要以磁盘上的字节为准。
+    static func validateFinalFileSize(_ bytes: Int, limits: BackupSizeLimits = .standard) throws {
+        guard bytes <= limits.maxFileBytes else { throw BackupError.fileTooLarge }
+    }
 }
 
 /// 允许进备份的偏好键。白名单而不是「UserDefaults 里有什么就抄什么」：
@@ -237,6 +382,7 @@ enum BackupError: LocalizedError, Equatable {
     case fileTooLarge
     case malformed
     case unsupportedVersion(Int)
+    case legacyVersion(Int)
     case missingData
     case checksumMismatch
     case duplicateIdentifier
@@ -247,6 +393,8 @@ enum BackupError: LocalizedError, Equatable {
     case tooManyRecords
     case imageConflict
     case restoreFailed
+    /// 某个具体字段不合法（技术名放在关联值里，只进日志/测试）。
+    case invalidValue(String)
 
     var errorDescription: String? {
         switch self {
@@ -258,6 +406,8 @@ enum BackupError: LocalizedError, Equatable {
             return L("这不是一份完整的 BrewPhase 备份，文件可能已损坏。")
         case .unsupportedVersion:
             return L("这份备份来自更新版本的 BrewPhase，请先升级 App 再恢复。")
+        case .legacyVersion:
+            return L("这份备份由旧版本生成，无法校验偏好是否完整，请重新生成一份备份。")
         case .missingData:
             return L("备份里缺少必要的数据，无法恢复。")
         case .checksumMismatch:
@@ -278,6 +428,8 @@ enum BackupError: LocalizedError, Equatable {
             return L("恢复时遇到同名但内容不同的图片，已停止恢复。")
         case .restoreFailed:
             return L("恢复没有完成，原有数据保持不动。")
+        case .invalidValue:
+            return L("备份里有不合理的数据，无法恢复。")
         }
     }
 
@@ -288,6 +440,7 @@ enum BackupError: LocalizedError, Equatable {
         case .fileTooLarge: return "file exceeds size limit"
         case .malformed: return "malformed container"
         case .unsupportedVersion(let version): return "unsupported schemaVersion=\(version)"
+        case .legacyVersion(let version): return "legacy schemaVersion=\(version)"
         case .missingData: return "missing data section"
         case .checksumMismatch: return "checksum mismatch"
         case .duplicateIdentifier: return "duplicate identifier"
@@ -298,6 +451,7 @@ enum BackupError: LocalizedError, Equatable {
         case .tooManyRecords: return "too many records"
         case .imageConflict: return "image name conflict"
         case .restoreFailed: return "restore failed"
+        case .invalidValue(let field): return "invalid value: \(field)"
         }
     }
 }
