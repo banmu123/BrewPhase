@@ -140,12 +140,17 @@ enum BackupManager {
     /// 任何一步失败都会删掉半成品——不留下「看起来成功」的残缺备份。
     static func write(
         _ data: BackupData,
-        preferences: BackupPreferences = .empty,
+        preferences: BackupPreferences,
         appVersion: String,
         imagesDirectory: URL,
         now: Date = Date(),
         limits: BackupSizeLimits = .standard
     ) throws -> URL {
+        // 偏好不是可选装饰：v2 要求每个白名单键都被明确交代（值或「未设置」）。
+        // 在**创建文件之前**校验，避免写出一份自己都读不回来的备份。
+        // 生产调用方在 `BackupView.build()` 里用 `preferences(from:)` 取全量快照。
+        try validatePreferences(preferences)
+
         // 空字符串在模型里等同「没有图片」（ImageStore 也是这样判断的），不算附件。
         let names = Set(data.beans.compactMap(\.imagePath)).filter { !$0.isEmpty }.sorted()
         guard names.count <= BackupFormat.maxAttachments else { throw BackupError.tooManyRecords }
@@ -279,7 +284,9 @@ enum BackupManager {
         }
 
         let data = file.data
-        let preferences = file.preferences ?? .empty
+        // v2 起偏好是必填段：没有它就无法证明「备份时的设置」被完整记录。
+        // v1 已在上面被明确拒绝，所以这里为空只可能是文件被改坏了。
+        guard let preferences = file.preferences else { throw BackupError.missingData }
         let counts = BackupSummary(
             beans: data.beans.count, brews: data.brews.count, tastings: data.tastings.count,
             reminders: data.reminders.count, phaseRules: data.phaseRules.count,
@@ -306,21 +313,8 @@ enum BackupManager {
                                       dataBytes: try canonicalEncoding(data).count)
 
         // 偏好：白名单、类型、范围、以及「每个键都要有交代」。
-        let allowed = Set(BackupPreferenceKeys.all)
-        let valueKeys = Set(preferences.values.keys)
-        let unsetKeys = Set(preferences.unset)
-        for key in valueKeys.union(unsetKeys) where !allowed.contains(key) {
-            throw BackupError.invalidValue("preferences.\(key)")
-        }
-        guard valueKeys.isDisjoint(with: unsetKeys) else {
-            throw BackupError.invalidValue("preferences.keys")
-        }
-        guard valueKeys.union(unsetKeys) == allowed else {
-            throw BackupError.missingData
-        }
-        for (key, value) in preferences.values {
-            try BackupPreferenceSchema.validate(value, for: key)
-        }
+        // 与写入端共用同一份契约——两处规则一旦分叉，就会出现「写得进、读不回」。
+        try validatePreferences(preferences)
 
         var names = Set<String>()
         var lines: [String] = []
@@ -376,6 +370,30 @@ enum BackupManager {
         let imageNames = Set(data.beans.compactMap(\.imagePath))
         guard imageNames.allSatisfy({ $0.isEmpty || names.contains($0) }) else {
             throw BackupError.missingAttachment
+        }
+    }
+
+    // MARK: - 偏好契约
+
+    /// 偏好段的完整性契约：白名单、键不重复归类、每个键都有交代、值与键类型匹配。
+    ///
+    /// 写入端与读取端必须调用同一个实现：曾经写入端默认 `.empty`、
+    /// 读取端却要求「全覆盖」，结果是一份刚写完就必然被拒绝的备份。
+    static func validatePreferences(_ preferences: BackupPreferences) throws {
+        let allowed = Set(BackupPreferenceKeys.all)
+        let valueKeys = Set(preferences.values.keys)
+        let unsetKeys = Set(preferences.unset)
+        for key in valueKeys.union(unsetKeys) where !allowed.contains(key) {
+            throw BackupError.invalidValue("preferences.\(key)")
+        }
+        guard valueKeys.isDisjoint(with: unsetKeys) else {
+            throw BackupError.invalidValue("preferences.keys")
+        }
+        guard valueKeys.union(unsetKeys) == allowed else {
+            throw BackupError.missingData
+        }
+        for (key, value) in preferences.values {
+            try BackupPreferenceSchema.validate(value, for: key)
         }
     }
 

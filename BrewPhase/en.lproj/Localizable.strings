@@ -446,6 +446,7 @@
 "故障排查" = "Troubleshooting";
 "数据" = "Data";
 "数据只存在这台设备上，没有账号，没有服务器。" = "Your data stays on this device. No account, no server.";
+"数据已恢复，但提醒没有重新排程。下次打开 App 会再试一次。" = "Your data was restored, but reminders were not rescheduled. The app will try again the next time it opens.";
 "文件大小" = "File size";
 "文字记录，不含图片" = "Text records, no images";
 "新记录会从这里开始" = "New brews start from these";

@@ -24,6 +24,8 @@ struct BackupView: View {
     @State private var pending: PendingRestore?
     @State private var isRestoring = false
     @State private var restoreFailure: String?
+    /// 数据已恢复、但提醒没能重排时的单独提示：这不是恢复失败。
+    @State private var notificationWarning: String?
     @State private var outcome: BackupRestorer.Outcome?
 
     var body: some View {
@@ -38,6 +40,9 @@ struct BackupView: View {
                 }
                 if let restoreFailure {
                     message(restoreFailure)
+                }
+                if let notificationWarning {
+                    notice(notificationWarning)
                 }
             }
             .padding(.horizontal, Metric.gutter)
@@ -166,6 +171,16 @@ struct BackupView: View {
         Text(text)
             .font(TypeScale.callout)
             .foregroundStyle(Palette.priority)
+            .padding(.horizontal, 4)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// 恢复成功但附带一项没做到的后续动作（提醒重排）。用正文色而不是警告红：
+    /// 数据已经回来了，这条不是失败。
+    private func notice(_ text: String) -> some View {
+        Text(text)
+            .font(TypeScale.callout)
+            .foregroundStyle(Palette.inkSoft)
             .padding(.horizontal, 4)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -338,6 +353,7 @@ struct BackupView: View {
         pending = nil
         isRestoring = true
         restoreFailure = nil
+        notificationWarning = nil
         let container = context.container
         let images = ImageStore.shared.directoryURL
 
@@ -348,16 +364,12 @@ struct BackupView: View {
                 }.value
 
                 // 数据库已经替换成功；现在才动系统通知。
-                // 用一个全新的上下文读取恢复结果，避免主上下文尚未合并时
-                // 拿旧豆子去重建（那会把该排的提醒清掉却不补回来）。
-                let reconcile = ModelContext(container)
-                let beans = (try? reconcile.fetch(FetchDescriptor<Bean>())) ?? []
-                let rules = (try? reconcile.fetch(FetchDescriptor<PhaseRule>())) ?? []
-                await NotificationManager.shared.reconcileAfterRestore(
-                    beans: beans,
-                    book: PhaseRuleBook.make(stored: rules),
-                    context: reconcile
-                )
+                // PostRestoreSync 会先用新上下文读取恢复后的数据，读不到就在
+                // 清理通知之前停下（通知保持原样，下次启动兜底），并明确返回
+                // `.dataUnavailable`——绝不把「通知没同步」说成「恢复失败」。
+                if await PostRestoreSync.reconcile(container: container) == .dataUnavailable {
+                    notificationWarning = L("数据已恢复，但提醒没有重新排程。下次打开 App 会再试一次。")
+                }
 
                 outcome = result
             } catch {

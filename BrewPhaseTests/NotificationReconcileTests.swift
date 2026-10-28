@@ -150,6 +150,50 @@ final class NotificationReconcileTests: XCTestCase {
                        Set(scheduler.addedIdentifiers).count,
                        "同一次协调里同一标识不能排两次")
     }
+
+    // MARK: - 恢复后的读取顺序
+
+    /// 读不到恢复后的数据时，必须在清理系统通知之前停下。
+    func testLoadFailureLeavesPendingNotificationsUntouched() async {
+        scheduler.pending = [NotificationPlanner.identifier(beanID: UUID(), kind: .windowOpens)]
+
+        let outcome = await PostRestoreSync.reconcile(container: container, manager: manager) { _ in
+            throw BackupError.missingData
+        }
+
+        XCTAssertEqual(outcome, .dataUnavailable)
+        XCTAssertEqual(scheduler.removedAllCount, 0, "读不到恢复后的数据时不得清理系统通知")
+        XCTAssertFalse(scheduler.pending.isEmpty, "旧通知必须原样保留")
+        XCTAssertTrue(scheduler.addedIdentifiers.isEmpty)
+    }
+
+    /// 读到了恢复后的数据，才清旧通知、按新数据重排。
+    func testSuccessfulLoadReconcilesRestoredData() async throws {
+        let restored = bean(name: "恢复后的豆子")
+        try context.save()
+        scheduler.pending = [NotificationPlanner.identifier(beanID: UUID(), kind: .windowOpens)]
+
+        let outcome = await PostRestoreSync.reconcile(container: container, manager: manager)
+
+        XCTAssertEqual(outcome, .reconciled)
+        XCTAssertEqual(scheduler.removedAllCount, 1)
+        XCTAssertTrue(scheduler.addedIdentifiers.contains { $0.contains(restored.id.uuidString) },
+                      "恢复后的豆子必须重新排上提醒")
+    }
+
+    /// 通知层出问题时，库里的数据不受影响——恢复成功是既成事实。
+    func testLoadFailureDoesNotAlterStoredData() async throws {
+        _ = bean(name: "数据不受通知影响")
+        try context.save()
+
+        _ = await PostRestoreSync.reconcile(container: container, manager: manager) { _ in
+            throw BackupError.missingData
+        }
+
+        let stored = try ModelContext(container).fetch(FetchDescriptor<Bean>())
+        XCTAssertEqual(stored.count, 1)
+        XCTAssertEqual(stored.first?.name, "数据不受通知影响")
+    }
 }
 
 @MainActor

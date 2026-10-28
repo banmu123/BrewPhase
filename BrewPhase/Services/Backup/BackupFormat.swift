@@ -158,9 +158,20 @@ enum BackupPreferenceSchema {
 
 /// 备份文件的体积策略。
 ///
-/// 三个数字必须分开看：附件原始字节、JSON 文件实际字节（Base64 会放大约 4/3）、
-/// 读取时的内存峰值（文件 + 解码结果，约 2 倍）。写入前先用保守估计挡住明显
-/// 超限的组合，写完后再次核对真实文件大小——保证「写成功的备份一定读得回来」。
+/// 三个数字必须分开看，不能互相替代：
+/// * **磁盘文件大小** `maxFileBytes`：读取端在解码之前先看它；
+/// * **附件原始字节** `maxAttachmentBytes`：Base64 编码后变成约 4/3；
+/// * **解码峰值**：整文件解码时，映射的文件、解码后的附件、中间的 Base64 字符串
+///   会同时存在，约为 `fileBytes + attachmentBytes × 2.3`。
+///
+/// 上限依据（iOS 18 起最低支持 iPhone XS 一档，3–4 GB 内存）：
+/// 80 MB 原图 → 文件约 107 MB → 峰值约 107 + 184 ≈ 290 MB，仍在前台一次
+/// 操作可承受的量级；把上限放到 256 MB 时同口径峰值会到 700 MB 以上，
+/// 在小内存机型上不可接受，因此本轮收紧。
+///
+/// 图片由 `ImageStore` 压到最长边 1400 px、质量 0.8 再落盘，单张通常
+/// 150–500 KB，80 MB 对应几百张照片，远超个人豆仓的实际用量。
+/// 这些是**估算**：未在真机上做过峰值实测，见交付报告中的「未执行」清单。
 struct BackupSizeLimits: Equatable {
     /// 读取端硬上限，也是生成端的最终上限。
     var maxFileBytes: Int
@@ -168,14 +179,14 @@ struct BackupSizeLimits: Equatable {
     var maxAttachmentBytes: Int
     /// 单张图片上限，避免一次解码就把内存顶满。
     var maxSingleAttachmentBytes: Int
-    /// JSON 结构本身的余量（键名、标点、记录字段）。测试可设为 0 精确验证边界。
+    /// JSON 结构本身的余量（键名、标点、记录字段、偏好段）。测试可设为 0 精确验证边界。
     var overheadBytes: Int
 
     static let standard = BackupSizeLimits(
-        maxFileBytes: 256 * 1024 * 1024,
-        maxAttachmentBytes: 160 * 1024 * 1024,
-        maxSingleAttachmentBytes: 32 * 1024 * 1024,
-        overheadBytes: 8 * 1024
+        maxFileBytes: 128 * 1024 * 1024,
+        maxAttachmentBytes: 80 * 1024 * 1024,
+        maxSingleAttachmentBytes: 16 * 1024 * 1024,
+        overheadBytes: 16 * 1024
     )
 }
 
@@ -209,6 +220,14 @@ enum BackupSizePolicy {
     /// 写完之后核对真实文件大小：估计再保守，也要以磁盘上的字节为准。
     static func validateFinalFileSize(_ bytes: Int, limits: BackupSizeLimits = .standard) throws {
         guard bytes <= limits.maxFileBytes else { throw BackupError.fileTooLarge }
+    }
+
+    /// 读取峰值的保守估算（只用于文档与测试断言，不参与准入判断）。
+    ///
+    /// 解码时同时驻留的三部分：映射的文件、Base64 字符串、解码后的附件。
+    /// 系数 2.3 = 附件原字节 ×（4/3 的 Base64 + 1 份解码结果）。
+    static func estimatedReadPeakBytes(fileBytes: Int, attachmentBytes: Int) -> Int {
+        fileBytes + attachmentBytes * 23 / 10
     }
 }
 

@@ -372,6 +372,46 @@ final class BackupTests: XCTestCase {
         try expectFailure(file, "白名单键既没有值也不在 unset 里，必须拒绝", expecting: .missingData)
     }
 
+    /// 写入端不能写出一份自己读不回来的文件：偏好不完整时必须在建文件之前失败。
+    func testWriteRejectsIncompletePreferencesWithoutCreatingAFile() throws {
+        try seedBean()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BrewPhaseBackup", isDirectory: true)
+        let before = Set((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [])
+
+        XCTAssertThrowsError(
+            try BackupManager.write(try snapshot(),
+                                    preferences: .empty,
+                                    appVersion: "test-1.0",
+                                    imagesDirectory: sourceImages)
+        ) { error in
+            XCTAssertEqual(error as? BackupError, .missingData,
+                           "空偏好不应生成一个读取端必然拒绝的备份")
+        }
+
+        let after = Set((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [])
+        XCTAssertEqual(before, after, "被拒绝的写入不得留下半成品")
+    }
+
+    /// 生产路径的偏好快照（`BackupManager.preferences()`）必须天然满足 v2 契约，
+    /// 不能靠 UI 每次都记得传参来兜底。
+    func testProductionPreferencesSnapshotIsCompleteAndReadable() throws {
+        let name = "BackupTests-contract-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+
+        // 只设一个键，其余全部落在 unset——这正是「全新安装后立刻备份」的形状。
+        defaults.set(15.0, forKey: PrefKey.defaultDoseG)
+        let preferences = BackupManager.preferences(from: defaults)
+        XCTAssertNoThrow(try BackupManager.validatePreferences(preferences))
+        XCTAssertEqual(Set(preferences.values.keys).union(preferences.unset),
+                       Set(BackupPreferenceKeys.all))
+
+        try seedBean()
+        let (file, _) = try makeBackup(preferences: preferences)
+        XCTAssertEqual(file.preferences, preferences, "偏好段必须原样往返")
+    }
+
     // MARK: - 异常备份
 
     private func expectFailure(_ file: BackupFile,
@@ -494,6 +534,55 @@ final class BackupTests: XCTestCase {
         let after = try Data(contentsOf: targetImages.appendingPathComponent(name))
         XCTAssertEqual(before, after, "内容不同的同名图片不能被备份覆盖")
         XCTAssertTrue(try targetBeans().isEmpty, "失败时不得写入任何数据")
+    }
+
+    /// 恢复后关闭容器再重新打开（等价于重启 App），数据仍在。
+    /// 这是**模型层的持久化验证**，不是 UI 验收。
+    func testRestoredDataSurvivesContainerReopen() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BackupReopen-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let images = root.appendingPathComponent("Images", isDirectory: true)
+        try FileManager.default.createDirectory(at: images, withIntermediateDirectories: true)
+
+        let schema = Schema([Bean.self, Brew.self, Tasting.self, PhaseReminder.self, PhaseRule.self])
+        let sourceURL = root.appendingPathComponent("source.store")
+        let source = try ModelContainer(
+            for: schema,
+            configurations: [ModelConfiguration(schema: schema, url: sourceURL)]
+        )
+
+        let sourceContext = ModelContext(source)
+        let bean = Bean(name: "持久化", roastLevel: .light, roastDate: Date())
+        sourceContext.insert(bean)
+        sourceContext.insert(Brew(method: "V60", coffeeG: 15, waterG: 250, bean: bean))
+        try sourceContext.save()
+
+        let data = BackupManager.snapshot(
+            beans: try sourceContext.fetch(FetchDescriptor<Bean>()), rules: []
+        )
+        let url = try BackupManager.write(data, preferences: allUnsetPreferences(),
+                                          appVersion: "test-1.0", imagesDirectory: images)
+        let file = try BackupManager.read(from: url)
+
+        let targetURL = root.appendingPathComponent("target.store")
+        let target = try ModelContainer(
+            for: schema,
+            configurations: [ModelConfiguration(schema: schema, url: targetURL)]
+        )
+        _ = try BackupRestorer.restore(file, into: target, imagesDirectory: images)
+
+        // 重新打开同一个库文件：数据与关系都必须还在。
+        let reopened = try ModelContainer(
+            for: schema,
+            configurations: [ModelConfiguration(schema: schema, url: targetURL)]
+        )
+        let stored = try ModelContext(reopened).fetch(FetchDescriptor<Bean>())
+        XCTAssertEqual(stored.count, 1)
+        XCTAssertEqual(stored.first?.name, "持久化")
+        XCTAssertEqual(stored.first?.brews?.count, 1, "重启后冲煮记录必须仍挂在豆子上")
     }
 
     // MARK: - 版本与逐字段校验
@@ -644,6 +733,46 @@ final class BackupTests: XCTestCase {
         XCTAssertNotEqual(first, second, "同一秒生成两份不能互相覆盖")
         XCTAssertTrue(FileManager.default.fileExists(atPath: first.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: second.path))
+    }
+
+    /// 上限之间的关系与解码峰值估算：只断言数字，不分配大内存。
+    func testStandardLimitsKeepDecodedPeakWithinBudget() {
+        let limits = BackupSizeLimits.standard
+        XCTAssertLessThan(limits.maxAttachmentBytes, limits.maxFileBytes)
+        XCTAssertLessThan(limits.maxSingleAttachmentBytes, limits.maxAttachmentBytes)
+
+        // 最坏情况：文件顶到上限，附件也顶到上限。
+        let peak = BackupSizePolicy.estimatedReadPeakBytes(fileBytes: limits.maxFileBytes,
+                                                           attachmentBytes: limits.maxAttachmentBytes)
+        XCTAssertLessThanOrEqual(peak, 400 * 1024 * 1024,
+                                 "标准上限下的解码峰值估算需留在小内存设备可承受的范围")
+
+        // 导出端用同一组数字：附件顶满时估算出的 JSON 仍必须落进文件上限。
+        let estimated = BackupSizePolicy.estimatedJSONBytes(
+            attachmentBytes: limits.maxAttachmentBytes,
+            dataBytes: 0,
+            overheadBytes: limits.overheadBytes
+        )
+        XCTAssertLessThanOrEqual(estimated, limits.maxFileBytes)
+    }
+
+    /// 单张图片超限必须在写文件之前被挡住。
+    func testSingleAttachmentOverLimitIsRejected() throws {
+        let name = "\(UUID().uuidString).jpg"
+        try writeImage(named: name, into: sourceImages)
+        try seedBean(imageName: name)
+
+        let limits = BackupSizeLimits(maxFileBytes: 64 * 1024 * 1024,
+                                      maxAttachmentBytes: 64 * 1024 * 1024,
+                                      maxSingleAttachmentBytes: 1,
+                                      overheadBytes: 0)
+        XCTAssertThrowsError(try BackupManager.write(try snapshot(),
+                                                     preferences: allUnsetPreferences(),
+                                                     appVersion: "t",
+                                                     imagesDirectory: sourceImages,
+                                                     limits: limits)) { error in
+            XCTAssertEqual(error as? BackupError, .attachmentTooLarge)
+        }
     }
 
     // MARK: - 设备状态不进入备份
