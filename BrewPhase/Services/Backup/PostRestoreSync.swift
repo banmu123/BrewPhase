@@ -14,8 +14,11 @@ import SwiftData
 enum PostRestoreSync {
 
     enum Outcome: Equatable {
-        /// 已按恢复后的数据重排。
+        /// 数据读取成功，所有该排的提醒都被系统受理。
         case reconciled
+        /// 数据读到了、协调也跑了，但有一条或多条提醒没能排上。
+        /// 数据已经恢复；缺失的提醒会在下次启动时重新计算。
+        case partialFailure
         /// 读不到恢复后的数据：系统通知保持原样，等下次启动自愈。
         case dataUnavailable
     }
@@ -46,11 +49,13 @@ enum PostRestoreSync {
             return .dataUnavailable
         }
 
-        await manager.reconcileAfterRestore(
+        // 协调层已经把「清了什么、排上几条、失败几条」写进日志；这里只把
+        // 结论交给调用方，避免 UI 把「部分失败」当成「完全成功」。
+        let report = await manager.reconcileAfterRestore(
             beans: beans,
             book: PhaseRuleBook.make(stored: rules),
             context: context
         )
-        return .reconciled
+        return report.isComplete ? .reconciled : .partialFailure
     }
 }

@@ -160,18 +160,22 @@ enum BackupPreferenceSchema {
 ///
 /// 三个数字必须分开看，不能互相替代：
 /// * **磁盘文件大小** `maxFileBytes`：读取端在解码之前先看它；
-/// * **附件原始字节** `maxAttachmentBytes`：Base64 编码后变成约 4/3；
-/// * **解码峰值**：整文件解码时，映射的文件、解码后的附件、中间的 Base64 字符串
-///   会同时存在，约为 `fileBytes + attachmentBytes × 2.3`。
+/// * **附件原始字节** `maxAttachmentBytes`：Base64 编码后变成 `4 × ceil(n / 3)`；
+/// * **解码峰值**：整文件解码时，文件本身、Base64 文本、解码后的附件同时在内存里，
+///   约等于 `fileBytes + attachmentBytes + base64Bytes`。
 ///
 /// 上限依据（iOS 18 起最低支持 iPhone XS 一档，3–4 GB 内存）：
-/// 80 MB 原图 → 文件约 107 MB → 峰值约 107 + 184 ≈ 290 MB，仍在前台一次
-/// 操作可承受的量级；把上限放到 256 MB 时同口径峰值会到 700 MB 以上，
-/// 在小内存机型上不可接受，因此本轮收紧。
+/// 80 MiB 原图 → Base64 约 106.7 MiB；数据段最多再用掉约 21.3 MiB，
+/// 文件顶到 128 MiB。三条独立约束同时取满时：
+/// `128 + 80 + 106.7 ≈ 314.7 MiB`（约 330 MB 十进制）——这是**估算上界**，
+/// 也是实际可达上界（用大段备注文本把数据段填满即可），不是实测值。
 ///
-/// 图片由 `ImageStore` 压到最长边 1400 px、质量 0.8 再落盘，单张通常
-/// 150–500 KB，80 MB 对应几百张照片，远超个人豆仓的实际用量。
-/// 这些是**估算**：未在真机上做过峰值实测，见交付报告中的「未执行」清单。
+/// 若上限放到 256 MB / 160 MB，同口径峰值约 629 MiB（256 + 160 + 213），
+/// 在小内存机型上不可接受，因此本轮收紧。图片由 `ImageStore` 压到最长边
+/// 1400 px、质量 0.8 再落盘，单张通常 150–500 KB，80 MiB 对应几百张照片，
+/// 远超个人豆仓的实际用量。
+///
+/// **真机峰值未实测**：这些是字节数推算，不是性能测量结果。
 struct BackupSizeLimits: Equatable {
     /// 读取端硬上限，也是生成端的最终上限。
     var maxFileBytes: Int
@@ -192,12 +196,26 @@ struct BackupSizeLimits: Equatable {
 
 enum BackupSizePolicy {
 
-    /// Base64 每 3 字节变 4 字符，另加记录结构与 JSON 标点的余量。
+    /// Base64 后的字节数：每 3 字节变 4 字符，向上取整。
+    /// 用 `(n + 2) / 3 * 4` 而不是先乘后除，避免小数被截断后低估。
+    /// 溢出时饱和到 `Int.max`——调用方的比较会把饱和值判为超限。
+    static func base64Bytes(_ raw: Int) -> Int {
+        guard raw > 0 else { return 0 }
+        let (padded, overflow) = raw.addingReportingOverflow(2)
+        guard !overflow else { return Int.max }
+        let (groups, multiplyOverflow) = (padded / 3).multipliedReportingOverflow(by: 4)
+        return multiplyOverflow ? Int.max : groups
+    }
+
+    /// JSON 文件大小估算：数据段 + Base64 附件 + 结构余量。
     static func estimatedJSONBytes(attachmentBytes: Int,
                                    dataBytes: Int,
                                    overheadBytes: Int = BackupSizeLimits.standard.overheadBytes) -> Int {
-        let encoded = (attachmentBytes / 3 + 1) * 4
-        return dataBytes + encoded + overheadBytes
+        let (encodedAndData, overflow) = base64Bytes(attachmentBytes)
+            .addingReportingOverflow(max(0, dataBytes))
+        guard !overflow else { return Int.max }
+        let (total, totalOverflow) = encodedAndData.addingReportingOverflow(max(0, overheadBytes))
+        return totalOverflow ? Int.max : total
     }
 
     static func validate(attachmentBytes: Int,
@@ -222,12 +240,19 @@ enum BackupSizePolicy {
         guard bytes <= limits.maxFileBytes else { throw BackupError.fileTooLarge }
     }
 
-    /// 读取峰值的保守估算（只用于文档与测试断言，不参与准入判断）。
+    /// 读取峰值的保守估算（只用于文档与测试断言，**不参与准入判断**，也不是实测值）。
     ///
-    /// 解码时同时驻留的三部分：映射的文件、Base64 字符串、解码后的附件。
-    /// 系数 2.3 = 附件原字节 ×（4/3 的 Base64 + 1 份解码结果）。
+    /// 解码时同时驻留的三部分：文件本身（已含 Base64 文本）、JSONDecoder 展开的
+    /// Base64 字符串、解码后的附件原始字节：
+    /// `fileBytes + base64Bytes(attachmentBytes) + attachmentBytes`。
+    ///
+    /// 标准上限下取满：128 MiB + 106.7 MiB + 80 MiB ≈ 314.7 MiB。
     static func estimatedReadPeakBytes(fileBytes: Int, attachmentBytes: Int) -> Int {
-        fileBytes + attachmentBytes * 23 / 10
+        let raw = max(0, attachmentBytes)
+        let (fileAndRaw, overflow) = max(0, fileBytes).addingReportingOverflow(raw)
+        guard !overflow else { return Int.max }
+        let (peak, peakOverflow) = fileAndRaw.addingReportingOverflow(base64Bytes(raw))
+        return peakOverflow ? Int.max : peak
     }
 }
 

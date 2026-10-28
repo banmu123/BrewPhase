@@ -51,7 +51,8 @@ final class NotificationReconcileTests: XCTestCase {
 
     private var book: PhaseRuleBook { PhaseRuleBook.make(stored: []) }
 
-    private func reconcile(_ beans: [Bean], preferences: ReminderPreferences = .allEnabled) async {
+    private func reconcile(_ beans: [Bean],
+                           preferences: ReminderPreferences = .allEnabled) async -> NotificationManager.SyncReport {
         await manager.reconcileAfterRestore(beans: beans, book: book, context: context,
                                             preferences: preferences)
     }
@@ -112,11 +113,13 @@ final class NotificationReconcileTests: XCTestCase {
         let survivor = bean(name: "无权限")
         XCTAssertEqual((survivor.reminders ?? []).count, 1)
 
-        await reconcile([survivor])
+        let report = await reconcile([survivor])
 
         XCTAssertTrue(scheduler.addedIdentifiers.isEmpty, "未授权时不得排程")
         XCTAssertEqual((survivor.reminders ?? []).count, 0, "未授权时也不能留下与系统不一致的提醒行")
         XCTAssertEqual(scheduler.requestAuthorizationCalls, 0, "恢复不得触发权限申请")
+        XCTAssertTrue(report.isComplete, "未授权属于既定业务状态，不算排程失败")
+        XCTAssertTrue(report.added.isEmpty)
     }
 
     func testAllRemindersDisabledByRestoredPreferences() async throws {
@@ -149,6 +152,82 @@ final class NotificationReconcileTests: XCTestCase {
         XCTAssertEqual(scheduler.addedIdentifiers.count,
                        Set(scheduler.addedIdentifiers).count,
                        "同一次协调里同一标识不能排两次")
+    }
+
+    // MARK: - 排程结果
+
+    func testAllRemindersScheduledReportsComplete() async throws {
+        let survivor = bean(name: "全部成功")
+        let report = await reconcile([survivor])
+
+        XCTAssertTrue(report.isComplete)
+        XCTAssertTrue(report.clearedAllPending)
+        XCTAssertTrue(report.failed.isEmpty)
+        XCTAssertEqual(report.added.count, (survivor.reminders ?? []).count)
+        XCTAssertEqual(Set(report.added), Set(scheduler.addedIdentifiers))
+    }
+
+    func testSingleRefusedReminderReportsPartialFailure() async {
+        let survivor = bean(name: "一条失败")
+        scheduler.shouldFail = { $0.hasSuffix(".\(ReminderKind.windowOpens.rawValue)") }
+
+        let report = await reconcile([survivor])
+
+        XCTAssertFalse(report.isComplete)
+        XCTAssertEqual(report.failed.count, 1, "只应有一条被系统拒绝")
+        XCTAssertGreaterThan(report.added.count, 0, "其余提醒仍应排上")
+        XCTAssertEqual(report.added.count + report.failed.count,
+                       scheduler.attemptedIdentifiers.count)
+        XCTAssertEqual((survivor.reminders ?? []).count, report.added.count,
+                       "库里只能有系统确认受理的提醒行")
+    }
+
+    /// 协调层返回的状态必须是 UI 实际使用的状态。
+    func testPartialFailureIsSurfacedToRestoreFlow() async throws {
+        _ = bean(name: "部分失败")
+        try context.save()
+        scheduler.shouldFail = { $0.hasSuffix(".\(ReminderKind.windowOpens.rawValue)") }
+
+        let outcome = await PostRestoreSync.reconcile(container: container, manager: manager)
+
+        XCTAssertEqual(outcome, .partialFailure, "UI 必须看到部分失败，而不是成功")
+    }
+
+    func testCompleteReconcileIsSurfacedAsReconciled() async throws {
+        _ = bean(name: "全成功")
+        try context.save()
+
+        let outcome = await PostRestoreSync.reconcile(container: container, manager: manager)
+
+        XCTAssertEqual(outcome, .reconciled)
+    }
+
+    /// 第一次被系统拒绝的提醒，下一次协调能够补上（启动自愈路径）。
+    func testNextReconcileRecoversFailedReminder() async {
+        let survivor = bean(name: "可恢复")
+        scheduler.shouldFail = { $0.hasSuffix(".\(ReminderKind.windowOpens.rawValue)") }
+        let first = await reconcile([survivor])
+        XCTAssertEqual(first.failed.count, 1)
+
+        scheduler.shouldFail = nil
+        let second = await reconcile([survivor])
+
+        XCTAssertTrue(second.isComplete)
+        XCTAssertTrue(second.added.contains { $0.hasSuffix(".\(ReminderKind.windowOpens.rawValue)") })
+        XCTAssertTrue(scheduler.pending.contains { $0.hasSuffix(".\(ReminderKind.windowOpens.rawValue)") })
+    }
+
+    /// 通知失败不能把已经成功的恢复说成回滚。
+    func testPartialFailureDoesNotUndoRestoredData() async throws {
+        _ = bean(name: "数据仍在新库")
+        try context.save()
+        scheduler.shouldFail = { _ in true }
+
+        let outcome = await PostRestoreSync.reconcile(container: container, manager: manager)
+
+        XCTAssertEqual(outcome, .partialFailure)
+        let stored = try ModelContext(container).fetch(FetchDescriptor<Bean>())
+        XCTAssertEqual(stored.count, 1, "数据已恢复是既成事实，不因通知失败回退")
     }
 
     // MARK: - 恢复后的读取顺序
@@ -201,8 +280,11 @@ private final class FakeScheduler: NotificationScheduling {
 
     var status: UNAuthorizationStatus = .authorized
     var pending: Set<String> = []
+    /// 返回 true 的标识在 add 时抛错，用来模拟系统拒绝某条提醒。
+    var shouldFail: ((String) -> Bool)?
     private(set) var removedAllCount = 0
     private(set) var addedIdentifiers: [String] = []
+    private(set) var attemptedIdentifiers: [String] = []
     private(set) var requestAuthorizationCalls = 0
 
     func notificationStatus() async -> UNAuthorizationStatus { status }
@@ -222,6 +304,11 @@ private final class FakeScheduler: NotificationScheduling {
     }
 
     func add(_ request: UNNotificationRequest) async throws {
+        attemptedIdentifiers.append(request.identifier)
+        if shouldFail?(request.identifier) == true {
+            throw NSError(domain: "FakeScheduler", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "system refused"])
+        }
         addedIdentifiers.append(request.identifier)
         pending.insert(request.identifier)
     }

@@ -365,9 +365,14 @@ struct BackupView: View {
 
                 // 数据库已经替换成功；现在才动系统通知。
                 // PostRestoreSync 会先用新上下文读取恢复后的数据，读不到就在
-                // 清理通知之前停下（通知保持原样，下次启动兜底），并明确返回
-                // `.dataUnavailable`——绝不把「通知没同步」说成「恢复失败」。
-                if await PostRestoreSync.reconcile(container: container) == .dataUnavailable {
+                // 清理通知之前停下（通知保持原样，下次启动兜底）。三种结论分别提示，
+                // 都**不**把它说成「恢复失败」——数据可能已经成功替换。
+                switch await PostRestoreSync.reconcile(container: container) {
+                case .reconciled:
+                    break
+                case .partialFailure:
+                    notificationWarning = L("数据已恢复，但部分提醒未能安排；App 下次启动时会重新检查。")
+                case .dataUnavailable:
                     notificationWarning = L("数据已恢复，但提醒没有重新排程。下次打开 App 会再试一次。")
                 }
 

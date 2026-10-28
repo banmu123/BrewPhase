@@ -741,19 +741,71 @@ final class BackupTests: XCTestCase {
         XCTAssertLessThan(limits.maxAttachmentBytes, limits.maxFileBytes)
         XCTAssertLessThan(limits.maxSingleAttachmentBytes, limits.maxAttachmentBytes)
 
-        // 最坏情况：文件顶到上限，附件也顶到上限。
-        let peak = BackupSizePolicy.estimatedReadPeakBytes(fileBytes: limits.maxFileBytes,
-                                                           attachmentBytes: limits.maxAttachmentBytes)
-        XCTAssertLessThanOrEqual(peak, 400 * 1024 * 1024,
+        // 独立约束上界（也是可达上界：用大段备注把数据段填满即可）。
+        let attachments = limits.maxAttachmentBytes
+        let expectedBase64 = ((attachments + 2) / 3) * 4
+        let expectedPeak = limits.maxFileBytes + attachments + expectedBase64
+
+        XCTAssertEqual(BackupSizePolicy.base64Bytes(attachments), expectedBase64)
+        XCTAssertEqual(
+            BackupSizePolicy.estimatedReadPeakBytes(fileBytes: limits.maxFileBytes,
+                                                    attachmentBytes: attachments),
+            expectedPeak
+        )
+        // 314.7 MiB 量级，不是 291 MB：文件顶满 128 MiB 时峰值必须按 128 算。
+        XCTAssertGreaterThan(expectedPeak, 300 * 1024 * 1024)
+        XCTAssertLessThanOrEqual(expectedPeak, 400 * 1024 * 1024,
                                  "标准上限下的解码峰值估算需留在小内存设备可承受的范围")
 
         // 导出端用同一组数字：附件顶满时估算出的 JSON 仍必须落进文件上限。
         let estimated = BackupSizePolicy.estimatedJSONBytes(
-            attachmentBytes: limits.maxAttachmentBytes,
+            attachmentBytes: attachments,
             dataBytes: 0,
             overheadBytes: limits.overheadBytes
         )
         XCTAssertLessThanOrEqual(estimated, limits.maxFileBytes)
+    }
+
+    /// Base64 长度按 `4 × ceil(n / 3)` 精确取整，溢出饱和而不是回绕成负数。
+    func testPeakEstimateRoundsUpAndSaturates() {
+        XCTAssertEqual(BackupSizePolicy.base64Bytes(0), 0)
+        XCTAssertEqual(BackupSizePolicy.base64Bytes(1), 4)
+        XCTAssertEqual(BackupSizePolicy.base64Bytes(2), 4)
+        XCTAssertEqual(BackupSizePolicy.base64Bytes(3), 4)
+        XCTAssertEqual(BackupSizePolicy.base64Bytes(4), 8)
+
+        XCTAssertEqual(BackupSizePolicy.estimatedReadPeakBytes(fileBytes: 0, attachmentBytes: 0), 0)
+        XCTAssertEqual(BackupSizePolicy.estimatedReadPeakBytes(fileBytes: 1, attachmentBytes: 1), 6)
+        XCTAssertEqual(BackupSizePolicy.estimatedReadPeakBytes(fileBytes: 0, attachmentBytes: 3), 7)
+        XCTAssertEqual(BackupSizePolicy.estimatedReadPeakBytes(fileBytes: 0, attachmentBytes: 4), 12)
+
+        // 负值按 0 处理，不产生「负峰值」这种无意义结果。
+        XCTAssertEqual(BackupSizePolicy.estimatedReadPeakBytes(fileBytes: -1, attachmentBytes: -1), 0)
+
+        // 极端输入饱和到 Int.max，调用方的 `<= maxFileBytes` 会判为超限。
+        XCTAssertEqual(BackupSizePolicy.base64Bytes(Int.max), Int.max)
+        XCTAssertEqual(BackupSizePolicy.estimatedReadPeakBytes(fileBytes: Int.max,
+                                                               attachmentBytes: Int.max), Int.max)
+        XCTAssertEqual(BackupSizePolicy.estimatedJSONBytes(attachmentBytes: Int.max,
+                                                           dataBytes: Int.max), Int.max)
+    }
+
+    /// 含 1 MB 级附件的往返：验证 Base64 体积记账在真实数据上也成立。
+    func testLargerAttachmentStaysWithinLimitsAndRoundTrips() throws {
+        let name = "\(UUID().uuidString).jpg"
+        let bytes = Data(repeating: 0xAB, count: 1_100_000)
+        try bytes.write(to: sourceImages.appendingPathComponent(name))
+        try seedBean(imageName: name)
+
+        let (file, url) = try makeBackup()
+        let size = try XCTUnwrap(url.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+        XCTAssertLessThanOrEqual(size, BackupSizeLimits.standard.maxFileBytes)
+        XCTAssertGreaterThan(size, 1_100_000, "Base64 后应大于原始字节")
+        XCTAssertEqual(file.attachments.first?.data, bytes, "附件字节必须原样往返")
+
+        _ = try BackupRestorer.restore(file, into: target, imagesDirectory: targetImages)
+        let restored = try Data(contentsOf: targetImages.appendingPathComponent(name))
+        XCTAssertEqual(restored, bytes)
     }
 
     /// 单张图片超限必须在写文件之前被挡住。

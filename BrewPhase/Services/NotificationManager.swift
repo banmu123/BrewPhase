@@ -11,6 +11,26 @@ import UserNotifications
 @MainActor
 final class NotificationManager {
 
+    /// 一次排程尝试的结果。
+    ///
+    /// `added` 只包含**系统确认受理**的标识：只有 add 成功之后才写提醒行，
+    /// 所以库里「有行」和系统「有请求」始终一致。`failed` 里的提醒不会留下
+    /// 半真半假的记录，下次启动 `refreshAll` 会重新计算并补排。
+    struct SyncReport: Equatable {
+        /// 是否已清空本 App 的全部待送达请求（只有恢复协调会做这件事）。
+        var clearedAllPending = false
+        var added: [String] = []
+        var failed: [String] = []
+
+        var isComplete: Bool { failed.isEmpty }
+
+        mutating func absorb(_ other: SyncReport) {
+            clearedAllPending = clearedAllPending || other.clearedAllPending
+            added.append(contentsOf: other.added)
+            failed.append(contentsOf: other.failed)
+        }
+    }
+
     static let shared = NotificationManager()
 
     private let scheduler: NotificationScheduling
@@ -86,6 +106,7 @@ final class NotificationManager {
     /// Idempotent by construction: all of the bag's identifiers are removed
     /// first, and the planner emits each kind at most once, so calling this twice
     /// cannot produce two notifications for the same moment (§39).
+    @discardableResult
     func sync(
         bean: Bean,
         rule: PhaseRuleData,
@@ -93,7 +114,8 @@ final class NotificationManager {
         context: ModelContext,
         preferences: ReminderPreferences = .current(),
         now: Date = Date()
-    ) async {
+    ) async -> SyncReport {
+        var report = SyncReport()
         let ids = NotificationPlanner.allIdentifiers(beanID: bean.id)
         scheduler.removePending(identifiers: ids)
 
@@ -103,13 +125,13 @@ final class NotificationManager {
 
         guard let roastDate = bean.roastDate else {
             commit(context, note: "cleared bag without roast date")
-            return
+            return report
         }
 
         guard preferences.allowsAny else {
             commit(context, note: "cleared bag with reminders disabled")
             AppLog.notifications.debug("all reminders disabled; cleared bag")
-            return
+            return report
         }
 
         let planned = NotificationPlanner.plan(
@@ -128,7 +150,7 @@ final class NotificationManager {
             // lie about what the app will actually do.
             commit(context, note: "cleared bag without notification permission")
             AppLog.notifications.debug("not authorized; planned \(planned.count) but scheduled none")
-            return
+            return report
         }
 
         for plan in planned {
@@ -137,13 +159,18 @@ final class NotificationManager {
                 let row = PhaseReminder(kind: plan.kind, fireDate: plan.fireDate,
                                         identifier: plan.identifier, bean: bean)
                 context.insert(row)
+                report.added.append(plan.identifier)
             } catch {
+                // 系统拒绝的不写行：宁可在库里缺这一条、下次启动重试，
+                // 也不能让导出显示一条其实永远不会响的提醒。
+                report.failed.append(plan.identifier)
                 AppLog.notifications.error("failed to schedule \(plan.identifier, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
 
         commit(context, note: "reminder rows for \(bean.name)")
-        AppLog.notifications.info("scheduled \(planned.count) reminder(s) for \(bean.name, privacy: .public)")
+        AppLog.notifications.info("scheduled \(report.added.count)/\(planned.count) reminder(s) for \(bean.name, privacy: .public)")
+        return report
     }
 
     /// Removes a bag's reminders, both from the system and from the store. Called
@@ -175,23 +202,27 @@ final class NotificationManager {
     /// This is also the recovery path for a bag whose window moved because the
     /// user edited its rule, and for stale reminders left over from a previous
     /// version of the rules.
+    @discardableResult
     func refreshAll(
         beans: [Bean],
         book: PhaseRuleBook,
         context: ModelContext,
         preferences: ReminderPreferences = .current()
-    ) async {
+    ) async -> SyncReport {
         await refreshStatus()
 
+        var report = SyncReport()
         for bean in beans where !bean.isFinished {
             guard bean.roastDate != nil else { continue }
             let insight = InsightFactory.insight(for: bean, book: book)
-            await sync(bean: bean,
-                       rule: book.rule(for: bean.roastLevel),
-                       estimate: insight.estimate,
-                       context: context,
-                       preferences: preferences)
+            let one = await sync(bean: bean,
+                                 rule: book.rule(for: bean.roastLevel),
+                                 estimate: insight.estimate,
+                                 context: context,
+                                 preferences: preferences)
+            report.absorb(one)
         }
+        return report
     }
 
     // MARK: - 恢复备份之后
@@ -209,12 +240,13 @@ final class NotificationManager {
     ///    它们，若不清就会留下与规则不一致的陈旧行；
     /// 3. 按恢复后的豆子、规则、偏好与当前授权状态重新排程。未授权时只清不排，
     ///    不触发权限申请。
+    @discardableResult
     func reconcileAfterRestore(
         beans: [Bean],
         book: PhaseRuleBook,
         context: ModelContext,
         preferences: ReminderPreferences = .current()
-    ) async {
+    ) async -> SyncReport {
         await refreshStatus()
         AppLog.notifications.info("reconciling notifications after restore")
 
@@ -226,8 +258,21 @@ final class NotificationManager {
         }
         commit(context, note: "cleared derived reminders after restore")
 
-        await refreshAll(beans: beans, book: book, context: context, preferences: preferences)
-        AppLog.notifications.info("notification reconciliation finished")
+        var report = await refreshAll(beans: beans, book: book, context: context,
+                                      preferences: preferences)
+        report.clearedAllPending = true
+
+        // 一条日志说清「清了什么、排上了什么、失败了几条」——排查提醒丢失时
+        // 这是唯一能还原现场的地方。失败明细在 `sync` 里逐条记过。
+        AppLog.notifications.info(
+            "notification reconciliation finished: clearedAll=\(report.clearedAllPending), added=\(report.added.count), failed=\(report.failed.count)"
+        )
+        if !report.isComplete {
+            AppLog.notifications.error(
+                "some reminders could not be scheduled; they will be retried on next launch"
+            )
+        }
+        return report
     }
 
     /// How many reminders are actually waiting, for the settings screen.

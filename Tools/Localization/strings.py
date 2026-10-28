@@ -1176,6 +1176,8 @@ EN: dict[str, str] = {
     "好的": "OK",
     "数据已恢复，但提醒没有重新排程。下次打开 App 会再试一次。":
         "Your data was restored, but reminders were not rescheduled. The app will try again the next time it opens.",
+    "数据已恢复，但部分提醒未能安排；App 下次启动时会重新检查。":
+        "Your data was restored, but some reminders could not be scheduled. The app will check again the next time it opens.",
     "没能打开这个文件，请再选一次。": "That file could not be opened. Please choose it again.",
     "这个文件打不开，可能已经被移动或删除。": "This file cannot be opened. It may have been moved or deleted.",
     "备份文件过大，这台设备无法安全地打开它。": "The backup is too large for this device to open safely.",
