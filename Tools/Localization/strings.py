@@ -336,6 +336,7 @@ EN: dict[str, str] = {
     "这些内容模型不认识，没有参与预测：%@": "The model did not recognise these, so they took no part in the estimate: %@",
     "模型用合成数据训练，结果只是估算，不能当成真实规律。": "The model was trained on synthetic data. This is only an estimate, not a real pattern.",
     "没有开封日期，开封时间按最早一次冲煮记录推算。": "There is no open date, so the bag is taken as opened at the first brew you recorded.",
+    "没有开封日期，也没有可用的冲煮记录，本次预测按未开封处理。": "No open date and no usable brew record to infer one from — this estimate treats the bag as still sealed.",
     "实验性风味预测": "Experimental flavour prediction",
     "用合成数据训练的模型估算每包豆子的最佳风味窗口": "Estimate each bag's best flavour window with a model trained on synthetic data",
     "预计风味窗口已经关掉，详情页不会显示它。": "The estimated flavour window is switched off, so it will not appear on the bean page.",

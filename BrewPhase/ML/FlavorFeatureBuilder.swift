@@ -74,6 +74,18 @@ enum FlavorOpenBasis: Equatable, Hashable, Sendable {
     var isInferred: Bool { self != .openDate }
 }
 
+/// 开封日的来路要不要向用户说明，以及说明哪一种。
+///
+/// 单独拎出来是为了两件事：`.openDate` 明确不显示（没有推断，就不该出现警告），
+/// 而 `.assumedSealed` 必须有话说——没有它，用户看到的只是一条「按未开封算」的
+/// 曲线，却不知道这个前提是猜的。视图只负责把这里的选择排成文字。
+enum FlavorOpenBasisNote: Equatable, Sendable {
+    /// 没有开封日期，按最早一次冲煮记录推算。
+    case inferredFromFirstBrew
+    /// 没有开封日期，也没有可用冲煮记录，按一直封着处理。
+    case assumedSealed
+}
+
 /// 这一次预测里哪些资料没派上用场。存在的意义只有一个：**让缺失可见**。
 ///
 /// 一份「85 个特征里 40 个是填出来的」的预测，和一份资料齐全的预测，算出来的
@@ -106,6 +118,15 @@ struct FlavorDiagnostics: Equatable, Sendable {
     var unavailableLabels: [String] { unavailable.map(FlavorFeatureLabel.label) }
 
     var unmatchedLabels: [String] { unmatched.map(FlavorFeatureLabel.label) }
+
+    /// 开封日来路对应的说明；`.openDate` 返回 nil，表示不该多显示一句。
+    var openBasisNote: FlavorOpenBasisNote? {
+        switch openBasis {
+        case .openDate: return nil
+        case .firstBrew: return .inferredFromFirstBrew
+        case .assumedSealed: return .assumedSealed
+        }
+    }
 }
 
 /// 特征的中文名。只服务于「哪些资料没派上用场」这一条说明。

@@ -506,6 +506,7 @@
 "水量约 %@" = "about %@ water";
 "水量还没填，粉水比会留空" = "No water yet, so the ratio stays blank";
 "没有名字的豆子" = "Unnamed bag";
+"没有开封日期，也没有可用的冲煮记录，本次预测按未开封处理。" = "No open date and no usable brew record to infer one from — this estimate treats the bag as still sealed.";
 "没有开封日期，开封时间按最早一次冲煮记录推算。" = "There is no open date, so the bag is taken as opened at the first brew you recorded.";
 "没有找到相似的记录" = "No similar records found";
 "没有烘焙日期" = "no roast date";

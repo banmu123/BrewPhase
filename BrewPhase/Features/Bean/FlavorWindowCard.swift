@@ -137,8 +137,8 @@ struct FlavorWindowCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if diagnostics.openBasis == .firstBrew {
-                Text("没有开封日期，开封时间按最早一次冲煮记录推算。")
+            if let note = diagnostics.openBasisNote {
+                Text(openBasisText(note))
                     .font(TypeScale.caption)
                     .foregroundStyle(Palette.inkFaint)
                     .fixedSize(horizontal: false, vertical: true)
@@ -152,6 +152,16 @@ struct FlavorWindowCard: View {
     }
 
     // MARK: - Status wording
+
+    /// 开封日的两种推断，各说各的前提；有真实开封日期时这里根本不会出现。
+    private func openBasisText(_ note: FlavorOpenBasisNote) -> String {
+        switch note {
+        case .inferredFromFirstBrew:
+            return L("没有开封日期，开封时间按最早一次冲煮记录推算。")
+        case .assumedSealed:
+            return L("没有开封日期，也没有可用的冲煮记录，本次预测按未开封处理。")
+        }
+    }
 
     private func statusText(_ status: FlavorWindowStatus) -> String {
         switch status {

@@ -581,4 +581,194 @@ final class FlavorDiagnosticsTests: XCTestCase {
         diagnostics.openBasis = .firstBrew
         XCTAssertFalse(diagnostics.isEmpty)
     }
+
+    // MARK: - 开封日说明
+
+    /// 三种来路对应三种呈现：真实日期不说话，两种推断各说各的前提。
+    func testOpenBasisNoteMapping() {
+        var diagnostics = FlavorDiagnostics()
+
+        diagnostics.openBasis = .openDate
+        XCTAssertNil(diagnostics.openBasisNote, "有真实开封日期时不该出现推断警告")
+
+        diagnostics.openBasis = .firstBrew
+        XCTAssertEqual(diagnostics.openBasisNote, .inferredFromFirstBrew)
+
+        diagnostics.openBasis = .assumedSealed
+        XCTAssertEqual(diagnostics.openBasisNote, .assumedSealed)
+    }
+}
+
+/// 预测卡刷新验收矩阵（场景 A/B/C）。
+///
+/// 这里验证的是**重算判据**：它必须随每一项有效输入变化，且只在有效输入变化时
+/// 变化。SwiftUI 的 `.task(id:)` 是否因此真的重新执行，属于视图运行期行为——
+/// 项目没有 UI Test target，这部分未被自动化覆盖（见交付说明的手工步骤）。
+final class FlavorRefreshAcceptanceTests: XCTestCase {
+
+    private func roast(_ daysAgo: Int) -> Date { DateMath.add(days: -daysAgo, to: Date()) }
+
+    private func bean(roastDaysAgo days: Int, openDaysAgo: Int? = nil) -> Bean {
+        Bean(name: "Test", roastLevel: .light,
+             roastDate: roast(days),
+             openDate: openDaysAgo.map { roast($0) },
+             weightG: 200, remainingG: 200)
+    }
+
+    private func token(_ bean: Bean, _ defaults: BrewDefaults = .standard) throws -> FlavorInput {
+        try XCTUnwrap(FlavorInputFactory.refreshToken(for: bean, defaults: defaults))
+    }
+
+    private var changedDefaults: BrewDefaults {
+        BrewDefaults(method: "爱乐压", doseG: 18, waterG: 280, waterTemp: 90)
+    }
+
+    // MARK: 场景 A：没有冲煮记录
+
+    func testA_NoBrewMeansDefaultsBecomeTheEffectiveInput() throws {
+        let input = try token(bean(roastDaysAgo: 10))
+        XCTAssertEqual(input.brewMethodText, BrewDefaults.standard.method)
+        XCTAssertEqual(input.doseG, BrewDefaults.standard.doseG)
+        XCTAssertEqual(input.waterWeightG, BrewDefaults.standard.waterG)
+        XCTAssertEqual(input.waterTempC, BrewDefaults.standard.waterTemp)
+        XCTAssertNil(input.brewTimeSeconds, "没有记录就没有时长，该走模型默认值")
+    }
+
+    /// 四个默认参数分别改，都要让判据变化——漏掉任何一个都意味着那一项改了不刷新。
+    func testA_EachDefaultParameterAloneChangesTheToken() throws {
+        let bean = self.bean(roastDaysAgo: 10)
+        let base = try token(bean)
+
+        let variants: [BrewDefaults] = [
+            BrewDefaults(method: "冷萃", doseG: base.doseG!,
+                         waterG: base.waterWeightG!, waterTemp: base.waterTempC!),
+            BrewDefaults(method: base.brewMethodText, doseG: 20,
+                         waterG: base.waterWeightG!, waterTemp: base.waterTempC!),
+            BrewDefaults(method: base.brewMethodText, doseG: base.doseG!,
+                         waterG: 300, waterTemp: base.waterTempC!),
+            BrewDefaults(method: base.brewMethodText, doseG: base.doseG!,
+                         waterG: base.waterWeightG!, waterTemp: 96),
+        ]
+        for (index, variant) in variants.enumerated() {
+            XCTAssertNotEqual(try token(bean, variant), base, "第 \(index) 个默认参数变化后判据未变")
+        }
+    }
+
+    func testA_RevertingDefaultsRestoresTheSameToken() throws {
+        let bean = self.bean(roastDaysAgo: 10)
+        let original = try token(bean)
+        _ = try token(bean, changedDefaults)
+        XCTAssertEqual(try token(bean), original, "改回原值应恢复同一份输入，直接命中缓存")
+    }
+
+    // MARK: 场景 B：已有冲煮记录
+
+    func testB_LatestBrewWinsAndDefaultsAreIgnored() throws {
+        let bean = self.bean(roastDaysAgo: 20)
+        let brew = Brew(date: roast(2), method: "V60", grinder: "C40", grindSize: "22",
+                        waterTemp: 93, coffeeG: 18, waterG: 300, timeSeconds: 150,
+                        score: 4, bean: bean)
+        bean.brews = [brew]
+
+        let fromDefaults = try token(bean, .standard)
+        let fromOther = try token(bean, changedDefaults)
+
+        XCTAssertEqual(fromDefaults, fromOther, "有记录时默认值不参与预测，改它不该重算")
+        XCTAssertEqual(fromDefaults.doseG, 18)
+        XCTAssertEqual(fromDefaults.waterWeightG, 300)
+        XCTAssertEqual(fromDefaults.waterTempC, 93)
+        XCTAssertEqual(fromDefaults.brewMethodText, "V60")
+    }
+
+    func testB_NewerBrewSwitchesTheEffectiveInput() throws {
+        let bean = self.bean(roastDaysAgo: 20)
+        let older = Brew(date: roast(5), method: "V60", coffeeG: 15, waterG: 240, bean: bean)
+        bean.brews = [older]
+        XCTAssertEqual(try token(bean).doseG, 15)
+
+        let newer = Brew(date: roast(1), method: "V60", coffeeG: 20, waterG: 320, bean: bean)
+        bean.brews = [older, newer]
+
+        let updated = try token(bean)
+        XCTAssertEqual(updated.doseG, 20, "应以最新一条记录为准")
+        XCTAssertEqual(updated.waterWeightG, 320)
+    }
+
+    func testB_EditingTheLatestBrewChangesTheToken() throws {
+        let bean = self.bean(roastDaysAgo: 20)
+        let brew = Brew(date: roast(2), method: "V60", coffeeG: 18, waterG: 300, bean: bean)
+        bean.brews = [brew]
+        let before = try token(bean)
+
+        brew.coffeeG = 22
+        brew.waterG = 350
+
+        let after = try token(bean)
+        XCTAssertNotEqual(before, after)
+        XCTAssertEqual(after.doseG, 22)
+        XCTAssertEqual(after.waterWeightG, 350)
+    }
+
+    /// 反向保护：与预测无关的编辑（备注、updatedAt）不该制造重算。
+    func testB_NonPredictiveEditsLeaveTheTokenAlone() throws {
+        let bean = self.bean(roastDaysAgo: 10)
+        let before = try token(bean)
+
+        bean.notes = "换了个包装"
+        bean.updatedAt = Date()
+
+        XCTAssertEqual(try token(bean), before)
+    }
+
+    // MARK: 场景 C：豆子日期改变
+
+    func testC_ChangingRoastDateUpdatesTheOpenDay() throws {
+        let bean = self.bean(roastDaysAgo: 20, openDaysAgo: 12)
+        let before = try token(bean)
+        XCTAssertEqual(before.openDayAfterRoast, 8)
+
+        bean.roastDate = roast(25)
+        let after = try token(bean)
+
+        XCTAssertNotEqual(before, after)
+        XCTAssertEqual(after.openDayAfterRoast, 13, "同一个开封日，烘焙日期推后，天数要跟着变")
+    }
+
+    func testC_ChangingOpenDateUpdatesTheToken() throws {
+        let bean = self.bean(roastDaysAgo: 20, openDaysAgo: 12)
+        let before = try token(bean)
+
+        bean.openDate = roast(15)
+        let after = try token(bean)
+
+        XCTAssertNotEqual(before, after)
+        XCTAssertEqual(after.openDayAfterRoast, 5)
+        XCTAssertEqual(after.openBasis, .openDate)
+    }
+
+    func testC_RemovingOpenDateFallsBackToTheFirstBrew() throws {
+        let bean = self.bean(roastDaysAgo: 20, openDaysAgo: 12)
+        let earliest = Brew(date: roast(16), method: "V60", coffeeG: 15, waterG: 240, bean: bean)
+        let latest = Brew(date: roast(2), method: "V60", coffeeG: 18, waterG: 300, bean: bean)
+        bean.brews = [earliest, latest]
+
+        bean.openDate = nil
+        let after = try token(bean)
+
+        XCTAssertEqual(after.openBasis, .firstBrew)
+        XCTAssertEqual(after.openDayAfterRoast, 4, "应回退到最早一次冲煮（烘焙后第 4 天）")
+    }
+
+    func testC_NoOpenDateAndNoUsableBrewMeansAssumedSealed() throws {
+        let bean = self.bean(roastDaysAgo: 10)
+        let input = try token(bean)
+
+        XCTAssertEqual(input.openBasis, .assumedSealed)
+        XCTAssertNil(input.openDayAfterRoast)
+
+        var diagnostics = FlavorDiagnostics()
+        diagnostics.openBasis = input.openBasis
+        XCTAssertEqual(diagnostics.openBasisNote, .assumedSealed,
+                       "界面这一步必须给出「按未开封处理」的说明")
+    }
 }
