@@ -249,6 +249,83 @@ final class ExportTests: XCTestCase {
         XCTAssertEqual(ExportManager.csvField("two\nlines"), "\"two\nlines\"")
     }
 
+    // MARK: - CSV formula injection
+
+    /// 危险的公式前缀必须先被中和，而不是「加个引号」就算完——引号不阻止执行。
+    func testFormulaPrefixesAreNeutralisedInTextFields() {
+        for raw in ["=1+1", "+SUM(A1)", "-2+3", "@SUM(A1)", "\t=1+1", "\r=1+1", "   =1+1"] {
+            XCTAssertTrue(ExportManager.neutralisedFormulaPrefix(raw).hasPrefix("'"), raw)
+            XCTAssertTrue(ExportManager.csvText(raw).contains("'" + raw)
+                          || ExportManager.csvText(raw).hasPrefix("\"'"), raw)
+        }
+    }
+
+    /// 普通文本、中文文本、显式引号等既有行为不能被这次改动碰坏。
+    func testOrdinaryTextIsLeftAloneByFormulaNeutralisation() {
+        for raw in ["Guji", "云南 · 保山", "茉莉 / 柑橘", "He said \"hi\"", "", "   "] {
+            XCTAssertFalse(ExportManager.neutralisedFormulaPrefix(raw).hasPrefix("'"), raw)
+        }
+        XCTAssertEqual(ExportManager.csvText("Guji, Ethiopia"), "\"Guji, Ethiopia\"")
+        XCTAssertEqual(ExportManager.csvText("Guji"), "Guji")
+    }
+
+    /// 数值列不是用户文本：负号、温度、小数都必须原样写出。
+    func testNumericFieldsKeepTheirSigns() {
+        XCTAssertEqual(CSVField.value("-3").csv, "-3")
+        XCTAssertEqual(CSVField.value("-92.5").csv, "-92.5")
+        XCTAssertEqual(CSVField.value("-12").csv, "-12")
+        // 同一个字符串落在文本列时仍然要中和：来路决定规则。
+        XCTAssertEqual(CSVField.text("-3").csv, "'-3")
+    }
+
+    /// 端到端：危险内容出现在豆子名称/烘焙商/备注时，CSV 中和、JSON 原样保留。
+    func testCSVNeutralisesUserTextButJSONKeepsOriginal() throws {
+        let bean = Bean(name: "=HYPERLINK(\"http://evil\",\"点我\")",
+                        roaster: "@SUM(1+1)", origin: "云南 · 保山", process: "水洗",
+                        roastLevel: .light, roastDate: DateMath.add(days: -10, to: Date()),
+                        weightG: 200, remainingG: 120, price: 138,
+                        channel: "+门店", flavorTags: ["茉莉"],
+                        notes: "-1+1 备注")
+        context.insert(bean)
+        try context.save()
+
+        let bundle = ExportManager.build(beans: [bean], rules: rules)
+        let beans = try XCTUnwrap(ExportManager.csvTables(bundle).first)
+        let text = beans.text()
+
+        XCTAssertTrue(text.contains("'=HYPERLINK(\"\"http://evil\"\",\"\"点我\"\")"),
+                      "名称里的公式前缀要中和，引号仍按 RFC 4180 双写：\(text)")
+        XCTAssertTrue(text.contains("'@SUM(1+1)"), "烘焙商以 @ 开头，必须中和")
+        XCTAssertTrue(text.contains("'+门店"), "渠道以 + 开头，必须中和")
+        XCTAssertTrue(text.contains("'-1+1 备注"), "备注以 - 开头，必须中和")
+        // 中文与普通文本原样出现，没有被误伤。
+        XCTAssertTrue(text.contains("云南 · 保山"))
+        XCTAssertTrue(text.contains("茉莉"))
+
+        // JSON 备份是原始记录，不能为了 CSV 安全改写用户内容。
+        XCTAssertEqual(bundle.beans.first?.name, "=HYPERLINK(\"http://evil\",\"点我\")")
+        XCTAssertEqual(bundle.beans.first?.notes, "-1+1 备注")
+        let reloaded = try ExportManager.decode(try ExportManager.jsonData(bundle))
+        XCTAssertEqual(reloaded.beans.first?.name, bean.name)
+    }
+
+    /// 数值列里的合法负数在整表输出里不能被当成公式加前缀。
+    func testNegativeNumbersSurviveInTheBrewTable() throws {
+        let bean = Bean(name: "Guji", roastLevel: .light,
+                        roastDate: DateMath.add(days: -10, to: Date()))
+        context.insert(bean)
+        let brew = Brew(date: DateMath.add(days: -1, to: Date()), method: "V60",
+                        waterTemp: -3, coffeeG: 18, waterG: 300, timeSeconds: 0,
+                        score: 0, bean: bean)
+        context.insert(brew)
+        try context.save()
+
+        let bundle = ExportManager.build(beans: [bean], rules: rules)
+        let brews = try XCTUnwrap(ExportManager.csvTables(bundle).last(where: { $0.name == "brews" }))
+        let row = brews.text().split(separator: "\r\n")[1]
+        XCTAssertTrue(row.contains(",-3,"), "水温列是数值列，-3 不该被加单引号：\(row)")
+    }
+
     func testCSVIncludesTheColumnsAPersonWouldWant() throws {
         let bean = Bean(name: "Guji, Ethiopia", roaster: "启程", roastLevel: .light,
                         roastDate: DateMath.add(days: -16, to: Date()),

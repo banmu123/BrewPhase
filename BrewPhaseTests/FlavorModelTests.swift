@@ -493,4 +493,92 @@ final class FlavorInputFactoryTests: XCTestCase {
         XCTAssertEqual(input.openBasis, .assumedSealed)
         XCTAssertNil(input.openDayAfterRoast)
     }
+
+    // MARK: - 重算判据
+
+    /// 没有冲煮记录时，默认参数就是真实输入：改了它，预测必须重算。
+    func testChangingDefaultsChangesRefreshTokenWhenNoBrewExists() throws {
+        let bean = self.bean(roastDate: DateMath.add(days: -10, to: Date()))
+        let before = try XCTUnwrap(FlavorInputFactory.refreshToken(for: bean, defaults: .standard))
+        let after = try XCTUnwrap(FlavorInputFactory.refreshToken(
+            for: bean,
+            defaults: BrewDefaults(method: "爱乐压", doseG: 18, waterG: 280, waterTemp: 90)
+        ))
+
+        XCTAssertNotEqual(before, after, "默认参数变了，输入就变了，卡片必须重算")
+        XCTAssertEqual(before.doseG, BrewDefaults.standard.doseG)
+        XCTAssertEqual(after.doseG, 18)
+        XCTAssertEqual(after.waterTempC, 90)
+        XCTAssertEqual(after.brewMethodText, "爱乐压")
+    }
+
+    /// 有最近一次冲煮时，参数来自记录：改默认值是无效变化，不该重算。
+    func testLatestBrewWinsOverDefaultsAndTokenStaysStable() throws {
+        let roast = DateMath.add(days: -20, to: Date())
+        let bean = self.bean(roastDate: roast)
+        let brew = Brew(date: DateMath.add(days: -2, to: Date()), method: "V60",
+                        waterTemp: 93, coffeeG: 18, waterG: 300, timeSeconds: 150, bean: bean)
+        bean.brews = [brew]
+
+        let a = try XCTUnwrap(FlavorInputFactory.refreshToken(for: bean, defaults: .standard))
+        let b = try XCTUnwrap(FlavorInputFactory.refreshToken(
+            for: bean,
+            defaults: BrewDefaults(method: "冷萃", doseG: 30, waterG: 500, waterTemp: 20)
+        ))
+
+        XCTAssertEqual(a, b, "记录里的参数优先，默认值变化不影响输入，因而不该重算")
+        XCTAssertEqual(a.doseG, 18)
+        XCTAssertEqual(a.waterWeightG, 300)
+        XCTAssertEqual(a.waterTempC, 93)
+        XCTAssertEqual(a.brewMethodText, "V60")
+        XCTAssertEqual(a.brewTimeSeconds, 150)
+    }
+
+    /// 新增/替换最近一次冲煮会改变输入，卡片必须跟着刷新。
+    func testNewBrewChangesRefreshToken() throws {
+        let roast = DateMath.add(days: -20, to: Date())
+        let bean = self.bean(roastDate: roast)
+        let before = try XCTUnwrap(FlavorInputFactory.refreshToken(for: bean, defaults: .standard))
+
+        let brew = Brew(date: DateMath.add(days: -1, to: Date()), method: "V60",
+                        waterTemp: 90, coffeeG: 20, waterG: 320, bean: bean)
+        bean.brews = [brew]
+        let after = try XCTUnwrap(FlavorInputFactory.refreshToken(for: bean, defaults: .standard))
+
+        XCTAssertNotEqual(before, after)
+        XCTAssertEqual(after.doseG, 20)
+    }
+}
+
+/// `FlavorDiagnostics.isEmpty` 的语义：三个桶都要看，缺一不可。
+final class FlavorDiagnosticsTests: XCTestCase {
+
+    /// 三个桶都空 + 开封日已知，才算真正「这一轮什么都没缺」。
+    /// （`openBasis` 默认是 `.assumedSealed`，那本身也是一条要告诉用户的推断，
+    /// 所以默认实例并不等于「空」。）
+    func testDiagnosticsWithNoMissesAndKnownOpenDateAreEmpty() {
+        var diagnostics = FlavorDiagnostics()
+        diagnostics.openBasis = .openDate
+        XCTAssertTrue(diagnostics.isEmpty)
+    }
+
+    /// 无法归类的原文同样是一次没派上用场的输入——只存在这一类内容时，
+    /// 卡片不能说「一切都好」。
+    func testUninterpretableAloneMakesDiagnosticsNonEmpty() {
+        var diagnostics = FlavorDiagnostics()
+        diagnostics.openBasis = .openDate
+        XCTAssertTrue(diagnostics.isEmpty, "前提：其余两个桶都空")
+
+        diagnostics.uninterpretable = ["厌氧日晒"]
+        XCTAssertFalse(diagnostics.isEmpty)
+
+        diagnostics.uninterpretable = []
+        XCTAssertTrue(diagnostics.isEmpty)
+    }
+
+    func testInferredOpenBasisMakesDiagnosticsNonEmpty() {
+        var diagnostics = FlavorDiagnostics()
+        diagnostics.openBasis = .firstBrew
+        XCTAssertFalse(diagnostics.isEmpty)
+    }
 }

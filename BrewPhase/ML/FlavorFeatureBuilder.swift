@@ -92,7 +92,15 @@ struct FlavorDiagnostics: Equatable, Sendable {
     var uninterpretable: [String] = []
     var openBasis: FlavorOpenBasis = .assumedSealed
 
-    var isEmpty: Bool { unavailable.isEmpty && unmatched.isEmpty && !openBasis.isInferred }
+    /// 三个桶都空、且开封日不是推出来的，才算「这一次没有任何资料没派上用场」。
+    ///
+    /// `uninterpretable` 必须一起算：原文含混（「厌氧日晒」）同样是一次没被模型
+    /// 用上的输入，只是原因和「App 没这个字段」不同。漏掉它会让卡片在只存在这类
+    /// 内容时报告「一切正常」，而界面上明明还用单独一段在说它没参与预测。
+    var isEmpty: Bool {
+        unavailable.isEmpty && unmatched.isEmpty && uninterpretable.isEmpty
+            && !openBasis.isInferred
+    }
 
     /// 「缺了哪些字段」的清单，类别在前、数值在后。
     var unavailableLabels: [String] { unavailable.map(FlavorFeatureLabel.label) }

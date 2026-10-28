@@ -293,7 +293,6 @@ struct RootView: View {
                 NavigationStack {
                     ScrollView {
                         FlavorWindowCard(bean: bean,
-                                         defaults: BrewDefaults.current(),
                                          todayDay: bean.currentDayAfterRoast)
                             .padding(.horizontal, Metric.gutter)
                             .padding(.top, 10)

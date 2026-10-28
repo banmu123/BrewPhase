@@ -80,7 +80,6 @@ struct BeanDetailView: View {
                 // 预计风味窗口与知识区块都是参考资料，不属于当前行动，统一排在
                 // 自己的记录之后。
                 FlavorWindowCard(bean: bean,
-                                 defaults: BrewDefaults.current(),
                                  todayDay: bean.currentDayAfterRoast)
                 BeanKnowledgeSection(bean: bean, languageCode: languageCode)
                 if asksAboutThisBag {

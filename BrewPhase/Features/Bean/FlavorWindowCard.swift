@@ -15,13 +15,20 @@ import SwiftUI
 struct FlavorWindowCard: View {
 
     let bean: Bean
-    let defaults: BrewDefaults
     /// 今天在烘焙后的第几天，用来在曲线上标当前位置。
     let todayDay: Int?
 
     /// 实验功能，可以在「更多」里关掉；关掉时这张卡整个消失。
     @AppStorage(PrefKey.experimentalFlavorPrediction)
     private var isEnabled: Bool = true
+
+    /// 默认冲煮参数**是预测的输入之一**（没有冲煮记录时，粉量/水量/水温/方式都取
+    /// 这里的值）。所以卡片自己订阅这四个 key，而不是等父视图重建时顺带传进来：
+    /// 设置页一改，@AppStorage 就会让 body 重新求值，重算判据随之变化。
+    @AppStorage(PrefKey.defaultMethod) private var defaultMethod: String = BrewDefaults.standard.method
+    @AppStorage(PrefKey.defaultDoseG) private var defaultDoseG: Double = BrewDefaults.standard.doseG
+    @AppStorage(PrefKey.defaultWaterG) private var defaultWaterG: Double = BrewDefaults.standard.waterG
+    @AppStorage(PrefKey.defaultWaterTemp) private var defaultWaterTemp: Double = BrewDefaults.standard.waterTemp
 
     @State private var curve: FlavorCurve?
     @State private var didEvaluate = false
@@ -50,7 +57,7 @@ struct FlavorWindowCard: View {
                 }
             }
         }
-        .task(id: taskID) { evaluate() }
+        .task(id: refreshToken) { evaluate() }
     }
 
     // MARK: - Pieces
@@ -165,15 +172,22 @@ struct FlavorWindowCard: View {
 
     // MARK: - Evaluation
 
-    /// 输入没变就不重算。`Body` 会反复求值，30 次预测不能跟着反复跑。
-    private var taskID: String {
-        [bean.id.uuidString, String(bean.updatedAt.timeIntervalSince1970),
-         String(todayDay ?? -1), String(bean.brewsCount)].joined(separator: "|")
+    private var effectiveDefaults: BrewDefaults {
+        BrewDefaults(method: defaultMethod, doseG: defaultDoseG,
+                     waterG: defaultWaterG, waterTemp: defaultWaterTemp)
+    }
+
+    /// 重算判据就是模型的输入（见 `FlavorInputFactory.refreshToken`）。
+    ///
+    /// 旧实现拼的是「id + updatedAt + 天数 + 冲煮次数」：默认参数改了不会重算，
+    /// 改一句备注却会白算一遍。换成输入本身之后，`.task(id:)` 只在真正影响
+    /// 预测的东西变化时重新执行，其余交给 `FlavorWindowPredictor` 的输入键缓存。
+    private var refreshToken: FlavorInput? {
+        FlavorInputFactory.refreshToken(for: bean, defaults: effectiveDefaults)
     }
 
     private func evaluate() {
-        let input = FlavorInputFactory.input(for: bean, defaults: defaults)
-        curve = input.flatMap { FlavorWindowPredictor.shared.curve(for: $0) }
+        curve = refreshToken.flatMap { FlavorWindowPredictor.shared.curve(for: $0) }
         didEvaluate = true
     }
 }

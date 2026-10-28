@@ -1,17 +1,38 @@
 import Foundation
 import SwiftData
 
+/// 一个格子，连同它的来路。
+///
+/// 区分「用户输入的文本」和「我们自己生成的数值/日期/标识」不是分类癖：
+/// 名称、备注这类文本可能以 `=`、`+`、`-`、`@` 开头，表格软件会把它当公式执行；
+/// 而数值列里的负号（`-3`、`-92.5`）是合法数据，绝不能加前缀。两者的编码规则
+/// 因此必须分开，不能靠「给所有字段加引号」蒙混过关——引号不阻止公式执行。
+enum CSVField: Equatable {
+    /// 用户可控文本：先中和公式前缀，再做 RFC 4180 引号处理。
+    case text(String)
+    /// 我们自己生成的数值、日期、枚举、标识：只做 RFC 4180 引号处理。
+    case value(String)
+
+    var csv: String {
+        switch self {
+        case .text(let text): return ExportManager.csvText(text)
+        case .value(let value): return ExportManager.csvField(value)
+        }
+    }
+}
+
 /// A table ready to become a CSV file.
 struct CSVTable: Equatable {
     var name: String
     var header: [String]
-    var rows: [[String]]
+    var rows: [[CSVField]]
 
     var filename: String { "brewphase-\(name).csv" }
 
     func text() -> String {
-        ([header] + rows)
-            .map { $0.map(ExportManager.csvField).joined(separator: ",") }
+        // 表头是代码里写死的列名，不是用户内容，走数值路径即可。
+        ([header.map(CSVField.value)] + rows)
+            .map { $0.map(\.csv).joined(separator: ",") }
             .joined(separator: "\r\n") + "\r\n"
     }
 }
@@ -195,15 +216,22 @@ enum ExportManager {
                      "flavorTags", "notes", "createdAt"],
             rows: bundle.beans.map { bean in
                 [
-                    bean.id.uuidString, bean.name, bean.roaster, bean.origin, bean.process,
-                    bean.roastLevel, dateText(bean.roastDate), dateText(bean.purchaseDate),
-                    dateText(bean.openDate), number(bean.weightG), number(bean.remainingG),
-                    number(bean.price), bean.channel, bean.status,
-                    bean.dayAfterRoast.map(String.init) ?? "",
-                    bean.phaseAtExport,
-                    bean.flavorTags.joined(separator: " / "),
-                    bean.notes,
-                    timestampText(bean.createdAt),
+                    .value(bean.id.uuidString),
+                    // 名称/烘焙商/产地/处理法/渠道/风味标签/备注都是用户写的。
+                    .text(bean.name), .text(bean.roaster), .text(bean.origin),
+                    .text(bean.process),
+                    .value(bean.roastLevel),
+                    .value(dateText(bean.roastDate)), .value(dateText(bean.purchaseDate)),
+                    .value(dateText(bean.openDate)),
+                    .value(number(bean.weightG)), .value(number(bean.remainingG)),
+                    .value(number(bean.price)),
+                    .text(bean.channel),
+                    .value(bean.status),
+                    .value(bean.dayAfterRoast.map(String.init) ?? ""),
+                    .value(bean.phaseAtExport),
+                    .text(bean.flavorTags.joined(separator: " / ")),
+                    .text(bean.notes),
+                    .value(timestampText(bean.createdAt)),
                 ]
             }
         )
@@ -218,15 +246,21 @@ enum ExportManager {
                      "body", "aftertaste", "flavorTags", "notes"],
             rows: bundle.brews.map { brew in
                 [
-                    brew.id.uuidString, brew.beanName, timestampText(brew.date),
-                    brew.dayAfterRoast.map(String.init) ?? "",
-                    brew.method, brew.grinder, brew.grindSize, number(brew.waterTemp),
-                    number(brew.coffeeG), number(brew.waterG),
-                    brew.ratio > 0 ? String(format: "%.2f", brew.ratio) : "",
-                    brew.timeSeconds > 0 ? String(brew.timeSeconds) : "",
-                    String(brew.score), String(brew.acidity), String(brew.sweetness),
-                    String(brew.bitterness), String(brew.body), String(brew.aftertaste),
-                    brew.flavorNotes.joined(separator: " / "), brew.notes,
+                    .value(brew.id.uuidString),
+                    .text(brew.beanName),
+                    .value(timestampText(brew.date)),
+                    .value(brew.dayAfterRoast.map(String.init) ?? ""),
+                    // 方式/磨豆机/研磨度是自由文本，可能以「-」这类字符开头。
+                    .text(brew.method), .text(brew.grinder), .text(brew.grindSize),
+                    .value(number(brew.waterTemp)),
+                    .value(number(brew.coffeeG)), .value(number(brew.waterG)),
+                    .value(brew.ratio > 0 ? String(format: "%.2f", brew.ratio) : ""),
+                    .value(brew.timeSeconds > 0 ? String(brew.timeSeconds) : ""),
+                    .value(String(brew.score)), .value(String(brew.acidity)),
+                    .value(String(brew.sweetness)), .value(String(brew.bitterness)),
+                    .value(String(brew.body)), .value(String(brew.aftertaste)),
+                    .text(brew.flavorNotes.joined(separator: " / ")),
+                    .text(brew.notes),
                 ]
             }
         )
@@ -238,9 +272,14 @@ enum ExportManager {
             header: ["id", "beanName", "date", "dayAfterRoast", "score", "flavorTags", "notes", "source"],
             rows: bundle.tastings.map { tasting in
                 [
-                    tasting.id.uuidString, tasting.beanName, timestampText(tasting.date),
-                    String(tasting.dayAfterRoast), String(tasting.score),
-                    tasting.flavor.joined(separator: " / "), tasting.notes, tasting.source,
+                    .value(tasting.id.uuidString),
+                    .text(tasting.beanName),
+                    .value(timestampText(tasting.date)),
+                    .value(String(tasting.dayAfterRoast)),
+                    .value(String(tasting.score)),
+                    .text(tasting.flavor.joined(separator: " / ")),
+                    .text(tasting.notes),
+                    .value(tasting.source),
                 ]
             }
         )
@@ -291,6 +330,25 @@ enum ExportManager {
             || value.contains("\n") || value.contains("\r")
         guard needsQuoting else { return value }
         return "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+    }
+
+    /// 用户文本的编码：先中和公式前缀，再套 RFC 4180 引号。
+    ///
+    /// 引号只解决分隔符问题，**不阻止公式执行**：`"=1+1"` 在 Excel 里照样会算。
+    /// 所以文本列必须单独处理，而不是靠 `csvField` 一把梭。
+    static func csvText(_ value: String) -> String {
+        csvField(neutralisedFormulaPrefix(value))
+    }
+
+    /// 以电子表格会当成公式的前缀开头时，在前面加一个单引号，强制按文本显示。
+    ///
+    /// 危险前缀是 `=`、`+`、`-`、`@`。判断时跳过前导空白：Excel 会先 trim 再决定
+    /// 一个格子是不是公式，`"  =1+1"` 和 `"=1+1"` 一样危险，制表符/回车同理。
+    /// 这里只处理文本列；数值列的负号是数据，不能碰。
+    static func neutralisedFormulaPrefix(_ value: String) -> String {
+        guard let firstMeaningful = value.first(where: { !$0.isWhitespace }) else { return value }
+        guard "=+-@".contains(firstMeaningful) else { return value }
+        return "'" + value
     }
 
     private static func number(_ value: Double) -> String {
