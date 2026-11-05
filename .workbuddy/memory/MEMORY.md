@@ -19,7 +19,7 @@
 * `check.py` 五条：占位符数量、键是否齐全、两表键集一致、同键不重复定义、
   可本地化字面量不能再插值（`Text("\(n) 天")` 会变成不可翻译的键）。
   含插值又含汉字、且同一行没有 `L(` 的字面量会被判违规。
-* 改完文案必须跑 `generate.py && check.py`（当前 815 键）。
+* 改完文案必须跑 `generate.py && check.py`（当前 922 键）。
 
 ## 测试与模拟器
 
@@ -30,7 +30,23 @@
 * `Tools/run.sh` 的截图与 `xcodebuild test` **不能同时跑**：测试宿主会抢走模拟器
   并重启 App，截图会拍到别的界面。先截图，再跑全量。
 * `xcodebuild` 一律带 `CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO`，
-  并显式指定模拟器 `platform=iOS Simulator,id=810C6408-DCAB-469B-8D4B-5018BCC9C0FD`。
+  并显式指定模拟器 `platform=iOS Simulator,id=C7C7F583-310C-43CE-B6ED-D4915F465154`
+  （iPhone 16 Pro；旧的 810C6408 已不在设备列表里，换机时先 `simctl list` 查）。
+
+## 数据一致性的既有规则（2026-11 起）
+
+* **库存是台账**：`Brew.stockDeductedG` 记这条记录**实际**扣掉的克数；删除/编辑
+  都按它算，不要用 `coffeeG`——袋里不够时两者不等。旧记录该字段为 nil 时按粉量退。
+* **手动改剩余量 = 盘点**：`Bean.setRemaining` / 编辑器改剩余量会写
+  `stockCountedAt`；`createdAt` 早于它的冲煮视为已结算，`BrewRecorder.delete`
+  不再退粉、编辑不改库存。新增撤销路径时必须遵守这条。
+* **烘焙天数是现算的**：界面/导出/索引统一读 `Tasting.resolvedDayAfterRoast`；
+  存储的 `dayAfterRoast` 只给「豆子已不在」兜底。没有烘焙日期就是 nil（显示「—」），
+  不许写 0 冒充 Day 0。
+* **删豆子先取通知 ID**：级联删除不碰 `UNUserNotificationCenter`，顺序固定为
+  「取 ID → 删库成功 → `unschedule(identifiers:)` → 重排」。
+* **Schema 只有一个清单**：`BrewPhaseSchema.schema`，App 与测试共用。只允许加实体、
+  加可选/带默认值属性；破坏性变更必须先确认旧库能打开或用户能导出原始库。
 
 ## 代码风格
 
