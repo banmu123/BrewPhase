@@ -43,6 +43,22 @@ enum DebugScreen: String, CaseIterable, Identifiable {
     /// 预计风味窗口单独一屏：它在豆子页的折叠线以下，而这批要检查它的
     /// 视觉权重是否真的低于阶段卡。
     case flavorPrediction
+    /// 统一添加面板的第一步。模拟器点不到 + 号，面板本身要能被截图。
+    case addSheet
+    /// 面板的第二步：六类记录网格。
+    case addKinds
+    /// 新建画布。
+    case canvasEditor
+    /// 某一类记录的新增页（默认到访，字段最多的一种）。
+    case recordEditor
+    /// 标签管理：改名、删除、新建。
+    case tagManager
+    /// 一条已有记录的详情页。
+    case recordDetail
+    /// 一条链接记录的详情页。用来检查卡片、封面、播放器与降级状态。
+    case linkDetail
+    /// 全屏播放器本身。它是一个 fullScreenCover，正常只能从详情页点出来。
+    case playerFullscreen
 
     var id: String { rawValue }
 }
@@ -62,12 +78,12 @@ enum DebugLaunch {
         return DebugScreen(rawValue: raw)
     }
 
-    /// `-BrewPhaseTab brews`
+    /// `-BrewPhaseTab coffee|records|canvas`
     static var tab: AppTab? {
         switch value(for: "-BrewPhaseTab") {
-        case "cellar": return .cellar
-        case "brews": return .brews
-        case "more": return .more
+        case "coffee", "cellar": return .coffee
+        case "records": return .records
+        case "canvas": return .canvas
         default: return nil
         }
     }
@@ -160,6 +176,56 @@ enum DebugLaunch {
     /// 替用户展开才截得到。
     static var beanEditorExpand: Bool {
         value(for: "-BrewPhaseBeanEditorExpand") == "yes"
+    }
+
+    /// `-BrewPhaseRecordCarrier image`
+    ///
+    /// 打开记录编辑器时用哪种载体。图片与视频的编辑器只有「选完媒体」才有东西
+    /// 可看，而模拟器点不到相册——至少先把四种载体的空状态各截一张。
+    static var recordCarrier: RecordCarrier? {
+        guard let raw = value(for: "-BrewPhaseRecordCarrier") else { return nil }
+        return RecordCarrier(rawValue: raw)
+    }
+
+    /// `-BrewPhaseLinkURL https://…`
+    ///
+    /// 打开链接编辑器时预填这个地址。模拟器不能粘贴，而「粘贴之后识别出平台、
+    /// 抓到标题和封面」这条路只有地址真的在里面才会走。
+    static var linkURL: String? {
+        value(for: "-BrewPhaseLinkURL")
+    }
+
+    /// `-BrewPhaseLinkProvider bilibili`
+    ///
+    /// `linkDetail` 打开哪一家平台的链接记录。演示数据里四家都有。
+    static var linkProvider: LinkProvider? {
+        guard let raw = value(for: "-BrewPhaseLinkProvider") else { return nil }
+        return LinkProvider(rawValue: raw)
+    }
+
+    /// `-BrewPhaseForceAutoplay yes`
+    ///
+    /// 仅用于验证「播放器真的能播」。iOS 默认要求一次用户手势才允许出声，
+    /// 而 `simctl` 点不了屏幕；这个开关会同时放开手势限制并给播放地址补上
+    /// autoplay，好让模拟器里截到一帧真实画面。**正常运行时它永远是 false。**
+    static var forceAutoplay: Bool {
+        value(for: "-BrewPhaseForceAutoplay") == "yes"
+    }
+
+    /// `-BrewPhaseRecordTag 视频`
+    ///
+    /// 记录页一打开就按这个标签筛选。模拟器不能滚动，靠它把折叠线以下的卡片
+    /// （B 站、X）移到第一屏，也顺便验证筛选条真的在工作。
+    static var recordTagName: String? {
+        value(for: "-BrewPhaseRecordTag")
+    }
+
+    /// `-BrewPhaseAutoPlay yes`
+    ///
+    /// 详情页一打开就加载播放器。**只用于截图**：正常路径必须由用户点一下，
+    /// 列表与详情打开时都不会自动创建 WebView。
+    static var autoPlay: Bool {
+        value(for: "-BrewPhaseAutoPlay") == "yes"
     }
 
     /// `-BrewPhaseCardIndex 4`

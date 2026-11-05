@@ -26,6 +26,9 @@ enum BackupRestorer {
         var tastings: Int
         var reminders: Int
         var phaseRules: Int
+        /// v2 备份没有记录段，恢复出来就是 0。
+        var records: Int
+        var canvases: Int
         var imagesRestored: Int
     }
 
@@ -77,7 +80,13 @@ enum BackupRestorer {
             applyPreferences(file.preferences, to: defaults)
 
             // 3) 成功之后才清孤儿：此刻旧记录已经不在了，旧图片才真的没用了。
-            removeOrphans(in: imagesDirectory, keeping: Set(file.data.beans.compactMap(\.imagePath)))
+            //    记录的两类图片（预览图、图片记录的正文图）也在同一个目录里，
+            //    引用集合必须一起算进来，否则恢复会把它们当垃圾删掉。
+            let recordImages = (file.data.records ?? []).flatMap { record -> [String?] in
+                [record.previewPath, (record.mediaPath?.hasSuffix(".jpg") ?? false) ? record.mediaPath : nil]
+            }
+            let referenced = Set(file.data.beans.compactMap(\.imagePath) + recordImages.compactMap { $0 })
+            removeOrphans(in: imagesDirectory, keeping: referenced)
             ImageStore.shared.clearCache()
 
             AppLog.export.info(
@@ -86,6 +95,7 @@ enum BackupRestorer {
             return Outcome(
                 beans: outcome.beans, brews: outcome.brews, tastings: outcome.tastings,
                 reminders: outcome.reminders, phaseRules: outcome.phaseRules,
+                records: outcome.records, canvases: outcome.canvases,
                 imagesRestored: created.count
             )
         } catch {
@@ -211,13 +221,83 @@ enum BackupRestorer {
                 context.insert(rule)
             }
 
+            // 记录与画布：只有文件里**确实有这一段**才替换。
+            // v2 备份没有这两段（nil），它说的是「这份备份不知道有记录」，
+            // 不是「记录为空」——把设备上的记录当成空的删掉是不可接受的。
+            // 记录与标签一起替换：先清记录、再清标签，顺序反过来会先断开关系，
+            // 虽然是空操作，但没有必要。
+            if let records = file.data.records {
+                for row in try context.fetch(FetchDescriptor<Record>()) { context.delete(row) }
+                for row in try context.fetch(FetchDescriptor<RecordTag>()) { context.delete(row) }
+
+                var tagsByID: [UUID: RecordTag] = [:]
+                for row in file.data.tags ?? [] {
+                    let tag = RecordTag(name: row.name,
+                                        createdAt: Date(timeIntervalSince1970: row.createdAt))
+                    tag.id = row.id
+                    context.insert(tag)
+                    tagsByID[row.id] = tag
+                }
+
+                for row in records {
+                    let record = Record(
+                        carrier: RecordCarrier(rawValue: row.carrierRaw) ?? .text,
+                        title: row.title,
+                        note: row.note,
+                        urlString: row.urlString,
+                        sourceName: row.sourceName,
+                        previewPath: row.previewPath,
+                        mediaPath: row.mediaPath,
+                        createdAt: Date(timeIntervalSince1970: row.createdAt),
+                        isSample: row.isSample
+                    )
+                    record.id = row.id
+                    record.updatedAt = Date(timeIntervalSince1970: row.updatedAt)
+                    record.canonicalURL = row.canonicalURL ?? ""
+                    record.providerRaw = row.providerRaw ?? ""
+                    record.contentKindRaw = row.contentKindRaw ?? ""
+                    record.platformContentID = row.platformContentID ?? ""
+                    record.linkPage = row.linkPage ?? 1
+                    record.authorName = row.authorName ?? ""
+                    record.summary = row.summary ?? ""
+                    record.thumbnailURLString = row.thumbnailURLString ?? ""
+                    record.metadataStatusRaw = row.metadataStatusRaw
+                        ?? LinkMetadataStatus.idle.rawValue
+                    record.repositoryStars = row.repositoryStars ?? 0
+                    record.repositoryLanguage = row.repositoryLanguage ?? ""
+                    record.repositoryLicense = row.repositoryLicense ?? ""
+                    // 找不到的标签（比如旧文件里被手工删掉了）直接跳过，
+                    // 一条记录不应该因为一个坏标签整条不见。
+                    record.tags = row.tagIDs.compactMap { tagsByID[$0] }
+                    context.insert(record)
+                }
+            }
+
+            if let canvases = file.data.canvases {
+                for row in try context.fetch(FetchDescriptor<Canvas>()) { context.delete(row) }
+                for row in canvases {
+                    let canvas = Canvas(
+                        name: row.name,
+                        note: row.note,
+                        createdAt: Date(timeIntervalSince1970: row.createdAt),
+                        isSample: row.isSample
+                    )
+                    canvas.id = row.id
+                    canvas.updatedAt = Date(timeIntervalSince1970: row.updatedAt)
+                    context.insert(canvas)
+                }
+            }
+
             // 一次提交：删除与写入在同一个事务里，要么全成，要么全不成。
             try save(context)
 
             return Outcome(
                 beans: file.data.beans.count, brews: file.data.brews.count,
                 tastings: file.data.tastings.count, reminders: file.data.reminders.count,
-                phaseRules: file.data.phaseRules.count, imagesRestored: 0
+                phaseRules: file.data.phaseRules.count,
+                records: file.data.records?.count ?? 0,
+                canvases: file.data.canvases?.count ?? 0,
+                imagesRestored: 0
             )
         } catch {
             context.rollback()

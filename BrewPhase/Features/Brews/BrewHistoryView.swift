@@ -31,96 +31,96 @@ struct BrewHistoryView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                if brews.isEmpty {
-                    EmptyStateView(
-                        symbol: "cup.and.saucer",
-                        title: "还没有冲煮记录",
-                        message: "去豆仓挑一包，冲完记下参数和味道，这里就会长起来。"
-                    )
-                    .padding(.horizontal, Metric.gutter)
-                    .padding(.top, 60)
-                } else {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        summary
+        // 这一页现在是咖啡页里的一个推入目标，不再自己拥有导航栈：外面已经
+        // 有一层，套第二层会长出第二条导航栏。
+        ScrollView {
+            if brews.isEmpty {
+                EmptyStateView(
+                    symbol: "cup.and.saucer",
+                    title: "还没有冲煮记录",
+                    message: "去豆仓挑一包，冲完记下参数和味道，这里就会长起来。"
+                )
+                .padding(.horizontal, Metric.gutter)
+                .padding(.top, 60)
+            } else {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    summary
 
-                        ForEach(months, id: \.key) { group in
-                            VStack(alignment: .leading, spacing: 0) {
-                                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                    SectionLabel(title: .alreadyLocalized(group.key))
-                                    Spacer(minLength: 0)
-                                    Text(L("%@ 次", String(group.brews.count)))
-                                        .font(TypeScale.caption)
-                                        .foregroundStyle(Palette.inkFaint)
+                    ForEach(months, id: \.key) { group in
+                        VStack(alignment: .leading, spacing: 0) {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                SectionLabel(title: .alreadyLocalized(group.key))
+                                Spacer(minLength: 0)
+                                Text(L("%@ 次", String(group.brews.count)))
+                                    .font(TypeScale.caption)
+                                    .foregroundStyle(Palette.inkFaint)
+                            }
+                            .padding(.top, 28)
+
+                            ForEach(Array(group.brews.enumerated()), id: \.element.id) { index, brew in
+                                Button {
+                                    editingBrew = brew
+                                } label: {
+                                    BrewRow(brew: brew, showsBeanName: true)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.vertical, 13)
                                 }
-                                .padding(.top, 28)
-
-                                ForEach(Array(group.brews.enumerated()), id: \.element.id) { index, brew in
-                                    Button {
-                                        editingBrew = brew
+                                .buttonStyle(.plain)
+                                .contextMenu {
+                                    Button(role: .destructive) {
+                                        pendingDelete = brew
                                     } label: {
-                                        BrewRow(brew: brew, showsBeanName: true)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .padding(.vertical, 13)
+                                        Label("删除这条记录", systemImage: "trash")
                                     }
-                                    .buttonStyle(.plain)
-                                    .contextMenu {
-                                        Button(role: .destructive) {
-                                            pendingDelete = brew
-                                        } label: {
-                                            Label("删除这条记录", systemImage: "trash")
-                                        }
-                                    }
+                                }
 
-                                    if index != group.brews.count - 1 {
-                                        CardDivider()
-                                    }
+                                if index != group.brews.count - 1 {
+                                    CardDivider()
                                 }
                             }
                         }
                     }
-                    .padding(.horizontal, Metric.gutter)
-                    .padding(.top, 4)
-                    .padding(.bottom, 40)
                 }
+                .padding(.horizontal, Metric.gutter)
+                .padding(.top, 4)
+                .padding(.bottom, 40)
             }
-            .background(Palette.paper)
-            .navigationTitle("冲煮")
-            .navigationBarTitleDisplayMode(.large)
-            .sheet(item: $editingBrew) { brew in
-                if let bean = brew.bean {
-                    BrewEditorView(bean: bean, existing: brew)
-                }
+        }
+        .background(Palette.paper)
+        .navigationTitle("冲煮")
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $editingBrew) { brew in
+            if let bean = brew.bean {
+                BrewEditorView(bean: bean, existing: brew)
             }
-            // 删除失败时记录还在，必须说出来——默默失败会被当成「删掉了」。
-            .alert(
-                "没能保存",
-                isPresented: Binding(
-                    get: { actionError != nil },
-                    set: { if !$0 { actionError = nil } }
-                )
-            ) {
-                Button("好") { actionError = nil }
-            } message: {
-                Text(actionError ?? "")
+        }
+        // 删除失败时记录还在，必须说出来——默默失败会被当成「删掉了」。
+        .alert(
+            "没能保存",
+            isPresented: Binding(
+                get: { actionError != nil },
+                set: { if !$0 { actionError = nil } }
+            )
+        ) {
+            Button("好") { actionError = nil }
+        } message: {
+            Text(actionError ?? "")
+        }
+        .confirmationDialog(
+            "删除这条冲煮记录？",
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("删除", role: .destructive) {
+                if let brew = pendingDelete { delete(brew) }
+                pendingDelete = nil
             }
-            .confirmationDialog(
-                "删除这条冲煮记录？",
-                isPresented: Binding(
-                    get: { pendingDelete != nil },
-                    set: { if !$0 { pendingDelete = nil } }
-                ),
-                titleVisibility: .visible
-            ) {
-                Button("删除", role: .destructive) {
-                    if let brew = pendingDelete { delete(brew) }
-                    pendingDelete = nil
-                }
-                Button("取消", role: .cancel) { pendingDelete = nil }
-            } message: {
-                Text(deleteExplanation)
-            }
+            Button("取消", role: .cancel) { pendingDelete = nil }
+        } message: {
+            Text(deleteExplanation)
         }
     }
 

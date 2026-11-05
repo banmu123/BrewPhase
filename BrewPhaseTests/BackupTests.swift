@@ -18,7 +18,7 @@ final class BackupTests: XCTestCase {
     private var work: URL!
 
     override func setUpWithError() throws {
-        let schema = Schema([Bean.self, Brew.self, Tasting.self, PhaseReminder.self, PhaseRule.self])
+        let schema = Schema([Bean.self, Brew.self, Tasting.self, PhaseReminder.self, PhaseRule.self, Record.self, Canvas.self, RecordTag.self])
         source = try ModelContainer(for: schema,
                                     configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
         target = try ModelContainer(for: schema,
@@ -124,7 +124,10 @@ final class BackupTests: XCTestCase {
     throws -> (file: BackupFile, url: URL) {
         let data = BackupManager.snapshot(
             beans: try sourceContext.fetch(FetchDescriptor<Bean>()),
-            rules: try sourceContext.fetch(FetchDescriptor<PhaseRule>())
+            rules: try sourceContext.fetch(FetchDescriptor<PhaseRule>()),
+            records: try sourceContext.fetch(FetchDescriptor<Record>()),
+            canvases: try sourceContext.fetch(FetchDescriptor<Canvas>()),
+            tags: try sourceContext.fetch(FetchDescriptor<RecordTag>())
         )
         let url = try BackupManager.write(data,
                                           preferences: preferences ?? allUnsetPreferences(),
@@ -153,6 +156,81 @@ final class BackupTests: XCTestCase {
         let outcome = try BackupRestorer.restore(file, into: target, imagesDirectory: targetImages)
         XCTAssertEqual(outcome.beans, 0)
         XCTAssertTrue(try targetBeans().isEmpty)
+    }
+
+    /// v3 把记录、画布与标签一起装进备份：它们和豆子没有关系，必须独立往返，
+    /// 而且记录与标签的关系要能原样恢复。
+    func testRecordsAndCanvasesRoundTrip() throws {
+        _ = try seedBean()
+        let visit = RecordTag(name: "到访", createdAt: Date(timeIntervalSince1970: 10))
+        let idea = RecordTag(name: "随记", createdAt: Date(timeIntervalSince1970: 20))
+        sourceContext.insert(visit)
+        sourceContext.insert(idea)
+
+        let link = Record(carrier: .link, title: "BrewPhase",
+                          note: "本地优先", urlString: "https://github.com/banmu123/BrewPhase",
+                          sourceName: "GitHub",
+                          createdAt: Date(timeIntervalSince1970: 1_780_000_000))
+        link.adopt(LinkResolver.match(URL(string: "https://github.com/banmu123/BrewPhase")!))
+        link.summary = "本地优先的咖啡记录"
+        link.authorName = "banmu123"
+        link.repositoryStars = 12
+        link.repositoryLanguage = "Swift"
+        link.metadataStatus = .partial
+        link.tags = [visit, idea]
+        sourceContext.insert(link)
+        sourceContext.insert(Record(carrier: .text, note: "每包豆都有自己的脾气"))
+        sourceContext.insert(Canvas(name: "我的咖啡探索", note: "把喝过的味道串起来"))
+        try sourceContext.save()
+
+        let (file, _) = try makeBackup()
+        XCTAssertEqual(file.data.records?.count, 2)
+        XCTAssertEqual(file.data.canvases?.count, 1)
+        XCTAssertEqual(file.data.tags?.count, 2)
+        XCTAssertEqual(file.data.records?.first(where: { $0.carrierRaw == "link" })?.tagIDs.count, 2)
+
+        let outcome = try BackupRestorer.restore(file, into: target, imagesDirectory: targetImages)
+        XCTAssertEqual(outcome.records, 2)
+        XCTAssertEqual(outcome.canvases, 1)
+
+        let restored = try ModelContext(target).fetch(FetchDescriptor<Record>())
+        XCTAssertEqual(restored.count, 2)
+        let restoredLink = try XCTUnwrap(restored.first { $0.carrier == .link })
+        XCTAssertEqual(restoredLink.sourceName, "GitHub")
+        XCTAssertEqual(restoredLink.provider, .github)
+        XCTAssertEqual(restoredLink.platformContentID, "banmu123/BrewPhase")
+        XCTAssertEqual(restoredLink.summary, "本地优先的咖啡记录")
+        XCTAssertEqual(restoredLink.authorName, "banmu123")
+        XCTAssertEqual(restoredLink.repositoryStars, 12)
+        XCTAssertEqual(restoredLink.repositoryLanguage, "Swift")
+        XCTAssertEqual(restoredLink.metadataStatus, .partial)
+        XCTAssertEqual(restoredLink.linkEmbed, nil, "GitHub 没有播放器")
+        XCTAssertEqual(restoredLink.orderedTags.map(\.name), ["到访", "随记"],
+                       "标签关系必须原样回来")
+        XCTAssertEqual(restored.first { $0.carrier == .text }?.note, "每包豆都有自己的脾气")
+        let canvases = try ModelContext(target).fetch(FetchDescriptor<Canvas>())
+        XCTAssertEqual(canvases.first?.name, "我的咖啡探索")
+    }
+
+    /// v2 备份里没有记录这一段，它的意思不是「记录为空」。
+    /// 恢复这种文件时，设备上已有的记录必须原样留着。
+    func testBackupWithoutRecordSectionLeavesExistingRecordsAlone() throws {
+        _ = try seedBean()
+        var (file, _) = try makeBackup()
+        file.data.records = nil
+        file.data.canvases = nil
+        file.data.tags = nil
+        try rehash(&file)
+
+        let existing = ModelContext(target)
+        existing.insert(Record(carrier: .text, note: "旧记录不该被删"))
+        try existing.save()
+
+        _ = try BackupRestorer.restore(file, into: target, imagesDirectory: targetImages)
+
+        let after = try ModelContext(target).fetch(FetchDescriptor<Record>())
+        XCTAssertEqual(after.count, 1)
+        XCTAssertEqual(after.first?.note, "旧记录不该被删")
     }
 
     func testFullBackupRestoresIdsRelationsAndValues() throws {
@@ -547,7 +625,7 @@ final class BackupTests: XCTestCase {
         let images = root.appendingPathComponent("Images", isDirectory: true)
         try FileManager.default.createDirectory(at: images, withIntermediateDirectories: true)
 
-        let schema = Schema([Bean.self, Brew.self, Tasting.self, PhaseReminder.self, PhaseRule.self])
+        let schema = Schema([Bean.self, Brew.self, Tasting.self, PhaseReminder.self, PhaseRule.self, Record.self, Canvas.self, RecordTag.self])
         let sourceURL = root.appendingPathComponent("source.store")
         let source = try ModelContainer(
             for: schema,
@@ -561,7 +639,8 @@ final class BackupTests: XCTestCase {
         try sourceContext.save()
 
         let data = BackupManager.snapshot(
-            beans: try sourceContext.fetch(FetchDescriptor<Bean>()), rules: []
+            beans: try sourceContext.fetch(FetchDescriptor<Bean>()), rules: [],
+            records: [], canvases: [], tags: []
         )
         let url = try BackupManager.write(data, preferences: allUnsetPreferences(),
                                           appVersion: "test-1.0", imagesDirectory: images)
@@ -658,7 +737,10 @@ final class BackupTests: XCTestCase {
     private func snapshot() throws -> BackupData {
         BackupManager.snapshot(
             beans: try sourceContext.fetch(FetchDescriptor<Bean>()),
-            rules: try sourceContext.fetch(FetchDescriptor<PhaseRule>())
+            rules: try sourceContext.fetch(FetchDescriptor<PhaseRule>()),
+            records: try sourceContext.fetch(FetchDescriptor<Record>()),
+            canvases: try sourceContext.fetch(FetchDescriptor<Canvas>()),
+            tags: try sourceContext.fetch(FetchDescriptor<RecordTag>())
         )
     }
 

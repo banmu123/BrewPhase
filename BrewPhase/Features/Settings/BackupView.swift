@@ -14,6 +14,9 @@ struct BackupView: View {
     @Environment(\.modelContext) private var context
     @Query private var beans: [Bean]
     @Query private var rules: [PhaseRule]
+    @Query private var records: [Record]
+    @Query private var canvases: [Canvas]
+    @Query private var recordTags: [RecordTag]
 
     @State private var backupURL: URL?
     @State private var isBuilding = false
@@ -65,8 +68,9 @@ struct BackupView: View {
             Button("好的", role: .cancel) { outcome = nil }
         } message: {
             if let outcome {
-                Text(L("已恢复 %@ 包豆子、%@ 条冲煮记录、%@ 条风味记录。",
-                       String(outcome.beans), String(outcome.brews), String(outcome.tastings)))
+                Text(L("已恢复 %@ 包豆子、%@ 条冲煮记录、%@ 条风味记录，以及 %@ 条记录、%@ 块画布。",
+                       String(outcome.beans), String(outcome.brews), String(outcome.tastings),
+                       String(outcome.records), String(outcome.canvases)))
             }
         }
         .overlay {
@@ -83,7 +87,7 @@ struct BackupView: View {
             Text("把整个豆仓带走")
                 .font(TypeScale.title)
                 .foregroundStyle(Palette.ink)
-            Text("完整备份把豆子、冲煮、风味、提醒、窗口规则和图片打包成一个文件。换手机或重装后，用它一次恢复。文件只保存在你选择的位置，BrewPhase 不会上传。")
+            Text("完整备份把豆子、冲煮、风味、提醒、窗口规则、记录与画布，连同图片打包成一个文件。换手机或重装后，用它一次恢复。文件只保存在你选择的位置，BrewPhase 不会上传。")
                 .font(TypeScale.callout)
                 .foregroundStyle(Palette.inkSoft)
                 .lineSpacing(3)
@@ -208,7 +212,9 @@ struct BackupView: View {
         backupURL = nil
 
         // 快照在主线程上一次取完（含偏好）；编码和写盘放到后台，避免大文件卡住界面。
-        let data = BackupManager.snapshot(beans: beans, rules: rules)
+        let data = BackupManager.snapshot(beans: beans, rules: rules,
+                                          records: records, canvases: canvases,
+                                          tags: recordTags)
         let preferences = BackupManager.preferences()
         let images = ImageStore.shared.directoryURL
         isBuilding = true

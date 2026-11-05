@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build, install and screenshot BrewPhase on the iOS simulator.
 #
-#   Tools/run.sh [--demo] [--screen <name>] [--tab <cellar|brews|more>]
+#   Tools/run.sh [--demo] [--screen <name>] [--tab <coffee|records|canvas>]
 #                [--lang <system|zh-Hans|en>] [--ask "<question>"]
 #                [--ask-more "<question>"]...
 #                [--quick-demo] [--quick-expand <params|flavor|all>]
@@ -38,6 +38,12 @@
 #           stockAdjust) open this bag by name instead of today's pick.
 # --card-index  opens the home deck on the Nth bag (0-based), so the stack can be
 #           screenshotted away from the first card without a swipe.
+# --link    pre-fills the link editor with this URL. A simulator cannot paste,
+#           and the whole "recognise -> fetch -> preview" path only runs when a
+#           real URL is in the field.
+# --provider  which platform's link record `--screen linkDetail` opens.
+# --autoplay  loads the player as soon as linkDetail appears. Screenshots only:
+#           the real path always needs one tap on the poster.
 # --bean-action  performs one detail-page menu action (finish | restore) after
 #           the screen settles — the menu itself is a popover and cannot be
 #           screenshotted open.
@@ -81,6 +87,12 @@ while [ $# -gt 0 ]; do
     --bean-action) DEMO_ARGS+=(-BrewPhaseBeanAction "$2"); shift 2 ;;
     --bean-expand) DEMO_ARGS+=(-BrewPhaseBeanEditorExpand yes); shift ;;
     --card-index) DEMO_ARGS+=(-BrewPhaseCardIndex "$2"); shift 2 ;;
+    --carrier) DEMO_ARGS+=(-BrewPhaseRecordCarrier "$2"); shift 2 ;;
+    --link)   DEMO_ARGS+=(-BrewPhaseLinkURL "$2"); shift 2 ;;
+    --provider) DEMO_ARGS+=(-BrewPhaseLinkProvider "$2"); shift 2 ;;
+    --autoplay) DEMO_ARGS+=(-BrewPhaseAutoPlay yes); shift ;;
+    --force-autoplay) DEMO_ARGS+=(-BrewPhaseForceAutoplay yes); shift ;;
+    --tag)    DEMO_ARGS+=(-BrewPhaseRecordTag "$2"); shift 2 ;;
     --stock-overshoot) DEMO_ARGS+=(-BrewPhaseStockOvershoot yes); shift ;;
     --lang)   LANG_SETTING="$2"; shift 2 ;;
     --pref)   PREFS+=("$2"); shift 2 ;;

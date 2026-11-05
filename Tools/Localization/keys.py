@@ -18,7 +18,9 @@ A key is any string literal containing Chinese, with three normalisations:
   with a full-width stop.
 
 Literals that are internal by construction — log messages, `UserDefaults` keys,
-file names — are dropped.
+file names — are dropped. So is *content*: a line marked `// i18n:data` holds a
+platform title or a sample URL, which must reach the screen exactly as written
+and must not appear in either string table.
 """
 
 from __future__ import annotations
@@ -74,7 +76,12 @@ def is_internal(text: str, line: str) -> bool:
 def source_keys() -> set[str]:
     keys: set[str] = set()
     for path in sorted(SOURCES.rglob("*.swift")):
-        for line in strip_comments(path.read_text(encoding="utf-8")).split("\n"):
+        raw_lines = path.read_text(encoding="utf-8").split("\n")
+        code_lines = strip_comments(path.read_text(encoding="utf-8")).split("\n")
+        for raw, line in zip(raw_lines, code_lines):
+            # 标了 i18n:data 的行是内容，不是文案：平台标题、示例链接原样显示。
+            if "i18n:data" in raw:
+                continue
             for match in LITERAL.finditer(line):
                 text = match.group(1)
                 if is_internal(text, line):

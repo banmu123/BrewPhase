@@ -30,6 +30,13 @@ enum BrewPhaseSchema {
         // 本地问答用的向量索引。它是**派生数据**：全部内容都能从上面几张表重算，
         // 所以清掉它不丢信息，只是下次提问要多花一次建索引的时间。
         EmbeddingRecord.self,
+        // 个人咖啡馆的两块新内容：记录与画布。与咖啡完全独立——它们没有外键，
+        // 不参与阶段/推荐/提醒的任何计算，加进来只是多了两张表。
+        Record.self,
+        Canvas.self,
+        // 用户自定义的标签，与记录多对多。它不是「记录的分类」：删一个标签
+        // 只解除关联，记录一条都不会少。
+        RecordTag.self,
     ]
 
     static let schema = Schema(modelTypes)

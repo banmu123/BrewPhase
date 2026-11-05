@@ -380,7 +380,8 @@ final class DataConsistencyTests: XCTestCase {
 
         let data = BackupManager.snapshot(
             beans: try context.fetch(FetchDescriptor<Bean>()),
-            rules: try context.fetch(FetchDescriptor<PhaseRule>())
+            rules: try context.fetch(FetchDescriptor<PhaseRule>()),
+            records: [], canvases: [], tags: []
         )
         XCTAssertEqual(try XCTUnwrap(data.brews.first?.stockDeductedG), 15, accuracy: 0.001)
         XCTAssertNotNil(data.beans.first?.stockCountedAt)
@@ -456,9 +457,12 @@ final class DataConsistencyTests: XCTestCase {
     // MARK: - Schema
 
     /// App 与测试共用同一份实体清单；容器认得的实体数量必须与清单一致。
+    ///
+    /// 这里钉住数量是刻意的：新增实体必须是一次**有意识**的改动，而不是某个
+    /// 模型文件被顺手挪进清单。记录与画布加进来时，这个数字从 6 变成 8。
     func testTheSharedSchemaHoldsEveryPersistedEntity() throws {
         XCTAssertEqual(BrewPhaseSchema.schema.entities.count, BrewPhaseSchema.modelTypes.count)
-        XCTAssertEqual(BrewPhaseSchema.modelTypes.count, 6)
+        XCTAssertEqual(BrewPhaseSchema.modelTypes.count, 9)
     }
 
     /// 落盘再打开：新增的两个可选字段要原样回来。

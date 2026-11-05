@@ -15,4 +15,6 @@ enum AppLog {
     static let flavor = Logger(subsystem: subsystem, category: "flavor")
     /// 本地 RAG：索引、检索、以及每一次问答走了哪条路径。
     static let rag = Logger(subsystem: subsystem, category: "rag")
+    /// 链接解析与内嵌播放器：取到了什么、被谁拦下、播放器停在哪一步。
+    static let link = Logger(subsystem: subsystem, category: "link")
 }

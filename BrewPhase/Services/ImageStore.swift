@@ -62,11 +62,14 @@ final class ImageStore: @unchecked Sendable {
     // MARK: - Writing
 
     /// Downscales, writes both sizes, and returns the name to store on the bean.
+    ///
+    /// `maxDimension` 用来区分「用户拍的照片」和「网页预览图」：后者本来就只有
+    /// 几百像素宽，再存一张 1400 的长边副本只是白占空间。
     @discardableResult
-    func save(_ image: UIImage) throws -> String {
+    func save(_ image: UIImage, maxDimension: CGFloat = ImageStore.maxDimension) throws -> String {
         let name = "\(UUID().uuidString).jpg"
 
-        guard let display = Self.downscaled(image, maxDimension: Self.maxDimension),
+        guard let display = Self.downscaled(image, maxDimension: maxDimension),
               let displayData = display.jpegData(compressionQuality: Self.jpegQuality) else {
             throw ImageStoreError.encodingFailed
         }

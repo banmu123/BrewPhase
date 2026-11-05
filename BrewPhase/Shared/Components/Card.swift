@@ -83,6 +83,18 @@ struct CardDivider: View {
     }
 }
 
+/// The page's separator: one hairline across the content width.
+///
+/// Pages that are not made of cards still need to say where one thought ends and
+/// the next begins; this is that line, and the only one they use.
+struct Hairline: View {
+    var body: some View {
+        Rectangle()
+            .fill(Palette.hairline)
+            .frame(height: 0.7)
+    }
+}
+
 /// Card-shaped button wrapper: gives a card the press feedback of a control
 /// without turning it into a `Button` with default styling.
 struct CardButtonStyle: ButtonStyle {

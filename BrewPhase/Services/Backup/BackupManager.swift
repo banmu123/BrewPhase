@@ -15,8 +15,15 @@ enum BackupManager {
     // MARK: - 快照
 
     /// 把 SwiftData 对象翻译成可编码的备份结构。必须在主线程/主上下文调用。
+    ///
+    /// 记录与画布**必须显式传进来**，没有默认值：漏传一次就会写出「完整备份
+    /// 里没有记录」的文件，而这种缺失在恢复成功的那一刻才被发现。
     @MainActor
-    static func snapshot(beans: [Bean], rules: [PhaseRule]) -> BackupData {
+    static func snapshot(beans: [Bean],
+                         rules: [PhaseRule],
+                         records: [Record],
+                         canvases: [Canvas],
+                         tags: [RecordTag]) -> BackupData {
         let beanRows = beans.map { bean in
             BackupBean(
                 id: bean.id,
@@ -99,7 +106,49 @@ enum BackupManager {
         }
 
         return BackupData(beans: beanRows, brews: brewRows, tastings: tastingRows,
-                          reminders: reminderRows, phaseRules: ruleRows)
+                          reminders: reminderRows, phaseRules: ruleRows,
+                          records: records.map { record in
+                              BackupRecord(
+                                  id: record.id,
+                                  carrierRaw: record.carrierRaw,
+                                  title: record.title,
+                                  note: record.note,
+                                  urlString: record.urlString,
+                                  sourceName: record.sourceName,
+                                  previewPath: record.previewPath,
+                                  mediaPath: record.mediaPath,
+                                  createdAt: record.createdAt.timeIntervalSince1970,
+                                  updatedAt: record.updatedAt.timeIntervalSince1970,
+                                  isSample: record.isSample,
+                                  tagIDs: (record.tags ?? []).map(\.id),
+                                  canonicalURL: record.canonicalURL,
+                                  providerRaw: record.providerRaw,
+                                  contentKindRaw: record.contentKindRaw,
+                                  platformContentID: record.platformContentID,
+                                  linkPage: record.linkPage,
+                                  authorName: record.authorName,
+                                  summary: record.summary,
+                                  thumbnailURLString: record.thumbnailURLString,
+                                  metadataStatusRaw: record.metadataStatusRaw,
+                                  repositoryStars: record.repositoryStars,
+                                  repositoryLanguage: record.repositoryLanguage,
+                                  repositoryLicense: record.repositoryLicense
+                              )
+                          },
+                          canvases: canvases.map { canvas in
+                              BackupCanvas(
+                                  id: canvas.id,
+                                  name: canvas.name,
+                                  note: canvas.note,
+                                  createdAt: canvas.createdAt.timeIntervalSince1970,
+                                  updatedAt: canvas.updatedAt.timeIntervalSince1970,
+                                  isSample: canvas.isSample
+                              )
+                          },
+                          tags: tags.map { tag in
+                              BackupTag(id: tag.id, name: tag.name,
+                                        createdAt: tag.createdAt.timeIntervalSince1970)
+                          })
     }
 
     // MARK: - 偏好
@@ -154,7 +203,19 @@ enum BackupManager {
         try validatePreferences(preferences)
 
         // 空字符串在模型里等同「没有图片」（ImageStore 也是这样判断的），不算附件。
-        let names = Set(data.beans.compactMap(\.imagePath)).filter { !$0.isEmpty }.sorted()
+        // 记录的照片与豆子的照片共用同一个目录，也必须一起进备份——否则恢复时
+        // 的孤儿清理会把它们当成没人引用的文件删掉。
+        let beanImages = data.beans.compactMap(\.imagePath)
+        // 记录有两类图片引用：预览图（链接缩略图 / 视频封面）与图片记录的正文图。
+        // 视频本体是 .mov，**不能**进附件列表——它可能几百兆，而且
+        // `isSafeAttachmentName` 只接受 .jpg，混进来会让整份备份写失败。
+        let recordImages = (data.records ?? []).flatMap { record -> [String] in
+            var names: [String] = []
+            if let preview = record.previewPath { names.append(preview) }
+            if let media = record.mediaPath, media.hasSuffix(".jpg") { names.append(media) }
+            return names
+        }
+        let names = Set(beanImages + recordImages).filter { !$0.isEmpty }.sorted()
         guard names.count <= BackupFormat.maxAttachments else { throw BackupError.tooManyRecords }
 
         // 第一遍只算摘要与体积，不把图片留在内存里。
@@ -277,7 +338,7 @@ enum BackupManager {
         let manifest = file.manifest
         guard manifest.format == BackupFormat.identifier else { throw BackupError.malformed }
         guard manifest.schemaVersion >= 1 else { throw BackupError.malformed }
-        guard manifest.schemaVersion >= BackupFormat.currentSchemaVersion else {
+        guard manifest.schemaVersion >= BackupFormat.oldestReadableVersion else {
             // v1 的摘要不覆盖偏好，不能被当作完整的完整性校验。
             throw BackupError.legacyVersion(manifest.schemaVersion)
         }
@@ -297,7 +358,8 @@ enum BackupManager {
         )
         guard counts == manifest.summary else { throw BackupError.missingData }
 
-        for count in [counts.beans, counts.brews, counts.tastings, counts.reminders, counts.phaseRules] {
+        for count in [counts.beans, counts.brews, counts.tastings, counts.reminders, counts.phaseRules,
+                      data.records?.count ?? 0, data.canvases?.count ?? 0] {
             guard count <= BackupFormat.maxRecordsPerEntity else { throw BackupError.tooManyRecords }
         }
         guard counts.attachments <= BackupFormat.maxAttachments else {

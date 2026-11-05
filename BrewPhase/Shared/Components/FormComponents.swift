@@ -32,17 +32,21 @@ struct EditorSection<Content: View>: View {
 /// One row inside an `EditorSection`.
 struct EditorRow<Content: View>: View {
     var title: LocalizedStringKey?
+    /// 多行输入要让标题和第一行文字对齐，否则 68pt 宽的标签会漂到整块的正中间，
+    /// 看起来像是掉到下一行去了。
+    var alignsTop: Bool = false
     var showsDivider: Bool = true
     @ViewBuilder var content: Content
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
+            HStack(alignment: alignsTop ? .top : .center, spacing: 12) {
                 if let title {
                     Text(title)
                         .font(TypeScale.body)
                         .foregroundStyle(Palette.inkSoft)
                         .frame(width: 68, alignment: .leading)
+                        .padding(.top, alignsTop ? 3 : 0)
                 }
                 content
             }

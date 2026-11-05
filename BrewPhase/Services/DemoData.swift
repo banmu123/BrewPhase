@@ -34,11 +34,22 @@ enum DemoData {
     }
 
     /// 库里是否已有示例数据（「更多 → 数据 → 示例数据」开关的数据真相）。
+    ///
+    /// 三类都看：用户可能只把示例豆删掉了，记录与画布还在；只数豆子会让开关
+    /// 显示「关」，而点开记录页仍然能看到示例内容。
     static func hasInstalled(context: ModelContext) -> Bool {
-        let count = (try? context.fetchCount(
+        let beans = (try? context.fetchCount(
             FetchDescriptor<Bean>(predicate: #Predicate { $0.isSample })
         )) ?? 0
-        return count > 0
+        if beans > 0 { return true }
+        let records = (try? context.fetchCount(
+            FetchDescriptor<Record>(predicate: #Predicate { $0.isSample })
+        )) ?? 0
+        if records > 0 { return true }
+        let canvases = (try? context.fetchCount(
+            FetchDescriptor<Canvas>(predicate: #Predicate { $0.isSample })
+        )) ?? 0
+        return canvases > 0
     }
 
     /// 库里所有带示例标记的豆子。
@@ -51,20 +62,29 @@ enum DemoData {
         )) ?? []
     }
 
-    /// 删除全部示例数据：只碰带 `isSample` 标记的豆子，它们的冲煮、风味与
-    /// 提醒随级联一起走；真实记录不带标记，永远不受影响。
+    /// 删除全部示例数据：只碰带 `isSample` 标记的豆子、记录与画布，它们的
+    /// 冲煮、风味与提醒随级联一起走；真实记录不带标记，永远不受影响。
     ///
     /// - Returns: true when something was actually deleted.
     @discardableResult
     static func removeInstalled(context: ModelContext) -> Bool {
         let samples = sampleBeans(context: context)
-        guard !samples.isEmpty else { return false }
-        for bean in samples {
-            context.delete(bean)
-        }
+        let records = (try? context.fetch(
+            FetchDescriptor<Record>(predicate: #Predicate { $0.isSample })
+        )) ?? []
+        let canvases = (try? context.fetch(
+            FetchDescriptor<Canvas>(predicate: #Predicate { $0.isSample })
+        )) ?? []
+        guard !samples.isEmpty || !records.isEmpty || !canvases.isEmpty else { return false }
+
+        for bean in samples { context.delete(bean) }
+        for record in records { context.delete(record) }
+        for canvas in canvases { context.delete(canvas) }
         do {
             try context.save()
-            AppLog.store.info("sample data removed: \(samples.count) bean(s)")
+            AppLog.store.info(
+                "sample data removed: \(samples.count) bean(s), \(records.count) record(s), \(canvases.count) canvas(es)"
+            )
             return true
         } catch {
             AppLog.store.error("sample data removal failed: \(error.localizedDescription, privacy: .public)")
@@ -276,6 +296,8 @@ enum DemoData {
             bean.isSample = true
         }
 
+        installSampleRecords(context: context, today: today)
+
         do {
             try context.save()
         } catch {
@@ -284,5 +306,138 @@ enum DemoData {
             AppLog.store.error("demo data save failed: \(error.localizedDescription, privacy: .public)")
             context.rollback()
         }
+    }
+
+    // MARK: - 示例记录与画布
+    //
+    // 链接这几条用的是**真实存在的内容**（GitHub 上的开源仓库、B 站官方 MV、
+    // YouTube 上的 Blender 短片、X 上第一条推文），元数据在安装时静态写好，
+    // 不联网。这样列表里能同时看到视频卡、仓库卡、帖子卡与普通网页卡；
+    // 点进 B 站那条还能真的把官方播放器拉起来。
+    // 图片与视频载体不放假文件——本机没有素材，空占位比伪造一张图诚实。
+    // 全部带 `isSample`，与示例豆一起被那个开关整批删除。
+
+    static func installSampleRecords(context: ModelContext, today: Date = Date()) {
+        func day(_ offset: Int) -> Date { DateMath.add(days: -offset, to: today) }
+
+        let allTags = (try? context.fetch(FetchDescriptor<RecordTag>())) ?? []
+        func tag(_ name: String) -> RecordTag? {
+            let localized = L(name)
+            return allTags.first { $0.name == localized || $0.name == name }
+                ?? allTags.first { $0.name.caseInsensitiveCompare(localized) == .orderedSame }
+        }
+        func tags(_ names: [String]) -> [RecordTag] { names.compactMap { tag($0) } }
+
+        /// 一条链接示例：平台身份走真正的识别器，元数据按平台实际情况写死。
+        func link(_ urlString: String,
+                  title: String,
+                  summary: String,
+                  author: String,
+                  note: String,
+                  stars: Int = 0,
+                  language: String = "",
+                  license: String = "",
+                  createdAt: Date) -> Record {
+            let record = Record(carrier: .link, title: title, note: L(note),
+                                urlString: urlString, createdAt: createdAt, isSample: true)
+            if let url = URL(string: urlString) {
+                record.adopt(LinkResolver.match(url))
+            }
+            record.summary = summary
+            record.authorName = author
+            record.sourceName = record.provider.displayName.isEmpty
+                ? (record.linkHost ?? "")
+                : record.provider.displayName
+            record.repositoryStars = stars
+            record.repositoryLanguage = language
+            record.repositoryLicense = license
+            // 示例数据不联网：状态记成「已解析」，但封面留空——卡片会退到
+            // 平台图标，而不是一张假的截图。
+            record.metadataStatus = .partial
+            return record
+        }
+
+        let records: [Record] = [
+            link("https://github.com/NiftyTreeStudios/Bean-Juice",
+                 title: "NiftyTreeStudios/Bean-Juice",
+                 summary: "A simple app for coffee brewing recipes.",
+                 author: "NiftyTreeStudios",
+                 note: "本地优先的做法值得借鉴：数据先落在自己的机器上。",
+                 stars: 30, language: "Swift", license: "MIT",
+                 createdAt: day(3)),
+
+            link("https://standartmag.com",
+                 title: "Standart",
+                 summary: "",
+                 author: "",
+                 note: "关于「浅烘是不是一种审美霸权」的讨论。读完还是觉得：好喝比正确重要。",
+                 createdAt: day(6)),
+
+            link("https://www.youtube.com/watch?v=jNQXAC9IVRw",
+                 title: "Me at the zoo",
+                 summary: "The first video on YouTube.",
+                 author: "jawed",
+                 note: "互联网上的第一条视频。",
+                 createdAt: day(9)),
+
+            link("https://www.bilibili.com/video/BV1GJ411x7h7",
+                 title: "【官方 MV】Never Gonna Give You Up - Rick Astley", // i18n:data
+                 summary: "",
+                 author: "Rick Astley",
+                 note: "十年前的老歌，画质修得真好。",
+                 createdAt: day(11)),
+
+            link("https://x.com/jack/status/20",
+                 title: "",
+                 summary: "just setting up my twttr",
+                 author: "jack",
+                 note: "互联网上的第一条推文。",
+                 createdAt: day(14)),
+
+            Record(carrier: .text,
+                   title: L("％Arabica 武康路店"),
+                   note: L("午后坐了一小时。吧台只有两个位置，看咖啡师做浓缩，比喝本身更有意思。"),
+                   createdAt: day(17), isSample: true),
+
+            Record(carrier: .text,
+                   note: L("每包豆都有自己的脾气：有的要高温，有的要等。人也是。"),
+                   createdAt: day(20), isSample: true),
+
+            Record(carrier: .text,
+                   title: L("换城市之后"),
+                   note: L("咖啡变成了少数几件每天都会做的事之一。它不解决问题，但它让一天有个开头。"),
+                   createdAt: day(24), isSample: true),
+
+            Record(carrier: .text,
+                   title: L("Onibus Coffee 中目黑"),
+                   note: L("二楼靠窗，能看到电车经过。点了一杯浅烘的肯尼亚，凉下来之后更像红茶。"),
+                   createdAt: day(28), isSample: true),
+        ]
+
+        let tagAssignments: [[String]] = [
+            ["开发"],
+            ["文章"],
+            ["视频"],
+            ["视频"],
+            ["随记"],
+            ["到访"],
+            ["随记"],
+            ["人生"],
+            ["到访"],
+        ]
+        for (index, record) in records.enumerated() {
+            record.tags = tags(tagAssignments[index])
+            context.insert(record)
+        }
+
+        let canvases: [Canvas] = [
+            Canvas(name: L("我的咖啡探索"),
+                   note: L("从第一包手冲豆开始，把喝过的味道串成一条线。"),
+                   createdAt: day(18), isSample: true),
+            Canvas(name: L("我想建立怎样的生活？"),
+                   note: L("慢一点，少一点，把一件事做完。"),
+                   createdAt: day(30), isSample: true),
+        ]
+        for canvas in canvases { context.insert(canvas) }
     }
 }

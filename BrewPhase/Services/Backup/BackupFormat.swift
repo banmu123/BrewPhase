@@ -19,7 +19,18 @@ enum BackupFormat {
     /// 改一个默认粉量不会被发现。v1 没有发布给任何外部用户（功能尚未上线），
     /// 因此这里提升到 v2 并把偏好纳入摘要，而不是悄悄改变 v1 的语义：
     /// 读到 v1 文件会明确拒绝并提示重新生成。
-    static let currentSchemaVersion = 2
+    ///
+    /// v3 增加了 `records` 与 `canvases` 两段（记录与画布）。它们**可选**：
+    /// v2 文件解出来是 nil，恢复时按「这份备份不知道有这些东西」处理——
+    /// 不动设备上已有的记录，而不是把它们当成空集删掉。这也是 v2 仍然可读的
+    /// 原因：v2 的摘要只覆盖它自己有的字段，重新编码仍然一致。
+    static let currentSchemaVersion = 3
+
+    /// 仍然接受的最旧版本。
+    ///
+    /// v1 必须拒绝（摘要不覆盖偏好，等于没有完整性校验）；v2 只是少了记录与
+    /// 画布两段，数据本身是可信的，没有理由让用户手里的备份作废。
+    static let oldestReadableVersion = 2
 
     static let fileExtension = "brewphasebackup"
 
@@ -329,6 +340,63 @@ struct BackupData: Codable, Equatable {
     var tastings: [BackupTasting]
     var reminders: [BackupReminder]
     var phaseRules: [BackupPhaseRule]
+    /// v3 起才有。nil = 这份文件来自 v2，不知道记录与画布的存在；恢复时
+    /// **不动**设备上已有的那两张表，而不是把它们当成空集删掉。
+    var records: [BackupRecord]? = nil
+    var canvases: [BackupCanvas]? = nil
+    /// 记录用的标签。与 `records` 同进同退：只有带记录段的文件才会带标签。
+    var tags: [BackupTag]? = nil
+}
+
+/// 一条记录。与 `Record` 逐字段对应；`kindRaw` 保留原始字符串，
+/// 让未来新增的分类在旧版本 App 上仍然能被读出来（UI 会回退到「灵感」）。
+/// 一条记录。载体、内容、用户的话与标签分开存——与模型一致：标签只存 ID，
+/// 标签本身在 `BackupTag` 里，恢复时先建标签再挂关系。
+struct BackupRecord: Codable, Equatable {
+    var id: UUID
+    var carrierRaw: String
+    var title: String
+    var note: String
+    var urlString: String
+    var sourceName: String
+    var previewPath: String?
+    var mediaPath: String?
+    var createdAt: Double
+    var updatedAt: Double
+    var isSample: Bool
+    var tagIDs: [UUID]
+
+    // 链接的平台身份。全部可选：v3 文件是分两次长出来的，早先那份没有这些键，
+    // 缺了就等于「这条记录还没被识别过」，读取时按地址现认。
+    var canonicalURL: String? = nil
+    var providerRaw: String? = nil
+    var contentKindRaw: String? = nil
+    var platformContentID: String? = nil
+    var linkPage: Int? = nil
+    var authorName: String? = nil
+    var summary: String? = nil
+    var thumbnailURLString: String? = nil
+    var metadataStatusRaw: String? = nil
+    var repositoryStars: Int? = nil
+    var repositoryLanguage: String? = nil
+    var repositoryLicense: String? = nil
+}
+
+/// 用户自定义的标签。
+struct BackupTag: Codable, Equatable {
+    var id: UUID
+    var name: String
+    var createdAt: Double
+}
+
+/// 一块画布。这一版只有名字与说明，内容尚未建模。
+struct BackupCanvas: Codable, Equatable {
+    var id: UUID
+    var name: String
+    var note: String
+    var createdAt: Double
+    var updatedAt: Double
+    var isSample: Bool
 }
 
 // MARK: - 实体

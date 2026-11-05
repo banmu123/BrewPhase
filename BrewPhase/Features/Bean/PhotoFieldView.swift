@@ -15,6 +15,9 @@ struct PhotoFieldView: View {
     @Binding var pickedImage: UIImage?
     /// Set when the user explicitly removes the picture.
     @Binding var isRemoved: Bool
+    /// 文案默认是豆子的包装照；记录（到访）用同一套控件，只换称呼。
+    var addLabel: LocalizedStringKey = "加一张包装照片"
+    var replaceLabel: LocalizedStringKey = "换一张"
 
     @State private var pickerItem: PhotosPickerItem?
     @State private var isShowingCamera = false
@@ -32,7 +35,7 @@ struct PhotoFieldView: View {
             preview
 
             VStack(alignment: .leading, spacing: 8) {
-                Text(hasAnyImage ? "换一张" : "加一张包装照片")
+                Text(hasAnyImage ? replaceLabel : addLabel)
                     .font(TypeScale.callout)
                     .foregroundStyle(Palette.inkSoft)
 

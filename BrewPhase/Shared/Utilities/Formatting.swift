@@ -37,6 +37,19 @@ enum Fmt {
         return rounded == rounded.rounded() ? "\(Int(rounded))" : String(format: "%.1f", rounded)
     }
 
+    /// `845` / `1.2k` / `38k` —— 仓库卡片上的 star 数。
+    ///
+    /// 不本地化：`k` 在中英文界面里都是同一个缩写，而 `1200` 会把这一行撑长。
+    static func starCount(_ value: Int) -> String {
+        if value < 1000 { return String(value) }
+        let thousands = Double(value) / 1000
+        if thousands < 10 {
+            let text = String(format: "%.1f", thousands)
+            return (text.hasSuffix(".0") ? String(text.dropLast(2)) : text) + "k"
+        }
+        return "\(Int(thousands.rounded()))k"
+    }
+
     // MARK: - Day after roast
 
     /// `Day 16`, or an em dash when the roast date is unknown.

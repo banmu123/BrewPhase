@@ -23,7 +23,7 @@ struct BrewPhaseApp: App {
 
     /// Held here rather than inside `RootView` so that rebuilding the view tree
     /// for a language change does not reset which tab the user is on.
-    @State private var selection: AppTab = DebugLaunch.tab ?? .cellar
+    @State private var selection: AppTab = DebugLaunch.tab ?? .coffee
 
     init() {
         // Touch the singleton before the first frame so the language is already
@@ -74,6 +74,8 @@ struct BrewPhaseApp: App {
     private static func bootstrap(on container: ModelContainer) {
         let context = container.mainContext
         PhaseRuleBook.seedIfNeeded(context: context)
+        // 六个建议标签要在示例记录之前铺好：示例记录会按名字挂到它们上面。
+        RecordTag.seedIfNeeded(context: context)
         DemoData.installIfRequested(context: context)
     }
 
@@ -109,11 +111,33 @@ struct BrewPhaseApp: App {
     }
 }
 
-/// The three tabs (§26): what to drink, what I have drunk, and everything else.
-enum AppTab: Hashable {
-    case cellar
-    case brews
-    case more
+/// 三个一级页面：喝什么、记什么、把什么放在一起。
+///
+/// 「豆仓」与「冲煮」不再是两个并列的 Tab——冲煮本来就是咖啡这件事的一部分，
+/// 现在它作为咖啡页里的一个入口存在。腾出来的位置给了记录与画布，这是这一版
+/// 产品形态的变化：从一台咖啡工具，变成一个有咖啡的个人空间。
+enum AppTab: String, CaseIterable, Identifiable, Hashable {
+    case coffee
+    case records
+    case canvas
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .coffee: return L("咖啡")
+        case .records: return L("记录")
+        case .canvas: return L("画布")
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .coffee: return "cup.and.saucer.fill"
+        case .records: return "rectangle.stack.fill"
+        case .canvas: return "square.grid.2x2.fill"
+        }
+    }
 }
 
 struct RootView: View {
@@ -129,20 +153,30 @@ struct RootView: View {
     @State private var debugScreen: DebugScreen?
 
     var body: some View {
-        TabView(selection: $selection) {
-            HomeView()
-                .tabItem { Label("豆仓", systemImage: "square.stack.3d.up") }
-                .tag(AppTab.cellar)
+        // 导航条与页面是上下两块，而不是把胶囊浮在内容上面：页面自己滚动到
+        // 多长都走不到胶囊底下，也就不需要每个列表各自猜一个底部内边距。
+        VStack(spacing: 0) {
+            TabView(selection: $selection) {
+                CoffeeHomeView()
+                    .toolbar(.hidden, for: .tabBar)
+                    .tag(AppTab.coffee)
 
-            BrewHistoryView()
-                .tabItem { Label("冲煮", systemImage: "cup.and.saucer") }
-                .tag(AppTab.brews)
+                RecordsView()
+                    .toolbar(.hidden, for: .tabBar)
+                    .tag(AppTab.records)
 
-            MoreView()
-                .tabItem { Label("更多", systemImage: "ellipsis.circle") }
-                .tag(AppTab.more)
+                CanvasListView()
+                    .toolbar(.hidden, for: .tabBar)
+                    .tag(AppTab.canvas)
+            }
+            .tint(Palette.roast)
+
+            CapsuleTabBar(selection: $selection)
+                .padding(.horizontal, 56)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
         }
-        .tint(Palette.roast)
+        .background(Palette.paper)
         .sheet(item: $debugScreen) { screen in
             debugContent(for: screen)
         }
@@ -293,6 +327,39 @@ struct RootView: View {
             } else {
                 debugEmpty
             }
+        case .addSheet:
+            AddSheet()
+        case .addKinds:
+            AddSheet(initialRoute: .recordCarriers)
+        case .canvasEditor:
+            CanvasEditorView()
+        case .recordEditor:
+            RecordEditorView(carrier: DebugLaunch.recordCarrier ?? .link,
+                             initialURL: DebugLaunch.linkURL ?? "")
+        case .tagManager:
+            TagManagerView()
+        case .recordDetail:
+            if let record = (try? context.fetch(
+                FetchDescriptor<Record>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
+            ))?.first {
+                NavigationStack { RecordDetailView(record: record) }
+            } else {
+                debugEmpty
+            }
+        case .playerFullscreen:
+            if let record = debugLinkRecord, let embed = record.linkEmbed {
+                FullScreenPlayerView(record: record, embed: embed)
+            } else {
+                debugEmpty
+            }
+        case .linkDetail:
+            if let record = debugLinkRecord {
+                NavigationStack {
+                    RecordDetailView(record: record, autoPlay: DebugLaunch.autoPlay)
+                }
+            } else {
+                debugEmpty
+            }
         case .quickLog:
             // 从最近冲过的那包进来，和首页「记一杯」走的是同一条路。
             QuickBrewLogView(bean: beans.first { $0.id == recentBrewBeanID } ?? spotlightBean)
@@ -315,6 +382,18 @@ struct RootView: View {
                 debugEmpty
             }
         }
+    }
+
+    /// `linkDetail` 要打开的那条链接：可以按平台挑，默认取最新一条。
+    private var debugLinkRecord: Record? {
+        let links = ((try? context.fetch(
+            FetchDescriptor<Record>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
+        )) ?? []).filter { $0.carrier == .link }
+        if let provider = DebugLaunch.linkProvider,
+           let picked = links.first(where: { $0.provider == provider }) {
+            return picked
+        }
+        return links.first
     }
 
     /// 最近被冲过的那包豆——「记一杯」默认预填它的上一次参数。
