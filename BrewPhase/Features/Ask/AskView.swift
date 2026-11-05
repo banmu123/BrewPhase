@@ -120,7 +120,7 @@ struct AskView: View {
                             .foregroundStyle(Palette.roast)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
-                            .background(Capsule(style: .continuous).fill(Palette.cream.opacity(0.6)))
+                            .background(Capsule(style: .continuous).fill(Palette.well))
                     }
                     .buttonStyle(.plain)
                 }
@@ -282,7 +282,7 @@ struct AskView: View {
                 .foregroundStyle(Palette.roast)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 5)
-                .background(Capsule(style: .continuous).fill(Palette.cream.opacity(0.55)))
+                .background(Capsule(style: .continuous).fill(Palette.well))
                 .accessibilityLabel(L("正在讨论：%@", label))
             }
 

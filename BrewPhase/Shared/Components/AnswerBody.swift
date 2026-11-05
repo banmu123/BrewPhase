@@ -72,7 +72,7 @@ struct AnswerBody: View {
                 .padding(.trailing, 13)
                 .padding(.vertical, 10)
         }
-        .background(Palette.cream.opacity(0.5))
+        .background(Palette.well)
         .clipShape(RoundedRectangle(cornerRadius: Metric.radiusSmall, style: .continuous))
     }
 

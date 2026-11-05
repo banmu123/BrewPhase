@@ -84,6 +84,18 @@ enum Fmt {
     static func brews(_ n: Int) -> String { L("约 %@ 次", String(n)) }
     /// `约 4 天` / `About 4 days`
     static func days(_ n: Int) -> String { L("约 %@ 天", String(n)) }
+
+    /// `1 包` / `2 包` — Chinese counters do not inflect, English nouns do, so
+    /// the singular gets its own key rather than printing "1 bags".
+    static func bags(_ n: Int) -> String {
+        n == 1 ? L("1 包") : L("%@ 包", String(n))
+    }
+
+    /// `1 包在喝` / `3 包在喝`
+    static func bagsOpen(_ n: Int) -> String {
+        n == 1 ? L("1 包在喝") : L("%@ 包在喝", String(n))
+    }
+
     /// `还能喝 4 天` / `今天喝完`
     static func daysLeftPhrase(_ n: Int) -> String {
         n <= 0 ? L("已经见底") : L("预计还能喝 %@ 天", String(n))

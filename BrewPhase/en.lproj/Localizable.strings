@@ -5,6 +5,7 @@
 "%@ 养豆结束" = "%@ has finished resting";
 "%@ 分" = "%@ points";
 "%@ 包" = "%@ bags";
+"%@ 包在喝" = "%@ bags open";
 "%@ 天" = "%@ days";
 "%@ 天后" = "After day %@";
 "%@ 建议优先喝" = "%@ — drink this one first";
@@ -44,6 +45,8 @@
 "**下一杯留意**：%@" = "**Watch next time**: %@";
 "**保持不变**：%@" = "**Keep unchanged**: %@";
 "+%@ 天" = "+%@ days";
+"1 包" = "1 bag";
+"1 包在喝" = "1 bag open";
 "22 格" = "22 clicks";
 "App 版本" = "App version";
 "BrewPhase 会结合你的咖啡记录和本地知识进行分析，数据不会上传到服务器。" = "BrewPhase works from your coffee records and its built-in knowledge. Nothing is uploaded to a server.";
@@ -53,6 +56,7 @@
 "Ollama 本地服务" = "Ollama local service";
 "Ollama 的回答看不懂：%@" = "Ollama's response made no sense: %@";
 "Ollama 返回了 %@：%@" = "Ollama returned %@: %@";
+"· 这次冲煮早于你最后一次盘点，保存不会改变库存" = "· this brew predates your last stock count, so saving will not change your stock";
 "· 这次用掉的比剩下的还多" = "· that is more than you have left";
 "、" = ", ";
 "。" = ". ";
@@ -83,17 +87,18 @@
 "一句话总结" = "One-line summary";
 "一本属于你的咖啡实验手册：记录每一包豆，看到风味怎么变化。" = "A coffee notebook that's yours: log every bag and watch its flavour move.";
 "一次只改一个变量，否则事后不知道是哪一项起的作用。" = "Change one variable at a time, or you will not know which one did the work.";
+"上一包" = "Previous bag";
 "上一杯" = "Last cup";
 "上一杯为什么酸？" = "Why was the last cup sour?";
 "上一轮的建议：%@" = "Previous suggestion: %@";
 "上次建议" = "Last suggestion";
 "上次这杯不太理想" = "The last cup was not great";
+"下一包" = "Next bag";
 "下一杯建议" = "Next cup";
 "下一杯怎么调？" = "How should the next cup change?";
 "下一杯留意" = "Watch next time";
 "下一杯：%@" = "Next cup: %@";
 "下一步" = "Next step";
-"下午好" = "Good afternoon";
 "下次记这一杯，会自动带上这次的参数。" = "Next time, this cup's parameters will be filled in for you.";
 "下面会给你两部分资料：一部分是用户自己的豆子、冲煮和风味记录，一部分是 BrewPhase 自带的咖啡常识。" = "You will be given two sets of material: the user's own bags, brews and tasting notes, and the coffee background notes that ship with BrewPhase.";
 "不依赖任何模型，中英混写也能匹配，但只认字面相近" = "Depends on no model and copes with mixed Chinese and English, but only matches on literal wording";
@@ -103,7 +108,6 @@
 "与上一次相比" = "vs. the last one";
 "与本杯相关" = "Relevant to this brew";
 "个人最佳参数还不可用：至少需要 %@ 条带评分的记录。" = "Personal best is not available yet: at least %@ scored brews are needed.";
-"中午好" = "Good midday";
 "中深烘" = "Medium-dark";
 "中烘" = "Medium";
 "中烘两头都搭，手冲和加奶都稳。" = "Medium roasts go either way: filter or milk, both hold up.";
@@ -115,7 +119,6 @@
 "今天可以先喝这包：%@" = "You could start with %@ today";
 "今天喝哪包" = "Which bag today";
 "今天喝哪包？" = "Which bag today?";
-"今天建议" = "Today's pick";
 "今天是烘焙后第 %@ 天，处于「%@」。" = "Today is day %@ after roast, in %@.";
 "今天适合%@：%@" = "Today suits %@: %@";
 "从你自己的记录里找答案：什么时候开封的、哪次冲得最好" = "Find the answer in your own records: when it was opened, which brew turned out best";
@@ -142,6 +145,7 @@
 "保存" = "Save";
 "保存后剩余 %@" = "%@ left after saving";
 "保存后这包豆的总容量会从 %@ 变成 %@。历史记录不受影响。" = "Saving will change the bag size from %@ to %@. History is not affected.";
+"保存后，这次盘点之前的冲煮记录不再影响库存。" = "After saving, brews recorded before this count will no longer change your stock.";
 "保存完整备份文件" = "Save the backup file";
 "保持不变" = "Keep unchanged";
 "修改这些参数会影响 BrewPhase 对咖啡阶段的判断。" = "Changing these numbers changes how BrewPhase reads every bag's stage.";
@@ -155,7 +159,6 @@
 "先把流速拉回你自己的区间，再谈别的。" = "Get the flow back into your own range first.";
 "先放着养一养。" = "Leaving it to rest for now.";
 "先检查文件，确认后才会替换" = "Checked first; nothing changes until you confirm";
-"先记下第一杯" = "Log the first cup";
 "入口有点闷" = "A bit flat on entry";
 "全部恢复默认" = "Reset everything";
 "关于这包豆" = "About this bean";
@@ -167,7 +170,6 @@
 "再记一杯" = "Log another";
 "再记录几杯，这里会开始出现你的个人规律。" = "A few more cups and your own patterns will start to show up here.";
 "写入索引失败，这一轮的回答可能不完整。" = "Writing the index failed, so this answer may be incomplete.";
-"冲完随手记一笔，之后这里会自动带上一次的参数。" = "Jot it down after brewing; the next log will pick up these parameters.";
 "冲得偏快" = "Running fast";
 "冲得偏慢" = "Running slow";
 "冲煮" = "Brews";
@@ -189,6 +191,7 @@
 "删除后不可恢复。冲煮记录本身不受影响。" = "This cannot be undone. The brew itself is not affected.";
 "删除后不可恢复。它关联的 %@ 条冲煮记录和 %@ 条风味记录也会一起被删除。" = "This cannot be undone. Its %@ brews and %@ tasting notes will be deleted too.";
 "删除后不可恢复。这杯用掉的粉会回到原来那包豆的库存里。" = "This cannot be undone. The coffee it used goes back to the bag's stock.";
+"删除后不可恢复。这次冲煮早于你最后一次盘点，库存不会再变动。" = "This cannot be undone. This brew predates your last stock count, so your stock will not change.";
 "删除示例数据" = "Remove sample data";
 "删除示例数据？" = "Remove sample data?";
 "删除这包咖啡豆？" = "Delete this bag of coffee?";
@@ -322,9 +325,11 @@
 "实验预测" = "Experimental prediction";
 "导出" = "Export";
 "导出 JSON" = "Export JSON";
+"导出数据文件" = "Export data files";
 "导出时出了一点问题，请再试一次" = "Something went wrong while exporting. Please try again";
 "导出的 JSON 包含全部文字记录，但不含图片。要连图片一起带走，请用「更多 → 完整备份与恢复」。CSV 只包含豆子、冲煮和风味三张表，方便做统计。" = "The exported JSON holds every text record but no images. To take the photos too, use More → Full backup & restore. The CSV holds three tables — beans, brews and tastings — for working with the numbers.";
 "导出的文件只保存在这台设备上，通过系统分享面板发给你自己。BrewPhase 不会上传任何东西。" = "Exported files stay on this device and are handed to you through the system share sheet. BrewPhase uploads nothing.";
+"导出的文件就是数据库本身，不是备份。先保存到「文件」App，再重装或联系支持时都用得上。" = "These files are the database itself, not a backup. Save them to Files first — you will need them if you reinstall or contact support.";
 "将删除全部示例豆及其冲煮与风味记录。你自己的记录不受影响。" = "Deletes every sample bag along with its brews and tasting notes. Your own records are untouched.";
 "将加入 7 包演示豆（含冲煮与风味记录）。你自己的记录不受影响，之后关闭开关即可整批移除。" = "Adds 7 sample bags with brews and tasting notes. Your own records are untouched; turn the switch off later to remove them all.";
 "少一点" = "a bit less";
@@ -355,7 +360,6 @@
 "干涩" = "Dryness";
 "平均 %@/次" = "averaging %@ a brew";
 "平均评分" = "Average";
-"库存" = "Stock";
 "应用" = "App";
 "延长" = "longer";
 "建议与分析只来自你记录里的数字和既定规则；没有历史的地方会直接说证据不足。" = "Every suggestion comes from the numbers in your records and fixed rules; where there is no history it simply says the evidence is not enough.";
@@ -397,7 +401,6 @@
 "慢一点" = "a bit slower";
 "我在你的记录和 BrewPhase 知识库里都没有找到和这个问题相关的内容。可以换个说法再问一次，或者先补上这包豆子的烘焙日期、开封日期这类信息。" = "I could not find anything in your records or in the BrewPhase knowledge base that answers this. Try wording it differently, or fill in the bag's roast and opening dates first.";
 "我最近的参数有什么变化？" = "How have my parameters changed lately?";
-"我的咖啡豆" = "My beans";
 "我的最佳参数" = "My best parameters";
 "所有数据随时可以导出带走。" = "All your data can be exported at any time.";
 "手冲/滤泡" = "filter";
@@ -437,7 +440,6 @@
 "提醒会根据每包豆子的烘焙日期自动排好" = "Reminders line themselves up from each bag's roast date";
 "提醒会根据烘焙日期一次排好，不需要 App 在后台运行。" = "Reminders are scheduled in one go from the roast date; the app never needs to run in the background.";
 "摩卡壶" = "Moka pot";
-"收起" = "Show less";
 "收起依据" = "Hide evidence";
 "收起完整分析" = "Hide full analysis";
 "收起对比" = "Hide comparison";
@@ -454,14 +456,12 @@
 "新鲜度" = "Freshness";
 "无法打开本地数据" = "Cannot open your local data";
 "日期" = "Date";
-"早上好" = "Good morning";
 "时间" = "Time";
 "时间 %@–%@" = "Time %@–%@";
 "时间不短但甜感没上来时，升温通常比磨细更有效。" = "When the time is fine but sweetness is missing, a warmer brew usually helps more than a finer grind.";
 "时间与天数" = "Timing";
 "时间偏短是萃取不足最常见的信号，磨细是最直接的补救。" = "A short brew is the most common under-extraction signal; going finer is the direct fix.";
 "时间偏长，又有苦或干涩，通常是磨得太细。" = "A long brew plus bitterness or dryness usually means the grind is too fine.";
-"晚上好" = "Good evening";
 "暂时没有这包豆子的专属资料，下面显示的是更上层的通用知识。" = "Nothing specific to this bag yet; what follows is broader, generic knowledge.";
 "更多" = "More";
 "更多信息" = "More details";
@@ -494,7 +494,6 @@
 "来自 BrewPhase 知识库" = "From the BrewPhase knowledge base";
 "来自你的记录" = "From your records";
 "柑橘" = "Mandarin";
-"查看全部 %@ 包" = "Show all %@ bags";
 "查看全部 %@ 条" = "Show all %@";
 "查看变化" = "See changes";
 "查看完整分析" = "Show full analysis";
@@ -556,6 +555,7 @@
 "没能保存" = "Could not save";
 "没能保存下来，请再试一次" = "Could not save. Please try again";
 "没能删除，请再试一次" = "Could not delete. Please try again";
+"没能导出数据文件。请确认设备还有可用空间，然后再试一次。" = "Could not export the data files. Check that the device has free space, then try again.";
 "没能打开这个文件，请再选一次。" = "That file could not be opened. Please choose it again.";
 "沿用上一轮：%@" = "Carried over from the previous turn: %@";
 "沿用你上一次冲的参数" = "Reusing your last brew";
@@ -611,6 +611,7 @@
 "用合成数据训练的模型估算每包豆子的最佳风味窗口" = "Estimate each bag's best flavour window with a model trained on synthetic data";
 "用户写下的原话：%@" = "The user's own words: %@";
 "用户在 %@ 用「%@」做了一次 %@。" = "On %@ the user brewed %@ with a %@.";
+"用户在 %@ 给「%@」记了一次风味，这包豆还没有烘焙日期。" = "The user recorded a tasting on %@ for “%@”; this bag has no roast date.";
 "用户在 %@ 给「%@」记了一次风味，那时是烘焙后第 %@ 天。" = "On %@ the user logged a tasting for %@, at day %@ after roast.";
 "用户常用的参数是：%@。" = "The settings the user tends to use: %@.";
 "用户常用的磨豆机是：%@。" = "Grinders the user uses: %@.";
@@ -769,8 +770,8 @@
 "还没有填：%@。填上之后关联会更准。" = "Not filled in yet: %@. Filling these in makes the linking more accurate.";
 "还没有标签" = "No tags yet";
 "还没有烘焙日期" = "No roast date yet";
+"还没有记录。冲完随手记一笔，之后这里会自动带上一次的参数。" = "Nothing logged yet. Note the next cup as you drink it and this line starts from your last recipe.";
 "还没有请求通知权限，添加第一包豆子时会问一次" = "Notification permission has not been asked for yet — it comes up once when you add your first bean";
-"还能冲" = "brews left";
 "这一杯和你自己表现较好的记录差得比较远。" = "This cup sits well away from your better brews.";
 "这一杯和你自己评价较高的那几次差得比较远。" = "This cup sits well away from the brews you rated higher.";
 "这一杯在你自己的记录里没有明显异常。" = "This cup shows nothing unusual against your own records.";
@@ -869,7 +870,6 @@
 "隐私政策" = "Privacy Policy";
 "需要 iOS 26 或更新的系统" = "Needs iOS 26 or later";
 "需要本机运行 Ollama，换模型更灵活" = "Requires Ollama running locally; makes swapping models easy";
-"预计喝完" = "Runs out";
 "预计已过峰值" = "estimated past its peak";
 "预计已进入窗口" = "estimated in its window";
 "预计最佳" = "estimated best";
@@ -904,7 +904,7 @@
 "黄金期将尽" = "Peak window closing";
 "黄金期过半" = "Peak window halfway";
 "黄金风味期" = "Peak window";
-"黄金风味期比你的消耗速度更短" = "A shorter peak window than your drinking pace";
+"黄金风味期比你的消耗速度更短" = "The peak window ends before your pace will finish it";
 "黄金风味期结束前两天提醒" = "Two days before the peak window ends";
 "黄金风味期走过一半时提醒" = "Halfway through the peak window";
 "黄金风味期这两天就结束了" = "The peak window closes in the next couple of days";

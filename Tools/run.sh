@@ -36,6 +36,8 @@
 #           cannot tap) and scrolls to the requested one.
 # --bean    makes the bean-scoped debug screens (beanDetail, brewEditor, tasting,
 #           stockAdjust) open this bag by name instead of today's pick.
+# --card-index  opens the home deck on the Nth bag (0-based), so the stack can be
+#           screenshotted away from the first card without a swipe.
 # --bean-action  performs one detail-page menu action (finish | restore) after
 #           the screen settles — the menu itself is a popover and cannot be
 #           screenshotted open.
@@ -78,6 +80,7 @@ while [ $# -gt 0 ]; do
     --bean)   DEMO_ARGS+=(-BrewPhaseBean "$2"); shift 2 ;;
     --bean-action) DEMO_ARGS+=(-BrewPhaseBeanAction "$2"); shift 2 ;;
     --bean-expand) DEMO_ARGS+=(-BrewPhaseBeanEditorExpand yes); shift ;;
+    --card-index) DEMO_ARGS+=(-BrewPhaseCardIndex "$2"); shift 2 ;;
     --stock-overshoot) DEMO_ARGS+=(-BrewPhaseStockOvershoot yes); shift ;;
     --lang)   LANG_SETTING="$2"; shift 2 ;;
     --pref)   PREFS+=("$2"); shift 2 ;;

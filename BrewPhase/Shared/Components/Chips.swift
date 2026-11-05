@@ -102,7 +102,8 @@ struct PhaseBadge: View {
     }
 }
 
-/// Flavour tag capsule. Cream ground, roast ink — the app's one warm pairing.
+/// Flavour tag capsule. Neutral ground, roast ink — colour in the word, not in
+/// a tinted block.
 struct FlavorChip: View {
     let text: String
     var body: some View {
@@ -112,7 +113,7 @@ struct FlavorChip: View {
             .lineLimit(1)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
-            .background(Capsule(style: .continuous).fill(Palette.cream.opacity(0.55)))
+            .background(Capsule(style: .continuous).fill(Palette.well))
     }
 }
 

@@ -149,7 +149,7 @@ struct PhotoFieldView: View {
         .foregroundStyle(Palette.roast)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Capsule(style: .continuous).fill(Palette.cream.opacity(0.6)))
+        .background(Capsule(style: .continuous).fill(Palette.well))
         // Without this the buttons get squeezed and "Camera" wraps onto two lines.
         .fixedSize()
     }

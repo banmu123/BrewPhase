@@ -1,11 +1,12 @@
 import SwiftUI
 
-/// 阶段卡 (§11): where this bag is, and how long it has left.
+/// 阶段：where this bag is, and how long it has left.
 ///
-/// The reading is always framed as an estimate and always attributed to the rule
-/// that produced it — never as a fact about the coffee, and never with the word
-/// "过期".
-struct PhaseCard: View {
+/// Not a card any more — it sits directly on the page under the bag's name, and
+/// the day is the largest number on the screen. The reading is always framed as
+/// an estimate and always attributed to the rule that produced it, never as a
+/// fact about the coffee and never with the word "过期".
+struct PhaseSection: View {
 
     let insight: BeanInsight
     let onEditRules: () -> Void
@@ -17,19 +18,17 @@ struct PhaseCard: View {
     }
 
     var body: some View {
-        Card(lifted: true) {
-            VStack(alignment: .leading, spacing: 15) {
-                topRow
-                headline
-                PhaseTrack(reading: reading, showsMarker: true, showsLegend: true)
-                footnote
-            }
+        VStack(alignment: .leading, spacing: 14) {
+            topRow
+            headline
+            PhaseTrack(reading: reading, showsMarker: true, showsLegend: true)
+            footnote
         }
     }
 
     private var topRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(Fmt.day(reading.dayAfterRoast))
+            Text(verbatim: Fmt.day(reading.dayAfterRoast))
                 .font(TypeScale.bigNumeral)
                 .foregroundStyle(Palette.ink)
 
@@ -40,7 +39,7 @@ struct PhaseCard: View {
     }
 
     private var headline: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(PhasePresentation.title(phase: reading.phase, tier: verdict.tier))
                 .font(TypeScale.title)
                 .foregroundStyle(color)

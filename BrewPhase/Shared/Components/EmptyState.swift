@@ -43,7 +43,7 @@ struct EmptyStateView: View {
                         .foregroundStyle(Palette.card)
                         .padding(.horizontal, 18)
                         .padding(.vertical, 11)
-                        .background(Capsule(style: .continuous).fill(Palette.roast))
+                        .background(Capsule(style: .continuous).fill(Palette.espresso))
                 }
                 .buttonStyle(.plain)
                 .padding(.top, 4)
@@ -55,6 +55,9 @@ struct EmptyStateView: View {
 }
 
 /// The primary action button, used for "开始冲煮" and "保存".
+///
+/// One deep espresso block per screen — the only filled button in the interface.
+/// Everything else is a quiet row or a text link.
 struct PrimaryButton: View {
     let title: LocalizedStringKey
     var systemImage: String?
@@ -75,8 +78,8 @@ struct PrimaryButton: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
             .background(
-                RoundedRectangle(cornerRadius: 15, style: .continuous)
-                    .fill(isEnabled ? Palette.roast : Palette.latte.opacity(0.45))
+                RoundedRectangle(cornerRadius: Metric.radiusSmall + 2, style: .continuous)
+                    .fill(isEnabled ? Palette.espresso : Palette.wellDeep)
             )
         }
         .buttonStyle(.plain)
@@ -106,7 +109,7 @@ struct SecondaryButton: View {
             .padding(.vertical, 9)
             .background(
                 Capsule(style: .continuous)
-                    .fill(Palette.cream.opacity(0.6))
+                    .fill(Palette.well)
             )
         }
         .buttonStyle(.plain)

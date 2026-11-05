@@ -35,7 +35,7 @@ struct InsightsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Metric.sectionGap) {
+            VStack(alignment: .leading, spacing: 0) {
                 if activeBeans.isEmpty {
                     emptyCellar
                 } else {
@@ -52,14 +52,14 @@ struct InsightsView: View {
                             Text("这是你自己的高分记录统计，不是专业标准。")
                                 .font(TypeScale.caption)
                                 .foregroundStyle(Palette.inkFaint)
-                                .padding(.horizontal, 4)
+                                .padding(.top, 10)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                     if let nextAction {
                         actionSection(nextAction)
                     }
-                    footnote
+                    footnote.padding(.top, 26)
                 }
             }
             .padding(.horizontal, Metric.gutter)
@@ -94,39 +94,43 @@ struct InsightsView: View {
     // MARK: - 卡片
 
     private func insightSection(title: LocalizedStringKey, insight: Insight) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: title)
-            insightCard(insight)
+        VStack(alignment: .leading, spacing: 0) {
+            Hairline().padding(.top, 24)
+            SectionLabel(title: title)
+                .padding(.top, 16)
+            insightBody(insight)
+                .padding(.top, 10)
         }
     }
 
-    private func insightCard(_ insight: Insight) -> some View {
-        Card {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(LocalizedStringKey.alreadyLocalized(insight.headline))
-                    .font(TypeScale.cardTitle)
-                    .foregroundStyle(Palette.ink)
-                    .fixedSize(horizontal: false, vertical: true)
+    /// The conclusion is the biggest thing on this page; the reasoning under it is
+    /// quiet; the evidence is quieter still. That order is the whole point of 洞察.
+    private func insightBody(_ insight: Insight) -> some View {
+        VStack(alignment: .leading, spacing: 11) {
+            Text(LocalizedStringKey.alreadyLocalized(insight.headline))
+                .font(TypeScale.emphasis)
+                .foregroundStyle(Palette.ink)
+                .fixedSize(horizontal: false, vertical: true)
 
-                if insight.confidence == .insufficientEvidence {
-                    // 数据不足也要漂亮（规格 §十六）：不是一句冷冰冰的「证据不足」，
-                    // 而是告诉用户规律正在路上。具体差几杯在下面的证据行里。
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("还在认识你的冲煮习惯")
-                            .font(TypeScale.callout.weight(.medium))
-                            .foregroundStyle(Palette.inkSoft)
-                        Text("再记录几杯，这里会开始出现你的个人规律。")
-                            .font(TypeScale.caption)
-                            .foregroundStyle(Palette.inkFaint)
-                    }
+            if insight.confidence == .insufficientEvidence {
+                // 数据不足也要漂亮（规格 §十六）：不是一句冷冰冰的「证据不足」，
+                // 而是告诉用户规律正在路上。具体差几杯在下面的证据行里。
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("还在认识你的冲煮习惯")
+                        .font(TypeScale.callout.weight(.medium))
+                        .foregroundStyle(Palette.inkSoft)
+                    Text("再记录几杯，这里会开始出现你的个人规律。")
+                        .font(TypeScale.caption)
+                        .foregroundStyle(Palette.inkFaint)
                 }
+            }
 
-                ForEach(insight.reasons, id: \.self) { reason in
-                    bullet(reason, color: Palette.inkSoft)
-                }
+            ForEach(insight.reasons, id: \.self) { reason in
+                bullet(reason, color: Palette.inkSoft)
+            }
 
-                if !insight.evidence.isEmpty {
-                    CardDivider()
+            if !insight.evidence.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
                     ForEach(insight.evidence) { row in
                         HStack(alignment: .top, spacing: 7) {
                             Circle()
@@ -140,6 +144,7 @@ struct InsightsView: View {
                         }
                     }
                 }
+                .padding(.top, 4)
             }
         }
     }
@@ -162,80 +167,82 @@ struct InsightsView: View {
     /// 选中豆子最近的一次冲煮：参数、评分、味觉，以及与再上一杯的差。
     /// 提问式的检索归「问一问」，这里只做主动汇报。
     private var recentBrewSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
+            Hairline().padding(.top, 24)
+
             // 「最近一杯 / 我的习惯 / 下一步」说的都是同一包豆——切换器就摆在
             // 这一组开头，默认是今天最该关注的那包。只有一包时不用切。
-            HStack {
-                SectionHeader(title: "最近一杯")
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                SectionLabel(title: "最近一杯")
+                Spacer(minLength: 0)
                 if activeBeans.count > 1 {
                     beanPicker
                 }
             }
+            .padding(.top, 16)
 
             if let latest = selectedBean?.latestBrew {
-                Card {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text(LocalizedStringKey.alreadyLocalized(
-                                latest.recipe.summaryParts.joined(separator: " · ")
-                            ))
-                            .font(TypeScale.numeral)
-                            .foregroundStyle(Palette.ink)
-                            .fixedSize(horizontal: false, vertical: true)
-                            Spacer(minLength: 0)
-                            Text(Fmt.short(latest.date, calendar: DateMath.calendar))
-                                .font(TypeScale.micro)
-                                .foregroundStyle(Palette.inkFaint)
-                        }
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(LocalizedStringKey.alreadyLocalized(
+                            latest.recipe.summaryParts.joined(separator: " · ")
+                        ))
+                        .font(TypeScale.numeral)
+                        .foregroundStyle(Palette.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        Text(Fmt.short(latest.date, calendar: DateMath.calendar))
+                            .font(TypeScale.micro)
+                            .foregroundStyle(Palette.inkFaint)
+                    }
 
-                        if latest.score > 0 {
-                            StarRating(score: latest.score)
-                        }
+                    if latest.score > 0 {
+                        StarRating(score: latest.score)
+                    }
 
-                        if let taste = latest.tasteLine {
-                            Text(LocalizedStringKey.alreadyLocalized(taste))
-                                .font(TypeScale.caption)
-                                .foregroundStyle(Palette.inkSoft)
-                        }
+                    if let taste = latest.tasteLine {
+                        Text(LocalizedStringKey.alreadyLocalized(taste))
+                            .font(TypeScale.caption)
+                            .foregroundStyle(Palette.inkSoft)
+                    }
 
-                        if let previous = brewBefore(latest) {
-                            let comparison = SuggestionFollowUp.between(
-                                previous: previous, suggestion: nil, current: latest
-                            )
-                            if comparison.hasChanges || comparison.scoreText != nil {
-                                CardDivider()
-                                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                    Text("与上一次相比")
-                                        .font(TypeScale.micro)
-                                        .foregroundStyle(Palette.inkFaint)
-                                    if let changes = comparison.changesText {
-                                        Text(LocalizedStringKey.alreadyLocalized(changes))
-                                            .font(TypeScale.caption.monospacedDigit())
-                                            .foregroundStyle(Palette.inkSoft)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                    }
+                    if let previous = brewBefore(latest) {
+                        let comparison = SuggestionFollowUp.between(
+                            previous: previous, suggestion: nil, current: latest
+                        )
+                        if comparison.hasChanges || comparison.scoreText != nil {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text("与上一次相比")
+                                    .font(TypeScale.micro)
+                                    .foregroundStyle(Palette.inkFaint)
+                                if let changes = comparison.changesText {
+                                    Text(LocalizedStringKey.alreadyLocalized(changes))
+                                        .font(TypeScale.caption.monospacedDigit())
+                                        .foregroundStyle(Palette.inkSoft)
+                                        .fixedSize(horizontal: false, vertical: true)
                                 }
-                                if let scoreText = comparison.scoreText {
-                                    Text(LocalizedStringKey.alreadyLocalized(scoreText))
-                                        .font(TypeScale.micro)
-                                        .foregroundStyle(Palette.inkFaint)
-                                }
+                            }
+                            if let scoreText = comparison.scoreText {
+                                Text(LocalizedStringKey.alreadyLocalized(scoreText))
+                                    .font(TypeScale.micro)
+                                    .foregroundStyle(Palette.inkFaint)
                             }
                         }
                     }
                 }
+                .padding(.top, 12)
             } else {
-                Card {
-                    Text("这包豆还没有冲煮记录。记一杯之后，这里就是它的最新进展。")
-                        .font(TypeScale.callout)
-                        .foregroundStyle(Palette.inkSoft)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                Text("这包豆还没有冲煮记录。记一杯之后，这里就是它的最新进展。")
+                    .font(TypeScale.callout)
+                    .foregroundStyle(Palette.inkSoft)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 10)
             }
 
             // 「是否偏离自己的正常范围」是这一层的另一半，分析器已经算好了。
             if let deviationInsight {
-                insightCard(deviationInsight)
+                insightBody(deviationInsight)
+                    .padding(.top, 20)
             }
         }
     }
@@ -261,20 +268,23 @@ struct InsightsView: View {
     }
 
     private func actionSection(_ suggestion: AdjustmentSuggestion) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "下一步")
-            Card {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text(LocalizedStringKey.alreadyLocalized(suggestion.headline))
-                        .font(TypeScale.title)
-                        .foregroundStyle(Palette.roast)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text(LocalizedStringKey.alreadyLocalized(suggestion.reason))
-                        .font(TypeScale.caption)
-                        .foregroundStyle(Palette.inkSoft)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            Hairline().padding(.top, 24)
+
+            SectionLabel(title: "下一步")
+                .padding(.top, 16)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(LocalizedStringKey.alreadyLocalized(suggestion.headline))
+                    .font(TypeScale.cardTitle)
+                    .foregroundStyle(Palette.roast)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(LocalizedStringKey.alreadyLocalized(suggestion.reason))
+                    .font(TypeScale.caption)
+                    .foregroundStyle(Palette.inkSoft)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .padding(.top, 10)
         }
     }
 
@@ -323,7 +333,6 @@ struct InsightsView: View {
         Text("建议与分析只来自你记录里的数字和既定规则；没有历史的地方会直接说证据不足。")
             .font(TypeScale.caption)
             .foregroundStyle(Palette.inkFaint)
-            .padding(.horizontal, 4)
             .fixedSize(horizontal: false, vertical: true)
     }
 

@@ -102,7 +102,7 @@ struct PhaseRulesView: View {
                     .font(TypeScale.title)
                     .foregroundStyle(Palette.ink)
                 if isCustomized {
-                    Chip(text: L("已自定义"), tint: Palette.roast, background: Palette.cream.opacity(0.6))
+                    Chip(text: L("已自定义"), tint: Palette.roast, background: Palette.well)
                 }
                 Spacer(minLength: 0)
             }
@@ -180,7 +180,7 @@ struct PhaseRulesView: View {
                     .font(TypeScale.title)
                     .foregroundStyle(Palette.ink)
                 if isCustomized {
-                    Chip(text: L("已自定义"), tint: Palette.roast, background: Palette.cream.opacity(0.6))
+                    Chip(text: L("已自定义"), tint: Palette.roast, background: Palette.well)
                 }
                 Spacer(minLength: 0)
             }

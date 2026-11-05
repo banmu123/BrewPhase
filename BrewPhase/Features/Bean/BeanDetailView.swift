@@ -52,12 +52,15 @@ struct BeanDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Metric.sectionGap) {
+            VStack(alignment: .leading, spacing: 0) {
                 // 页面的十个层次按用户打开一包豆后的提问顺序排（§十一）：
                 // 现在怎么样 → 还剩多少 → 上一杯怎么样 → 下一杯怎么改 → 继续冲，
                 // 冲出足够的记录之后才是参考材料与备注。
+                //
+                // 每一层之间只有一条细线，没有卡片套卡片：这一页的内容够多，
+                // 再给每段加一个圆角容器，读起来就像后台表格了。
                 hero
-                PhaseCard(insight: insight) { isEditing = true }
+                phaseBlock
                 stockSection
                 if let brew = bean.latestBrew, let recentDiagnosis {
                     recentCupSection(brew: brew, diagnosis: recentDiagnosis)
@@ -67,7 +70,7 @@ struct BeanDetailView: View {
                     PrimaryButton(title: "记一杯", systemImage: "cup.and.saucer") {
                         isQuickLogging = true
                     }
-                    .padding(.top, -6)
+                    .padding(.top, 24)
                 }
                 brewsSection
                 TastingTimelineView(
@@ -77,11 +80,14 @@ struct BeanDetailView: View {
                     onAdd: { isAddingTasting = true },
                     onDelete: { pendingTastingDelete = $0 }
                 )
+                .padding(.top, Metric.sectionGap)
                 // 预计风味窗口与知识区块都是参考资料，不属于当前行动，统一排在
                 // 自己的记录之后。
                 FlavorWindowCard(bean: bean,
                                  todayDay: bean.currentDayAfterRoast)
+                    .padding(.top, Metric.sectionGap)
                 BeanKnowledgeSection(bean: bean, languageCode: languageCode)
+                    .padding(.top, Metric.sectionGap)
                 if asksAboutThisBag {
                     askSection
                 }
@@ -92,7 +98,8 @@ struct BeanDetailView: View {
             .padding(.bottom, 40)
         }
         .background(Palette.paper)
-        .navigationTitle(bean.name.isEmpty ? LocalizedStringKey("未命名") : .alreadyLocalized(bean.name))
+        // 名字已经在正文里以 26pt 出现一次了，导航栏不必再说一遍。
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -196,23 +203,19 @@ struct BeanDetailView: View {
     // MARK: - Hero
 
     private var hero: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
             if let image = ImageStore.shared.image(named: bean.imagePath, thumbnail: false) {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
-                    .frame(height: 190)
+                    .frame(height: 210)
                     .frame(maxWidth: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: Metric.radius, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Metric.radius, style: .continuous)
-                            .strokeBorder(Palette.hairline, lineWidth: 0.7)
-                    )
             }
 
             VStack(alignment: .leading, spacing: 7) {
                 Text(bean.name.isEmpty ? LocalizedStringKey("未命名") : LocalizedStringKey.alreadyLocalized(bean.name))
-                    .font(TypeScale.cardTitle)
+                    .font(TypeScale.beanName)
                     .foregroundStyle(Palette.ink)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -222,24 +225,35 @@ struct BeanDetailView: View {
                         .foregroundStyle(Palette.inkSoft)
                 }
 
-                if !metadataChips.isEmpty {
-                    FlowLayout(spacing: 6, lineSpacing: 6) {
-                        ForEach(metadataChips, id: \.self) { text in
-                            Chip(text: text, tint: Palette.inkSoft, background: Palette.well)
-                        }
-                    }
-                    .padding(.top, 2)
+                if !metaLine.isEmpty {
+                    Text(verbatim: metaLine)
+                        .font(TypeScale.caption)
+                        .foregroundStyle(Palette.inkFaint)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
+        .padding(.top, 4)
     }
 
-    private var metadataChips: [String] {
-        var chips: [String] = [bean.roastLevel.label]
-        if !bean.origin.isEmpty { chips.append(bean.origin) }
-        if !bean.process.isEmpty { chips.append(bean.process) }
-        if let roastDate = bean.roastDate { chips.append(L("烘焙 %@", Fmt.short(roastDate))) }
-        return chips
+    /// 一行读完的来路：烘焙度 · 产地 · 处理法 · 烘焙日。
+    /// 之前是四个 chip，读起来像筛选器；合成一句话更像在描述这包豆。
+    private var metaLine: String {
+        var parts: [String] = [bean.roastLevel.label]
+        if !bean.origin.isEmpty { parts.append(bean.origin) }
+        if !bean.process.isEmpty { parts.append(bean.process) }
+        if let roastDate = bean.roastDate { parts.append(L("烘焙 %@", Fmt.short(roastDate))) }
+        return parts.joined(separator: " · ")
+    }
+
+    // MARK: - Phase
+
+    private var phaseBlock: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Hairline().padding(.top, 26)
+            PhaseSection(insight: insight) { isEditing = true }
+                .padding(.top, 18)
+        }
     }
 
     // MARK: - Ask
@@ -249,10 +263,12 @@ struct BeanDetailView: View {
     /// 放在存量之后：看完「还剩多少」，最自然的下一个问题就是「那我该怎么喝」。
     /// 入口带着这包豆子进去，所以用户不必在问题里念一遍名字。
     private var askSection: some View {
-        NavigationLink {
-            AskView(focusBean: bean)
-        } label: {
-            Card {
+        VStack(alignment: .leading, spacing: 0) {
+            Hairline().padding(.top, 26)
+
+            NavigationLink {
+                AskView(focusBean: bean)
+            } label: {
                 HStack(spacing: 12) {
                     Image(systemName: "text.magnifyingglass")
                         .font(.system(size: 15, weight: .medium))
@@ -271,61 +287,67 @@ struct BeanDetailView: View {
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Palette.inkFaint)
                 }
+                .padding(.vertical, 16)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(CardButtonStyle())
     }
 
     // MARK: - Stock
 
     private var stockSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "库存", detail: .alreadyLocalized(bean.status.label))
-            Card {
-                VStack(alignment: .leading, spacing: 13) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(Fmt.grams(bean.remainingG))
-                            .font(TypeScale.bigNumeral)
-                            .foregroundStyle(Palette.ink)
-                        Text("/ \(Fmt.grams(bean.weightG))")
-                            .font(TypeScale.callout)
-                            .foregroundStyle(Palette.inkFaint)
-                        Spacer(minLength: 0)
-                        Button("调整") { isAdjustingStock = true }
-                            .font(TypeScale.callout)
-                            .foregroundStyle(Palette.roast)
-                    }
+        VStack(alignment: .leading, spacing: 0) {
+            Hairline().padding(.top, 26)
 
-                    // A thin fill bar: the one place stock is shown as a quantity
-                    // rather than a number.
-                    GeometryReader { geo in
-                        let fraction = bean.weightG > 0
-                            ? min(max(bean.remainingG / bean.weightG, 0), 1)
-                            : 0
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Palette.well)
-                            Capsule()
-                                .fill(Palette.latte)
-                                .frame(width: max(0, geo.size.width * fraction))
-                        }
-                    }
-                    .frame(height: 6)
-
-                    HStack(spacing: 10) {
-                        Text(insight.estimate.usedDefaults
-                             ? L("按默认 %@/次 估算", Fmt.gramsShort(insight.estimate.averageDoseG))
-                             : L("平均 %@/次", Fmt.gramsShort(insight.estimate.averageDoseG)))
-                        Text(verbatim: "·")
-                        Text(insight.estimate.brewsText)
-                        if insight.reading.dayAfterRoast != nil, bean.remainingG > 0 {
-                            Text(verbatim: "·")
-                            Text(Fmt.daysLeftPhrase(insight.estimate.daysRemaining))
-                        }
-                    }
-                    .font(TypeScale.caption)
-                    .foregroundStyle(Palette.inkFaint)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(verbatim: Fmt.grams(bean.remainingG))
+                        .font(TypeScale.bigNumeral)
+                        .foregroundStyle(Palette.ink)
+                    Text(verbatim: "/ \(Fmt.grams(bean.weightG))")
+                        .font(TypeScale.callout)
+                        .foregroundStyle(Palette.inkFaint)
+                    Spacer(minLength: 0)
+                    Text(verbatim: bean.status.label)
+                        .font(TypeScale.caption)
+                        .foregroundStyle(Palette.inkFaint)
+                    Button("调整") { isAdjustingStock = true }
+                        .font(TypeScale.callout)
+                        .foregroundStyle(Palette.roast)
+                        .padding(.leading, 10)
                 }
+
+                // A thin fill bar: the one place stock is shown as a quantity
+                // rather than a number.
+                GeometryReader { geo in
+                    let fraction = bean.weightG > 0
+                        ? min(max(bean.remainingG / bean.weightG, 0), 1)
+                        : 0
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Palette.well)
+                        Capsule()
+                            .fill(Palette.latte)
+                            .frame(width: max(0, geo.size.width * fraction))
+                    }
+                }
+                .frame(height: 4)
+
+                HStack(spacing: 10) {
+                    Text(insight.estimate.usedDefaults
+                         ? L("按默认 %@/次 估算", Fmt.gramsShort(insight.estimate.averageDoseG))
+                         : L("平均 %@/次", Fmt.gramsShort(insight.estimate.averageDoseG)))
+                    Text(verbatim: "·")
+                    Text(insight.estimate.brewsText)
+                    if insight.reading.dayAfterRoast != nil, bean.remainingG > 0 {
+                        Text(verbatim: "·")
+                        Text(Fmt.daysLeftPhrase(insight.estimate.daysRemaining))
+                    }
+                }
+                .font(TypeScale.caption)
+                .foregroundStyle(Palette.inkFaint)
             }
+            .padding(.top, 18)
         }
     }
 
@@ -337,60 +359,66 @@ struct BeanDetailView: View {
     /// 日常扫一眼只需要三行结论，想深究的时候它还在——功能一个没少，只是不再
     /// 把整张诊断卡铺在页面前半部分。
     private func recentCupSection(brew: Brew, diagnosis: BrewDiagnosis) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "最近一杯",
-                          detail: .alreadyLocalized(Fmt.short(brew.date, calendar: DateMath.calendar)))
-            Card {
-                VStack(alignment: .leading, spacing: 13) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(recentRecipeLine(brew))
-                            .font(TypeScale.numeral)
-                            .foregroundStyle(Palette.ink)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 0)
-                        if brew.score > 0 {
-                            StarRating(score: brew.score)
-                        }
-                    }
+        VStack(alignment: .leading, spacing: 0) {
+            Hairline().padding(.top, 26)
 
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(LocalizedStringKey.alreadyLocalized(conclusionLine(diagnosis)))
-                            .font(TypeScale.bodyMedium)
-                            .foregroundStyle(Palette.ink)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if let suggestion = diagnosis.suggestion {
-                            Text(L("下一杯：%@", suggestion.headline))
-                                .font(TypeScale.callout)
-                                .foregroundStyle(Palette.roast)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
+            VStack(alignment: .leading, spacing: 13) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    SectionLabel(title: "最近一杯")
+                    Spacer(minLength: 0)
+                    Text(verbatim: Fmt.short(brew.date, calendar: DateMath.calendar))
+                        .font(TypeScale.caption)
+                        .foregroundStyle(Palette.inkFaint)
+                }
 
-                    CardDivider()
-
-                    HStack(spacing: 10) {
-                        SecondaryButton(title: "再记一杯", systemImage: "plus") {
-                            isQuickLogging = true
-                        }
-                        Spacer(minLength: 0)
-                        Button {
-                            withAnimation(Motion.settle) { showsRecentDiagnosis.toggle() }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Text(showsRecentDiagnosis ? "收起依据" : "展开依据")
-                                Image(systemName: showsRecentDiagnosis ? "chevron.up" : "chevron.down")
-                                    .font(.system(size: 9, weight: .semibold))
-                            }
-                            .font(TypeScale.caption)
-                            .foregroundStyle(Palette.inkSoft)
-                        }
-                        .buttonStyle(.plain)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(verbatim: recentRecipeLine(brew))
+                        .font(TypeScale.numeral)
+                        .foregroundStyle(Palette.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    if brew.score > 0 {
+                        StarRating(score: brew.score)
                     }
                 }
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(LocalizedStringKey.alreadyLocalized(conclusionLine(diagnosis)))
+                        .font(TypeScale.bodyMedium)
+                        .foregroundStyle(Palette.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let suggestion = diagnosis.suggestion {
+                        Text(L("下一杯：%@", suggestion.headline))
+                            .font(TypeScale.callout)
+                            .foregroundStyle(Palette.roast)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                HStack(spacing: 10) {
+                    SecondaryButton(title: "再记一杯", systemImage: "plus") {
+                        isQuickLogging = true
+                    }
+                    Spacer(minLength: 0)
+                    Button {
+                        withAnimation(Motion.settle) { showsRecentDiagnosis.toggle() }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(showsRecentDiagnosis ? "收起依据" : "展开依据")
+                            Image(systemName: showsRecentDiagnosis ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .font(TypeScale.caption)
+                        .foregroundStyle(Palette.inkSoft)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
+            .padding(.top, 18)
 
             if showsRecentDiagnosis {
                 BrewDiagnosticCard(diagnosis: diagnosis, showsKnowledge: false)
+                    .padding(.top, 14)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -418,51 +446,57 @@ struct BeanDetailView: View {
     // MARK: - Brews
 
     private var brewsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "冲煮记录",
-                          detail: bean.brewsCount == 0
-                              ? nil
-                              : .alreadyLocalized(L("%@ 次", String(bean.brewsCount))))
+        VStack(alignment: .leading, spacing: 0) {
+            Hairline().padding(.top, 26)
 
-            Card {
-                VStack(alignment: .leading, spacing: 16) {
-                    if bean.brewsCount == 0 {
-                        Text("还没有冲煮记录\n记下第一杯，之后才能看到你的参数变化和个人规律。")
-                            .font(TypeScale.callout)
-                            .foregroundStyle(Palette.inkSoft)
-                            .lineSpacing(3)
-                        addBrewButtons
-                    } else {
-                        let brews = visibleBrews
-                        ForEach(Array(brews.enumerated()), id: \.element.id) { index, brew in
-                            Button {
-                                editingBrew = brew
-                            } label: {
-                                BrewRow(brew: brew)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .buttonStyle(.plain)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                SectionLabel(title: "冲煮记录")
+                Spacer(minLength: 0)
+                if bean.brewsCount > 0 {
+                    Text(L("%@ 次", String(bean.brewsCount)))
+                        .font(TypeScale.caption)
+                        .foregroundStyle(Palette.inkFaint)
+                }
+            }
+            .padding(.top, 18)
 
-                            if index != brews.count - 1 {
-                                CardDivider()
-                            }
-                        }
+            if bean.brewsCount == 0 {
+                Text("还没有冲煮记录\n记下第一杯，之后才能看到你的参数变化和个人规律。")
+                    .font(TypeScale.callout)
+                    .foregroundStyle(Palette.inkSoft)
+                    .lineSpacing(3)
+                    .padding(.top, 12)
+                addBrewButtons.padding(.top, 14)
+            } else {
+                let brews = visibleBrews
+                ForEach(Array(brews.enumerated()), id: \.element.id) { index, brew in
+                    Button {
+                        editingBrew = brew
+                    } label: {
+                        BrewRow(brew: brew)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 13)
+                    }
+                    .buttonStyle(.plain)
 
-                        if bean.brewsCount > brews.count {
-                            Button {
-                                withAnimation(Motion.settle) { showsAllBrews = true }
-                            } label: {
-                                Text(L("查看全部 %@ 条", String(bean.brewsCount)))
-                                    .font(TypeScale.callout)
-                                    .foregroundStyle(Palette.roast)
-                            }
-                            .buttonStyle(.plain)
-                        }
-
+                    if index != brews.count - 1 {
                         CardDivider()
-                        addBrewButtons
                     }
                 }
+
+                if bean.brewsCount > brews.count {
+                    Button {
+                        withAnimation(Motion.settle) { showsAllBrews = true }
+                    } label: {
+                        Text(L("查看全部 %@ 条", String(bean.brewsCount)))
+                            .font(TypeScale.callout)
+                            .foregroundStyle(Palette.roast)
+                            .padding(.vertical, 12)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                addBrewButtons.padding(.top, 12)
             }
         }
     }
@@ -475,8 +509,12 @@ struct BeanDetailView: View {
     private var addBrewButtons: some View {
         HStack(spacing: 10) {
             // 常用的是快记：参数已经沿用上一杯，只需要回答「这次变了什么」。
-            SecondaryButton(title: "记一杯", systemImage: "plus") {
-                isQuickLogging = true
+            // 页面上的主按钮已经写着「记一杯」，这里就不再重复一次——只有
+            // 已经喝完的豆子没有那个主按钮，才把快记放回这一行。
+            if bean.isFinished {
+                SecondaryButton(title: "记一杯", systemImage: "plus") {
+                    isQuickLogging = true
+                }
             }
             // 完整表单仍然在：想逐项填、或者要改的是配方本身时用它。
             SecondaryButton(title: "完整表单", systemImage: "square.and.pencil") {
@@ -489,15 +527,16 @@ struct BeanDetailView: View {
     @ViewBuilder
     private var notesSection: some View {
         if !bean.notes.trimmed.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                SectionHeader(title: "备注")
-                Card {
-                    Text(bean.notes)
-                        .font(TypeScale.body)
-                        .foregroundStyle(Palette.inkSoft)
-                        .lineSpacing(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            VStack(alignment: .leading, spacing: 0) {
+                Hairline().padding(.top, 26)
+                SectionLabel(title: "备注")
+                    .padding(.top, 18)
+                Text(bean.notes)
+                    .font(TypeScale.body)
+                    .foregroundStyle(Palette.inkSoft)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 10)
             }
         }
     }
@@ -608,6 +647,13 @@ struct StockAdjustView: View {
                             NumberField(placeholder: "0", value: $value, unit: "g")
                         }
                     }
+                    // 盘点是重新计数：说清楚它对历史记录意味着什么，用户才会
+                    // 明白为什么之后删一条旧记录库存没动。
+                    Text("保存后，这次盘点之前的冲煮记录不再影响库存。")
+                        .font(TypeScale.caption)
+                        .foregroundStyle(Palette.inkFaint)
+                        .padding(.horizontal, 4)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 HStack(spacing: 8) {
@@ -622,7 +668,7 @@ struct StockAdjustView: View {
                                 .foregroundStyle(Palette.roast)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
-                                .background(Capsule(style: .continuous).fill(Palette.cream.opacity(0.5)))
+                                .background(Capsule(style: .continuous).fill(Palette.well))
                         }
                         .buttonStyle(.plain)
                     }
@@ -715,6 +761,7 @@ struct StockAdjustView: View {
         let previousRemaining = bean.remainingG
         let previousWeight = bean.weightG
         let previousStatus = bean.status
+        let previousCountedAt = bean.stockCountedAt
 
         bean.setRemaining(value)
         do {
@@ -725,6 +772,7 @@ struct StockAdjustView: View {
             bean.remainingG = previousRemaining
             bean.weightG = previousWeight
             bean.status = previousStatus
+            bean.stockCountedAt = previousCountedAt
             errorMessage = L("没能保存下来，请再试一次")
             return
         }

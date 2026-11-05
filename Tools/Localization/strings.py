@@ -14,6 +14,9 @@ EN: dict[str, str] = {
     # MARK: Plurals and counts
     "%@ · 剩余 %@": "%@ · %@ left",    "%@ 个文件 · %@": "%@ files · %@",
     "%@ 包": "%@ bags",
+    "%@ 包在喝": "%@ bags open",
+    "1 包": "1 bag",
+    "1 包在喝": "1 bag open",
     "%@ 天": "%@ days",
     "%@ 条": "%@ entries",
     "%@ 条待送达": "%@ scheduled",
@@ -92,6 +95,8 @@ EN: dict[str, str] = {
     "豆仓": "Cellar",
     "豆子": "Beans",
     "豆子清单": "Bean list",
+    "上一包": "Previous bag",
+    "下一包": "Next bag",
     "添加豆子": "Add bean",
     "编辑豆子": "Edit bean",
     "豆仓还是空的": "Your coffee shelf is empty",
@@ -809,6 +814,8 @@ EN: dict[str, str] = {
     "记下这一杯": "Log this cup",
     "再记一杯": "Log another",
     "最近一杯": "Last cup",
+    "还没有记录。冲完随手记一笔，之后这里会自动带上一次的参数。":
+        "Nothing logged yet. Note the next cup as you drink it and this line starts from your last recipe.",
     "完成": "Done",
     "完整表单": "Full form",
     "哪包豆": "Which bag",
@@ -1048,7 +1055,7 @@ EN: dict[str, str] = {
     "现在正处于黄金风味期": "Right in its peak window",
     "风味已经开始衰减": "The flavour has started to decline",
     "已过黄金风味期但还剩不少": "Past the peak window with plenty left",
-    "黄金风味期比你的消耗速度更短": "A shorter peak window than your drinking pace",
+    "黄金风味期比你的消耗速度更短": "The peak window ends before your pace will finish it",
     "进入黄金风味期": "Peak window opens",
     "黄金期过半": "Peak window halfway",
     "黄金期将尽": "Peak window closing",
@@ -1204,4 +1211,19 @@ EN: dict[str, str] = {
     "恢复时遇到同名但内容不同的图片，已停止恢复。":
         "Restoring stopped because an image with the same name but different contents already exists.",
     "恢复没有完成，原有数据保持不动。": "The restore did not finish. Your existing data is untouched.",
+
+    # MARK: Stock ledger, manual counts and the recovery exit
+    "· 这次冲煮早于你最后一次盘点，保存不会改变库存":
+        "· this brew predates your last stock count, so saving will not change your stock",
+    "保存后，这次盘点之前的冲煮记录不再影响库存。":
+        "After saving, brews recorded before this count will no longer change your stock.",
+    "删除后不可恢复。这次冲煮早于你最后一次盘点，库存不会再变动。":
+        "This cannot be undone. This brew predates your last stock count, so your stock will not change.",
+    "导出数据文件": "Export data files",
+    "导出的文件就是数据库本身，不是备份。先保存到「文件」App，再重装或联系支持时都用得上。":
+        "These files are the database itself, not a backup. Save them to Files first — you will need them if you reinstall or contact support.",
+    "没能导出数据文件。请确认设备还有可用空间，然后再试一次。":
+        "Could not export the data files. Check that the device has free space, then try again.",
+    "用户在 %@ 给「%@」记了一次风味，这包豆还没有烘焙日期。":
+        "The user recorded a tasting on %@ for “%@”; this bag has no roast date.",
 }

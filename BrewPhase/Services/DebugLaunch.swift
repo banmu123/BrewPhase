@@ -161,4 +161,14 @@ enum DebugLaunch {
     static var beanEditorExpand: Bool {
         value(for: "-BrewPhaseBeanEditorExpand") == "yes"
     }
+
+    /// `-BrewPhaseCardIndex 4`
+    ///
+    /// 首页的卡片堆叠停在第 N 包豆上，而不是第一包。模拟器不能滑动，而
+    /// 「停在中间一包 / 最后一包」时的层叠、页码和箭头禁用状态只有停在那里
+    /// 才看得到——这也是唯一能确认层叠不是只在第一张上碰巧对齐的办法。
+    static var cardIndex: Int? {
+        guard let raw = value(for: "-BrewPhaseCardIndex"), let index = Int(raw) else { return nil }
+        return max(0, index)
+    }
 }
