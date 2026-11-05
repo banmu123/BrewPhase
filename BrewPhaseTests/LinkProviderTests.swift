@@ -225,15 +225,33 @@ final class LinkProviderTests: XCTestCase {
     func testRepositoryStatsLineLeavesOutWhatWeDoNotKnow() {
         let record = Record(carrier: .link, urlString: "https://github.com/apple/swift")
         record.providerRaw = LinkProvider.github.rawValue
-        XCTAssertEqual(record.repositoryStats, [])
+        record.adopt(LinkResolver.match(URL(string: "https://github.com/apple/swift")!))
+        XCTAssertTrue(record.repositoryStatItems.isEmpty)
 
         record.repositoryStars = 65_432
+        record.repositoryForks = 1_200
+        record.repositoryIssues = 98
         record.repositoryLanguage = "C++"
         record.repositoryLicense = "Apache-2.0"
-        XCTAssertEqual(record.repositoryStats, ["★ 65k", "C++", "Apache-2.0"])
+
+        XCTAssertEqual(record.repositoryOwner, "apple")
+        XCTAssertEqual(record.repositoryName, "swift")
+        XCTAssertEqual(record.repositoryStatItems.map(\.symbol),
+                       ["star", "arrow.triangle.branch", "exclamationmark.circle", "", ""])
+        XCTAssertEqual(record.repositoryStatItems.map(\.text),
+                       ["65k", "1.2k", "98", "C++", "Apache-2.0"])
 
         record.repositoryLicense = "NOASSERTION"
-        XCTAssertEqual(record.repositoryStats, ["★ 65k", "C++"])
+        XCTAssertEqual(record.repositoryStatItems.map(\.text),
+                       ["65k", "1.2k", "98", "C++"])
+    }
+
+    func testGitHubAvatarBecomesTheThumbnail() {
+        // 仓库没有封面图；owner 头像就是它的缩略图，非法 scheme 不收。
+        XCTAssertEqual(GitHubAdapter.avatarURL(from: "https://avatars.githubusercontent.com/u/1?v=4")?
+            .absoluteString, "https://avatars.githubusercontent.com/u/1?v=4")
+        XCTAssertNil(GitHubAdapter.avatarURL(from: "javascript:alert(1)"))
+        XCTAssertNil(GitHubAdapter.avatarURL(from: "  "))
     }
 
     func testStarCountShortensLargeNumbers() {
@@ -275,10 +293,12 @@ final class LinkProviderTests: XCTestCase {
     }
 
     func testGitHubRepoDecoding() {
-        let json = #"{"full_name":"apple/swift","description":"The Swift Programming Language","language":"C++","stargazers_count":65432,"owner":{"login":"apple"},"license":{"spdx_id":"Apache-2.0"}}"#
+        let json = #"{"full_name":"apple/swift","description":"The Swift Programming Language","language":"C++","stargazers_count":65432,"forks_count":1200,"open_issues_count":98,"owner":{"login":"apple","avatar_url":"https://avatars.githubusercontent.com/u/1?v=4"},"license":{"spdx_id":"Apache-2.0"}}"#
         let payload = GitHubAdapter.decodeRepo(Data(json.utf8))
         XCTAssertEqual(payload?.full_name, "apple/swift")
         XCTAssertEqual(payload?.stargazers_count, 65_432)
+        XCTAssertEqual(payload?.forks_count, 1_200)
+        XCTAssertEqual(payload?.open_issues_count, 98)
         XCTAssertEqual(payload?.license?.spdx_id, "Apache-2.0")
     }
 

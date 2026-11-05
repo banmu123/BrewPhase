@@ -378,6 +378,8 @@ struct BackupRecord: Codable, Equatable {
     var thumbnailURLString: String? = nil
     var metadataStatusRaw: String? = nil
     var repositoryStars: Int? = nil
+    var repositoryForks: Int? = nil
+    var repositoryIssues: Int? = nil
     var repositoryLanguage: String? = nil
     var repositoryLicense: String? = nil
 }

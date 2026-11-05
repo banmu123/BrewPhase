@@ -57,6 +57,8 @@ struct RecordEditorView: View {
     @State private var autoPreviewPath: String?
     /// 已保存的记录。封面下载晚于保存完成时，把图补写到它身上。
     @State private var savedTarget: Record?
+    /// 预览槽的封面还在下载。转圈比「突然长出一张图」更容易被理解。
+    @State private var isDownloadingCover = false
     @State private var isLoadingMedia = false
     @State private var errorMessage: String?
     @State private var didSave = false
@@ -273,9 +275,13 @@ struct RecordEditorView: View {
                     } else {
                         ZStack {
                             Palette.well
-                            Image(systemName: match?.provider.symbol ?? "link")
-                                .font(.system(size: 18, weight: .light))
-                                .foregroundStyle(Palette.inkFaint)
+                            if isDownloadingCover {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: match?.provider.symbol ?? "link")
+                                    .font(.system(size: 18, weight: .light))
+                                    .foregroundStyle(Palette.inkFaint)
+                            }
                         }
                     }
                 }
@@ -573,7 +579,9 @@ struct RecordEditorView: View {
         guard previewPath == nil, let thumbnail = metadata.thumbnailURL else { return }
         let expected = lastFetchedURL
         let referer = resolution.match.provider == .bilibili ? "https://www.bilibili.com/" : nil
+        isDownloadingCover = true
         Task {
+            defer { isDownloadingCover = false }
             guard let image = await LinkPreviewService.downloadImage(thumbnail, referer: referer),
                   let saved = try? ImageStore.shared.save(image, maxDimension: 1200) else { return }
             guard !Task.isCancelled else { return }

@@ -175,6 +175,8 @@ final class BackupTests: XCTestCase {
         link.summary = "本地优先的咖啡记录"
         link.authorName = "banmu123"
         link.repositoryStars = 12
+        link.repositoryForks = 3
+        link.repositoryIssues = 4
         link.repositoryLanguage = "Swift"
         link.metadataStatus = .partial
         link.tags = [visit, idea]
@@ -202,6 +204,8 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(restoredLink.summary, "本地优先的咖啡记录")
         XCTAssertEqual(restoredLink.authorName, "banmu123")
         XCTAssertEqual(restoredLink.repositoryStars, 12)
+        XCTAssertEqual(restoredLink.repositoryForks, 3)
+        XCTAssertEqual(restoredLink.repositoryIssues, 4)
         XCTAssertEqual(restoredLink.repositoryLanguage, "Swift")
         XCTAssertEqual(restoredLink.metadataStatus, .partial)
         XCTAssertEqual(restoredLink.linkEmbed, nil, "GitHub 没有播放器")

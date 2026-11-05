@@ -131,6 +131,8 @@ enum BackupManager {
                                   thumbnailURLString: record.thumbnailURLString,
                                   metadataStatusRaw: record.metadataStatusRaw,
                                   repositoryStars: record.repositoryStars,
+                                  repositoryForks: record.repositoryForks,
+                                  repositoryIssues: record.repositoryIssues,
                                   repositoryLanguage: record.repositoryLanguage,
                                   repositoryLicense: record.repositoryLicense
                               )

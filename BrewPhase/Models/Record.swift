@@ -91,8 +91,10 @@ final class Record {
     /// `LinkMetadataStatus` 的 rawValue。
     var metadataStatusRaw: String = LinkMetadataStatus.idle.rawValue
 
-    // GitHub 仓库卡片的三个数字。别的平台留空，卡片不会去读。
+    // GitHub 仓库卡片的数字与文字。别的平台留空，卡片不会去读。
     var repositoryStars: Int = 0
+    var repositoryForks: Int = 0
+    var repositoryIssues: Int = 0
     var repositoryLanguage: String = ""
     var repositoryLicense: String = ""
 
@@ -298,16 +300,34 @@ final class Record {
         return url
     }
 
-    /// 仓库卡片下那行：`★ 1.2k · Swift · MIT`。没有的项不占位。
-    var repositoryStats: [String] {
+    /// 仓库卡片的信息行：`☆ 2k ⑂ 124 ! 3 Swift MIT`。没有的项不占位——
+    /// 一个 0 star 的新仓库不应该顶着四个零。
+    /// symbol 为空表示纯文本（语言、许可证），由界面决定怎么画。
+    var repositoryStatItems: [(symbol: String, text: String)] {
         guard provider == .github else { return [] }
-        var parts: [String] = []
-        if repositoryStars > 0 { parts.append("★ " + Fmt.starCount(repositoryStars)) }
+        var items: [(String, String)] = []
+        if repositoryStars > 0 { items.append(("star", Fmt.starCount(repositoryStars))) }
+        if repositoryForks > 0 { items.append(("arrow.triangle.branch", Fmt.starCount(repositoryForks))) }
+        if repositoryIssues > 0 { items.append(("exclamationmark.circle", Fmt.starCount(repositoryIssues))) }
         let language = repositoryLanguage.trimmed
-        if !language.isEmpty { parts.append(language) }
+        if !language.isEmpty { items.append(("", language)) }
         let license = repositoryLicense.trimmed
-        if !license.isEmpty, license.uppercased() != "NOASSERTION" { parts.append(license) }
-        return parts
+        if !license.isEmpty, license.uppercased() != "NOASSERTION" { items.append(("", license)) }
+        return items
+    }
+
+    /// `owner` / `repo` 拆开显示：owner 是小字，仓库名才是标题。
+    /// 旧记录没有 platformContentID 时拿不到，界面退回整行标题。
+    var repositoryOwner: String? {
+        guard provider == .github else { return nil }
+        let parts = platformContentID.split(separator: "/")
+        return parts.isEmpty ? nil : String(parts[0])
+    }
+
+    var repositoryName: String? {
+        guard provider == .github else { return nil }
+        let parts = platformContentID.split(separator: "/")
+        return parts.count >= 2 ? String(parts[1]) : nil
     }
 
     /// 把识别结果写进记录。编辑器与示例数据共用这一条路，免得字段漏写。
@@ -329,6 +349,8 @@ final class Record {
         if let site = metadata.siteName, sourceName.trimmed.isEmpty { sourceName = site }
         metadataStatus = metadata.status
         repositoryStars = metadata.repositoryStars ?? repositoryStars
+        repositoryForks = metadata.repositoryForks ?? repositoryForks
+        repositoryIssues = metadata.repositoryIssues ?? repositoryIssues
         repositoryLanguage = metadata.repositoryLanguage ?? repositoryLanguage
         repositoryLicense = metadata.repositoryLicense ?? repositoryLicense
     }

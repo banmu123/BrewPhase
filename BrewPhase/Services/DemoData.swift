@@ -336,6 +336,8 @@ enum DemoData {
                   note: String,
                   thumbnail: String = "",
                   stars: Int = 0,
+                  forks: Int = 0,
+                  issues: Int = 0,
                   language: String = "",
                   license: String = "",
                   createdAt: Date) -> Record {
@@ -351,6 +353,8 @@ enum DemoData {
                 : record.provider.displayName
             record.thumbnailURLString = thumbnail
             record.repositoryStars = stars
+            record.repositoryForks = forks
+            record.repositoryIssues = issues
             record.repositoryLanguage = language
             record.repositoryLicense = license
             // 示例数据不联网下载封面，只记录地址：第一次打开详情页时补一次，
@@ -365,7 +369,9 @@ enum DemoData {
                  summary: "A simple app for coffee brewing recipes.",
                  author: "NiftyTreeStudios",
                  note: "本地优先的做法值得借鉴：数据先落在自己的机器上。",
-                 stars: 30, language: "Swift", license: "MIT",
+                 thumbnail: "https://avatars.githubusercontent.com/u/29564181?v=4",
+                 stars: 30, forks: 7, issues: 22,
+                 language: "Swift", license: "MIT",
                  createdAt: day(3)),
 
             link("https://standartmag.com",

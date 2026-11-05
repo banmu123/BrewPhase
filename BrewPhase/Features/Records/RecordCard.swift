@@ -16,6 +16,49 @@ enum RecordPresentation {
     }
 }
 
+/// 封面槽的统一状态机：本地有图就画图；有远端地址就先在占位上叠一个转圈，
+/// `CoverFetcher` 取到后记录的 `previewPath` 更新，图会自动长出来；取失败
+/// （或本轮已经失败过）就安静地退回占位。视频卡与仓库头像共用这一套。
+struct RecordCover<Placeholder: View>: View {
+
+    let record: Record
+    var thumbnail: Bool = true
+    @ViewBuilder var placeholder: Placeholder
+
+    private enum Phase { case initial, loading, settled }
+    @State private var phase: Phase = .initial
+
+    var body: some View {
+        Group {
+            if let image = ImageStore.shared.image(named: record.previewPath, thumbnail: thumbnail) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else if phase == .loading {
+                placeholder
+                    .overlay { ProgressView().controlSize(.regular) }
+            } else {
+                placeholder
+            }
+        }
+        .task(id: record.id) { await update() }
+    }
+
+    private func update() async {
+        if ImageStore.shared.image(named: record.previewPath, thumbnail: thumbnail) != nil {
+            phase = .settled
+            return
+        }
+        guard record.thumbnailURL != nil else { phase = .settled; return }
+        // 视图重建时先同步定一次状态：本轮已经试过失败的不再闪一下转圈。
+        phase = CoverFetcher.shared.hasAttempted(record.id) ? .settled : .loading
+        let result = await CoverFetcher.shared.fetch(record)
+        phase = .settled
+        // .fetched 时 previewPath 的更新会自动换到图；失败/跳过则留在占位。
+        _ = result
+    }
+}
+
 /// 一条记录在列表里的样子。
 ///
 /// 四种模板，因为四种内容本来就不一样：链接有来源和预览图，照片有画面，视频有
@@ -98,19 +141,13 @@ struct VideoLinkCard: View {
         Card(padding: 12) {
             VStack(alignment: .leading, spacing: 10) {
                 ZStack {
-                    Group {
-                        if let image = ImageStore.shared.image(named: record.previewPath, thumbnail: true) {
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFill()
-                        } else {
-                            ZStack {
-                                LinearGradient(colors: [Palette.wellDeep, Palette.well],
-                                               startPoint: .topLeading, endPoint: .bottomTrailing)
-                                Image(systemName: "play.rectangle")
-                                    .font(.system(size: 46, weight: .ultraLight))
-                                    .foregroundStyle(Palette.inkFaint.opacity(0.45))
-                            }
+                    RecordCover(record: record) {
+                        ZStack {
+                            LinearGradient(colors: [Palette.wellDeep, Palette.well],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing)
+                            Image(systemName: "play.rectangle")
+                                .font(.system(size: 46, weight: .ultraLight))
+                                .foregroundStyle(Palette.inkFaint.opacity(0.45))
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -225,38 +262,61 @@ struct PostLinkCard: View {
     }
 }
 
-/// GitHub：仓库名、描述、star / 语言 / 许可证。没有播放按钮。
+/// GitHub 仓库卡：owner 小字 + 仓库名大字 + 右上头像 + 描述 + 图标统计行。
+/// 仓库没有视频，所以没有播放按钮——它是一张「项目卡」。
 struct RepositoryCard: View {
 
     let record: Record
 
     var body: some View {
-        Card(padding: 15) {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 7) {
-                    Image(systemName: "chevron.left.forwardslash.chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Palette.roast)
-                    Text(LocalizedStringKey.alreadyLocalized(record.displayTitle))
-                        .font(TypeScale.bodyMedium)
-                        .foregroundStyle(Palette.ink)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+        Card(padding: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        if let owner = record.repositoryOwner {
+                            Text(verbatim: owner + " /")
+                                .font(TypeScale.caption)
+                                .foregroundStyle(Palette.inkFaint)
+                                .lineLimit(1)
+                                .truncationMode(.head)
+                        }
+                        Text(.alreadyLocalized(record.repositoryName ?? record.displayTitle))
+                            .font(TypeScale.cardTitle)
+                            .foregroundStyle(Palette.ink)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    RepositoryAvatar(record: record, size: 54)
                 }
 
                 if let summary = record.linkSummary {
                     Text(verbatim: summary)
                         .font(TypeScale.caption)
                         .foregroundStyle(Palette.inkSoft)
-                        .lineLimit(2)
+                        .lineLimit(3)
+                        .lineSpacing(2)
                         .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
-                if !record.repositoryStats.isEmpty {
-                    Text(verbatim: record.repositoryStats.joined(separator: " · "))
-                        .font(TypeScale.micro)
-                        .foregroundStyle(Palette.inkFaint)
-                        .lineLimit(1)
+                if !record.repositoryStatItems.isEmpty {
+                    HStack(spacing: 12) {
+                        ForEach(Array(record.repositoryStatItems.enumerated()), id: \.offset) { _, item in
+                            HStack(spacing: 3) {
+                                if !item.symbol.isEmpty {
+                                    Image(systemName: item.symbol)
+                                        .font(.system(size: 9.5, weight: .semibold))
+                                }
+                                Text(verbatim: item.text)
+                                    .font(TypeScale.micro)
+                            }
+                            .foregroundStyle(Palette.inkFaint)
+                            .lineLimit(1)
+                        }
+                    }
                 }
 
                 if !record.note.trimmed.isEmpty {
@@ -270,6 +330,30 @@ struct RepositoryCard: View {
                     .padding(.top, 1)
             }
         }
+    }
+}
+
+/// 仓库的「缩略图」就是 owner 头像；没缓存到时退回一个克制的斜杠徽标。
+struct RepositoryAvatar: View {
+
+    let record: Record
+    var size: CGFloat = 44
+
+    var body: some View {
+        RecordCover(record: record) {
+            ZStack {
+                Palette.well
+                Image(systemName: "chevron.left.forwardslash.chevron.right")
+                    .font(.system(size: size * 0.24, weight: .semibold))
+                    .foregroundStyle(Palette.inkFaint)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+                .strokeBorder(Palette.hairline, lineWidth: 0.8)
+        )
     }
 }
 

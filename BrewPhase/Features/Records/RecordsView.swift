@@ -297,6 +297,7 @@ struct RecordDetailView: View {
     @State private var isFullscreen = false
     @State private var isRefreshing = false
     @State private var refreshFailure: LinkFailure?
+    @State private var isHydratingCover = false
 
     /// `autoPlay` 只给调试截图用：正常路径必须先点封面才会创建播放器。
     init(record: Record, autoPlay: Bool = false) {
@@ -422,7 +423,12 @@ struct RecordDetailView: View {
             if !showing { isPlaying = false }
         }
         .task(id: record.previewPath) {
-            await hydrateCoverIfNeeded()
+            // 详情页是唯一的 force 重试口：列表里失败过的封面，打开详情再试一次。
+            guard record.carrier == .link, record.previewPath == nil,
+                  record.thumbnailURL != nil else { return }
+            isHydratingCover = true
+            _ = await CoverFetcher.shared.fetch(record, force: true)
+            isHydratingCover = false
         }
         .confirmationDialog("删除这条记录？", isPresented: $isConfirmingDelete,
                             titleVisibility: .visible) {
@@ -434,33 +440,70 @@ struct RecordDetailView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 5) {
-                Image(systemName: record.carrier == .link ? record.provider.symbol : record.carrier.symbol)
-                    .font(.system(size: 10, weight: .semibold))
-                Text(verbatim: headerBadge)
-                    .font(TypeScale.micro)
-                    .tracking(0.8)
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 5) {
+                    Image(systemName: record.carrier == .link ? record.provider.symbol : record.carrier.symbol)
+                        .font(.system(size: 10, weight: .semibold))
+                    Text(verbatim: headerBadge)
+                        .font(TypeScale.micro)
+                        .tracking(0.8)
+                }
+                .foregroundStyle(tint)
+
+                if record.provider == .github {
+                    // 仓库照 GitHub 的习惯拆两行：owner 是小字，仓库名才是标题。
+                    VStack(alignment: .leading, spacing: 2) {
+                        if let owner = record.repositoryOwner {
+                            Text(verbatim: owner + " /")
+                                .font(TypeScale.callout)
+                                .foregroundStyle(Palette.inkFaint)
+                                .lineLimit(1)
+                        }
+                        Text(.alreadyLocalized(record.repositoryName ?? record.displayTitle))
+                            .font(TypeScale.beanName)
+                            .foregroundStyle(Palette.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else {
+                    Text(record.displayTitle.isEmpty
+                         ? LocalizedStringKey(record.carrier.title)
+                         : .alreadyLocalized(record.displayTitle))
+                        .font(TypeScale.beanName)
+                        .foregroundStyle(Palette.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if record.carrier == .link, let credit = record.linkCreditLine,
+                   !(record.provider == .github && record.repositoryOwner != nil) {
+                    // GitHub 的 owner 已经拆在标题上了，不再重复。
+                    Text(verbatim: credit)
+                        .font(TypeScale.callout)
+                        .foregroundStyle(Palette.inkSoft)
+                }
+
+                if !record.repositoryStatItems.isEmpty {
+                    HStack(spacing: 12) {
+                        ForEach(Array(record.repositoryStatItems.enumerated()), id: \.offset) { _, item in
+                            HStack(spacing: 3) {
+                                if !item.symbol.isEmpty {
+                                    Image(systemName: item.symbol)
+                                        .font(.system(size: 10, weight: .semibold))
+                                }
+                                Text(verbatim: item.text)
+                                    .font(TypeScale.caption)
+                            }
+                            .foregroundStyle(Palette.inkFaint)
+                            .lineLimit(1)
+                        }
+                    }
+                }
             }
-            .foregroundStyle(tint)
 
-            Text(record.displayTitle.isEmpty
-                 ? LocalizedStringKey(record.carrier.title)
-                 : .alreadyLocalized(record.displayTitle))
-                .font(TypeScale.beanName)
-                .foregroundStyle(Palette.ink)
-                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 10)
 
-            if record.carrier == .link, let credit = record.linkCreditLine {
-                Text(verbatim: credit)
-                    .font(TypeScale.callout)
-                    .foregroundStyle(Palette.inkSoft)
-            }
-
-            if !record.repositoryStats.isEmpty {
-                Text(verbatim: record.repositoryStats.joined(separator: " · "))
-                    .font(TypeScale.caption)
-                    .foregroundStyle(Palette.inkFaint)
+            if record.provider == .github {
+                RepositoryAvatar(record: record, size: 64)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -502,7 +545,8 @@ struct RecordDetailView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-        } else if let preview = ImageStore.shared.image(named: record.previewPath, thumbnail: false) {
+        } else if record.provider != .github,
+                  let preview = ImageStore.shared.image(named: record.previewPath, thumbnail: false) {
             Image(uiImage: preview)
                 .resizable()
                 .scaledToFill()
@@ -529,6 +573,9 @@ struct RecordDetailView: View {
                             Image(systemName: record.provider.symbol)
                                 .font(.system(size: 34, weight: .ultraLight))
                                 .foregroundStyle(Palette.inkFaint)
+                            if isHydratingCover {
+                                ProgressView().controlSize(.regular)
+                            }
                         }
                     }
                 }
@@ -603,32 +650,6 @@ struct RecordDetailView: View {
                     .foregroundStyle(Palette.inkFaint)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        }
-    }
-
-    /// 保存时封面还没下完（或当时网络不好）的记录：打开详情页时补一次。
-    /// 用户主动打开才算「同意访问」，列表滚动永远不会触发它。
-    private func hydrateCoverIfNeeded() async {
-        guard record.carrier == .link,
-              record.previewPath == nil,
-              let remote = record.thumbnailURL else { return }
-        let referer = record.provider == .bilibili ? "https://www.bilibili.com/" : nil
-        guard let image = await LinkPreviewService.downloadImage(remote, referer: referer),
-              let saved = try? ImageStore.shared.save(image, maxDimension: 1200) else {
-            return
-        }
-        // 下载期间用户可能已经编辑出一张图：别覆盖，把多余的文件删掉。
-        guard record.previewPath == nil else {
-            ImageStore.shared.delete(saved)
-            return
-        }
-        record.previewPath = saved
-        do {
-            try context.save()
-        } catch {
-            AppLog.store.error("cover hydrate failed: \(error.localizedDescription, privacy: .public)")
-            context.rollback()
-            ImageStore.shared.delete(saved)
         }
     }
 

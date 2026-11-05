@@ -264,6 +264,8 @@ enum BackupRestorer {
                     record.metadataStatusRaw = row.metadataStatusRaw
                         ?? LinkMetadataStatus.idle.rawValue
                     record.repositoryStars = row.repositoryStars ?? 0
+                    record.repositoryForks = row.repositoryForks ?? 0
+                    record.repositoryIssues = row.repositoryIssues ?? 0
                     record.repositoryLanguage = row.repositoryLanguage ?? ""
                     record.repositoryLicense = row.repositoryLicense ?? ""
                     // 找不到的标签（比如旧文件里被手工删掉了）直接跳过，

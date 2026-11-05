@@ -177,6 +177,8 @@ struct LinkMetadata: Equatable, Sendable {
 
     // 仓库专用。别的平台留空，卡片不会去读。
     var repositoryStars: Int?
+    var repositoryForks: Int?
+    var repositoryIssues: Int?
     var repositoryLanguage: String?
     var repositoryLicense: String?
 

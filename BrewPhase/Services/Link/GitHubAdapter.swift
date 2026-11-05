@@ -104,11 +104,12 @@ struct GitHubAdapter: LinkProviderAdapter {
         metadata.siteName = "GitHub"
         metadata.contentKind = .repository
         metadata.repositoryStars = payload.stargazers_count
+        metadata.repositoryForks = payload.forks_count
+        metadata.repositoryIssues = payload.open_issues_count
         metadata.repositoryLanguage = payload.language?.trimmed.nonEmpty
         metadata.repositoryLicense = payload.license?.spdx_id?.trimmed.nonEmpty
-        if let raw = payload.owner?.avatar_url, let avatar = URL(string: raw) {
-            metadata.iconURL = avatar
-        }
+        // 仓库没有封面图，owner 头像就是它的「缩略图」——卡片与详情页都画它。
+        metadata.thumbnailURL = Self.avatarURL(from: payload.owner?.avatar_url)
         return metadata.finalized()
     }
 
@@ -124,11 +125,24 @@ struct GitHubAdapter: LinkProviderAdapter {
         var description: String?
         var language: String?
         var stargazers_count: Int?
+        var forks_count: Int?
+        var open_issues_count: Int?
         var owner: Owner?
         var license: License?
     }
 
     static func decodeRepo(_ data: Data) -> Repo? {
         try? JSONDecoder().decode(Repo.self, from: data)
+    }
+
+    /// 头像地址只接受 http/https（`https://github.com/{owner}.png` 这种也认）。
+    static func avatarURL(from raw: String?) -> URL? {
+        guard let raw = raw?.trimmed.nonEmpty,
+              let url = URL(string: raw),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return nil
+        }
+        return url
     }
 }
