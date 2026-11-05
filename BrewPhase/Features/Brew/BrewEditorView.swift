@@ -81,12 +81,21 @@ struct BrewEditorView: View {
         Fmt.day(bean.dayAfterRoast(on: date))
     }
 
+    /// 这次保存会不会动库存。编辑一条已被人工盘点结算的记录时不会——那份
+    /// 剩余量是用户称出来的，改一条旧记录不能反过来改它。
+    private var affectsStock: Bool {
+        guard let existing else { return true }
+        return !existing.isSettledForStock(in: bean)
+    }
+
     /// Remaining stock as it will be after saving, shown live so the number never
     /// comes as a surprise.
     private var projectedRemaining: Double {
+        guard affectsStock else { return bean.remainingG }
         let dose = recipe.coffeeG
         guard dose > 0 else { return bean.remainingG }
-        let delta = dose - (existing?.coffeeG ?? 0)
+        // 差值要拿**实扣量**算，不是粉量：袋里不够时两者不等。
+        let delta = dose - (existing?.appliedStockDeductedG ?? 0)
         return BrewMath.remainingAfter(current: bean.remainingG, dose: delta, total: bean.weightG)
     }
 
@@ -373,7 +382,10 @@ struct BrewEditorView: View {
             Image(systemName: "scalemass")
                 .font(.system(size: 11, weight: .medium))
             Text(L("保存后剩余 %@", Fmt.grams(projectedRemaining)))
-            if recipe.coffeeG > bean.remainingG, bean.remainingG > 0 {
+            if !affectsStock {
+                Text("· 这次冲煮早于你最后一次盘点，保存不会改变库存")
+                    .foregroundStyle(Palette.inkFaint)
+            } else if recipe.coffeeG > bean.remainingG, bean.remainingG > 0 {
                 Text("· 这次用掉的比剩下的还多")
                     .foregroundStyle(Palette.priority)
             }

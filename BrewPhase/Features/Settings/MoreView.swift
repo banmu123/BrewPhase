@@ -150,7 +150,12 @@ struct MoreView: View {
                 VStack(spacing: 0) {
                     ForEach(Array(ReminderKind.allCases.enumerated()), id: \.element) { index, kind in
                         ReminderToggleRow(kind: kind) {
-                            Task { await refreshStatus() }
+                            // 关掉一类提醒必须把已经排在系统里的那几条撤掉，
+                            // 否则它们会一直响到下次启动重排为止。
+                            Task {
+                                await resyncReminders()
+                                await refreshStatus()
+                            }
                         }
                         if index != ReminderKind.allCases.count - 1 {
                             CardDivider()
@@ -323,9 +328,17 @@ struct MoreView: View {
         case .install:
             DemoData.install(context: context)
             sampleMessage = L("示例数据已载入：7 包演示豆，覆盖养豆到喝完的完整生命周期。")
+            // 刚插进来的豆子还没有任何提醒；下一次启动才会整体重排。这里顺手
+            // 排一遍，开关打开之后提醒就是真的在队列里。
+            Task { await resyncReminders() }
         case .remove:
+            // 系统通知只认豆子 ID：删完再查就查不到该清谁了，所以先取下来。
+            let identifiers = DemoData.sampleBeans(context: context)
+                .flatMap { NotificationPlanner.allIdentifiers(beanID: $0.id) }
             if DemoData.removeInstalled(context: context) {
+                NotificationManager.shared.unschedule(identifiers: identifiers)
                 sampleMessage = L("示例数据已移除，你的记录未受影响。")
+                Task { await resyncReminders() }
             } else {
                 sampleMessage = nil
             }
@@ -459,6 +472,13 @@ struct MoreView: View {
         notificationStatus = NotificationManager.shared.status
         pendingReminderCount = await NotificationManager.shared.pendingCount()
         refreshImageStats()
+    }
+
+    /// 按当前规则与开关重排全部提醒。偏好刚刚变过，`refreshAll` 里的
+    /// `ReminderPreferences.current()` 读到的就是新值。
+    private func resyncReminders() async {
+        let all = (try? context.fetch(FetchDescriptor<Bean>())) ?? []
+        await NotificationManager.shared.refreshAll(beans: all, book: book, context: context)
     }
 
     private func refreshImageStats() {

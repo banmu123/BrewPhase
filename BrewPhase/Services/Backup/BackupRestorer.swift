@@ -142,6 +142,7 @@ enum BackupRestorer {
                 bean.createdAt = Date(timeIntervalSince1970: row.createdAt)
                 bean.updatedAt = Date(timeIntervalSince1970: row.updatedAt)
                 bean.isSample = row.isSample
+                bean.stockCountedAt = row.stockCountedAt.map(Date.init(timeIntervalSince1970:))
                 context.insert(bean)
                 beans[row.id] = bean
             }
@@ -166,6 +167,7 @@ enum BackupRestorer {
                 brew.flavorTagsRaw = row.flavorTagsRaw
                 brew.notes = row.notes
                 brew.createdAt = Date(timeIntervalSince1970: row.createdAt)
+                brew.stockDeductedG = row.stockDeductedG
                 brew.bean = beans[row.beanID]
                 context.insert(brew)
             }

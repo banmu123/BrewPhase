@@ -44,6 +44,16 @@ final class Brew {
     // MARK: - Housekeeping
 
     var createdAt: Date = Date()
+
+    /// 这条记录当时**实际**从库存里扣掉的克数。
+    ///
+    /// 不总是等于 `coffeeG`：袋里只剩 5g 时记一杯 18g，只扣得掉 5g。以前删除
+    /// 时按 `coffeeG` 退，一次「记错 → 删掉」就能让库存凭空多出 13g。
+    ///
+    /// nil = 这条记录写于本字段存在之前。旧数据没有真相可查，只能按粉量退，
+    /// 也就是旧行为；它不会比升级前更差。
+    var stockDeductedG: Double?
+
     var bean: Bean?
 
     init(
@@ -130,6 +140,20 @@ final class Brew {
 
     var dayAfterRoast: Int? {
         bean?.dayAfterRoast(on: date)
+    }
+
+    /// 撤销这条记录时该退回的克数。旧记录没有实扣量，退回粉量本身。
+    var appliedStockDeductedG: Double {
+        stockDeductedG ?? coffeeG
+    }
+
+    /// 这条记录是否已经被一次**人工盘点**结算过。
+    ///
+    /// 盘点之后 `remainingG` 就是用户称出来的事实，盘之前记录的冲煮已经没有
+    /// 单独回补的余地：再把粉退回去，得到的会是用户从没称过的数字。
+    func isSettledForStock(in bean: Bean) -> Bool {
+        guard let countedAt = bean.stockCountedAt else { return false }
+        return createdAt < countedAt
     }
 
     /// Whether any taste judgement was filled in at all.

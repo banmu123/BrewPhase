@@ -31,11 +31,13 @@ struct TastingTimelineView: View {
                         ForEach(Array(tastings.enumerated()), id: \.element.id) { index, tasting in
                             // 与上一条的间隔：时间连续感就在这几行小字里——
                             // 「Day 5 → Day 9」中间隔着几天，一眼可见。
+                            // 两边都得有天数才算得出间隔；没有烘焙日期的记录
+                            // 不参与，免得拿一个编出来的 0 去减。
                             row(
                                 tasting,
                                 gapDays: index == 0
                                     ? nil
-                                    : tasting.dayAfterRoast - tastings[index - 1].dayAfterRoast,
+                                    : Self.gap(tastings[index - 1], tasting),
                                 isLast: index == tastings.count - 1
                             )
                         }
@@ -44,6 +46,13 @@ struct TastingTimelineView: View {
                 }
             }
         }
+    }
+
+    /// 两条记录之间隔了几天。任一条没有烘焙日期就没有间隔可说。
+    private static func gap(_ earlier: Tasting, _ later: Tasting) -> Int? {
+        guard let a = earlier.resolvedDayAfterRoast,
+              let b = later.resolvedDayAfterRoast else { return nil }
+        return b - a
     }
 
     private var emptyState: some View {
@@ -63,8 +72,10 @@ struct TastingTimelineView: View {
     // MARK: - Row
 
     private func row(_ tasting: Tasting, gapDays: Int?, isLast: Bool) -> some View {
-        let phase = PhaseEngine.phase(dayAfterRoast: tasting.dayAfterRoast, bean: bean, rule: rule)
-        let color = Palette.tint(phase)
+        let day = tasting.resolvedDayAfterRoast
+        // 没有天数就没有阶段可判：给一个中性的点，而不是假装它在某个阶段里。
+        let phase = day.map { PhaseEngine.phase(dayAfterRoast: $0, bean: bean, rule: rule) }
+        let color = phase.map(Palette.tint) ?? Palette.inkFaint
 
         return HStack(alignment: .top, spacing: 12) {
             // The rail.
@@ -83,7 +94,7 @@ struct TastingTimelineView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(Fmt.day(tasting.dayAfterRoast))
+                    Text(Fmt.day(day))
                         .font(TypeScale.caption.weight(.medium).monospacedDigit())
                         .foregroundStyle(color)
 

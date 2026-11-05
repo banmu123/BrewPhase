@@ -16,19 +16,8 @@ struct BrewPhaseApp: App {
     @State private var store: PersistenceState
 
     /// The schema is shared between the first open and every retry, so the two
-    /// can never drift apart.
-    private static let schema = Schema([
-        Bean.self,
-        Brew.self,
-        Tasting.self,
-        PhaseReminder.self,
-        PhaseRule.self,
-        // 本地问答用的向量索引。它是**派生数据**：全部内容都能从上面几张表重算，
-        // 所以清掉它不丢信息，只是下次提问要多花一次建索引的时间。加进 schema
-        // 意味着新增一张表，SwiftData 对这种「只加实体」的变更是轻量迁移，
-        // 老数据不需要转换。
-        EmbeddingRecord.self,
-    ])
+    /// can never drift apart. 实体清单与迁移约定见 `BrewPhaseSchema`。
+    private static let schema = BrewPhaseSchema.schema
 
     @StateObject private var language = LanguageManager.shared
 

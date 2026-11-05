@@ -356,6 +356,9 @@ struct BackupBean: Codable, Equatable {
     var createdAt: Double
     var updatedAt: Double
     var isSample: Bool
+    /// 最近一次人工盘点的时刻；nil = 从未盘点。旧备份没有这个键，解出来就是 nil，
+    /// 正好等于「没有盘点过」，语义与旧版一致。
+    var stockCountedAt: Double? = nil
 }
 
 struct BackupBrew: Codable, Equatable {
@@ -378,6 +381,8 @@ struct BackupBrew: Codable, Equatable {
     var flavorTagsRaw: String
     var notes: String
     var createdAt: Double
+    /// 这条记录当时实际扣掉的克数；nil = 旧备份，恢复后按粉量退（旧行为）。
+    var stockDeductedG: Double? = nil
 }
 
 struct BackupTasting: Codable, Equatable {

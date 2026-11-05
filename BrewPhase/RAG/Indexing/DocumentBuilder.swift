@@ -239,8 +239,15 @@ enum DocumentBuilder {
         let beanName = bean?.displayName ?? L("一包没有记录的豆子")
 
         var lines: [String] = []
-        lines.append(L("用户在 %@ 给「%@」记了一次风味，那时是烘焙后第 %@ 天。",
-                       Fmt.short(tasting.date), beanName, String(tasting.dayAfterRoast)))
+        // 与界面同一条语义：天数由（烘焙日期，记录日期）现算；没有烘焙日期
+        // 就不说「第 0 天」——那是一句具体的话，而这里的事实是不知道。
+        if let day = tasting.resolvedDayAfterRoast {
+            lines.append(L("用户在 %@ 给「%@」记了一次风味，那时是烘焙后第 %@ 天。",
+                           Fmt.short(tasting.date), beanName, String(day)))
+        } else {
+            lines.append(L("用户在 %@ 给「%@」记了一次风味，这包豆还没有烘焙日期。",
+                           Fmt.short(tasting.date), beanName))
+        }
 
         if tasting.score > 0 {
             lines.append(L("评分 %@ 分。", String(tasting.score)))
@@ -264,7 +271,7 @@ enum DocumentBuilder {
                 beanID: bean?.id,
                 tastingID: tasting.id,
                 docDate: tasting.date,
-                dayAfterRoast: tasting.dayAfterRoast,
+                dayAfterRoast: tasting.resolvedDayAfterRoast,
                 score: tasting.score > 0 ? tasting.score : nil,
                 origin: bean?.origin.nonEmpty,
                 process: bean?.process.nonEmpty,

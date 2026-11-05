@@ -41,15 +41,23 @@ enum DemoData {
         return count > 0
     }
 
+    /// 库里所有带示例标记的豆子。
+    ///
+    /// 单独暴露出来，是为了让调用方在**删除之前**拿到它们——系统里的待送达
+    /// 提醒只认豆子 ID，删完再查就查不到该清谁了。
+    static func sampleBeans(context: ModelContext) -> [Bean] {
+        (try? context.fetch(
+            FetchDescriptor<Bean>(predicate: #Predicate { $0.isSample })
+        )) ?? []
+    }
+
     /// 删除全部示例数据：只碰带 `isSample` 标记的豆子，它们的冲煮、风味与
     /// 提醒随级联一起走；真实记录不带标记，永远不受影响。
     ///
     /// - Returns: true when something was actually deleted.
     @discardableResult
     static func removeInstalled(context: ModelContext) -> Bool {
-        let samples = (try? context.fetch(
-            FetchDescriptor<Bean>(predicate: #Predicate { $0.isSample })
-        )) ?? []
+        let samples = sampleBeans(context: context)
         guard !samples.isEmpty else { return false }
         for bean in samples {
             context.delete(bean)

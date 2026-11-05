@@ -38,7 +38,8 @@ enum BackupManager {
                 statusRaw: bean.statusRaw,
                 createdAt: bean.createdAt.timeIntervalSince1970,
                 updatedAt: bean.updatedAt.timeIntervalSince1970,
-                isSample: bean.isSample
+                isSample: bean.isSample,
+                stockCountedAt: bean.stockCountedAt?.timeIntervalSince1970
             )
         }
 
@@ -59,7 +60,8 @@ enum BackupManager {
                     acidity: brew.acidity, sweetness: brew.sweetness,
                     bitterness: brew.bitterness, body: brew.body, aftertaste: brew.aftertaste,
                     flavorTagsRaw: brew.flavorTagsRaw, notes: brew.notes,
-                    createdAt: brew.createdAt.timeIntervalSince1970
+                    createdAt: brew.createdAt.timeIntervalSince1970,
+                    stockDeductedG: brew.stockDeductedG
                 ))
             }
             for tasting in (bean.tastings ?? []).sorted(by: { $0.date < $1.date }) {
@@ -426,6 +428,9 @@ enum BackupManager {
             guard bean.createdAt.isFinite, bean.updatedAt.isFinite else {
                 throw BackupError.invalidValue("bean.timestamps")
             }
+            if let countedAt = bean.stockCountedAt, !countedAt.isFinite {
+                throw BackupError.invalidValue("bean.stockCountedAt")
+            }
         }
     }
 
@@ -445,6 +450,12 @@ enum BackupManager {
             }
             guard (0...7_200).contains(brew.timeSeconds) else {
                 throw BackupError.invalidValue("brew.timeSeconds")
+            }
+            // 实扣量可以小于粉量（袋里不够），但不能是负数或大于一份粉量。
+            if let deducted = brew.stockDeductedG {
+                guard deducted.isFinite, (0...500).contains(deducted) else {
+                    throw BackupError.invalidValue("brew.stockDeductedG")
+                }
             }
             // StarRatingInput 只能取 0…5；越界值会让界面画出第六颗星或负数。
             for (label, score) in [("brew.score", brew.score),

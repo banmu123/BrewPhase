@@ -276,7 +276,9 @@ final class NotificationReconcileTests: XCTestCase {
 }
 
 @MainActor
-private final class FakeScheduler: NotificationScheduling {
+/// 记账替身。`DataConsistencyTests` 也用它验证整批删除时的通知清理，
+/// 所以不能是 fileprivate。
+final class FakeScheduler: NotificationScheduling {
 
     var status: UNAuthorizationStatus = .authorized
     var pending: Set<String> = []

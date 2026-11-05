@@ -26,14 +26,19 @@ enum PostRestoreSync {
     typealias Loader = (ModelContext) throws -> (beans: [Bean], rules: [PhaseRule])
 
     /// 读取恢复后的数据并协调通知。`load` 可注入，用于验证「读失败不动通知」。
+    ///
+    /// `manager` 用 `nil` 而不是 `= .shared` 作为默认值：默认参数在 Swift 里于
+    /// **nonisolated** 上下文求值，直接写 `.shared` 会触碰 `@MainActor` 隔离的
+    /// 静态属性（Swift 6 报错）。改在函数体内解析——这里已经是主线程隔离。
     static func reconcile(
         container: ModelContainer,
-        manager: NotificationManager = .shared,
+        manager: NotificationManager? = nil,
         load: Loader = { context in
             (try context.fetch(FetchDescriptor<Bean>()),
              try context.fetch(FetchDescriptor<PhaseRule>()))
         }
     ) async -> Outcome {
+        let manager = manager ?? NotificationManager.shared
         // 用全新上下文：主上下文此刻可能还没把替换后的数据合并进来，
         // 拿旧豆子去重排会把该排的提醒清掉却不补回来。
         let context = ModelContext(container)

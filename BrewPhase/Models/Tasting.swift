@@ -11,8 +11,12 @@ final class Tasting {
 
     var id: UUID = UUID()
     var date: Date = Date()
-    /// Frozen at creation time. Recomputed on the fly it would silently change
-    /// meaning if the roast date were later corrected.
+    /// 创建时冻结的「烘焙后第几天」。
+    ///
+    /// 只作为**没有豆子可问**时的兜底（正常数据里风味记录一定挂着豆子，删豆
+    /// 会级联带走它）。界面、导出与检索读的是 `resolvedDayAfterRoast`：
+    /// 天数由（烘焙日期，记录日期）唯一决定，改了烘焙日期就该跟着改，否则
+    /// 同一笔记在时间线上写着 Day 9、详情页写着 Day 6。
     var dayAfterRoast: Int = 0
     var flavorTagsRaw: String = ""
     var score: Int = 0
@@ -66,7 +70,20 @@ final class Tasting {
         set { sourceRaw = newValue.rawValue }
     }
 
-    var dayText: String { Fmt.day(dayAfterRoast) }
+    /// 界面上那个「Day N」的唯一来源。
+    ///
+    /// 豆子还在就**现算**：烘焙日期是这包豆的属性，用户把它从 9 月 1 日改到
+    /// 9 月 3 日，所有「Day N」都该一起挪两天。保存的 `dayAfterRoast` 只在豆子
+    /// 已经不在时兜底。
+    ///
+    /// 没有烘焙日期时返回 nil——不是 0。「Day 0」是一句具体的话（烘焙当天），
+    /// 而不知道就是不知道，界面上显示「—」。
+    var resolvedDayAfterRoast: Int? {
+        guard let bean else { return dayAfterRoast }
+        return bean.dayAfterRoast(on: date)
+    }
+
+    var dayText: String { Fmt.day(resolvedDayAfterRoast) }
 }
 
 /// Where a tasting came from. Kept visible in the timeline so a note that was

@@ -184,6 +184,10 @@ final class NotificationManager {
 
     /// 只清系统里的待送达提醒，不碰库。删除豆子时用它收尾：库里的提醒行已经
     /// 随级联删除走了，不需要（也不能）再动上下文。
+    ///
+    /// 调用方要在**删除之前**把标识符取下来（见 `BeanDetailView.deleteBean` 与
+    /// `MoreView.performSampleAction`）：级联删除不会碰系统通知中心，那些请求
+    /// 还会留在队列里，时间一到照样弹出来，指向一包已经不存在的豆子。
     func unschedule(identifiers: [String]) {
         guard !identifiers.isEmpty else { return }
         scheduler.removePending(identifiers: identifiers)

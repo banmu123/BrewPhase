@@ -51,6 +51,14 @@ final class Bean {
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
+    /// 最近一次**人工盘点**库存的时刻（用户亲手填了一个剩余量）。
+    ///
+    /// 盘点是一次重新计数：盘之前记录的冲煮已经包含在这个数字里，再对它们做
+    /// 「删记录退粉」就是把粉退到一份已经算过它的账上。所以 `BrewRecorder`
+    /// 只对 `createdAt` 晚于这个时刻的冲煮做自动回补。nil = 从没盘点过，
+    /// 所有记录都参与——这也是旧数据的行为，不需要迁移。
+    var stockCountedAt: Date?
+
     /// 示例数据标记。带标记的豆子（及其冲煮、风味、提醒）来自「更多 → 数据 →
     /// 示例数据」，关闭开关时会被整批删除；真实记录一律不带标记，永远不受
     /// 该开关影响。默认 false——轻量迁移给历史数据自动补的也是 false。
@@ -201,6 +209,28 @@ final class Bean {
         touch()
     }
 
+    /// 扣掉至多 `grams`，返回**实际**扣掉的克数。
+    ///
+    /// 返回值是这个方法的全部意义：袋里只剩 5g 时记一杯 18g，实际只扣得掉 5g。
+    /// 调用方要把这 5g 记进那条冲煮记录里，删除时才不会退 18g——那 13g 是
+    /// 凭空多出来的库存。
+    @discardableResult
+    func deduct(_ grams: Double) -> Double {
+        guard grams > 0 else { return 0 }
+        let before = remainingG
+        consume(grams)
+        return max(before - remainingG, 0)
+    }
+
+    /// 把 `grams` 还回袋里，返回实际还回去的克数（受总容量限制）。
+    @discardableResult
+    func refund(_ grams: Double) -> Double {
+        guard grams > 0 else { return 0 }
+        let before = remainingG
+        consume(-grams)
+        return max(remainingG - before, 0)
+    }
+
     // MARK: - Lifecycle changes
 
     /// 手改库存：把剩余量设成 `grams`。三条规则都在这里，调整页只负责把
@@ -210,10 +240,14 @@ final class Bean {
     /// * 剩余量大于总克数时**抬高总克数**——用户比谁都清楚袋子里有多少，
     ///   这里不擅自把输入砍掉；
     /// * 已经喝完的袋子改出正数剩余量时回到「在喝」。
+    ///
+    /// 同时记下盘点时刻（`stockCountedAt`）：从这个数字往后，更早的冲煮记录
+    /// 不再参与库存回补，见 `BrewRecorder.delete`。
     func setRemaining(_ grams: Double) {
         remainingG = max(grams, 0)
         if remainingG > weightG { weightG = remainingG }
         if remainingG > 0, status == .finished { status = .active }
+        stockCountedAt = Date()
         touch()
     }
 

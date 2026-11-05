@@ -92,7 +92,9 @@ struct TastingDTO: Codable, Equatable {
     var beanID: UUID
     var beanName: String
     var date: Date
-    var dayAfterRoast: Int
+    /// 与界面同一来源（`Tasting.resolvedDayAfterRoast`）。没有烘焙日期时是
+    /// nil，而不是一个冒名的 0——「Day 0」是一句具体的话，不能说不知道就说它。
+    var dayAfterRoast: Int?
     var flavor: [String]
     var score: Int
     var notes: String

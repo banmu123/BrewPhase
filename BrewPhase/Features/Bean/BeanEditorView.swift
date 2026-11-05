@@ -23,6 +23,7 @@ private struct BeanOriginalValues {
     var openDate: Date?
     var weightG: Double
     var remainingG: Double
+    var stockCountedAt: Date?
     var price: Double
     var channel: String
     var flavorTags: [String]
@@ -40,6 +41,7 @@ private struct BeanOriginalValues {
         openDate = bean.openDate
         weightG = bean.weightG
         remainingG = bean.remainingG
+        stockCountedAt = bean.stockCountedAt
         price = bean.price
         channel = bean.channel
         flavorTags = bean.flavorTags
@@ -58,6 +60,7 @@ private struct BeanOriginalValues {
         bean.openDate = openDate
         bean.weightG = weightG
         bean.remainingG = remainingG
+        bean.stockCountedAt = stockCountedAt
         bean.price = price
         bean.channel = channel
         bean.flavorTags = flavorTags
@@ -467,6 +470,8 @@ struct BeanEditorView: View {
 
         case .edit:
             guard let bean else { return }
+            // 在编辑器里改剩余量，同样是一次人工盘点（见 `Bean.stockCountedAt`）。
+            let remainingBeforeEdit = bean.remainingG
             bean.name = name.trimmed
             bean.roaster = roaster.trimmed
             bean.origin = origin.trimmed
@@ -477,6 +482,7 @@ struct BeanEditorView: View {
             bean.openDate = isOpened ? (openDate ?? bean.openDate ?? Date()) : nil
             bean.weightG = result.weightG
             bean.remainingG = result.remainingG
+            if result.remainingG != remainingBeforeEdit { bean.stockCountedAt = Date() }
             bean.price = price
             bean.channel = channel.trimmed
             bean.flavorTags = flavorTags

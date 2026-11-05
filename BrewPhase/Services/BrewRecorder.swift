@@ -116,13 +116,29 @@ enum BrewRecorder {
         // 什么就得自己记着什么。
         let previousRemaining = bean.remainingG
         let previousDraft = existing.map { Draft(existing: $0) }
+        let previousDeducted = existing?.stockDeductedG
 
         let brew: Brew
         if let existing {
-            // 编辑：库存按**差值**调整，改一个打错的粉量不该再扣一次。
-            let delta = resolved.coffeeG - existing.coffeeG
+            // **先**读实扣量再 apply：旧记录没有 `stockDeductedG`，兜底值就是
+            // `coffeeG`，而 apply 会把 coffeeG 改成新粉量——顺序反了，差额永远
+            // 是 0，改粉量不动库存。
+            let previousApplied = existing.appliedStockDeductedG
             apply(draft, to: existing)
-            if delta != 0 { bean.consume(delta) }
+            if existing.isSettledForStock(in: bean) {
+                // 这条记录已经被一次人工盘点结算过：库存数字是用户称出来的，
+                // 改一条旧记录不能反过来改它。实扣量归零，将来删除也不再退。
+                existing.stockDeductedG = 0
+            } else {
+                // 编辑：库存按**实扣量的差值**调整。用 `coffeeG` 做差值会把
+                // 「袋里不够、只扣得掉一部分」的记录算错——那正是库存凭空
+                // 变多或变少的地方。
+                let delta = resolved.coffeeG - previousApplied
+                let before = bean.remainingG
+                bean.consume(delta)
+                // `consume` 会夹紧；实际变动多少，实扣量就跟着改多少。
+                existing.stockDeductedG = max(0, previousApplied - (bean.remainingG - before))
+            }
             brew = existing
         } else {
             let created = Brew(
@@ -145,7 +161,8 @@ enum BrewRecorder {
                 bean: bean
             )
             context.insert(created)
-            bean.consume(resolved.coffeeG)
+            // 记下**实际**扣掉的量：袋里只有 5g 时，这一杯只扣得掉 5g。
+            created.stockDeductedG = bean.deduct(resolved.coffeeG)
             brew = created
         }
 
@@ -164,6 +181,7 @@ enum BrewRecorder {
             if let previousDraft {
                 // 编辑：把上一版逐字段写回，并让镜像记录跟着回到旧值。
                 apply(previousDraft, to: brew)
+                brew.stockDeductedG = previousDeducted
                 syncMirrorTasting(for: brew, bean: bean, in: context)
             }
             throw Failure.saveFailed(L("没能保存下来，请再试一次"))
@@ -193,18 +211,30 @@ enum BrewRecorder {
         brew.notes = draft.notes.trimmed
     }
 
-    /// 删除一次冲煮：把粉还回袋里，并带走它在风味时间线上留下的那一条。
+    /// 删除一次冲煮：把**当时实际扣掉的粉**还回袋里，并带走它在风味时间线上
+    /// 留下的那一条。
     ///
+    /// 三种情况刻意分开：
+    /// * 正常记录：退还 `stockDeductedG`（不是粉量——袋里不够时两者不等）；
+    /// * 旧记录（没有实扣量）：按粉量退，与升级前的行为一致；
+    /// * 已被人工盘点结算的记录：一分不退。盘点之后的剩余量是用户称出来的，
+    ///   把一份已经算过这杯的账再退一次，得到的会是没人称过的数字。
+    ///
+    /// - Returns: 这条记录原来挂在哪包豆上，调用方据此重排提醒。
     /// - Throws: 落库失败时把一切退回删除前的样子再抛出——记录还在，
     ///   调用方必须把这一点告诉用户，不能说成删掉了。
-    static func delete(_ brew: Brew, in context: ModelContext) throws {
+    @discardableResult
+    static func delete(_ brew: Brew, in context: ModelContext) throws -> Bean? {
         let bean = brew.bean
         let previousRemaining = bean?.remainingG
         let previousStatus = bean?.status
+        let settled = bean.map { brew.isSettledForStock(in: $0) } ?? false
 
         if let bean {
-            bean.remainingG = min(bean.weightG, bean.remainingG + brew.coffeeG)
-            if bean.status == .finished, bean.remainingG > 0 { bean.status = .active }
+            if !settled {
+                bean.refund(brew.appliedStockDeductedG)
+                if bean.status == .finished, bean.remainingG > 0 { bean.status = .active }
+            }
             for tasting in (bean.tastings ?? []) where tasting.brewID == brew.id {
                 context.delete(tasting)
             }
@@ -222,6 +252,7 @@ enum BrewRecorder {
             if let bean, let previousStatus { bean.status = previousStatus }
             throw Failure.saveFailed(L("没能删除，请再试一次"))
         }
+        return bean
     }
 
     /// 库存变了，提醒与「还剩几次」也得跟着变。

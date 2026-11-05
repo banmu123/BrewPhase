@@ -29,8 +29,9 @@ struct TastingEditorView: View {
         _date = State(initialValue: today)
     }
 
-    private var dayAfterRoast: Int {
-        bean.dayAfterRoast(on: date) ?? 0
+    /// 天数由（烘焙日期，所选日期）现算；没有烘焙日期时是 nil，界面显示「—」。
+    private var dayAfterRoast: Int? {
+        bean.dayAfterRoast(on: date)
     }
 
     var body: some View {
@@ -108,7 +109,8 @@ struct TastingEditorView: View {
 
         let tasting = Tasting(
             date: date,
-            dayAfterRoast: dayAfterRoast,
+            // 存下来的只是没有豆子可问时的兜底快照（见 `Tasting.resolvedDayAfterRoast`）。
+            dayAfterRoast: dayAfterRoast ?? 0,
             flavorTags: flavorTags,
             score: BrewMath.clampScore(score),
             notes: notes.trimmed,
