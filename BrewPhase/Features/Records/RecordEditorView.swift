@@ -55,6 +55,8 @@ struct RecordEditorView: View {
     @State private var fetchedTitle = ""
     /// 我们自己下载的封面。换地址时按它清理，用户挑的图绝不动。
     @State private var autoPreviewPath: String?
+    /// 已保存的记录。封面下载晚于保存完成时，把图补写到它身上。
+    @State private var savedTarget: Record?
     @State private var isLoadingMedia = false
     @State private var errorMessage: String?
     @State private var didSave = false
@@ -580,8 +582,19 @@ struct RecordEditorView: View {
                 ImageStore.shared.delete(saved)
                 return
             }
-            previewPath = saved
-            autoPreviewPath = saved
+            if let target = savedTarget {
+                // 用户没等封面下完就保存了：封面晚一步补进已保存的记录，
+                // 列表卡片会随着 @Query 自动长出图。
+                guard target.previewPath == nil else {
+                    ImageStore.shared.delete(saved)
+                    return
+                }
+                target.previewPath = saved
+                try? target.modelContext?.save()
+            } else {
+                previewPath = saved
+                autoPreviewPath = saved
+            }
         }
     }
 
@@ -730,6 +743,7 @@ struct RecordEditorView: View {
         }
         if let pickedVideo { try? FileManager.default.removeItem(at: pickedVideo) }
 
+        savedTarget = target
         didSave = true
         if let onSaved { onSaved() } else { dismiss() }
     }

@@ -421,6 +421,9 @@ struct RecordDetailView: View {
             // 全屏是一次独立的播放：退出后行内回到封面，避免两个播放器同时出声。
             if !showing { isPlaying = false }
         }
+        .task(id: record.previewPath) {
+            await hydrateCoverIfNeeded()
+        }
         .confirmationDialog("删除这条记录？", isPresented: $isConfirmingDelete,
                             titleVisibility: .visible) {
             Button("删除", role: .destructive) { delete() }
@@ -600,6 +603,32 @@ struct RecordDetailView: View {
                     .foregroundStyle(Palette.inkFaint)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+
+    /// 保存时封面还没下完（或当时网络不好）的记录：打开详情页时补一次。
+    /// 用户主动打开才算「同意访问」，列表滚动永远不会触发它。
+    private func hydrateCoverIfNeeded() async {
+        guard record.carrier == .link,
+              record.previewPath == nil,
+              let remote = record.thumbnailURL else { return }
+        let referer = record.provider == .bilibili ? "https://www.bilibili.com/" : nil
+        guard let image = await LinkPreviewService.downloadImage(remote, referer: referer),
+              let saved = try? ImageStore.shared.save(image, maxDimension: 1200) else {
+            return
+        }
+        // 下载期间用户可能已经编辑出一张图：别覆盖，把多余的文件删掉。
+        guard record.previewPath == nil else {
+            ImageStore.shared.delete(saved)
+            return
+        }
+        record.previewPath = saved
+        do {
+            try context.save()
+        } catch {
+            AppLog.store.error("cover hydrate failed: \(error.localizedDescription, privacy: .public)")
+            context.rollback()
+            ImageStore.shared.delete(saved)
         }
     }
 

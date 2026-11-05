@@ -334,6 +334,7 @@ enum DemoData {
                   summary: String,
                   author: String,
                   note: String,
+                  thumbnail: String = "",
                   stars: Int = 0,
                   language: String = "",
                   license: String = "",
@@ -348,11 +349,12 @@ enum DemoData {
             record.sourceName = record.provider.displayName.isEmpty
                 ? (record.linkHost ?? "")
                 : record.provider.displayName
+            record.thumbnailURLString = thumbnail
             record.repositoryStars = stars
             record.repositoryLanguage = language
             record.repositoryLicense = license
-            // 示例数据不联网：状态记成「已解析」，但封面留空——卡片会退到
-            // 平台图标，而不是一张假的截图。
+            // 示例数据不联网下载封面，只记录地址：第一次打开详情页时补一次，
+            // 之后卡片和详情用的都是本地缓存。
             record.metadataStatus = .partial
             return record
         }
@@ -378,6 +380,7 @@ enum DemoData {
                  summary: "The first video on YouTube.",
                  author: "jawed",
                  note: "互联网上的第一条视频。",
+                 thumbnail: "https://i.ytimg.com/vi/jNQXAC9IVRw/hqdefault.jpg",
                  createdAt: day(9)),
 
             link("https://www.bilibili.com/video/BV1GJ411x7h7",
@@ -385,6 +388,7 @@ enum DemoData {
                  summary: "",
                  author: "Rick Astley",
                  note: "十年前的老歌，画质修得真好。",
+                 thumbnail: "https://i0.hdslb.com/bfs/archive/5242750857121e05146d5d5b13a47a2a6dd36e98.jpg",
                  createdAt: day(11)),
 
             link("https://x.com/jack/status/20",

@@ -286,6 +286,18 @@ final class Record {
         return linkHost
     }
 
+    /// 平台给的封面地址。本地还没缓存（`previewPath == nil`）时，详情页会拿
+    /// 它补一次下载；只接受 http/https。
+    var thumbnailURL: URL? {
+        let raw = thumbnailURLString.trimmed
+        guard let url = URL(string: raw), !raw.isEmpty,
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return nil
+        }
+        return url
+    }
+
     /// 仓库卡片下那行：`★ 1.2k · Swift · MIT`。没有的项不占位。
     var repositoryStats: [String] {
         guard provider == .github else { return [] }

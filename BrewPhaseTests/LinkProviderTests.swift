@@ -244,6 +244,18 @@ final class LinkProviderTests: XCTestCase {
         XCTAssertEqual(Fmt.starCount(65_432), "65k")
     }
 
+    func testThumbnailURLOnlyAcceptsWebSchemes() {
+        var record = Record(carrier: .link, urlString: "https://example.com")
+        record.thumbnailURLString = "https://i.ytimg.com/vi/x/hqdefault.jpg"
+        XCTAssertEqual(record.thumbnailURL?.absoluteString,
+                       "https://i.ytimg.com/vi/x/hqdefault.jpg")
+
+        record.thumbnailURLString = "javascript:alert(1)"
+        XCTAssertNil(record.thumbnailURL)
+        record.thumbnailURLString = "   "
+        XCTAssertNil(record.thumbnailURL)
+    }
+
     // MARK: - 元数据解码
 
     func testYouTubeOEmbedDecoding() {
