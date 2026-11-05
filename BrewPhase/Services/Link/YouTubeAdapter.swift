@@ -56,18 +56,21 @@ struct YouTubeAdapter: LinkProviderAdapter {
 
     static func embed(videoID: String) -> LinkEmbed? {
         guard isVideoID(videoID),
-              var comps = URLComponents(string: "https://www.youtube-nocookie.com/embed/\(videoID)") else {
+              var comps = URLComponents(string: "https://www.youtube.com/embed/\(videoID)") else {
             return nil
         }
         comps.queryItems = [
             URLQueryItem(name: "playsinline", value: "1"),
             URLQueryItem(name: "rel", value: "0"),
-            URLQueryItem(name: "modestbranding", value: "1"),
         ]
         guard let url = comps.url else { return nil }
+        // 来源身份用应用自己：Bundle ID 的 https 形式。之前伪装成 youtube.com
+        // 的包装页正是 152-4 的嫌疑——YouTube 拒绝「自称是 YouTube」的嵌入页，
+        // 而一个稳定的应用来源正是官方要求的 WebView 接入方式。
+        // Privacy Enhanced Mode（youtube-nocookie）只适用于网站内嵌，App 内不用。
         return LinkEmbed(url: url,
-                         allowedHosts: ["youtube-nocookie.com", "youtube.com"],
-                         parentOrigin: URL(string: "https://www.youtube.com/"))
+                         allowedHosts: ["youtube.com"],
+                         parentOrigin: URL(string: "https://com.brewphase.ios/"))
     }
 
     func embed(contentID: String) -> LinkEmbed? {

@@ -116,7 +116,7 @@ struct ExternalMediaPlayer: UIViewRepresentable {
             <style>html,body{margin:0;padding:0;height:100%;background:transparent;overflow:hidden}
             iframe{border:0;width:100%;height:100%;display:block}</style>
             </head><body>
-            <iframe src="\(escaped)" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowfullscreen playsinline></iframe>
+            <iframe src="\(escaped)" referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowfullscreen playsinline></iframe>
             </body></html>
             """
         }
@@ -224,7 +224,12 @@ struct ExternalMediaPlayer: UIViewRepresentable {
             }
 
             // 播放器内部的 iframe、脚本请求不走这里；这里只管主框架。
+            // 顺手把 iframe 导航实际带出的 Referer 记下来：包装页的身份对不对，
+            // 这行日志是唯一硬证据（播放器报 152-4 时先看它）。
             if navigationAction.targetFrame?.isMainFrame == false {
+                if let referer = navigationAction.request.value(forHTTPHeaderField: "Referer") {
+                    AppLog.link.debug("iframe referer: \(referer, privacy: .public)")
+                }
                 decisionHandler(.allow)
                 return
             }

@@ -33,10 +33,13 @@ final class LinkProviderTests: XCTestCase {
 
         let embed = LinkResolver.embed(provider: .youtube, contentID: result.platformContentID, url: nil)
         let text = embed?.url.absoluteString ?? ""
-        XCTAssertTrue(text.contains("/embed/dQw4w9WgXcQ"), text)
+        XCTAssertTrue(text.hasPrefix("https://www.youtube.com/embed/dQw4w9WgXcQ?"), text)
         XCTAssertTrue(text.contains("playsinline=1"), text)
         XCTAssertFalse(text.lowercased().contains("autoplay=1"), "默认不允许自动播放：\(text)")
-        XCTAssertEqual(embed?.allowedHosts.contains("youtube-nocookie.com"), true)
+        XCTAssertFalse(text.contains("youtube-nocookie.com"), "App 内不用隐私增强模式：\(text)")
+        XCTAssertEqual(embed?.allowedHosts, ["youtube.com"])
+        XCTAssertEqual(embed?.parentOrigin?.absoluteString, "https://com.brewphase.ios/",
+                       "包装页来源必须是应用自己的身份，而不是 youtube.com")
     }
 
     func testYouTubeShortForms() {
