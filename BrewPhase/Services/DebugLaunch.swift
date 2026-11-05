@@ -43,10 +43,8 @@ enum DebugScreen: String, CaseIterable, Identifiable {
     /// 预计风味窗口单独一屏：它在豆子页的折叠线以下，而这批要检查它的
     /// 视觉权重是否真的低于阶段卡。
     case flavorPrediction
-    /// 统一添加面板的第一步。模拟器点不到 + 号，面板本身要能被截图。
+    /// 统一添加面板：四类载体的选择卡。模拟器点不到 + 号，面板要能被截图。
     case addSheet
-    /// 面板的第二步：六类记录网格。
-    case addKinds
     /// 新建画布。
     case canvasEditor
     /// 某一类记录的新增页（默认到访，字段最多的一种）。

@@ -75,7 +75,7 @@ struct RecordsView: View {
                 RecordDetailView(record: record)
             }
             .sheet(isPresented: $showsAdd) {
-                AddSheet()
+                AddFlowView()
             }
             .task {
                 guard filter == nil, let name = DebugLaunch.recordTagName else { return }

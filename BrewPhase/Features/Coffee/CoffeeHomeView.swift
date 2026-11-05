@@ -105,7 +105,7 @@ struct CoffeeHomeView: View {
                 BeanDetailView(bean: bean)
             }
             .sheet(isPresented: $showsAdd) {
-                AddSheet()
+                AddFlowView()
             }
             .sheet(isPresented: $showsSettings) {
                 MoreView()

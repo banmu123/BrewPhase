@@ -328,9 +328,7 @@ struct RootView: View {
                 debugEmpty
             }
         case .addSheet:
-            AddSheet()
-        case .addKinds:
-            AddSheet(initialRoute: .recordCarriers)
+            AddFlowView()
         case .canvasEditor:
             CanvasEditorView()
         case .recordEditor:

@@ -14,7 +14,7 @@ struct CanvasListView: View {
 
     @State private var detail: Canvas?
     @State private var pendingDelete: Canvas?
-    @State private var showsAdd = false
+    @State private var showsCreate = false
 
     private let columns = [
         GridItem(.flexible(), spacing: 12),
@@ -33,7 +33,7 @@ struct CanvasListView: View {
                             title: "还没有画布",
                             message: "画布是一个自己命名的空间，用来把咖啡与记录里的东西放在一起。",
                             actionLabel: "新建画布",
-                            action: { showsAdd = true }
+                            action: { showsCreate = true }
                         )
                         .padding(.top, 40)
                     } else {
@@ -66,8 +66,8 @@ struct CanvasListView: View {
             .navigationDestination(item: $detail) { canvas in
                 CanvasDetailView(canvas: canvas)
             }
-            .sheet(isPresented: $showsAdd) {
-                AddSheet()
+            .sheet(isPresented: $showsCreate) {
+                CanvasEditorView()
             }
             .confirmationDialog(
                 "删除这块画布？",
@@ -105,7 +105,7 @@ struct CanvasListView: View {
             Spacer(minLength: 0)
 
             Button {
-                showsAdd = true
+                showsCreate = true
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 15, weight: .semibold))
