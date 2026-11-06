@@ -66,6 +66,19 @@
 * **估算器媒体不钳制**：图片/封面高度 = 列宽 ÷ 宽高比，与卡片
   `.aspectRatio(.fit)` 同一条公式；文本行数上限仍是近似（只影响列归属）。
 
+## Record 详情页（Phase 4 起）
+
+* **展示决策只在 `RecordDetailPresentation`**：title / credit / content /
+  personalNote / sourceURL。新增字段先想清楚归属，同一事实不许出现在两处
+  （标题 vs 摘要、域名 vs 来源、正文 vs 备注）。
+* **文字载体的 `note` 是正文**，永不进「我的备注」；标题只在 `record.title`
+  非空时显示，不拿备注首行或域名冒充标题。
+* **操作入口只有一个 More Menu**：编辑 / 打开原始来源 / 复制链接 / 删除。
+  底部不再放删除按钮；删除仍走「删库成功 → 清文件 → dismiss」。
+* **视频播放器由 @State 持有**（`.task(id: mediaPath)` 建一次）：不要在 body
+  里 `AVPlayer(url:)`，任何重绘都会让播放从头开始。
+* `refreshMetadata` 有快照保护：地址变了丢弃响应；用户写过的标题不覆盖。
+
 ## 代码风格
 
 * 阈值集中在 `RAG/Rules/IntelligenceConfig.swift`；中文词表放 `Resources/*.json`
