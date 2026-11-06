@@ -308,6 +308,55 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(max(loaded.size.width, loaded.size.height), 800, accuracy: 1)
     }
 
+    // MARK: - 缓存契约（v1.2 审查）
+
+    /// 保存后的展示图必须能从**缓存**命中：删掉磁盘上的两个文件再读，
+    /// 读得到就说明走的是缓存。旧实现把展示图缓存在裸文件名下，而读取
+    /// 路径用的是 `name|false`——保存写入的那份缓存永远命不中，这条测试
+    /// 在旧代码上是红的（读到 nil）。
+    func testSavingCachesTheDisplayImageWhereReadsCanHit() throws {
+        let name = try ImageStore.shared.save(makeImage(width: 900, height: 700))
+        defer { ImageStore.shared.delete(name) }
+
+        try FileManager.default.removeItem(at: ImageStore.shared.url(for: name))
+        try FileManager.default.removeItem(at: ImageStore.shared.url(for: name, thumbnail: true))
+
+        let fromCache = try XCTUnwrap(ImageStore.shared.image(named: name, thumbnail: false))
+        XCTAssertEqual(max(fromCache.size.width, fromCache.size.height), 900, accuracy: 1)
+    }
+
+    /// 展示图与缩略图是两份独立缓存：展示图命中不能被缩略图路径借用。
+    /// 缩略图读取的降级链路是「缓存 → 缩略图文件 → 展示图**文件**」，
+    /// 两个文件都删掉之后必须返回 nil，而不是把展示图缓存当成缩略图。
+    func testDisplayAndThumbnailCachesStayIndependent() throws {
+        let name = try ImageStore.shared.save(makeImage(width: 900, height: 700))
+        defer { ImageStore.shared.delete(name) }
+
+        // 从干净状态开始：先把展示图读进缓存，再删掉两个磁盘文件。
+        ImageStore.shared.clearCache()
+        XCTAssertNotNil(ImageStore.shared.image(named: name, thumbnail: false))
+        try FileManager.default.removeItem(at: ImageStore.shared.url(for: name))
+        try FileManager.default.removeItem(at: ImageStore.shared.url(for: name, thumbnail: true))
+
+        XCTAssertNil(ImageStore.shared.image(named: name, thumbnail: true))
+        // 展示图路径不受影响，缓存里的那份仍然可用。
+        XCTAssertNotNil(ImageStore.shared.image(named: name, thumbnail: false))
+    }
+
+    /// 删除之后，两种尺寸的缓存都不许再吐出已删除的图——哪怕缓存条目
+    /// 刚刚还在（读取即缓存）。
+    func testDeletingAnImageClearsBothCacheEntries() throws {
+        let name = try ImageStore.shared.save(makeImage(width: 600, height: 600))
+
+        XCTAssertNotNil(ImageStore.shared.image(named: name, thumbnail: false))
+        XCTAssertNotNil(ImageStore.shared.image(named: name, thumbnail: true))
+
+        ImageStore.shared.delete(name)
+
+        XCTAssertNil(ImageStore.shared.image(named: name, thumbnail: false))
+        XCTAssertNil(ImageStore.shared.image(named: name, thumbnail: true))
+    }
+
     func testReplacingAnImageRemovesTheOldFile() throws {
         // `ImageStore.replace` 不在了：它「写完新的就删旧的」发生在数据库落库
         // 之前，落库一旦失败，记录就会指向一个已经被删掉的文件。图片的更替

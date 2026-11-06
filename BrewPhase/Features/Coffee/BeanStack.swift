@@ -21,7 +21,9 @@ struct BeanStack: View {
     @State private var width: CGFloat = 1
     /// The bag the deck is showing, by identity rather than by position, so a
     /// re-rank (after logging a brew, say) does not silently swap what the user
-    /// is looking at for a different bag.
+    /// is looking at for a different bag. When that bag leaves the shelf
+    /// (finished or deleted), the focus re-anchors to the card now on screen —
+    /// see `BeanDeck.resolvedFocus`.
     @State private var focusedID: UUID?
 
     private var count: Int { items.count }
@@ -46,12 +48,10 @@ struct BeanStack: View {
             focusedID = items.indices.contains(newValue) ? items[newValue].id : nil
         }
         .onChange(of: items) { _, newItems in
-            guard !newItems.isEmpty else { index = 0; return }
-            if let focusedID, let position = newItems.firstIndex(where: { $0.id == focusedID }) {
-                if position != index { index = position }
-            } else if index >= newItems.count {
-                index = max(0, newItems.count - 1)
-            }
+            let resolved = BeanDeck.resolvedFocus(
+                focusedID: focusedID, index: index, ids: newItems.map(\.id))
+            index = resolved.index
+            focusedID = resolved.focusedID
         }
     }
 
@@ -208,6 +208,41 @@ struct BeanStack: View {
 /// constant peck; negative depths are cards already swiped away, travelling left
 /// and fading.
 enum BeanDeck {
+
+    /// Focus, resolved after the ranked list changed.
+    ///
+    /// Two pieces of state, two jobs: `index` is where the deck rests;
+    /// `focusedID` is *which bean the user is reading*. Identity is what lets a
+    /// re-rank slide the deck along with the bean instead of swapping cards
+    /// under the user's eyes — but only while that bean is on the shelf.
+    ///
+    /// When the focused bean leaves (finished, deleted), the card that took its
+    /// place is what the user is now looking at: the focus re-anchors to it.
+    /// The old behaviour kept the stale id around, so if that bean later
+    /// returned to the shelf, the deck yanked itself back to it without any
+    /// gesture — a silent swap of exactly the kind identity-focus exists to
+    /// prevent. Re-anchoring is the whole fix; nothing else about the contract
+    /// changes.
+    ///
+    /// - Parameters:
+    ///   - focusedID: which bean the user was reading (`nil` before first layout).
+    ///   - index: where the deck was resting.
+    ///   - ids: the new ranked list, by id only — this must stay checkable
+    ///     without a screen.
+    /// - Returns: the new `(index, focusedID)` pair.
+    static func resolvedFocus(focusedID: UUID?, index: Int,
+                              ids: [UUID]) -> (index: Int, focusedID: UUID?) {
+        guard !ids.isEmpty else { return (0, nil) }
+        if let focusedID, let position = ids.firstIndex(of: focusedID) {
+            // Still on the shelf: the deck follows the bean through re-ranks.
+            return (position, focusedID)
+        }
+        // The focused bean is gone: rest where the deck rests — clamped, in
+        // case the list shrank past the current position — and let the card on
+        // screen own the focus from here on.
+        let clamped = min(max(index, 0), ids.count - 1)
+        return (clamped, ids[clamped])
+    }
 
     /// A card's width is unknown on the very first layout pass; a gesture that
     /// arrived before it was measured must not fling the deck, so an unmeasured

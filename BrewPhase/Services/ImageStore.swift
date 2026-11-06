@@ -59,6 +59,17 @@ final class ImageStore: @unchecked Sendable {
         return "\(stem)_thumb.jpg"
     }
 
+    // MARK: - Cache keys
+
+    /// 唯一构造缓存 Key 的地方。展示图与缩略图各占一个键位、互不借用。
+    ///
+    /// v1.2 审查修复：`save` 曾把展示图缓存在裸文件名下，而读取路径全部走
+    /// `name|…`——那份缓存永远命不中，只是白占 NSCache 的名额，保存后的
+    /// 第一次读取仍然要进磁盘。现在读写共用这一个函数，拼法不会再分叉。
+    private static func cacheKey(_ name: String, thumbnail: Bool) -> NSString {
+        "\(name)|\(thumbnail)" as NSString
+    }
+
     // MARK: - Writing
 
     /// Downscales, writes both sizes, and returns the name to store on the bean.
@@ -82,7 +93,7 @@ final class ImageStore: @unchecked Sendable {
             try? thumbData.write(to: url(for: name, thumbnail: true), options: .atomic)
         }
 
-        cache.setObject(display, forKey: name as NSString)
+        cache.setObject(display, forKey: Self.cacheKey(name, thumbnail: false))
         AppLog.images.debug("stored image \(name, privacy: .public)")
 
         // A new image means the old one, if any, is the caller's business — see
@@ -95,7 +106,7 @@ final class ImageStore: @unchecked Sendable {
     func image(named name: String?, thumbnail: Bool = true) -> UIImage? {
         guard let name, !name.isEmpty else { return nil }
 
-        let key = "\(name)|\(thumbnail)" as NSString
+        let key = Self.cacheKey(name, thumbnail: thumbnail)
         if let cached = cache.object(forKey: key) { return cached }
 
         // A missing thumbnail is not an error — migrate to the full image.
@@ -125,9 +136,8 @@ final class ImageStore: @unchecked Sendable {
         guard let name, !name.isEmpty else { return }
         remove(url(for: name))
         remove(url(for: name, thumbnail: true))
-        cache.removeObject(forKey: name as NSString)
-        cache.removeObject(forKey: "\(name)|true" as NSString)
-        cache.removeObject(forKey: "\(name)|false" as NSString)
+        cache.removeObject(forKey: Self.cacheKey(name, thumbnail: false))
+        cache.removeObject(forKey: Self.cacheKey(name, thumbnail: true))
     }
 
     private func remove(_ url: URL) {

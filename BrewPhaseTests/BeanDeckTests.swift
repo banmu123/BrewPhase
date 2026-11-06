@@ -74,4 +74,67 @@ final class BeanDeckTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(BeanDeck.opacity(CGFloat(depth)), 0)
         }
     }
+
+    // MARK: - Focus（v1.2 审查）
+
+    private var ids: [UUID] { (0..<6).map { _ in UUID() } }
+
+    /// 重排时 deck 跟着豆子走——焦点按身份保持，不按位置。
+    func testFocusFollowsTheBeanThroughARerank() {
+        let shelf = ids
+        let focused = shelf[2]
+        // 该豆从位置 2 移到位置 4（冲煮记录改变了排序）。
+        var reranked = shelf
+        reranked.remove(at: 2)
+        reranked.insert(focused, at: 4)
+
+        let resolved = BeanDeck.resolvedFocus(focusedID: focused, index: 2, ids: reranked)
+        XCTAssertEqual(resolved.index, 4)
+        XCTAssertEqual(resolved.focusedID, focused)
+    }
+
+    /// 焦点豆离架（喝完/删除）时，替补上位的卡就是新的焦点——index 不动，
+    /// focusedID 换人。旧行为保留了失效的 id，是后续跳回的根源。
+    func testFocusReanchorsToTheReplacementWhenTheFocusedBeanLeaves() {
+        let shelf = ids
+        let focused = shelf[2]
+        var withoutIt = shelf
+        withoutIt.removeAll { $0 == focused }
+
+        let resolved = BeanDeck.resolvedFocus(focusedID: focused, index: 2, ids: withoutIt)
+        XCTAssertEqual(resolved.index, 2, "替补豆就位，deck 不该动")
+        XCTAssertEqual(resolved.focusedID, withoutIt[2], "焦点必须落在屏幕上的这张卡")
+        XCTAssertNotEqual(resolved.focusedID, focused)
+    }
+
+    /// 焦点豆离架后又被恢复：deck 继续跟着用户正在看的豆走，**不跳回**旧豆。
+    /// 这是本次修复要钉死的核心场景。
+    func testARestoredBeanDoesNotStealTheFocus() {
+        let a = UUID(), b = UUID(), c = UUID(), d = UUID()
+        // 用户在看 C（位置 2）；C 离架，替补 D 上位并获得焦点。
+        let afterLeave = BeanDeck.resolvedFocus(focusedID: c, index: 2, ids: [a, b, d])
+        XCTAssertEqual(afterLeave.focusedID, d)
+
+        // C 恢复在喝，重新插到最前面。
+        let afterRestore = BeanDeck.resolvedFocus(
+            focusedID: afterLeave.focusedID, index: afterLeave.index, ids: [c, a, b, d])
+        XCTAssertEqual(afterRestore.index, 3, "deck 滑动以保持 D 在眼前")
+        XCTAssertEqual(afterRestore.focusedID, d, "而不是跳回刚恢复的 C")
+    }
+
+    /// 列表尾部一起离开时 index 越界：钳到末位，焦点同样落在屏幕上的卡。
+    func testIndexIsClampedWhenTheFocusedBeanAndTailLeaveTogether() {
+        let shelf = [UUID(), UUID(), UUID()]
+        let resolved = BeanDeck.resolvedFocus(focusedID: shelf[2], index: 2, ids: [shelf[0]])
+        XCTAssertEqual(resolved.index, 0)
+        XCTAssertEqual(resolved.focusedID, shelf[0])
+    }
+
+    /// 货架空了：一切归零。BeanStack 在 Coffee 首页此时已整体卸载，但类型
+    /// 必须自洽——空列表上没有「焦点」可言。
+    func testFocusResolvesToNothingWhenTheShelfEmpties() {
+        let resolved = BeanDeck.resolvedFocus(focusedID: UUID(), index: 3, ids: [])
+        XCTAssertEqual(resolved.index, 0)
+        XCTAssertNil(resolved.focusedID)
+    }
 }
