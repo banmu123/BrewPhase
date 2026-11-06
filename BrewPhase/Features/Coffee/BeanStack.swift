@@ -42,7 +42,14 @@ struct BeanStack: View {
             }
         }
         .onAppear {
-            focusedID = items.indices.contains(index) ? items[index].id : nil
+            // 首次出现与列表变化走**同一条**状态规则：focusedID 还是 nil，
+            // resolvedFocus 走「重锚」分支——index 越界就被钳回（调试启动可以
+            // 指定第 4 张卡，而架上只有 1 包豆；不钳的话 visiblePositions
+            // 会算出空窗口，页面一张卡都不剩），焦点落在屏幕上的卡。
+            let resolved = BeanDeck.resolvedFocus(
+                focusedID: focusedID, index: index, ids: items.map(\.id))
+            index = resolved.index
+            focusedID = resolved.focusedID
         }
         .onChange(of: index) { _, newValue in
             focusedID = items.indices.contains(newValue) ? items[newValue].id : nil

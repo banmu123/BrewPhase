@@ -137,4 +137,20 @@ final class BeanDeckTests: XCTestCase {
         XCTAssertEqual(resolved.index, 0)
         XCTAssertNil(resolved.focusedID)
     }
+
+    /// 首次出现（onAppear）走的就是重锚分支：focusedID 为 nil 且 index 越界
+    /// （调试启动指定第 4 张卡、架上只有 1 包豆）时，钳回范围内并把焦点
+    /// 落到唯一的卡上——否则 visiblePositions 会算出空窗口，页面没有卡片。
+    func testFirstAppearanceClampsAnOutOfRangeIndex() {
+        let only = UUID()
+        let resolved = BeanDeck.resolvedFocus(focusedID: nil, index: 4, ids: [only])
+        XCTAssertEqual(resolved.index, 0)
+        XCTAssertEqual(resolved.focusedID, only)
+
+        // 正常首启（index 0 合法）：值原样通过，不做多余的动作。
+        let shelf = [UUID(), UUID(), UUID()]
+        let plain = BeanDeck.resolvedFocus(focusedID: nil, index: 0, ids: shelf)
+        XCTAssertEqual(plain.index, 0)
+        XCTAssertEqual(plain.focusedID, shelf[0])
+    }
 }
