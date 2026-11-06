@@ -60,6 +60,17 @@ enum CanvasDebugSeed {
         AppLog.store.info("canvas debug seed: \(created.count) node(s) placed")
     }
 
+    /// `-BrewPhaseCanvasFailLoad nodes|records`：人为让加载失败。
+    ///
+    /// 模拟器上制造不出真正的数据库故障，而「失败态 + 重试」正是这一版要验收的
+    /// 界面。只影响这一次加载，不改任何数据。
+    static var simulatedLoadFailure: CanvasLoadFailure? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-BrewPhaseCanvasFailLoad"),
+              args.indices.contains(index + 1) else { return nil }
+        return CanvasLoadFailure(rawValue: args[index + 1])
+    }
+
     /// `-BrewPhaseCanvasPicker yes`：进画布后直接把「添加记录」面板打开。
     static var opensPicker: Bool {
         let args = ProcessInfo.processInfo.arguments

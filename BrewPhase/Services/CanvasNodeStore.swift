@@ -160,32 +160,59 @@ enum CanvasNodeStore {
     ///
     /// 不在这里 `save()`——调用方随后删记录，并在同一个事务里提交；
     /// 失败时 `rollback()` 会把节点与画布时间一并恢复。
-    static func deleteNodes(referencing recordID: UUID, context: ModelContext) {
+    ///
+    /// - Returns: 节点查询是否成功。`false` 表示什么都没删（读不出来就不猜），
+    ///   调用方据此决定要不要继续。
+    @discardableResult
+    static func deleteNodes(referencing recordID: UUID,
+                            context: ModelContext,
+                            nodeFetch: (UUID, ModelContext) throws -> [CanvasNode] = CanvasNodeStore.nodes(referencing:context:)) -> Bool {
         let doomed: [CanvasNode]
         do {
-            doomed = try nodes(referencing: recordID, context: context)
+            doomed = try nodeFetch(recordID, context)
         } catch {
             // 读不出来就一条都不删：宁可留下稍后能自愈的孤儿节点，
             // 也不要凭一次失败的查询去猜该删谁。
             AppLog.store.error("canvas: node lookup failed, no cascade — \(error.localizedDescription, privacy: .public)")
-            return
+            return false
         }
         for node in doomed { context.delete(node) }
         for canvasID in Set(doomed.map(\.canvasID)) {
             touchCanvas(canvasID, context: context)
         }
+        return true
     }
 
-    /// 画布被删除前调用：清掉这块画布上的全部节点。
-    static func deleteNodes(in canvasID: UUID, context: ModelContext) {
+    /// 删画布的**唯一**事务入口：节点、画布同一次提交。
+    ///
+    /// 之前是「调用方先删节点、再删画布」两步：节点查询失败时前一步直接返回，
+    /// 后一步照旧把画布删掉——留下永远清不掉的孤儿节点。现在顺序与失败处理
+    /// 都在这里：
+    /// 1. 节点读不出来 → 抛错，**画布不动**；
+    /// 2. 节点与画布一起 `delete`；
+    /// 3. 保存失败 → `rollback()` 把两者一起恢复。
+    ///
+    /// 记录不参与这次删除，删画布永远不碰 `Record`。
+    static func deleteCanvas(_ canvas: Canvas,
+                             context: ModelContext,
+                             nodeFetch: (UUID, ModelContext) throws -> [CanvasNode] = CanvasNodeStore.nodes(in:context:),
+                             commit: (ModelContext) throws -> Void = { try $0.save() }) throws {
         let doomed: [CanvasNode]
         do {
-            doomed = try nodes(in: canvasID, context: context)
+            doomed = try nodeFetch(canvas.id, context)
         } catch {
-            AppLog.store.error("canvas: node lookup failed, no cascade — \(error.localizedDescription, privacy: .public)")
-            return
+            AppLog.store.error("canvas: delete aborted, node lookup failed — \(error.localizedDescription, privacy: .public)")
+            throw CanvasDeletionError.nodeLookupFailed(error)
         }
         for node in doomed { context.delete(node) }
+        context.delete(canvas)
+        do {
+            try commit(context)
+        } catch {
+            context.rollback()
+            AppLog.store.error("canvas: delete rolled back — \(error.localizedDescription, privacy: .public)")
+            throw CanvasDeletionError.saveFailed(error)
+        }
     }
 
     /// 删除示例数据：只清挂在示例画布上、或引用示例记录的节点。
@@ -209,4 +236,12 @@ enum CanvasNodeStore {
             touchCanvas(canvasID, context: context)
         }
     }
+}
+
+/// 删画布失败的两种来源。都意味着「什么都没删掉」，界面可以原样重试。
+enum CanvasDeletionError: Error {
+    /// 节点查不出来：不删节点，也**不删画布**。
+    case nodeLookupFailed(Error)
+    /// 保存失败：已 `rollback`，画布与节点都还在。
+    case saveFailed(Error)
 }

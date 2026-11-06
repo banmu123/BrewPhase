@@ -199,6 +199,7 @@
 "养豆" = "Resting";
 "养豆完成" = "Resting finished";
 "养豆期" = "Resting";
+"内容暂时读不到" = "Content unavailable";
 "内容由 %@ 提供" = "Content from %@";
 "内置知识库" = "Built-in knowledge base";
 "再记一杯" = "Log another";
@@ -570,6 +571,7 @@
 "最近这一杯更接近「%@」（%@）。" = "The latest cup is closer to \"%@\" (%@).";
 "最高 %@ 分，出现在 %@。" = "The best was %@, on %@.";
 "有 %@ 条资料没能算出向量，这次检索里没有它们。" = "%@ items could not be embedded and are missing from this search.";
+"有些内容暂时读不到。" = "Some content can't be loaded right now.";
 "有哪些豆子" = "Inventory";
 "有容" = "Yourong";
 "有点苦了" = "A bit bitter";
@@ -622,6 +624,7 @@
 "正在翻你的记录…" = "Looking through your records…";
 "正在获取网页信息…" = "Reading the page…";
 "正在讨论：%@" = "Discussing: %@";
+"正在读取画布" = "Loading canvas";
 "正在重建…" = "Rebuilding…";
 "正在重新获取…" = "Fetching again…";
 "正在问「%@」" = "Asking about %@";
@@ -668,6 +671,7 @@
 "没有需要清理的图片" = "Nothing to clean up";
 "没能保存" = "Could not save";
 "没能保存下来，请再试一次" = "Could not save. Please try again";
+"没能删除" = "Couldn't delete";
 "没能删除，请再试一次" = "Could not delete. Please try again";
 "没能导出数据文件。请确认设备还有可用空间，然后再试一次。" = "Could not export the data files. Check that the device has free space, then try again.";
 "没能打开这个文件，请再选一次。" = "That file could not be opened. Please choose it again.";
@@ -748,6 +752,7 @@
 "用户评价最高的豆子是：%@。" = "The user's highest-rated bags: %@.";
 "画布" = "Canvas";
 "画布上的节点会一起消失，原始记录不受影响。" = "Its nodes go with it; the original records are unaffected.";
+"画布内容没能读出来。" = "Couldn't load this canvas.";
 "画布备注" = "Canvas note";
 "画布是一个自己命名的空间，用来把咖啡与记录里的东西放在一起。" = "A canvas is a space you name yourself, for putting coffee and records side by side.";
 "界面语言" = "Language";

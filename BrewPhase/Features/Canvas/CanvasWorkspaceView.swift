@@ -35,6 +35,8 @@ struct CanvasWorkspaceView: View {
 
     @State private var nodes: [CanvasNode] = []
     @State private var recordsByID: [UUID: Record] = [:]
+    /// 加载状态：空画布只能来自「读取成功且确实没有节点」。
+    @State private var loadState: CanvasLoadState = .loading
 
     @State private var viewport = CanvasViewport()
     @State private var canvasSize: CGSize = .zero
@@ -105,8 +107,10 @@ struct CanvasWorkspaceView: View {
 
                 worldLayer
 
-                if nodes.isEmpty {
+                if loadState == .empty {
                     emptyCanvas
+                } else if loadState == .loading && nodes.isEmpty {
+                    loadingCanvas
                 }
             }
             .coordinateSpace(.named(canvasScreenSpace))
@@ -129,6 +133,11 @@ struct CanvasWorkspaceView: View {
             RecordDetailView(record: record)
         }
         .overlay(alignment: .bottomTrailing) { floatingControls }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if case .failed(let kind) = loadState {
+                failureBanner(kind)
+            }
+        }
         .sheet(isPresented: $showsPicker) {
             CanvasRecordPicker(canvas: canvas) { picked in
                 add(picked)
@@ -197,6 +206,7 @@ struct CanvasWorkspaceView: View {
             bounds: bounds,
             nodes: visibleNodes,
             recordsByID: recordsByID,
+            showsPlaceholders: loadState == .failed(.records),
             playingNodeID: playingNodeID,
             draggingNodeID: draggingNodeID,
             newIDs: newIDs,
@@ -215,7 +225,8 @@ struct CanvasWorkspaceView: View {
                                      to: CGPoint(x: node.positionX + worldTranslation.width,
                                                  y: node.positionY + worldTranslation.height),
                                      context: context)
-            }
+            },
+            onReload: { loadCanvas() }
         )
         .frame(width: bounds.width, height: bounds.height, alignment: .topLeading)
         .scaleEffect(viewport.scale, anchor: .topLeading)
@@ -317,7 +328,41 @@ struct CanvasWorkspaceView: View {
         .accessibilityLabel(label)
     }
 
-    // MARK: - 空画布
+    // MARK: - 加载 / 失败 / 空
+
+    /// 首次读取时的指示。只在还没有内容时出现——重试时上一屏保持不动。
+    private var loadingCanvas: some View {
+        ProgressView()
+            .controlSize(.regular)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityLabel("正在读取画布")
+    }
+
+    /// 读取失败：说明 + 重试。**不是**空状态，也不清任何内容。
+    private func failureBanner(_ kind: CanvasLoadFailure) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 12, weight: .medium))
+            Text(kind == .nodes ? "画布内容没能读出来。" : "有些内容暂时读不到。")
+                .font(TypeScale.caption)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            Button {
+                loadCanvas()
+            } label: {
+                Text("重新加载")
+                    .font(TypeScale.caption)
+                    .foregroundStyle(Palette.roast)
+            }
+            .buttonStyle(.plain)
+        }
+        .foregroundStyle(Palette.inkSoft)
+        .padding(.horizontal, Metric.gutter)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity)
+        .background(Palette.well)
+        .overlay(alignment: .bottom) { Hairline() }
+    }
 
     private var emptyCanvas: some View {
         VStack(spacing: 10) {
@@ -392,14 +437,15 @@ struct CanvasWorkspaceView: View {
                                                   visibleWorldRect: visibleWorldRect,
                                                   context: context)
             guard !created.isEmpty else { return }
-            // 直接把新节点接进列表：不需要为了「已经知道的结果」再查一遍库。
             nodes.append(contentsOf: created)
+            loadState = .loaded
             newIDs.formUnion(created.map(\.id))
             let ids = Set(created.map(\.id))
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(1200))
                 newIDs.subtract(ids)
             }
+            // 记录走同一套对账：新节点没有对应记录时不会渲染成空白卡。
             reconcileRecords()
             fitIfNeeded()
         } catch {
@@ -413,18 +459,17 @@ struct CanvasWorkspaceView: View {
         // 界面就不该假装已经没了。
         if CanvasNodeStore.remove(node, context: context) {
             nodes.removeAll { $0.id == node.id }
+            if nodes.isEmpty { loadState = .empty }
         }
         if playingNodeID == node.id { playingNodeID = nil }
     }
 
     private func deleteCanvas() {
-        CanvasNodeStore.deleteNodes(in: canvas.id, context: context)
-        context.delete(canvas)
         do {
-            try context.save()
+            // 唯一事务入口：节点查不出来就不删画布；保存失败整体回滚。
+            try CanvasNodeStore.deleteCanvas(canvas, context: context)
         } catch {
             AppLog.store.error("canvas delete failed: \(error.localizedDescription, privacy: .public)")
-            context.rollback()
             actionError = L("没能删除，请再试一次")
             return
         }
@@ -440,30 +485,41 @@ struct CanvasWorkspaceView: View {
         ensureContentVisible()
     }
 
-    /// 进入画布、以及每次回到前台的第一件事：**从库里读一次节点**。
-    /// 读失败保留现有状态——宁可这一屏少几张卡，也不能把用户的摆放删掉。
+    /// 进入画布、重试、以及每次回到前台：读节点 → 与记录对账。
+    ///
+    /// 状态与内容都由 `CanvasContentLoader` 给出：读取失败时它保留上一次成功的
+    /// 节点与记录缓存，只把状态标成 failed——界面因此**不会**把「读不到」
+    /// 画成一块正常的空画布。
     private func loadCanvas() {
-        do {
-            nodes = try CanvasNodeStore.nodes(in: canvas.id, context: context)
-        } catch {
-            AppLog.store.error("canvas: node load failed, keeping \(nodes.count) node(s) — \(error.localizedDescription, privacy: .public)")
-            return
-        }
-        AppLog.store.info("canvas: loaded \(nodes.count) node(s) for \(canvas.id.uuidString, privacy: .public)")
-        reconcileRecords()
+        if nodes.isEmpty { loadState = .loading }
+        let next = CanvasContentLoader.load(
+            canvasID: canvas.id,
+            context: context,
+            previous: CanvasContentLoad(nodes: nodes, recordsByID: recordsByID, state: loadState),
+            simulatedFailure: CanvasDebugSeed.simulatedLoadFailure
+        )
+        nodes = next.nodes
+        recordsByID = next.recordsByID
+        loadState = next.state
         fitIfNeeded()
         ensureContentVisible()
     }
 
-    /// 节点与源记录对账。清理只发生在**读取成功**之后，且只删确认取不到的节点。
+    /// 节点与源记录对账（添加节点后单独走一次，不必重读节点）。
+    /// 清理只发生在**读取成功**之后，且只删确认取不到的节点。
     private func reconcileRecords() {
         let outcome = CanvasNodeReconciler.reconcile(nodes: nodes, context: context)
-        guard !outcome.didFail else { return }
+        guard !outcome.didFail else {
+            loadState = .failed(.records)
+            return
+        }
         recordsByID = outcome.recordsByID
         AppLog.store.info("canvas: resolved \(recordsByID.count) record(s), purged \(outcome.purgedNodeIDs.count)")
-        guard !outcome.purgedNodeIDs.isEmpty else { return }
-        let purged = Set(outcome.purgedNodeIDs)
-        nodes.removeAll { purged.contains($0.id) }
+        if !outcome.purgedNodeIDs.isEmpty {
+            let purged = Set(outcome.purgedNodeIDs)
+            nodes.removeAll { purged.contains($0.id) }
+        }
+        if nodes.isEmpty { loadState = .empty }
     }
 
     /// 装窗只发生在「第一次看到非空节点」时。
@@ -526,6 +582,8 @@ private struct CanvasWorldLayer: View {
     let bounds: CGRect
     let nodes: [CanvasNode]
     let recordsByID: [UUID: Record]
+    /// 记录读不到时，仍把节点画成占位卡：位置、备注、移除入口都还在。
+    let showsPlaceholders: Bool
     let playingNodeID: UUID?
     let draggingNodeID: UUID?
     let newIDs: Set<UUID>
@@ -537,6 +595,7 @@ private struct CanvasWorldLayer: View {
     let onRemove: (CanvasNode) -> Void
     let onDragBegan: (UUID) -> Void
     let onDragEnded: (CanvasNode, CGSize) -> Void
+    let onReload: () -> Void
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -563,6 +622,16 @@ private struct CanvasWorldLayer: View {
                               y: node.frame.midY - bounds.minY)
                     // 拖动的卡片临时抬到最上层；只改渲染层级，不写库。
                     .zIndex(node.id == draggingNodeID ? 10_000 : Double(node.zIndex))
+                } else if showsPlaceholders {
+                    // 节点还在、源记录暂时读不到：占住原来的位置，别让布局塌掉，
+                    // 也别假装它不存在。
+                    CanvasPlaceholderLayer(node: node,
+                                           onRetry: onReload,
+                                           onRemove: { onRemove(node) })
+                        .frame(width: node.frame.width, height: node.frame.height)
+                        .position(x: node.frame.midX - bounds.minX,
+                                  y: node.frame.midY - bounds.minY)
+                        .zIndex(Double(node.zIndex))
                 }
             }
         }
@@ -682,6 +751,60 @@ private struct CanvasNodeLayer: View, Equatable {
                 guard wasDragging, !camera.isPinching else { return }
                 onDragEnded(world)
             }
+    }
+}
+
+// MARK: - 读不到记录的占位卡
+
+/// 节点读到了、源记录暂时读不到时的那张卡。
+///
+/// 它不是错误页：位置、尺寸、备注和移除入口都还在，只是内容暂时缺席。
+/// 不创建播放器、不查库，重试由顶部提示条统一负责。
+private struct CanvasPlaceholderLayer: View {
+
+    let node: CanvasNode
+    let onRetry: () -> Void
+    let onRemove: () -> Void
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "questionmark.square.dashed")
+                .font(.system(size: 19, weight: .light))
+                .foregroundStyle(Palette.inkFaint)
+            Text("内容暂时读不到")
+                .font(TypeScale.caption)
+                .foregroundStyle(Palette.inkSoft)
+            if !node.annotation.trimmed.isEmpty {
+                Text(node.annotation)
+                    .font(TypeScale.micro)
+                    .foregroundStyle(Palette.inkFaint)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: Metric.radius, style: .continuous)
+                .fill(Palette.well.opacity(0.7))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Metric.radius, style: .continuous)
+                .strokeBorder(Palette.hairline,
+                              style: StrokeStyle(lineWidth: 0.8, dash: [4, 4]))
+        )
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button { onRetry() } label: {
+                Label("重新加载", systemImage: "arrow.clockwise")
+            }
+            Divider()
+            Button(role: .destructive) { onRemove() } label: {
+                Label("从画布移除", systemImage: "minus.circle")
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text("内容暂时读不到"))
     }
 }
 

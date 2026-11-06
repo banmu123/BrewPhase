@@ -15,6 +15,8 @@ struct CanvasListView: View {
     @State private var detail: Canvas?
     @State private var pendingDelete: Canvas?
     @State private var showsCreate = false
+    /// 删画布失败（节点读不出来 / 保存失败）：两者都意味着什么都没删掉。
+    @State private var deleteError: String?
 
     private let columns = [
         GridItem(.flexible(), spacing: 12),
@@ -85,6 +87,14 @@ struct CanvasListView: View {
             } message: {
                 Text("删除后不可恢复。")
             }
+            .alert("没能删除", isPresented: Binding(
+                get: { deleteError != nil },
+                set: { if !$0 { deleteError = nil } }
+            )) {
+                Button("好") { deleteError = nil }
+            } message: {
+                Text(deleteError ?? "")
+            }
         }
     }
 
@@ -121,13 +131,12 @@ struct CanvasListView: View {
 
     private func delete(_ canvas: Canvas) {
         // 画布与它的节点一起消失；节点只删引用，不碰任何 Record。
-        CanvasNodeStore.deleteNodes(in: canvas.id, context: context)
-        context.delete(canvas)
+        // 事务边界在存储层：节点读不出来就整体中止，不会留下孤儿节点。
         do {
-            try context.save()
+            try CanvasNodeStore.deleteCanvas(canvas, context: context)
         } catch {
             AppLog.store.error("canvas delete failed: \(error.localizedDescription, privacy: .public)")
-            context.rollback()
+            deleteError = L("没能删除，请再试一次")
         }
     }
 }

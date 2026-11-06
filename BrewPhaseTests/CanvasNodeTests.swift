@@ -232,12 +232,129 @@ final class CanvasNodeTests: XCTestCase {
         _ = try CanvasNodeStore.add([record], to: canvas,
                                     visibleWorldRect: visible, context: context)
 
-        CanvasNodeStore.deleteNodes(in: canvas.id, context: context)
-        context.delete(canvas)
-        try context.save()
+        try CanvasNodeStore.deleteCanvas(canvas, context: context)
 
-        XCTAssertTrue(try context.fetch(FetchDescriptor<CanvasNode>()).isEmpty)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<Canvas>()), 0)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<CanvasNode>()), 0)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<Record>()), 1, "删画布不能碰记录")
+    }
+
+    // MARK: - 删除事务
+
+    /// 节点查不出来时：**画布也不能删**。旧实现是「先删节点、再删画布」两步，
+    /// 前一步静默返回、后一步照删，留下清不掉的孤儿节点。
+    func testDeletingACanvasAbortsWhenNodeLookupFails() throws {
+        let record = makeRecord("记录")
+        try context.save()
+        _ = try CanvasNodeStore.add([record], to: canvas,
+                                    visibleWorldRect: visible, context: context)
+
+        XCTAssertThrowsError(
+            try CanvasNodeStore.deleteCanvas(canvas, context: context,
+                                             nodeFetch: { _, _ in throw CocoaError(.fileReadCorruptFile) })
+        ) { error in
+            guard case CanvasDeletionError.nodeLookupFailed = error else {
+                return XCTFail("失败原因应当是节点查询失败，实际：\(error)")
+            }
+        }
+
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<Canvas>()), 1, "画布必须还在")
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<CanvasNode>()), 1, "节点也必须还在")
+    }
+
+    /// 保存失败：画布与节点一起回滚，不出现「只删了一半」的状态。
+    func testDeletingACanvasRollsBackWhenSaveFails() throws {
+        let record = makeRecord("记录")
+        try context.save()
+        _ = try CanvasNodeStore.add([record], to: canvas,
+                                    visibleWorldRect: visible, context: context)
+
+        XCTAssertThrowsError(
+            try CanvasNodeStore.deleteCanvas(canvas, context: context,
+                                             commit: { _ in throw CocoaError(.fileWriteUnknown) })
+        ) { error in
+            guard case CanvasDeletionError.saveFailed = error else {
+                return XCTFail("失败原因应当是保存失败，实际：\(error)")
+            }
+        }
+
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<Canvas>()), 1)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<CanvasNode>()), 1)
         XCTAssertEqual(try context.fetchCount(FetchDescriptor<Record>()), 1)
+    }
+
+    /// 删记录时的级联：节点查不出来就一条都不删，也不能误删别的节点。
+    func testRecordCascadeKeepsEverythingWhenNodeLookupFails() throws {
+        let victim = makeRecord("要删的")
+        let survivor = makeRecord("要留的")
+        try context.save()
+        _ = try CanvasNodeStore.add([victim, survivor], to: canvas,
+                                    visibleWorldRect: visible, context: context)
+
+        let handled = CanvasNodeStore.deleteNodes(
+            referencing: victim.id, context: context,
+            nodeFetch: { _, _ in throw CocoaError(.fileReadCorruptFile) }
+        )
+
+        XCTAssertFalse(handled, "查询失败时应当报告「没处理」，让调用方知道")
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<CanvasNode>()), 2,
+                       "读不出来就不猜，两个节点都保留")
+    }
+
+    // MARK: - 加载状态
+
+    /// 节点读取失败：状态必须是 failed，而不是空画布。
+    func testLoadFailureIsFailedNotEmpty() {
+        let previous = CanvasContentLoad(nodes: [], recordsByID: [:], state: .loading)
+        let result = CanvasContentLoader.load(
+            canvasID: canvas.id, context: context, previous: previous,
+            nodeFetch: { _, _ in throw CocoaError(.fileReadCorruptFile) }
+        )
+
+        XCTAssertEqual(result.state, .failed(.nodes))
+        XCTAssertNotEqual(result.state, .empty, "读不到不等于没有")
+    }
+
+    /// 读取成功且确实零个节点：这才是空画布。
+    func testLoadSucceedsAsEmptyOnlyWhenThereAreNoNodes() {
+        let result = CanvasContentLoader.load(canvasID: canvas.id, context: context,
+                                              previous: .initial)
+        XCTAssertEqual(result.state, .empty)
+        XCTAssertTrue(result.nodes.isEmpty)
+        XCTAssertTrue(result.recordsByID.isEmpty)
+    }
+
+    /// 记录对账失败：节点、位置、上一次成功的记录缓存都不许丢；重试后恢复。
+    func testRecordFailureKeepsNodesAndPreviousRecords() throws {
+        let record = makeRecord("在的")
+        try context.save()
+        let node = try XCTUnwrap(
+            try CanvasNodeStore.add([record], to: canvas,
+                                    visibleWorldRect: visible, context: context).first)
+
+        let first = CanvasContentLoader.load(canvasID: canvas.id, context: context,
+                                             previous: .initial)
+        XCTAssertEqual(first.state, .loaded)
+        XCTAssertEqual(first.recordsByID[record.id]?.id, record.id)
+
+        let failed = CanvasContentLoader.load(
+            canvasID: canvas.id, context: context, previous: first,
+            reconcile: { _, _ in
+                CanvasNodeReconciler.Outcome(recordsByID: [:], purgedNodeIDs: [],
+                                             didFail: true, failureMessage: "boom")
+            }
+        )
+
+        XCTAssertEqual(failed.state, .failed(.records))
+        XCTAssertEqual(failed.nodes.map(\.id), [node.id], "节点必须保留")
+        XCTAssertEqual(failed.nodes.first?.frame, node.frame, "位置不能变")
+        XCTAssertEqual(failed.recordsByID[record.id]?.id, record.id,
+                       "上一次成功的记录缓存不能被空结果覆盖")
+
+        let recovered = CanvasContentLoader.load(canvasID: canvas.id, context: context,
+                                                 previous: failed)
+        XCTAssertEqual(recovered.state, .loaded)
+        XCTAssertEqual(recovered.recordsByID[record.id]?.id, record.id)
     }
 
     /// 示例数据清理：只清示例画布/示例记录相关的节点，真实节点不动。
