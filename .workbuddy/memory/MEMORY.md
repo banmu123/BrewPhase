@@ -93,8 +93,21 @@
 * **点击语义**：单击节点直接推 `RecordDetailView`；播放/暂停是独立 Button；
   备注/移除放 contextMenu（备注写 CanvasNode）。
 * **列表缩略图**：`CanvasThumbnailPreview` 用全部节点算包围盒、最多绘 8 个
-  （四类各一 + 补齐），只读本地缩略图，不建播放器/WebView；`canvas.touch()`
-  驱动刷新。
+  （四类各一，其余按「离已选最远」补齐以覆盖整块画布），只读本地缩略图，
+  不建播放器/WebView；`canvas.touch()` 驱动刷新。
+* **节点加载只有一条路径**：`CanvasNodeStore.nodes(in:)`（throws）→
+  `CanvasNodeReconciler.reconcile` → 渲染。**读取失败一个节点都不许删**；
+  只有成功读到、确认某条记录不存在时才清理那一条，并 touch 受影响画布。
+  不要再用 `try? ... ?? []`：查询异常会被当成「记录都不存在」，把整块画布
+  的节点删光（2026-11-06 的真实故障）。
+* **装窗只认 `GeometryReader` 的 `geo.size`**：本页上 `onGeometryChange`
+  报过 800×800、2460×2976 这类占位/像素尺寸，按它算视口会把内容推出屏幕。
+  尺寸变化且用户没动过视角时要重算；另有「整块内容都在屏幕外 → 重装窗」兜底。
+* **删除级联要连带画布时间**：删记录 / 删画布 / 清示例数据后，受影响的画布
+  `updatedAt` 必须更新（缩略图靠它刷新），且与删除同一次 save。
+* **双指用 UIKit 桥**（`CanvasPinchBridge`）：SwiftUI `MagnifyGesture` 只给
+  startAnchor，拿不到两指中心；`CanvasViewport.pinched` 一起解算缩放与中心
+  平移。桥没挂上时自动回落到 MagnifyGesture。**未真机验证**。
 * **备份 v4**：`canvasNodes` 是可选段；旧备份（v2/v3）不动设备已有节点；
   坏引用节点跳过并记日志，不失败整份备份。
 
