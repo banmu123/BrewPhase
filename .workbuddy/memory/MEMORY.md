@@ -79,6 +79,19 @@
   里 `AVPlayer(url:)`，任何重绘都会让播放从头开始。
 * `refreshMetadata` 有快照保护：地址变了丢弃响应；用户写过的标题不覆盖。
 
+## Canvas（Phase 1 起）
+
+* **CanvasNode 是摆放实例**：`canvasID` / `recordID` 两个 UUID + 世界坐标 + 逻辑
+  尺寸，不复制记录内容；同一记录可进多块画布。没有 SwiftData 关系，
+  删除必须走 `CanvasNodeStore`（记录删除、画布删除、示例数据三条路径），
+  与删除同一次 save；删节点永远不删记录。
+* **只存世界坐标**：屏幕位置 = 世界 × `CanvasViewport.scale` + offset；缩放只改
+  视口。`.position` 会把视图撑满父级——手势/可访问性必须挂在 `.position` 之前。
+* **拖动只改内存**：`@State translation` 跟手，松手才 `CanvasNodeStore.move`，
+  一次拖动一次写库。
+* **备份 v4**：`canvasNodes` 是可选段；旧备份（v2/v3）不动设备已有节点；
+  坏引用节点跳过并记日志，不失败整份备份。
+
 ## 代码风格
 
 * 阈值集中在 `RAG/Rules/IntelligenceConfig.swift`；中文词表放 `Resources/*.json`
