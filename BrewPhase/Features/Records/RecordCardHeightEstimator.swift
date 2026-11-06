@@ -9,8 +9,9 @@ import Foundation
 ///
 /// 系数都是**刻意的近似**：中英文混排按 0.72 字宽折算，行高按字号 × 1.4。
 /// 估算偏差只会让某一张卡去另一列，不会破坏任何不变式——这也是它敢简单的
-/// 原因。行数上限与 `MasonryRecordCard` 的排版约定保持一致，两边改一个
-/// 都要看另一眼。
+/// 原因。文本卡的行数上限按卡片排版的量级取值（不是逐字对齐），改卡片行数
+/// 时顺手核一眼这里。**媒体不近似**：图片与封面的高度必须和卡片用同一条
+/// 公式（列宽 ÷ 宽高比），不设上下限——那正是 Phase 3.1 修掉的偏差。
 enum RecordCardHeightEstimator {
 
     // MARK: - 排版常数（与 MasonryRecordCard 对齐）
@@ -22,9 +23,6 @@ enum RecordCardHeightEstimator {
     private static let repoNameLineHeight: CGFloat = 26   // cardTitle 21 × 1.25
     private static let metaBlockHeight: CGFloat = 17      // 标签 + 日期那一行
     private static let textCardPadding: CGFloat = 28      // 文字卡轻底的内边距（上下）
-    /// 图片展示高度的两端。极端长图按封顶处理，免得一张竖图占满一屏。
-    private static let minImageHeight: CGFloat = 72
-    private static let maxImageHeight: CGFloat = 520
     /// 拿不到尺寸时的中性占位：4:3，横图习惯。
     static let placeholderAspectRatio: CGFloat = 4 / 3
 
@@ -138,12 +136,17 @@ enum RecordCardHeightEstimator {
 
     // MARK: - 图与文
 
-    /// 图片的展示高度：列宽 ÷ 宽高比，钳在两端之间。
+    /// 图片的展示高度：列宽 ÷ 宽高比。
+    ///
+    /// 这里**不设上下限**。卡片按 `.aspectRatio(_:contentMode: .fit)` 原样
+    /// 展示，估算再钳一次只会让两边在两极比例上分家（横幅 34pt 被算成 72、
+    /// 竖长图 680 被算成 520），列分配跟着偏。极端值由
+    /// `MasonryLayoutItem` 在入口统一防御（NaN / ∞ / 10000pt）。
     private static func imageHeight(for image: ImageDimensions?, columnWidth: CGFloat) -> CGFloat {
-        guard columnWidth > 0 else { return minImageHeight }
+        guard columnWidth > 0 else { return 0 }
         let ratio = image?.aspectRatio ?? placeholderAspectRatio
-        let height = columnWidth / ratio
-        return min(max(height, minImageHeight), maxImageHeight)
+        guard ratio.isFinite, ratio > 0 else { return 0 }
+        return columnWidth / ratio
     }
 
     /// 封面的展示高度。`fallbackAspectRatio` 一律是**宽 ÷ 高**——
@@ -152,10 +155,10 @@ enum RecordCardHeightEstimator {
     /// YouTube / Bilibili 的兜底被算反，估算比实际高出一倍。
     private static func posterHeight(for image: ImageDimensions?, columnWidth: CGFloat,
                                      fallbackAspectRatio: CGFloat) -> CGFloat {
-        guard columnWidth > 0 else { return minImageHeight }
+        guard columnWidth > 0 else { return 0 }
         let ratio = image?.aspectRatio ?? fallbackAspectRatio
-        let height = columnWidth / ratio
-        return min(max(height, 80), maxImageHeight)
+        guard ratio.isFinite, ratio > 0 else { return 0 }
+        return columnWidth / ratio
     }
 
     /// 按列宽折行的高度。中英文混排的近似：CJK 一个字宽 ≈ 字号，

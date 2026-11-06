@@ -131,6 +131,34 @@ final class RecordsDataSourceTests: XCTestCase {
         XCTAssertEqual(dataSource.records.map(\.id), [hit.id])
     }
 
+    /// 一条记录同时贴了两个都命中搜索词的标签：并集去重后只能出现一次。
+    /// 旧实现把 `known` 在循环外定死，第二个标签会把同一条记录再追加一遍。
+    func testSearchDeduplicatesRecordsMatchedBySeveralTags() throws {
+        let first = makeTag("灵感")
+        let second = makeTag("灵感集")
+        let record = Record(carrier: .text, title: "普通内容",
+                            createdAt: Date(timeIntervalSince1970: 1_780_020_000))
+        record.tags = [first, second]
+        context.insert(record)
+        try context.save()
+
+        dataSource.reload(query: RecordsQuery(searchText: "灵感"))
+        XCTAssertEqual(dataSource.records.map(\.id), [record.id],
+                       "两个标签指向同一条记录，也只能出现一张卡")
+        XCTAssertEqual(dataSource.records.count, 1)
+    }
+
+    /// 同一批次内部出现重复 id：只追加第一次，`fresh` 也只有一条。
+    func testBatchWithDuplicateIDsAppendsOnce() throws {
+        let record = Record(carrier: .text, title: "批次内重复")
+        context.insert(record)
+        try context.save()
+
+        let fresh = dataSource.append([record, record])
+        XCTAssertEqual(fresh.count, 1, "新增列表里同一条只能出现一次")
+        XCTAssertEqual(dataSource.records.count, 1)
+    }
+
     /// 内存匹配规则与数据库检索一致：同一个词，两条路给同一批 id。
     func testInMemoryMatchesMirrorsThePredicate() {
         seed(45)
@@ -290,7 +318,65 @@ final class RecordsDataSourceTests: XCTestCase {
         XCTAssertTrue(ids.contains(fresh.id))
     }
 
+    // MARK: - 待插记录的准入（筛选切换期间）
+
+    /// 正常情况：新记录匹配当前查询、数据源也已切到同一查询。
+    func testCanInsertAcceptsAMatchingFreshRecord() {
+        seed(3)
+        dataSource.reload(query: RecordsQuery())
+        let fresh = Record(carrier: .text, title: "刚保存的")
+        context.insert(fresh)
+        try? context.save()
+
+        XCTAssertTrue(dataSource.canInsert(fresh, for: RecordsQuery()))
+    }
+
+    /// 数据源的查询还停在旧值（搜索防抖窗口内）：不能插，否则列表与
+    /// 布局会在下一轮重建时对不上。
+    func testCanInsertRejectsWhenTheDataSourceQueryIsStale() {
+        seed(3)
+        dataSource.reload(query: RecordsQuery())
+        let fresh = Record(carrier: .text, title: "新记录")
+
+        XCTAssertFalse(dataSource.canInsert(fresh, for: RecordsQuery(searchText: "新")),
+                       "查询还没落到数据源上，插入必须等")
+    }
+
+    /// 记录不再匹配当前查询（保存后用户换了搜索词）：不插、不播动画。
+    func testCanInsertRejectsRecordsThatDoNotMatchTheQuery() {
+        seed(3)
+        dataSource.reload(query: RecordsQuery(searchText: "记录"))
+        let miss = Record(carrier: .text, title: "完全无关")
+
+        XCTAssertFalse(dataSource.canInsert(miss, for: RecordsQuery(searchText: "记录")))
+    }
+
+    /// 已经出现在窗口里的记录（比如查询重建把它读回来了）不再插一次。
+    func testCanInsertRejectsRecordsAlreadyInTheWindow() {
+        seed(3)
+        dataSource.reload(query: RecordsQuery())
+        let loaded = dataSource.records[0]
+
+        XCTAssertFalse(dataSource.canInsert(loaded, for: RecordsQuery()),
+                       "同一条记录不能播两次下落")
+    }
+
     // MARK: - 筛选变化
+
+    /// 取数代数：重建一次 +1、每成功取到一批 +1。界面把它当页脚哨兵的
+    /// 身份，代数不前进就不会有新哨兵，也就不会空转。
+    func testPageGenerationAdvancesPerBatchAndReload() {
+        seed(45)
+        let start = dataSource.pageGeneration
+        dataSource.reload(query: RecordsQuery())
+        XCTAssertEqual(dataSource.pageGeneration, start + 2, "重建 +1、首批 +1")
+        dataSource.loadMore()
+        XCTAssertEqual(dataSource.pageGeneration, start + 3)
+        dataSource.loadMore()
+        XCTAssertEqual(dataSource.pageGeneration, start + 4, "最后 5 条也是一批")
+        dataSource.loadMore()
+        XCTAssertEqual(dataSource.pageGeneration, start + 4, "空批不推进，哨兵不会空转")
+    }
 
     func testReloadResetsTheWindowCompletely() {
         seed(45)

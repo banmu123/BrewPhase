@@ -23,11 +23,14 @@ struct RecordsMasonryView: View {
     var onMeasure: (UUID, CGFloat) -> Void
     /// 触底或人工重试：请求下一批。
     var onNearBottom: () -> Void
-    /// 哨兵离开渲染窗口：重新武装自动加载，用户再次滑到底时才能再取一批。
-    var onFooterLeft: () -> Void
     var onOpen: (Record) -> Void
     var onDelete: (Record) -> Void
     var onWidthChange: (CGFloat) -> Void
+
+    /// 页脚哨兵挂在哪一列。**按取数代数冻结**，不在每次 body 里重算：
+    /// 实测高度回传会让两列累计高度频繁互相反超，哨兵一旦跟着换列就成了
+    /// 新视图，`onAppear` 会在用户没动的时候再取一批。换批时重选一次即可。
+    @State private var footerColumn: MasonryColumn = .left
 
     var body: some View {
         HStack(alignment: .top, spacing: Metric.Space.sm) {
@@ -36,6 +39,12 @@ struct RecordsMasonryView: View {
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
             onWidthChange(width)
+        }
+        // 每来一批重新挑一次「更高的一列」。批内不动，避免测量回传把
+        // 哨兵在两列之间来回搬。
+        .onChange(of: dataSource.pageGeneration, initial: true) { _, _ in
+            footerColumn = planner.totalHeight(of: .left) >= planner.totalHeight(of: .right)
+                ? .left : .right
         }
     }
 
@@ -52,7 +61,11 @@ struct RecordsMasonryView: View {
                     // 下落中的那张卡要在同列其他卡之上，不然会被挤在中间。
                     .zIndex(item.id == droppedRecordID ? 1 : 0)
             }
-            footer
+            // 分页哨兵只挂在**更高**的那一列末尾：它的底边就是整块内容的
+            // 底边，短列提前触发的路径从结构上消失。
+            if side == footerColumn {
+                footer
+            }
         }
         .frame(maxWidth: .infinity, alignment: .top)
     }
@@ -81,11 +94,18 @@ struct RecordsMasonryView: View {
 
     /// 只有「刚落下的那一条」拿下落 transition；其余一律 identity——
     /// 分页追加、重绘、从详情页返回都不会重播。
+    ///
+    /// Reduce Motion 不是「没有动画」而是「没有位移」：换成纯透明度过渡，
+    /// 让新卡片仍然能被察觉，但绝不弹跳。
     private func insertionTransition(for id: UUID) -> AnyTransition {
-        guard id == droppedRecordID, !reduceMotion else { return .identity }
+        guard id == droppedRecordID else { return .identity }
+        let motion = InsertionMotion.make(reduceMotion: reduceMotion)
+        if motion.isOpacityOnly {
+            return .asymmetric(insertion: .opacity, removal: .identity)
+        }
         return .asymmetric(
             insertion: .modifier(
-                active: DropFromAbove(offset: -150, opacity: 0),
+                active: DropFromAbove(offset: motion.offset, opacity: 0),
                 identity: DropFromAbove(offset: 0, opacity: 1)
             ),
             removal: .identity
@@ -94,7 +114,7 @@ struct RecordsMasonryView: View {
 
     // MARK: - 触底与加载
 
-    /// 列尾的加载哨兵。加载失败给轻量重试；没有更多数据时安静收场，
+    /// 内容底部唯一的加载哨兵。加载失败给轻量重试；没有更多数据时安静收场，
     /// 不立一块「到底了」的牌子。
     @ViewBuilder
     private var footer: some View {
@@ -115,12 +135,58 @@ struct RecordsMasonryView: View {
             }
             .buttonStyle(.plain)
         } else if dataSource.canLoadMore {
-            Color.clear
-                .frame(height: 1)
-                .onAppear { onNearBottom() }
-                .onDisappear { onFooterLeft() }
-                .accessibilityHidden(true)
+            // 代数换一次，哨兵换一个：同一批里它只会请求一次；这一批装完
+            // 页脚还在视野内（内容不足一屏）时，新哨兵会继续把屏幕填满。
+            PaginationSentinel(action: onNearBottom)
+                .id(dataSource.pageGeneration)
         }
+    }
+}
+
+/// 分页哨兵：一个取数代数只有一个哨兵，哨兵自己最多请求一次。
+///
+/// 它必须留在 `LazyVStack` 里——放在普通容器中会在首帧就被创建，
+/// `onAppear` 会把整库一口气拉完。
+private struct PaginationSentinel: View {
+
+    let action: () -> Void
+
+    @State private var fired = false
+
+    var body: some View {
+        Color.clear
+            .frame(height: 1)
+            .onAppear {
+                guard !fired else { return }
+                fired = true
+                action()
+            }
+            // 离开渲染窗口再回来 = 用户又滑到底了：允许为同一代数再试一次
+            // （上一批若因游标错位没取到新记录，这是唯一的自动恢复口）。
+            .onDisappear { fired = false }
+            .accessibilityHidden(true)
+    }
+}
+
+/// 插入动画的几何契约：默认从上方 150pt 落下；Reduce Motion 下位移必须
+/// 为 0，只保留一次淡入。
+///
+/// 单独成一个值类型，是为了让「无障碍模式下没有位移」变成可以离屏断言的
+/// 事实（`InsertionMotionTests`），而不是埋在 `AnyTransition` 里没法检查。
+struct InsertionMotion: Equatable {
+
+    /// 起始位移（负值 = 从上方进入）。
+    let offset: CGFloat
+    /// 是否只做透明度过渡。
+    let isOpacityOnly: Bool
+
+    /// 默认：Memory Drop，一次下落、一点回弹。
+    static let drop = InsertionMotion(offset: -150, isOpacityOnly: false)
+    /// Reduce Motion：不位移、不回弹，只淡入。
+    static let fade = InsertionMotion(offset: 0, isOpacityOnly: true)
+
+    static func make(reduceMotion: Bool) -> InsertionMotion {
+        reduceMotion ? .fade : .drop
     }
 }
 

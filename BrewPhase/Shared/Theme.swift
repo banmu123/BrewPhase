@@ -179,8 +179,10 @@ enum Motion {
     /// Flicking to the next bag in the stack.
     static let swipe = Animation.spring(response: 0.34, dampingFraction: 0.86)
     /// 新记录落入 Records 瀑布流的那一下：一次下落、一点回弹，不弹跳不旋转。
-    /// 只在保存后播放一次；Reduce Motion 下换成轻淡入（调用点判断）。
+    /// 只在保存后播放一次；Reduce Motion 下换成 `fade`（调用点判断）。
     static let drop = Animation.spring(response: 0.46, dampingFraction: 0.8)
+    /// Reduce Motion 的替代：只有透明度，没有位移与回弹。
+    static let fade = Animation.easeOut(duration: 0.2)
     /// Control-level appear/disappear — between `quick` and `pop`.
     static let standard = Animation.spring(response: 0.24, dampingFraction: 0.82)
     static let quick = Animation.easeOut(duration: 0.18)

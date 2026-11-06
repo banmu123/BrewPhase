@@ -30,8 +30,11 @@ final class RecordCardHeightEstimatorTests: XCTestCase {
         XCTAssertEqual(estimate, 175, accuracy: 0.5)
     }
 
-    /// 极端比例的两端钳制：横到极致不再压扁，竖到极致不再顶穿一屏。
-    func testExtremeRatiosAreClamped() {
+    /// 极端比例也不再钳制：估算必须与卡片渲染同一条公式（列宽 ÷ 宽高比）。
+    /// 旧实现把 1:20 的竖长图算成 520pt（实际 4000pt），列分配会系统性地
+    /// 选错边。横到极致仍受 64pt 的「最小存在感」托底——那是估算自身的
+    /// 下限，不改变卡片渲染。
+    func testExtremeRatiosFollowTheSameFormulaAsTheCard() {
         let record = Record(carrier: .image)
         let wide = RecordCardHeightEstimator.estimate(
             for: record, columnWidth: width,
@@ -39,10 +42,19 @@ final class RecordCardHeightEstimatorTests: XCTestCase {
         let tall = RecordCardHeightEstimator.estimate(
             for: record, columnWidth: width,
             image: ImageDimensions(pixelWidth: 100, pixelHeight: 2000))
-        let floorExpected: CGFloat = CGFloat(72) + 8 + 17
-        let capExpected: CGFloat = CGFloat(520) + 8 + 17
-        XCTAssertEqual(wide, floorExpected, accuracy: 0.5, "横图钳到 72pt 下限")
-        XCTAssertEqual(tall, capExpected, accuracy: 0.5, "竖图钳到 520pt 上限")
+        // 200 ÷ 20 = 10，加 8 + 17 = 35 → 触到 64pt 托底。
+        XCTAssertEqual(wide, 64, accuracy: 0.5)
+        // 200 ÷ 0.05 = 4000，加 8 + 17 = 4025。
+        XCTAssertEqual(tall, 4000 + 8 + 17, accuracy: 0.5)
+    }
+
+    /// 旧的 72pt 图片下限已经移除：3:1 的横幅按 66.7pt 计，而不是被抬到 72。
+    func testWideImageIsNoLongerFlooredAt72() {
+        let record = Record(carrier: .image)
+        let estimate = RecordCardHeightEstimator.estimate(
+            for: record, columnWidth: width,
+            image: ImageDimensions(pixelWidth: 300, pixelHeight: 100))
+        XCTAssertEqual(estimate, 200.0 / 3 + 8 + 17, accuracy: 0.5)
     }
 
     /// 同一条记录，列宽变宽 → 图片等比变高。
@@ -98,6 +110,16 @@ final class RecordCardHeightEstimatorTests: XCTestCase {
             image: ImageDimensions(pixelWidth: 900, pixelHeight: 1600))
         let posterHeight: CGFloat = 200 * 16 / 9
         XCTAssertGreaterThan(estimate, posterHeight, "竖版海报本身就要占 355pt 以上")
+    }
+
+    /// 封面同样不钳制：1:3 的竖长封面，估算就是列宽 × 3。
+    func testTallPosterIsNotClamped() {
+        let record = Record(carrier: .video, title: "竖长封面", sourceName: "本机")
+        let estimate = RecordCardHeightEstimator.estimate(
+            for: record, columnWidth: 200,
+            image: ImageDimensions(pixelWidth: 100, pixelHeight: 300))
+        // 封面 600 + 呼吸 8 + 标题 21+4 + 来源 15+2 + meta 17
+        XCTAssertEqual(estimate, 667, accuracy: 0.6)
     }
 
     // MARK: - 文本

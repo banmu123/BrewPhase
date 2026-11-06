@@ -58,10 +58,16 @@ final class RecordsDataSource {
     private(set) var records: [Record] = []
     /// 是否还有更早的记录可取。
     private(set) var canLoadMore = true
-    /// 单请求保护：两列的底部触发共用这一个闸门。
+    /// 单请求保护：一次取数只允许一个请求在飞（页脚哨兵与人工重试共用）。
     private(set) var isLoadingPage = false
     /// 上一批加载失败（数据库错误）。界面据此给出轻量重试入口。
     private(set) var lastLoadFailed = false
+    /// 取数代数：每次重建查询、每成功取到一批都 +1。
+    ///
+    /// 界面把它当作页脚哨兵的 `id`——一个代数只存在一个哨兵，哨兵自己
+    /// 只允许触发一次，于是「同一批最多一次自动请求」是结构保证，而不是
+    /// 靠共享布尔位在两条列之间互相谦让。
+    private(set) var pageGeneration = 0
 
     private(set) var query = RecordsQuery()
 
@@ -104,6 +110,7 @@ final class RecordsDataSource {
             let fresh = append(batch)
             // 取不满一批 = 数据耗尽。
             canLoadMore = batch.count == Self.pageSize
+            if !fresh.isEmpty { pageGeneration += 1 }
             return fresh
         } catch {
             AppLog.store.error("records page failed: \(error.localizedDescription, privacy: .public)")
@@ -113,10 +120,15 @@ final class RecordsDataSource {
     }
 
     /// 忽略已加载的 id 后追加。去重用 `Record.id`，不用下标。
-    private func append(_ batch: [Record]) -> [Record] {
-        let known = Set(records.map(\.id))
+    /// 集合必须随追加**同步增长**：同一批里出现两次的 id 若只看批次开始时的
+    /// 快照，就会被追加两遍、渲染成两张同 id 的卡片。
+    /// 非 private：`RecordsDataSourceTests` 直接喂「一批里同一个 id 出现两次」，
+    /// 这是分页取数里最难从数据库复现的一种输入。
+    func append(_ batch: [Record]) -> [Record] {
+        var known = Set(records.map(\.id))
         var fresh: [Record] = []
-        for record in batch where !known.contains(record.id) {
+        for record in batch {
+            guard known.insert(record.id).inserted else { continue }
             records.append(record)
             fresh.append(record)
         }
@@ -126,6 +138,19 @@ final class RecordsDataSource {
     /// 一条已加载的记录。
     func record(with id: UUID) -> Record? {
         records.first { $0.id == id }
+    }
+
+    /// 一条排队待插的记录，**现在**还能不能进列表。
+    ///
+    /// 三个条件缺一不可：
+    /// 1. 数据源的查询就是界面此刻的查询——筛选正在切换时，旧记录不能趁
+    ///    防抖窗口插进来（`dataSource.query` 落后于 `currentQuery`）；
+    /// 2. 记录仍然匹配当前查询（保存后用户可能改了搜索词或标签）；
+    /// 3. 列表里还没有它（查询重建可能已经把它一起读进来了，不能再播一次）。
+    func canInsert(_ record: Record, for query: RecordsQuery) -> Bool {
+        self.query == query
+            && query.matches(record)
+            && self.record(with: record.id) == nil
     }
 
     // MARK: - 筛选变化（重建）
@@ -141,6 +166,7 @@ final class RecordsDataSource {
         lastLoadFailed = false
         servedInPending = 0
         nextOffset = 0
+        pageGeneration += 1
 
         if query.tagID != nil {
             // 标签的关联记录数量有限，直接从关系里取全集。
@@ -161,7 +187,7 @@ final class RecordsDataSource {
     /// 全数据集搜索：字段谓词取回 + 标签名命中的记录并集，按时间倒序。
     private func fetchSearchResults() -> [Record] {
         let keyword = query.searchText.trimmed
-        var descriptor = FetchDescriptor<Record>(
+        let descriptor = FetchDescriptor<Record>(
             predicate: Self.fieldPredicate(keyword),
             sortBy: [SortDescriptor(\.createdAt, order: .reverse),
                      SortDescriptor(\.id)])
@@ -172,9 +198,12 @@ final class RecordsDataSource {
             predicate: #Predicate { $0.name.localizedStandardContains(keyword) })
         tagDescriptor.fetchLimit = 100
         let matchedTags = (try? context.fetch(tagDescriptor)) ?? []
-        let known = Set(results.map(\.id))
+        // 同一条记录可能贴在多个命中标签上：集合必须跟着 `results` 一起长，
+        // 不能只在并集开始前拍一张快照。
+        var known = Set(results.map(\.id))
         for tag in matchedTags {
-            for record in tag.records ?? [] where !known.contains(record.id) {
+            for record in tag.records ?? [] {
+                guard known.insert(record.id).inserted else { continue }
                 results.append(record)
             }
         }

@@ -531,7 +531,11 @@ enum DemoData {
             ["到访"],
         ]
         for (index, record) in records.enumerated() {
-            record.tags = tags(tagAssignments[index])
+            // 两张表**不必等长**：Phase 2 给示例数据补了十条记录，没有同步
+            // 扩标签表，`tagAssignments[index]` 直接越界、示例数据安装即崩
+            // （AskRetrievalTests 抓到的就是这条）。多出来的记录不贴标签，
+            // 而不是硬套别人用过的标签。
+            record.tags = index < tagAssignments.count ? tags(tagAssignments[index]) : []
             context.insert(record)
         }
 

@@ -29,12 +29,13 @@ struct RecordsView: View {
 
     /// 保存回调只入队：等外层 AddSheet 完全关闭后才真正插入并播落下动画。
     @State private var pendingInsertions = PendingInsertions()
+    /// 下落动画的串行序列：一次只让一条记录处于下落中，推进由动画完成回调
+    /// 负责。旧实现用两个固定延时互相追，连续保存时会抢同一个动画状态。
+    @State private var insertionSequence = InsertionSequence()
     /// 正在下落的记录（决定 transition 与 zIndex，播完清空，只播一次）。
     @State private var droppedRecordID: UUID?
     /// 回顶部用的代理：保存后先回到顶部，新卡片必须在视野里落下。
     @State private var scrollProxy: ScrollViewProxy?
-    /// 自动分页的「每批一次」闸门：哨兵出现触发一次，离开后重新武装。
-    @State private var autoLoadArmed = true
 
     /// 页面顶部的稳定锚点。
     private static let topAnchor = "records-top"
@@ -87,7 +88,10 @@ struct RecordsView: View {
                 }
             }
             // 搜索输入防抖：停手 250ms 才真正重查重建，打字过程不发请求。
+            // 查询一变，还没落的记录就不属于新列表了：先作废动画序列，
+            // 再让新查询接管（记录已在库里，不会因此消失）。
             .task(id: queryKey) {
+                insertionSequence.cancel()
                 try? await Task.sleep(for: .milliseconds(250))
                 guard !Task.isCancelled else { return }
                 reloadForCurrentQuery()
@@ -96,6 +100,11 @@ struct RecordsView: View {
             // 的已加载记录，连同它的列位一起撤下。不补拉新记录。
             .onAppear {
                 reconcileAfterReturn()
+            }
+            // 离开 Records（切页、进详情、收起 App）：没播完的动画不再推进。
+            .onDisappear {
+                insertionSequence.cancel()
+                droppedRecordID = nil
             }
             .confirmationDialog(
                 "删除这条记录？",
@@ -203,9 +212,6 @@ struct RecordsView: View {
                 onNearBottom: {
                     loadNextPage()
                 },
-                onFooterLeft: {
-                    autoLoadArmed = true
-                },
                 onOpen: { detail = $0 },
                 onDelete: { pendingDelete = $0 },
                 onWidthChange: { width in
@@ -305,7 +311,8 @@ struct RecordsView: View {
             dataSource = RecordsDataSource(context: context)
         }
         guard let dataSource else { return }
-        autoLoadArmed = true
+        // 重建后列表是另一套内容：进行中的下落与排队都不再成立。
+        insertionSequence.cancel()
         droppedRecordID = nil
         dataSource.reload(query: currentQuery)
         planner.rebuild(with: dataSource.records.map(layoutItem))
@@ -320,18 +327,13 @@ struct RecordsView: View {
         }
     }
 
-    /// 两列触底共用的取数闸门。
+    /// 页脚哨兵（或人工重试）请求下一批。
     ///
-    /// 「同一批只允许一次有效自动触发」由 `autoLoadArmed` 表达：一次加载
-    /// 之后立即解除武装，左右两列的哨兵即使同帧先后出现，也只有第一个
-    /// 生效；哨兵离开渲染窗口（`onFooterLeft`）才重新武装——那是用户
-    /// 又滑到底了的信号。加载失败时页脚换成人工重试，重试不受武装位限制。
+    /// 「同一批只自动请求一次」由哨兵自己的身份保证（`pageGeneration`），
+    /// 这里不再维护共享闸门；`loadMore` 内部仍有单请求保护与耗尽判断。
+    /// 只把**真正新增**的记录交给 Planner——分页追加不重建已有历史布局。
     private func loadNextPage() {
         guard let dataSource else { return }
-        if !dataSource.lastLoadFailed {
-            guard autoLoadArmed else { return }
-        }
-        autoLoadArmed = false
         let fresh = dataSource.loadMore()
         guard !fresh.isEmpty else { return }
         planner.append(fresh.map(layoutItem))
@@ -356,6 +358,10 @@ struct RecordsView: View {
     ///
     /// 顺序不能颠倒——用户在深滚动位置保存时，直接插入会让下落动画在
     /// 屏幕外播完，用户回到列表只看到一条已经静止的记录。
+    ///
+    /// 这里只做两件事：把匹配当前筛选的记录排进序列、发起回顶部的滚动。
+    /// 记录之间的推进交给动画完成回调（见 `advanceInsertion`），不再用
+    /// 「520ms 一条」的固定间隔去猜动画何时结束。
     private func processPendingInsertions() {
         guard !pendingInsertions.isEmpty else { return }
         let queued = pendingInsertions.drain()
@@ -366,6 +372,21 @@ struct RecordsView: View {
         // dataSource 必须在同一套查询下，否则列表和布局会对不上。
         if dataSource == nil { reloadForCurrentQuery() }
 
+        insertionSequence.enqueue(matching)
+        scrollToTop()
+
+        // 等滚动落定再落第一块。这一段等的是**滚动**，不是动画串行：
+        // 连着保存的第二、三条由完成回调在上一条落稳后自动接上。
+        let settle = reduceMotion ? 80 : 340
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(settle))
+            guard !Task.isCancelled else { return }
+            advanceInsertion()
+        }
+    }
+
+    /// 回到列表顶部：新记录必须在视野里落下，而不是在屏幕外播完。
+    private func scrollToTop() {
         if reduceMotion {
             scrollProxy?.scrollTo(Self.topAnchor, anchor: .top)
         } else {
@@ -373,44 +394,66 @@ struct RecordsView: View {
                 scrollProxy?.scrollTo(Self.topAnchor, anchor: .top)
             }
         }
+    }
 
-        Task { @MainActor in
-            // 等滚动落定（Reduce Motion 下没有滚动动画，几乎不用等）。
-            try? await Task.sleep(for: .milliseconds(reduceMotion ? 80 : 340))
-            for (index, record) in matching.enumerated() {
-                if index > 0 {
-                    // 连续保存：一条落稳了再落下一块，不叠在一起播。
-                    try? await Task.sleep(for: .milliseconds(520))
-                }
-                insertWithDrop(record)
-            }
+    /// 推进序列：下落位空着时取下一条，确认它仍然属于**当前**查询后再插入。
+    ///
+    /// 等待滚动或等待上一条落稳的这段时间里，用户可能改了搜索词或标签。
+    /// 所以每条记录真正插入之前都要重新核对一次：数据源的查询就是界面现在
+    /// 的查询，且这条记录仍然匹配。不匹配就让出位置继续看下一条——绝不替
+    /// 用户清空筛选条件来迁就新记录。
+    ///
+    /// 被跳过的记录只是不播动画、不进列表；它在保存时已经落库，后续正常
+    /// 查询照样找得到。
+    private func advanceInsertion() {
+        guard let record = insertionSequence.takeNext() else { return }
+        guard let dataSource, dataSource.canInsert(record, for: currentQuery) else {
+            insertionSequence.finishActive()
+            advanceInsertion()
+            return
         }
+        insertWithDrop(record)
     }
 
     /// 插入一条新记录并让它从上方落下。
     ///
     /// 数据面（dataSource）与布局面（planner）在同一个动画事务里更新；
     /// 列归属完全来自 `planner.insertNewest`，视图不自己算列。重复检查
-    /// 用稳定的 `Record.id`。动画结束撤下 `droppedRecordID`，后续任何
-    /// 重绘、返回、筛选都不会重播。
+    /// 用稳定的 `Record.id`。动画**完成回调**里才撤下 `droppedRecordID`
+    /// 并推进下一条：清理只认自己那条记录的 id，不会打到后一条身上。
+    ///
+    /// Reduce Motion：不位移、不回弹，只做一次轻淡入（透明度过渡）。
     private func insertWithDrop(_ record: Record) {
-        guard let dataSource, dataSource.record(with: record.id) == nil else { return }
+        guard let dataSource else {
+            // 没有数据面就没什么可插的；让出位置，别把后面的记录堵死。
+            finishDrop(of: record.id)
+            return
+        }
         droppedRecordID = record.id
         let item = layoutItem(for: record)
-        let insert = {
+        withAnimation(reduceMotion ? Motion.fade : Motion.drop) {
             dataSource.insertNewAtTop(record)
             planner.insertNewest(item)
+        } completion: {
+            finishDrop(of: record.id)
         }
-        if reduceMotion {
-            // 无障碍优先：不位移、不回弹，只做一次轻淡入。
-            withAnimation(.easeOut(duration: 0.2)) { insert() }
-        } else {
-            withAnimation(Motion.drop) { insert() }
-        }
+
+        // 兜底：完成回调万一没来（视图不在窗口里、动画被系统吞掉），
+        // 后面的记录不能永远卡在队列里。2s 是**失败超时**，不是动画节奏；
+        // 正常的完成回调远早于此，走到这里说明这一条根本不会回调了。
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(reduceMotion ? 260 : 760))
-            if droppedRecordID == record.id { droppedRecordID = nil }
+            try? await Task.sleep(for: .seconds(2))
+            finishDrop(of: record.id)
         }
+    }
+
+    /// 一条记录的下落真正结束：完成回调与超时兜底都走这里。
+    /// 用 `activeID` 做幂等——谁先到谁推进，另一条路径自然变成空操作。
+    private func finishDrop(of id: UUID) {
+        guard insertionSequence.activeID == id else { return }
+        if droppedRecordID == id { droppedRecordID = nil }
+        insertionSequence.finishActive()
+        advanceInsertion()
     }
 
     /// 从详情页返回 / sheet 收起后的核对：撤下被删除或被编辑出筛选范围的
