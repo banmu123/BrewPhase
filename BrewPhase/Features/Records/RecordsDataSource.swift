@@ -197,14 +197,18 @@ final class RecordsDataSource {
     // MARK: - 新记录（顶部插入）
 
     /// 一条刚保存的记录。调用方已用 `query.matches` 确认它匹配当前筛选。
-    /// 浏览模式下游标 +1——数据库在游标之前多了一条，偏移必须跟着走，
-    /// 否则下一批会漏掉一条最老的。
+    ///
+    /// 游标必须跟着走，否则下一批会漏边界：
+    /// - 浏览模式 `nextOffset + 1`——数据库在游标之前多了一条。
+    /// - 搜索 / 标签模式 `servedInPending + 1`——插入在已消费前缀的最前面，
+    ///   消费指针要跟着右移，下一批才不会把刚消费的最后一条重新端上来。
     func insertNewAtTop(_ record: Record) {
         records.insert(record, at: 0)
         switch pendingResults {
         case .some(var pending):
             pending.insert(record, at: 0)
             pendingResults = pending
+            servedInPending += 1
         case nil:
             nextOffset += 1
         }
@@ -213,11 +217,24 @@ final class RecordsDataSource {
     // MARK: - 删除与协调
 
     /// 一条已加载的记录被删除（列表长按或详情页）。
+    ///
+    /// 游标必须跟着退，否则下一批会跳过边界记录：
+    /// - 浏览模式删除已计入 `nextOffset` 的记录 → 偏移 -1。
+    /// - 搜索 / 标签模式：删的是**已消费前缀**里的记录 → 消费指针 -1；
+    ///   删的是尚未消费的部分 → 指针不动（它还没被端上去）。
     func remove(id: UUID) {
+        let wasLoaded = records.contains { $0.id == id }
         records.removeAll { $0.id == id }
-        if var pending = pendingResults {
-            pending.removeAll { $0.id == id }
-            pendingResults = pending
+        guard let pending = pendingResults else {
+            if wasLoaded { nextOffset = max(0, nextOffset - 1) }
+            return
+        }
+        let index = pending.firstIndex { $0.id == id }
+        var updated = pending
+        updated.removeAll { $0.id == id }
+        pendingResults = updated
+        if let index, index < servedInPending {
+            servedInPending = max(0, servedInPending - 1)
         }
     }
 

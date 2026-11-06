@@ -41,7 +41,7 @@ enum RecordCardHeightEstimator {
         case .video:
             // 列表只展示封面（poster 的比例），播放发生在详情页。
             content = posterHeight(for: image, columnWidth: columnWidth,
-                                   fallbackRatio: 9 / 16)
+                                   fallbackAspectRatio: 16 / 9)
                 + belowImageTextHeight(record, columnWidth: columnWidth, showsSource: true)
         case .link:
             content = linkHeight(record, columnWidth: columnWidth, image: image)
@@ -81,7 +81,7 @@ enum RecordCardHeightEstimator {
         switch record.provider {
         case .youtube, .bilibili:
             height += posterHeight(for: image, columnWidth: columnWidth,
-                                   fallbackRatio: 16 / 9)
+                                   fallbackAspectRatio: 16 / 9)
             height += widthHeight(record.displayTitle, lineHeight: titleLineHeight,
                                   width: columnWidth, maxLines: 2) + 6
             if record.handle != nil || record.linkHost != nil { height += microLineHeight + 2 }
@@ -92,7 +92,7 @@ enum RecordCardHeightEstimator {
                                   width: columnWidth, maxLines: 6) + 4
             if image != nil {
                 height += posterHeight(for: image, columnWidth: columnWidth,
-                                       fallbackRatio: 16 / 9) + 6
+                                       fallbackAspectRatio: 16 / 9) + 6
             }
         case .github:
             if record.repositoryOwner != nil { height += captionLineHeight }
@@ -107,7 +107,7 @@ enum RecordCardHeightEstimator {
         case .generic:
             if image != nil {
                 height += posterHeight(for: image, columnWidth: columnWidth,
-                                       fallbackRatio: 16 / 9) + 8
+                                       fallbackAspectRatio: 16 / 9) + 8
             }
             height += widthHeight(record.displayTitle, lineHeight: titleLineHeight,
                                   width: columnWidth, maxLines: 2) + 4
@@ -146,12 +146,14 @@ enum RecordCardHeightEstimator {
         return min(max(height, minImageHeight), maxImageHeight)
     }
 
-    /// 封面的展示高度：poster 拿不到尺寸时按平台习惯比例兜底。
+    /// 封面的展示高度。`fallbackAspectRatio` 一律是**宽 ÷ 高**——
+    /// 与卡片里 `.aspectRatio(_:contentMode: .fit)` 用的是同一个约定，
+    /// 16:9 横版就传 16/9，9:16 竖版就传 9/16。旧实现按「高 ÷ 宽」理解，
+    /// YouTube / Bilibili 的兜底被算反，估算比实际高出一倍。
     private static func posterHeight(for image: ImageDimensions?, columnWidth: CGFloat,
-                                     fallbackRatio: CGFloat) -> CGFloat {
+                                     fallbackAspectRatio: CGFloat) -> CGFloat {
         guard columnWidth > 0 else { return minImageHeight }
-        // fallbackRatio 是「高 ÷ 宽」的习惯说法（16:9），换算成宽高比再除。
-        let ratio = image?.aspectRatio ?? (1 / fallbackRatio)
+        let ratio = image?.aspectRatio ?? fallbackAspectRatio
         let height = columnWidth / ratio
         return min(max(height, 80), maxImageHeight)
     }

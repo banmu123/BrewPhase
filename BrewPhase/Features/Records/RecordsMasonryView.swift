@@ -10,12 +10,21 @@ import SwiftUI
 /// 把实测高度回传给 `planner.updateHeight`（阈值过滤 + 不换列），布局从此
 /// 稳定。卡片高度由内容决定，不由 Planner 决定——这是不形成测量循环的
 /// 关键：分派只认列，不画框。
+///
+/// 新记录的下落只属于 `droppedRecordID` 这一条：它拿到从上方进入的
+/// transition 与抬升的 zIndex，其余卡片（分页追加、重绘）保持原样。
 struct RecordsMasonryView: View {
 
     @Binding var planner: MasonryColumnPlanner
     let dataSource: RecordsDataSource
+    /// 刚刚保存、正在下落的记录；nil 表示没有进行中的插入动画。
+    var droppedRecordID: UUID?
+    var reduceMotion = false
     var onMeasure: (UUID, CGFloat) -> Void
+    /// 触底或人工重试：请求下一批。
     var onNearBottom: () -> Void
+    /// 哨兵离开渲染窗口：重新武装自动加载，用户再次滑到底时才能再取一批。
+    var onFooterLeft: () -> Void
     var onOpen: (Record) -> Void
     var onDelete: (Record) -> Void
     var onWidthChange: (CGFloat) -> Void
@@ -39,6 +48,9 @@ struct RecordsMasonryView: View {
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
                         onMeasure(item.id, height)
                     }
+                    .transition(insertionTransition(for: item.id))
+                    // 下落中的那张卡要在同列其他卡之上，不然会被挤在中间。
+                    .zIndex(item.id == droppedRecordID ? 1 : 0)
             }
             footer
         }
@@ -63,6 +75,21 @@ struct RecordsMasonryView: View {
                 }
             }
         }
+    }
+
+    // MARK: - 下落
+
+    /// 只有「刚落下的那一条」拿下落 transition；其余一律 identity——
+    /// 分页追加、重绘、从详情页返回都不会重播。
+    private func insertionTransition(for id: UUID) -> AnyTransition {
+        guard id == droppedRecordID, !reduceMotion else { return .identity }
+        return .asymmetric(
+            insertion: .modifier(
+                active: DropFromAbove(offset: -150, opacity: 0),
+                identity: DropFromAbove(offset: 0, opacity: 1)
+            ),
+            removal: .identity
+        )
     }
 
     // MARK: - 触底与加载
@@ -91,7 +118,21 @@ struct RecordsMasonryView: View {
             Color.clear
                 .frame(height: 1)
                 .onAppear { onNearBottom() }
+                .onDisappear { onFooterLeft() }
                 .accessibilityHidden(true)
         }
+    }
+}
+
+/// 新卡片下落的那一段位移与透明度。终点即卡片自己的最终位置，
+/// 所以「抬起 150pt → 落回原位」就是全部动作，不缩放、不旋转。
+private struct DropFromAbove: ViewModifier {
+    let offset: CGFloat
+    let opacity: Double
+
+    func body(content: Content) -> some View {
+        content
+            .offset(y: offset)
+            .opacity(opacity)
     }
 }

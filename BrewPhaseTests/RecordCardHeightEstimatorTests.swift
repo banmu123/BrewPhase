@@ -64,6 +64,42 @@ final class RecordCardHeightEstimatorTests: XCTestCase {
         XCTAssertEqual(estimate, 179.5, accuracy: 0.5)
     }
 
+    /// 16:9 与 9:16 的独立比例测试：估算必须与卡片渲染用同一个语义
+    /// （宽 ÷ 高），横竖差值 = 200 × 16/9 − 200 × 9/16。
+    func testVideoPosterRatioHandlesLandscapeAndPortrait() {
+        let record = Record(carrier: .video, title: "视频", sourceName: "本机")
+        let landscape = RecordCardHeightEstimator.estimate(
+            for: record, columnWidth: 200,
+            image: ImageDimensions(pixelWidth: 1600, pixelHeight: 900))
+        let portrait = RecordCardHeightEstimator.estimate(
+            for: record, columnWidth: 200,
+            image: ImageDimensions(pixelWidth: 900, pixelHeight: 1600))
+        let expectedDelta: CGFloat = 200 * 16 / 9 - 200 * 9 / 16
+        XCTAssertEqual(portrait - landscape, expectedDelta, accuracy: 0.6)
+    }
+
+    /// YouTube 兜底必须与卡片一致：没有本地封面尺寸时按 16:9 横版
+    /// （宽÷高），封面高 112.5pt——旧实现算成 355pt 的竖图。
+    func testYouTubeFallbackMatchesTheCardRenderingRatio() {
+        let record = Record(carrier: .link, title: "Me at the zoo",
+                            urlString: "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        record.adopt(LinkResolver.match(URL(string: "https://www.youtube.com/watch?v=dQw4w9WgXcQ")!))
+        let estimate = RecordCardHeightEstimator.estimate(for: record,
+                                                          columnWidth: 200, image: nil)
+        // 封面 112.5 + 标题 21+6 + credit 15+2 + meta 17 + 4
+        XCTAssertEqual(estimate, 177.5, accuracy: 0.6)
+    }
+
+    /// 竖版 9:16 封面（手机拍的视频）：封面高约为横版的 3.16 倍。
+    func testPortraitVideoPosterIsTall() {
+        let record = Record(carrier: .video, title: "竖版视频")
+        let estimate = RecordCardHeightEstimator.estimate(
+            for: record, columnWidth: 200,
+            image: ImageDimensions(pixelWidth: 900, pixelHeight: 1600))
+        let posterHeight: CGFloat = 200 * 16 / 9
+        XCTAssertGreaterThan(estimate, posterHeight, "竖版海报本身就要占 355pt 以上")
+    }
+
     // MARK: - 文本
 
     func testLongerNoteMeansTallerTextCard() {

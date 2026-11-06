@@ -11,6 +11,7 @@ import SwiftUI
 struct RecordsView: View {
 
     @Environment(\.modelContext) private var context
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// 标签只有几十个，`@Query` 拉全量无所谓；记录走数据源分页。
     @Query(sort: \RecordTag.createdAt) private var tags: [RecordTag]
@@ -25,6 +26,18 @@ struct RecordsView: View {
     /// 长按删除要先过确认：列表上的长按太容易误触。
     @State private var pendingDelete: Record?
     @State private var showsAdd = false
+
+    /// 保存回调只入队：等外层 AddSheet 完全关闭后才真正插入并播落下动画。
+    @State private var pendingInsertions = PendingInsertions()
+    /// 正在下落的记录（决定 transition 与 zIndex，播完清空，只播一次）。
+    @State private var droppedRecordID: UUID?
+    /// 回顶部用的代理：保存后先回到顶部，新卡片必须在视野里落下。
+    @State private var scrollProxy: ScrollViewProxy?
+    /// 自动分页的「每批一次」闸门：哨兵出现触发一次，离开后重新武装。
+    @State private var autoLoadArmed = true
+
+    /// 页面顶部的稳定锚点。
+    private static let topAnchor = "records-top"
 
     /// 筛选条只列「真的被用过」的标签：六个建议标签一条记录都没贴的时候，
     /// 摆六个点不动的筛选项只是噪音。
@@ -43,27 +56,34 @@ struct RecordsView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    header
-                    searchField.padding(.top, 12)
-                    if !filters.isEmpty {
-                        filterBar.padding(.top, 10)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        header.id(Self.topAnchor)
+                        searchField.padding(.top, 12)
+                        if !filters.isEmpty {
+                            filterBar.padding(.top, 10)
+                        }
+                        content.padding(.top, 16)
                     }
-                    content.padding(.top, 16)
+                    .padding(.horizontal, Metric.gutter)
+                    .padding(.top, 6)
+                    .padding(.bottom, 28)
                 }
-                .padding(.horizontal, Metric.gutter)
-                .padding(.top, 6)
-                .padding(.bottom, 28)
+                .background(Palette.paper)
+                .onAppear { scrollProxy = proxy }
             }
-            .background(Palette.paper)
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(item: $detail) { record in
                 RecordDetailView(record: record)
             }
-            .sheet(isPresented: $showsAdd) {
+            // 保存回调只入队；真正插入与下落发生在 onDismiss——此时两层
+            // sheet 都已收起，用户看得见列表。
+            .sheet(isPresented: $showsAdd, onDismiss: {
+                processPendingInsertions()
+            }) {
                 AddFlowView { record in
-                    handleSavedRecord(record)
+                    pendingInsertions.enqueue(record)
                 }
             }
             // 搜索输入防抖：停手 250ms 才真正重查重建，打字过程不发请求。
@@ -175,11 +195,16 @@ struct RecordsView: View {
             RecordsMasonryView(
                 planner: $planner,
                 dataSource: dataSource,
+                droppedRecordID: droppedRecordID,
+                reduceMotion: reduceMotion,
                 onMeasure: { id, height in
                     measure(id: id, height: height)
                 },
                 onNearBottom: {
                     loadNextPage()
+                },
+                onFooterLeft: {
+                    autoLoadArmed = true
                 },
                 onOpen: { detail = $0 },
                 onDelete: { pendingDelete = $0 },
@@ -280,6 +305,8 @@ struct RecordsView: View {
             dataSource = RecordsDataSource(context: context)
         }
         guard let dataSource else { return }
+        autoLoadArmed = true
+        droppedRecordID = nil
         dataSource.reload(query: currentQuery)
         planner.rebuild(with: dataSource.records.map(layoutItem))
     }
@@ -293,9 +320,18 @@ struct RecordsView: View {
         }
     }
 
-    /// 两列触底共用的取数闸门：新记录按估算值 `append` 进各自的列尾。
+    /// 两列触底共用的取数闸门。
+    ///
+    /// 「同一批只允许一次有效自动触发」由 `autoLoadArmed` 表达：一次加载
+    /// 之后立即解除武装，左右两列的哨兵即使同帧先后出现，也只有第一个
+    /// 生效；哨兵离开渲染窗口（`onFooterLeft`）才重新武装——那是用户
+    /// 又滑到底了的信号。加载失败时页脚换成人工重试，重试不受武装位限制。
     private func loadNextPage() {
         guard let dataSource else { return }
+        if !dataSource.lastLoadFailed {
+            guard autoLoadArmed else { return }
+        }
+        autoLoadArmed = false
         let fresh = dataSource.loadMore()
         guard !fresh.isEmpty else { return }
         planner.append(fresh.map(layoutItem))
@@ -316,12 +352,65 @@ struct RecordsView: View {
 
     // MARK: - 新增、删除与协调
 
-    /// 编辑器保存成功：匹配当前筛选才插进布局顶部；不匹配就安静放过，
-    /// 不清除用户的筛选条件。
-    private func handleSavedRecord(_ record: Record) {
-        guard currentQuery.matches(record) else { return }
-        dataSource?.insertNewAtTop(record)
-        planner.insertNewest(layoutItem(for: record))
+    /// 外层 AddSheet 完全关闭后：先回顶部，再把队列里的记录一条条落进去。
+    ///
+    /// 顺序不能颠倒——用户在深滚动位置保存时，直接插入会让下落动画在
+    /// 屏幕外播完，用户回到列表只看到一条已经静止的记录。
+    private func processPendingInsertions() {
+        guard !pendingInsertions.isEmpty else { return }
+        let queued = pendingInsertions.drain()
+        let matching = queued.filter { currentQuery.matches($0) }
+        guard !matching.isEmpty else { return } // 不匹配就安静放过，不清筛选条件
+
+        // 数据源尚未建立（极端时序）：先按当前查询安全初始化，planner 与
+        // dataSource 必须在同一套查询下，否则列表和布局会对不上。
+        if dataSource == nil { reloadForCurrentQuery() }
+
+        if reduceMotion {
+            scrollProxy?.scrollTo(Self.topAnchor, anchor: .top)
+        } else {
+            withAnimation(Motion.settle) {
+                scrollProxy?.scrollTo(Self.topAnchor, anchor: .top)
+            }
+        }
+
+        Task { @MainActor in
+            // 等滚动落定（Reduce Motion 下没有滚动动画，几乎不用等）。
+            try? await Task.sleep(for: .milliseconds(reduceMotion ? 80 : 340))
+            for (index, record) in matching.enumerated() {
+                if index > 0 {
+                    // 连续保存：一条落稳了再落下一块，不叠在一起播。
+                    try? await Task.sleep(for: .milliseconds(520))
+                }
+                insertWithDrop(record)
+            }
+        }
+    }
+
+    /// 插入一条新记录并让它从上方落下。
+    ///
+    /// 数据面（dataSource）与布局面（planner）在同一个动画事务里更新；
+    /// 列归属完全来自 `planner.insertNewest`，视图不自己算列。重复检查
+    /// 用稳定的 `Record.id`。动画结束撤下 `droppedRecordID`，后续任何
+    /// 重绘、返回、筛选都不会重播。
+    private func insertWithDrop(_ record: Record) {
+        guard let dataSource, dataSource.record(with: record.id) == nil else { return }
+        droppedRecordID = record.id
+        let item = layoutItem(for: record)
+        let insert = {
+            dataSource.insertNewAtTop(record)
+            planner.insertNewest(item)
+        }
+        if reduceMotion {
+            // 无障碍优先：不位移、不回弹，只做一次轻淡入。
+            withAnimation(.easeOut(duration: 0.2)) { insert() }
+        } else {
+            withAnimation(Motion.drop) { insert() }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(reduceMotion ? 260 : 760))
+            if droppedRecordID == record.id { droppedRecordID = nil }
+        }
     }
 
     /// 从详情页返回 / sheet 收起后的核对：撤下被删除或被编辑出筛选范围的

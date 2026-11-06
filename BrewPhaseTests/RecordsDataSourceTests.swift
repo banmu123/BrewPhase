@@ -206,6 +206,90 @@ final class RecordsDataSourceTests: XCTestCase {
         XCTAssertTrue(dataSource.staleIDs().isEmpty)
     }
 
+    // MARK: - 游标一致性（Phase 3 补修）
+
+    /// 浏览模式：删掉首批里的一条再翻页——全部旧记录一条不漏、不重复。
+    /// 旧实现不退 nextOffset，删除点之后的第一条会被偏移跳过。
+    func testRemoveInBrowseModeKeepsTheCursorAligned() throws {
+        let seeded = seed(45)
+        dataSource.reload(query: RecordsQuery())
+        let victim = dataSource.records[5]
+        context.delete(victim)
+        try context.save()
+        dataSource.remove(id: victim.id)
+
+        dataSource.loadMore()
+        dataSource.loadMore()
+        let ids = dataSource.records.map(\.id)
+        XCTAssertEqual(ids.count, 44, "44 条旧记录一条不少")
+        XCTAssertEqual(Set(ids).count, 44, "无重复")
+        XCTAssertTrue(ids.contains(seeded[44].id), "最老的一条不能被偏移跳过")
+        XCTAssertFalse(ids.contains(victim.id))
+    }
+
+    /// 标签模式：删已加载前缀里的记录，消费指针跟着退，后续不丢。
+    func testRemoveInTagModeKeepsTheCursorAligned() throws {
+        let tag = makeTag("随记")
+        let seeded = seed(25, tag: tag)
+        dataSource.reload(query: RecordsQuery(tagID: tag.id))
+        let victim = dataSource.records[2]
+        context.delete(victim)
+        try context.save()
+        dataSource.remove(id: victim.id)
+
+        dataSource.loadMore()
+        let ids = dataSource.records.map(\.id)
+        XCTAssertEqual(ids.count, 24)
+        XCTAssertEqual(Set(ids).count, 24)
+        XCTAssertEqual(ids, seeded.map(\.id).filter { $0 != victim.id }, "顺序不变、不丢不重")
+    }
+
+    /// 搜索模式：插入一条新记录后继续翻页——指针右移，不端回重复也不跳过。
+    func testInsertInSearchModeKeepsTheCursorAligned() throws {
+        let seeded = seed(45)
+        dataSource.reload(query: RecordsQuery(searchText: "记录")) // 45 条全部命中
+        XCTAssertEqual(dataSource.records.count, 20)
+
+        let fresh = Record(carrier: .text, title: "记录 新增",
+                           createdAt: Date(timeIntervalSince1970: 1_790_000_000))
+        context.insert(fresh)
+        try context.save()
+        dataSource.insertNewAtTop(fresh)
+
+        dataSource.loadMore()
+        dataSource.loadMore()
+        dataSource.loadMore()
+        let ids = dataSource.records.map(\.id)
+        XCTAssertEqual(ids.count, 46)
+        XCTAssertEqual(Set(ids).count, 46, "无重复")
+        XCTAssertEqual(ids.first, fresh.id)
+        XCTAssertTrue(ids.contains(seeded[44].id), "最老的一条不能丢")
+    }
+
+    /// 删除与新增连着发生：两个方向的游标调整互相抵消，依旧一致。
+    func testRemoveThenInsertInBrowseModeStaysConsistent() throws {
+        let seeded = seed(45)
+        dataSource.reload(query: RecordsQuery())
+        let victim = dataSource.records[3]
+        context.delete(victim)
+        try context.save()
+        dataSource.remove(id: victim.id)
+
+        let fresh = Record(carrier: .text, title: "夹在中间的新记录",
+                           createdAt: Date(timeIntervalSince1970: 1_790_000_100))
+        context.insert(fresh)
+        try context.save()
+        dataSource.insertNewAtTop(fresh)
+
+        dataSource.loadMore()
+        dataSource.loadMore()
+        let ids = dataSource.records.map(\.id)
+        XCTAssertEqual(ids.count, 45, "44 条幸存旧记录 + 1 条新记录")
+        XCTAssertEqual(Set(ids).count, 45)
+        XCTAssertTrue(ids.contains(seeded[44].id))
+        XCTAssertTrue(ids.contains(fresh.id))
+    }
+
     // MARK: - 筛选变化
 
     func testReloadResetsTheWindowCompletely() {
