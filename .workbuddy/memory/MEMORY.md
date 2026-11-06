@@ -19,11 +19,15 @@
 * `check.py` 五条：占位符数量、键是否齐全、两表键集一致、同键不重复定义、
   可本地化字面量不能再插值（`Text("\(n) 天")` 会变成不可翻译的键）。
   含插值又含汉字、且同一行没有 `L(` 的字面量会被判违规。
-* 改完文案必须跑 `generate.py && check.py`（当前 922 键）。
+* 改完文案必须跑 `generate.py && check.py`（当前 1068 键）。
 
 ## 测试与模拟器
 
 * 真实验收口径是 `xcodebuild test` 全量 + 模拟器截图 + OSLog，三者对得上才算过。
+* **判断全量是否真的绿**：`grep "Fatal error"` 必须为空，且末行是
+  `** TEST SUCCEEDED **`。测试进程崩了会被 runner 重启，「Executed N tests」
+  会混入多次启动的分段统计——Phase 3 的「600 通过」就是这么误判的（真因是
+  `DemoData` 标签表越界，Phase 3.1 已修）。当前基线 625 条。
 * 单测**必须**在 `setUp` 里 `LanguageManager.pinForTesting(.simplifiedChinese)`：
   语言偏好存在 App 的 UserDefaults 里，测试宿主与 App 共用容器，
   `Tools/run.sh --lang en` 会把它改成 en，之后断言中文文案的测试就会红。
@@ -47,6 +51,20 @@
   「取 ID → 删库成功 → `unschedule(identifiers:)` → 重排」。
 * **Schema 只有一个清单**：`BrewPhaseSchema.schema`，App 与测试共用。只允许加实体、
   加可选/带默认值属性；破坏性变更必须先确认旧库能打开或用户能导出原始库。
+
+## Records 瀑布流的既有契约（Phase 3.1 起）
+
+* **一次只落一条**：`InsertionSequence`（Features/Records）是唯一的动画队列；
+  推进靠 `withAnimation(_:completion:)` 的完成回调，不再用「520ms 间隔 /
+  760ms 清理」这类互相追的固定延时。2s 超时只是回调丢失时的兜底。
+* **插入前复核**：`RecordsDataSource.canInsert(_:for:)` 要求数据源查询已切到
+  当前条件、记录仍匹配、列表里还没有它；查询变化或离开页面就 `cancel()`，
+  记录在保存时已落库，取消只停动画。
+* **分页只有一个哨兵**：挂在「更高一列」的末尾，`footerColumn` 按
+  `pageGeneration` 冻结；哨兵以代数换身份、每代只 fire 一次。不要恢复
+  `autoLoadArmed` 那种双列共享闸门。
+* **估算器媒体不钳制**：图片/封面高度 = 列宽 ÷ 宽高比，与卡片
+  `.aspectRatio(.fit)` 同一条公式；文本行数上限仍是近似（只影响列归属）。
 
 ## 代码风格
 
