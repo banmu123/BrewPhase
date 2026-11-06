@@ -9,14 +9,18 @@ import SwiftData
 struct RecordsQuery: Equatable, Sendable {
     var searchText: String = ""
     var tagID: UUID?
+    /// 载体筛选。nil = 全部。Records 页面不传；Canvas 的素材选择器用它把
+    /// 「链接 / 视频 / 图片 / 文字」分开看——查询仍走同一套谓词与分页。
+    var carrier: RecordCarrier?
 
     var isActive: Bool {
-        !searchText.trimmed.isEmpty || tagID != nil
+        !searchText.trimmed.isEmpty || tagID != nil || carrier != nil
     }
 
     /// 内存版匹配规则（与 `RecordsDataSource.predicate(for:)` 同一套语义）。
     /// 搜索覆盖：标题、备注、来源、作者、网页摘要、网址（含域名）、标签名。
     func matches(_ record: Record) -> Bool {
+        if let carrier, record.carrier != carrier { return false }
         if let tagID, !(record.tags ?? []).contains(where: { $0.id == tagID }) {
             return false
         }
@@ -188,7 +192,7 @@ final class RecordsDataSource {
     private func fetchSearchResults() -> [Record] {
         let keyword = query.searchText.trimmed
         let descriptor = FetchDescriptor<Record>(
-            predicate: Self.fieldPredicate(keyword),
+            predicate: Self.fieldPredicate(keyword, carrier: query.carrier),
             sortBy: [SortDescriptor(\.createdAt, order: .reverse),
                      SortDescriptor(\.id)])
         var results = (try? context.fetch(descriptor)) ?? []
@@ -285,17 +289,38 @@ final class RecordsDataSource {
 
     // MARK: - 谓词
 
-    /// 浏览模式的数据库谓词：无筛选时全量，搜索时按字段匹配。
+    /// 浏览模式的数据库谓词：无筛选时全量，搜索时按字段匹配，载体筛选可叠加。
     /// 标签名匹配不做进谓词——关系上的嵌套闭包依赖存储的翻译能力，
     /// 搜索模式本来就是全量取回，内存并集更稳。
     private static func predicate(for query: RecordsQuery) -> Predicate<Record>? {
         let keyword = query.searchText.trimmed
-        guard !keyword.isEmpty else { return nil }
-        return fieldPredicate(keyword)
+        if let carrier = query.carrier, keyword.isEmpty {
+            let raw = carrier.rawValue
+            return #Predicate<Record> { $0.carrierRaw == raw }
+        }
+        guard let carrier = query.carrier else {
+            return keyword.isEmpty ? nil : fieldPredicate(keyword)
+        }
+        return fieldPredicate(keyword, carrier: carrier)
     }
 
-    private static func fieldPredicate(_ keyword: String) -> Predicate<Record> {
-        #Predicate<Record> { record in
+    /// 字段匹配。带 `carrier` 时把载体条件并进同一个谓词——分成两次过滤会
+    /// 让分页窗口在「先取 20 条再筛掉」时不断空转。
+    private static func fieldPredicate(_ keyword: String,
+                                       carrier: RecordCarrier? = nil) -> Predicate<Record> {
+        if let carrier {
+            let raw = carrier.rawValue
+            return #Predicate<Record> { record in
+                record.carrierRaw == raw
+                    && (record.title.localizedStandardContains(keyword)
+                        || record.note.localizedStandardContains(keyword)
+                        || record.sourceName.localizedStandardContains(keyword)
+                        || record.authorName.localizedStandardContains(keyword)
+                        || record.summary.localizedStandardContains(keyword)
+                        || record.urlString.localizedStandardContains(keyword))
+            }
+        }
+        return #Predicate<Record> { record in
             record.title.localizedStandardContains(keyword)
                 || record.note.localizedStandardContains(keyword)
                 || record.sourceName.localizedStandardContains(keyword)

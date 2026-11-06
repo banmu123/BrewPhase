@@ -18,7 +18,7 @@ final class BackupTests: XCTestCase {
     private var work: URL!
 
     override func setUpWithError() throws {
-        let schema = Schema([Bean.self, Brew.self, Tasting.self, PhaseReminder.self, PhaseRule.self, Record.self, Canvas.self, RecordTag.self])
+        let schema = Schema([Bean.self, Brew.self, Tasting.self, PhaseReminder.self, PhaseRule.self, Record.self, Canvas.self, CanvasNode.self, RecordTag.self])
         source = try ModelContainer(for: schema,
                                     configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
         target = try ModelContainer(for: schema,
@@ -127,6 +127,7 @@ final class BackupTests: XCTestCase {
             rules: try sourceContext.fetch(FetchDescriptor<PhaseRule>()),
             records: try sourceContext.fetch(FetchDescriptor<Record>()),
             canvases: try sourceContext.fetch(FetchDescriptor<Canvas>()),
+            canvasNodes: try sourceContext.fetch(FetchDescriptor<CanvasNode>()),
             tags: try sourceContext.fetch(FetchDescriptor<RecordTag>())
         )
         let url = try BackupManager.write(data,
@@ -629,7 +630,7 @@ final class BackupTests: XCTestCase {
         let images = root.appendingPathComponent("Images", isDirectory: true)
         try FileManager.default.createDirectory(at: images, withIntermediateDirectories: true)
 
-        let schema = Schema([Bean.self, Brew.self, Tasting.self, PhaseReminder.self, PhaseRule.self, Record.self, Canvas.self, RecordTag.self])
+        let schema = Schema([Bean.self, Brew.self, Tasting.self, PhaseReminder.self, PhaseRule.self, Record.self, Canvas.self, CanvasNode.self, RecordTag.self])
         let sourceURL = root.appendingPathComponent("source.store")
         let source = try ModelContainer(
             for: schema,
@@ -644,7 +645,7 @@ final class BackupTests: XCTestCase {
 
         let data = BackupManager.snapshot(
             beans: try sourceContext.fetch(FetchDescriptor<Bean>()), rules: [],
-            records: [], canvases: [], tags: []
+            records: [], canvases: [], canvasNodes: [], tags: []
         )
         let url = try BackupManager.write(data, preferences: allUnsetPreferences(),
                                           appVersion: "test-1.0", imagesDirectory: images)
@@ -736,6 +737,106 @@ final class BackupTests: XCTestCase {
         try expectFailure(file, "", expecting: .invalidValue("bean.weightG"))
     }
 
+    // MARK: - 画布节点（v4）
+
+    /// 节点只存引用与几何：备份往返后，位置、尺寸、层级、备注和它指向的
+    /// 画布/记录都必须原样回来。
+    func testCanvasNodesRoundTripWithGeometryAndAnnotation() throws {
+        let record = Record(carrier: .text, title: "FastAPI 文档", note: "路由与依赖注入",
+                            createdAt: Date(timeIntervalSince1970: 1_781_000_000))
+        sourceContext.insert(record)
+        let canvas = Canvas(name: "AI 应用开发学习")
+        sourceContext.insert(canvas)
+        let node = CanvasNode(canvasID: canvas.id, recordID: record.id,
+                              positionX: 120.5, positionY: -80.25,
+                              width: 220, height: 170, zIndex: 7,
+                              annotation: "先读这一段")
+        sourceContext.insert(node)
+        try sourceContext.save()
+
+        let (file, _) = try makeBackup()
+        XCTAssertEqual(file.manifest.schemaVersion, 4)
+        let row = try XCTUnwrap(file.data.canvasNodes?.first)
+        XCTAssertEqual(row.positionX, 120.5, accuracy: 0.001)
+        XCTAssertEqual(row.annotation, "先读这一段")
+
+        let outcome = try BackupRestorer.restore(file, into: target, imagesDirectory: targetImages)
+        XCTAssertEqual(outcome.canvasNodes, 1)
+        XCTAssertEqual(outcome.canvases, 1)
+        XCTAssertEqual(outcome.records, 1)
+
+        let restored = try ModelContext(target).fetch(FetchDescriptor<CanvasNode>())
+        let restoredNode = try XCTUnwrap(restored.first)
+        XCTAssertEqual(restored.count, 1)
+        XCTAssertEqual(restoredNode.canvasID, canvas.id)
+        XCTAssertEqual(restoredNode.recordID, record.id)
+        XCTAssertEqual(restoredNode.positionX, 120.5, accuracy: 0.001)
+        XCTAssertEqual(restoredNode.positionY, -80.25, accuracy: 0.001)
+        XCTAssertEqual(restoredNode.width, 220, accuracy: 0.001)
+        XCTAssertEqual(restoredNode.height, 170, accuracy: 0.001)
+        XCTAssertEqual(restoredNode.zIndex, 7)
+        XCTAssertEqual(restoredNode.annotation, "先读这一段")
+    }
+
+    /// v3 备份没有节点段：它说的是「不知道有节点」，不是「节点为空」。
+    /// 恢复后设备上已有的摆放必须原样留着。
+    func testRestoreKeepsExistingNodesWhenTheBackupHasNoNodeSection() throws {
+        let record = Record(carrier: .text, title: "保留", note: "正文")
+        sourceContext.insert(record)
+        let canvas = Canvas(name: "画布")
+        sourceContext.insert(canvas)
+        try sourceContext.save()
+
+        var (file, _) = try makeBackup()
+        file.data.canvasNodes = nil
+        file.manifest.schemaVersion = 3
+        try rehash(&file)
+
+        // 目标设备上已经有同一块画布的节点。
+        let targetContext = ModelContext(target)
+        let targetCanvas = Canvas(name: "画布")
+        targetCanvas.id = canvas.id
+        targetContext.insert(targetCanvas)
+        let targetRecord = Record(carrier: .text, title: "保留", note: "正文")
+        targetRecord.id = record.id
+        targetContext.insert(targetRecord)
+        targetContext.insert(CanvasNode(canvasID: canvas.id, recordID: record.id,
+                                        positionX: 10, positionY: 20,
+                                        width: 200, height: 150))
+        try targetContext.save()
+
+        let outcome = try BackupRestorer.restore(file, into: target, imagesDirectory: targetImages)
+        XCTAssertEqual(outcome.canvasNodes, 0)
+
+        let nodes = try ModelContext(target).fetch(FetchDescriptor<CanvasNode>())
+        XCTAssertEqual(nodes.count, 1, "旧备份不得把已有节点当成空集删掉")
+        XCTAssertEqual(nodes.first?.positionX, 10)
+    }
+
+    /// 一条节点的引用坏了（记录已不在文件里）：跳过这一条，其余节点照常恢复，
+    /// 整份备份不因此失败。
+    func testDanglingNodeReferenceIsSkippedWithoutFailingTheRestore() throws {
+        let record = Record(carrier: .text, title: "存在", note: "")
+        sourceContext.insert(record)
+        let canvas = Canvas(name: "画布")
+        sourceContext.insert(canvas)
+        sourceContext.insert(CanvasNode(canvasID: canvas.id, recordID: record.id,
+                                        width: 220, height: 170))
+        try sourceContext.save()
+
+        var (file, _) = try makeBackup()
+        file.data.canvasNodes?.append(BackupCanvasNode(
+            id: UUID(), canvasID: canvas.id, recordID: UUID(),
+            positionX: 0, positionY: 0, width: 220, height: 170,
+            zIndex: 1, annotation: "", createdAt: 0, updatedAt: 0
+        ))
+        try rehash(&file)
+
+        let outcome = try BackupRestorer.restore(file, into: target, imagesDirectory: targetImages)
+        XCTAssertEqual(outcome.canvasNodes, 1, "坏引用跳过，好节点照常恢复")
+        XCTAssertEqual(try ModelContext(target).fetch(FetchDescriptor<CanvasNode>()).count, 1)
+    }
+
     // MARK: - 体积策略
 
     private func snapshot() throws -> BackupData {
@@ -744,6 +845,7 @@ final class BackupTests: XCTestCase {
             rules: try sourceContext.fetch(FetchDescriptor<PhaseRule>()),
             records: try sourceContext.fetch(FetchDescriptor<Record>()),
             canvases: try sourceContext.fetch(FetchDescriptor<Canvas>()),
+            canvasNodes: try sourceContext.fetch(FetchDescriptor<CanvasNode>()),
             tags: try sourceContext.fetch(FetchDescriptor<RecordTag>())
         )
     }

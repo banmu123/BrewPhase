@@ -23,6 +23,7 @@ enum BackupManager {
                          rules: [PhaseRule],
                          records: [Record],
                          canvases: [Canvas],
+                         canvasNodes: [CanvasNode],
                          tags: [RecordTag]) -> BackupData {
         let beanRows = beans.map { bean in
             BackupBean(
@@ -150,6 +151,21 @@ enum BackupManager {
                           tags: tags.map { tag in
                               BackupTag(id: tag.id, name: tag.name,
                                         createdAt: tag.createdAt.timeIntervalSince1970)
+                          },
+                          canvasNodes: canvasNodes.map { node in
+                              BackupCanvasNode(
+                                  id: node.id,
+                                  canvasID: node.canvasID,
+                                  recordID: node.recordID,
+                                  positionX: node.positionX,
+                                  positionY: node.positionY,
+                                  width: node.width,
+                                  height: node.height,
+                                  zIndex: node.zIndex,
+                                  annotation: node.annotation,
+                                  createdAt: node.createdAt.timeIntervalSince1970,
+                                  updatedAt: node.updatedAt.timeIntervalSince1970
+                              )
                           })
     }
 
@@ -361,7 +377,8 @@ enum BackupManager {
         guard counts == manifest.summary else { throw BackupError.missingData }
 
         for count in [counts.beans, counts.brews, counts.tastings, counts.reminders, counts.phaseRules,
-                      data.records?.count ?? 0, data.canvases?.count ?? 0] {
+                      data.records?.count ?? 0, data.canvases?.count ?? 0,
+                      data.canvasNodes?.count ?? 0] {
             guard count <= BackupFormat.maxRecordsPerEntity else { throw BackupError.tooManyRecords }
         }
         guard counts.attachments <= BackupFormat.maxAttachments else {
@@ -408,6 +425,7 @@ enum BackupManager {
         try ensureUnique(data.tastings.map(\.id))
         try ensureUnique(data.reminders.map(\.id))
         try ensureUnique(data.phaseRules.map(\.id))
+        try ensureUnique((data.canvasNodes ?? []).map(\.id))
 
         // 关系：子记录必须挂在存在的豆子上；风味若来自冲煮，那条冲煮也要在，
         // 而且必须属于同一包豆子——跨包的引用只可能是坏数据。
@@ -431,6 +449,7 @@ enum BackupManager {
         try validateTastings(data.tastings)
         try validateReminders(data.reminders)
         try validateRules(data.phaseRules)
+        try validateCanvasNodes(data.canvasNodes ?? [])
 
         // 图片引用必须能在附件里找到——缺图的备份不是完整备份。
         let imageNames = Set(data.beans.compactMap(\.imagePath))
@@ -564,6 +583,34 @@ enum BackupManager {
                 kind: ReminderKind(rawValue: reminder.kindRaw) ?? .windowOpens
             ) else {
                 throw BackupError.invalidValue("reminder.identifier")
+            }
+        }
+    }
+
+    /// 节点的几何必须是有限的、尺寸在可阅读范围内。**引用**不在这里判定：
+    /// 一条节点指向的记录可能已经不在文件里（旧文件、手工改过），恢复时跳过
+    /// 这一条并记录日志，不让一个坏节点毁掉整份备份（见 `BackupRestorer`）。
+    private static func validateCanvasNodes(_ nodes: [BackupCanvasNode]) throws {
+        for node in nodes {
+            for (label, value) in [("node.positionX", node.positionX),
+                                   ("node.positionY", node.positionY)] {
+                guard value.isFinite, abs(value) <= 1_000_000 else {
+                    throw BackupError.invalidValue(label)
+                }
+            }
+            for (label, value) in [("node.width", node.width), ("node.height", node.height)] {
+                guard value.isFinite, (24...4_000).contains(value) else {
+                    throw BackupError.invalidValue(label)
+                }
+            }
+            guard (-10_000...10_000).contains(node.zIndex) else {
+                throw BackupError.invalidValue("node.zIndex")
+            }
+            guard node.annotation.count <= 2_000 else {
+                throw BackupError.invalidValue("node.annotation")
+            }
+            guard node.createdAt.isFinite, node.updatedAt.isFinite else {
+                throw BackupError.invalidValue("node.timestamps")
             }
         }
     }

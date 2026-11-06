@@ -24,7 +24,10 @@ enum BackupFormat {
     /// v2 文件解出来是 nil，恢复时按「这份备份不知道有这些东西」处理——
     /// 不动设备上已有的记录，而不是把它们当成空集删掉。这也是 v2 仍然可读的
     /// 原因：v2 的摘要只覆盖它自己有的字段，重新编码仍然一致。
-    static let currentSchemaVersion = 3
+    ///
+    /// v4 增加了 `canvasNodes`（记录在画布上的摆放）。同样可选：v2/v3 文件
+    /// 没有这一段，恢复时不动设备上已有的节点。
+    static let currentSchemaVersion = 4
 
     /// 仍然接受的最旧版本。
     ///
@@ -346,6 +349,9 @@ struct BackupData: Codable, Equatable {
     var canvases: [BackupCanvas]? = nil
     /// 记录用的标签。与 `records` 同进同退：只有带记录段的文件才会带标签。
     var tags: [BackupTag]? = nil
+    /// v4 起才有。nil = 这份文件来自 v2/v3，不知道画布上还摆着节点；
+    /// 恢复时**不动**设备上已有的节点。
+    var canvasNodes: [BackupCanvasNode]? = nil
 }
 
 /// 一条记录。与 `Record` 逐字段对应；`kindRaw` 保留原始字符串，
@@ -391,7 +397,7 @@ struct BackupTag: Codable, Equatable {
     var createdAt: Double
 }
 
-/// 一块画布。这一版只有名字与说明，内容尚未建模。
+/// 一块画布。这一版只有名字与说明，内容由 `BackupCanvasNode` 承载。
 struct BackupCanvas: Codable, Equatable {
     var id: UUID
     var name: String
@@ -399,6 +405,22 @@ struct BackupCanvas: Codable, Equatable {
     var createdAt: Double
     var updatedAt: Double
     var isSample: Bool
+}
+
+/// 一条记录在某块画布上的摆放。只存引用与几何，不复制记录内容——
+/// 恢复时用 `recordID` 找回记录，找不到就跳过（见 `BackupRestorer`）。
+struct BackupCanvasNode: Codable, Equatable {
+    var id: UUID
+    var canvasID: UUID
+    var recordID: UUID
+    var positionX: Double
+    var positionY: Double
+    var width: Double
+    var height: Double
+    var zIndex: Int
+    var annotation: String
+    var createdAt: Double
+    var updatedAt: Double
 }
 
 // MARK: - 实体

@@ -34,6 +34,9 @@ enum BrewPhaseSchema {
         // 不参与阶段/推荐/提醒的任何计算，加进来只是多了两张表。
         Record.self,
         Canvas.self,
+        // 记录在画布上的摆放实例。它只存 canvasID/recordID 与世界坐标，
+        // 不复制记录内容；删除由 `CanvasNodeStore` 在应用层清理。
+        CanvasNode.self,
         // 用户自定义的标签，与记录多对多。它不是「记录的分类」：删一个标签
         // 只解除关联，记录一条都不会少。
         RecordTag.self,

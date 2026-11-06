@@ -472,6 +472,9 @@ struct RecordsView: View {
         let media = record.mediaPath
         let preview = record.previewPath
         let carrier = record.carrier
+        // 先清掉画布里引用它的节点：节点只存引用，记录的删除必须连带回收，
+        // 否则画布上会留下点开一片空白的卡片。与记录同一次 save 提交。
+        CanvasNodeStore.deleteNodes(referencing: record.id, context: context)
         context.delete(record)
         do {
             try context.save()
@@ -1088,6 +1091,8 @@ struct RecordDetailView: View {
         let media = record.mediaPath
         let preview = record.previewPath
         let carrier = record.carrier
+        // 画布节点只存引用：记录删掉，引用必须一起回收。
+        CanvasNodeStore.deleteNodes(referencing: record.id, context: context)
         context.delete(record)
         do {
             try context.save()

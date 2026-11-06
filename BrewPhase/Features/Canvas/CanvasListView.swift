@@ -3,9 +3,9 @@ import SwiftUI
 
 /// 画布 —— 一级页面之三。
 ///
-/// 一块画布是一个自己命名的空间：先有名字和一句说明，内容下一步再往里放。
-/// 这一版只把「有哪些画布」这件事做实：列表、封面、新建与详情都是真的，
-/// 不存在「点进去什么都没有发生」的入口。
+/// 一块画布是一个自己命名的空间：列表回答「有哪些画布」，点进去是可自由
+/// 摆放记录的工作区（`CanvasWorkspaceView`）。画布本身不复制记录内容，
+/// 只通过 `CanvasNode` 引用它们。
 struct CanvasListView: View {
 
     @Environment(\.modelContext) private var context
@@ -64,7 +64,7 @@ struct CanvasListView: View {
             .background(Palette.paper)
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(item: $detail) { canvas in
-                CanvasDetailView(canvas: canvas)
+                CanvasWorkspaceView(canvas: canvas)
             }
             .sheet(isPresented: $showsCreate) {
                 CanvasEditorView()
@@ -120,6 +120,8 @@ struct CanvasListView: View {
     }
 
     private func delete(_ canvas: Canvas) {
+        // 画布与它的节点一起消失；节点只删引用，不碰任何 Record。
+        CanvasNodeStore.deleteNodes(in: canvas.id, context: context)
         context.delete(canvas)
         do {
             try context.save()
@@ -127,102 +129,5 @@ struct CanvasListView: View {
             AppLog.store.error("canvas delete failed: \(error.localizedDescription, privacy: .public)")
             context.rollback()
         }
-    }
-}
-
-/// 画布详情：名字、说明、创建时间，以及「内容」这一块目前的位置。
-///
-/// 内容聚合还没有接入持久化，所以这里如实留白：不摆假条目，也不放一个点了
-/// 没反应的「添加内容」。能做的事只有两件——改名字，或者删掉它。
-struct CanvasDetailView: View {
-
-    let canvas: Canvas
-
-    @Environment(\.modelContext) private var context
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var isEditing = false
-    @State private var isConfirmingDelete = false
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                CanvasCover(name: canvas.name, height: 168)
-                    .padding(.top, 6)
-
-                Text(LocalizedStringKey.alreadyLocalized(canvas.displayName))
-                    .font(TypeScale.beanName)
-                    .foregroundStyle(Palette.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 18)
-
-                if !canvas.note.trimmed.isEmpty {
-                    Text(canvas.note)
-                        .font(TypeScale.callout)
-                        .foregroundStyle(Palette.inkSoft)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 8)
-                }
-
-                Text(L("创建于 %@", Fmt.precise(canvas.createdAt, calendar: DateMath.calendar)))
-                    .font(TypeScale.caption)
-                    .foregroundStyle(Palette.inkFaint)
-                    .padding(.top, 10)
-
-                Hairline().padding(.top, 24)
-
-                SectionLabel(title: "内容")
-                    .padding(.top, 18)
-
-                Text("这块画布还是空的。")
-                    .font(TypeScale.callout)
-                    .foregroundStyle(Palette.inkFaint)
-                    .padding(.top, 10)
-
-                Button(role: .destructive) {
-                    isConfirmingDelete = true
-                } label: {
-                    Text("删除这块画布")
-                        .font(TypeScale.callout)
-                        .foregroundStyle(Palette.priority)
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 32)
-            }
-            .padding(.horizontal, Metric.gutter)
-            .padding(.bottom, 40)
-        }
-        .background(Palette.paper)
-        .navigationTitle("")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("编辑") { isEditing = true }
-                    .font(TypeScale.callout)
-                    .foregroundStyle(Palette.roast)
-            }
-        }
-        .sheet(isPresented: $isEditing) {
-            CanvasEditorView(existing: canvas)
-        }
-        .confirmationDialog("删除这块画布？", isPresented: $isConfirmingDelete,
-                            titleVisibility: .visible) {
-            Button("删除", role: .destructive) { delete() }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("删除后不可恢复。")
-        }
-    }
-
-    private func delete() {
-        context.delete(canvas)
-        do {
-            try context.save()
-        } catch {
-            AppLog.store.error("canvas delete failed: \(error.localizedDescription, privacy: .public)")
-            context.rollback()
-            return
-        }
-        dismiss()
     }
 }

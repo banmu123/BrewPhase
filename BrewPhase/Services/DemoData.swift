@@ -91,6 +91,9 @@ enum DemoData {
         }
 
         for bean in samples { context.delete(bean) }
+        // 节点只引用记录与画布：先回收挂在示例画布上、或引用示例记录的节点，
+        // 再删记录与画布——与用户手动删除走同一条清理规则。
+        CanvasNodeStore.deleteSampleNodes(records: records, canvases: canvases, context: context)
         for record in records { context.delete(record) }
         for canvas in canvases { context.delete(canvas) }
         do {

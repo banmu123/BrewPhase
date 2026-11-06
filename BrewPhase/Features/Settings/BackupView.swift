@@ -16,6 +16,7 @@ struct BackupView: View {
     @Query private var rules: [PhaseRule]
     @Query private var records: [Record]
     @Query private var canvases: [Canvas]
+    @Query private var canvasNodes: [CanvasNode]
     @Query private var recordTags: [RecordTag]
 
     @State private var backupURL: URL?
@@ -214,7 +215,7 @@ struct BackupView: View {
         // 快照在主线程上一次取完（含偏好）；编码和写盘放到后台，避免大文件卡住界面。
         let data = BackupManager.snapshot(beans: beans, rules: rules,
                                           records: records, canvases: canvases,
-                                          tags: recordTags)
+                                          canvasNodes: canvasNodes, tags: recordTags)
         let preferences = BackupManager.preferences()
         let images = ImageStore.shared.directoryURL
         isBuilding = true

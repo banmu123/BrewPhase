@@ -318,6 +318,40 @@ final class RecordsDataSourceTests: XCTestCase {
         XCTAssertTrue(ids.contains(fresh.id))
     }
 
+    // MARK: - 载体筛选（Canvas 选择器复用）
+
+    /// 只按载体筛选：浏览模式走数据库谓词，不该把别的载体带进来。
+    func testCarrierFilterSelectsOnlyThatCarrier() throws {
+        let text = Record(carrier: .text, title: "一段文字",
+                          createdAt: Date(timeIntervalSince1970: 1_780_030_000))
+        let image = Record(carrier: .image, title: "一张图",
+                           createdAt: Date(timeIntervalSince1970: 1_780_020_000))
+        let link = Record(carrier: .link, title: "一个链接",
+                          urlString: "https://example.com/post",
+                          createdAt: Date(timeIntervalSince1970: 1_780_010_000))
+        for record in [text, image, link] { context.insert(record) }
+        try context.save()
+
+        dataSource.reload(query: RecordsQuery(carrier: .image))
+        XCTAssertEqual(dataSource.records.map(\.id), [image.id])
+        XCTAssertFalse(dataSource.canLoadMore)
+    }
+
+    /// 载体 + 搜索：两个条件同时成立才出现（不是并集）。
+    func testCarrierFilterCombinesWithSearch() throws {
+        let hit = Record(carrier: .image, title: "猫在窗台",
+                         createdAt: Date(timeIntervalSince1970: 1_780_030_000))
+        let wrongCarrier = Record(carrier: .text, title: "猫在窗台",
+                                  createdAt: Date(timeIntervalSince1970: 1_780_020_000))
+        let wrongText = Record(carrier: .image, title: "杯子",
+                               createdAt: Date(timeIntervalSince1970: 1_780_010_000))
+        for record in [hit, wrongCarrier, wrongText] { context.insert(record) }
+        try context.save()
+
+        dataSource.reload(query: RecordsQuery(searchText: "猫", carrier: .image))
+        XCTAssertEqual(dataSource.records.map(\.id), [hit.id])
+    }
+
     // MARK: - 待插记录的准入（筛选切换期间）
 
     /// 正常情况：新记录匹配当前查询、数据源也已切到同一查询。

@@ -29,6 +29,8 @@ enum BackupRestorer {
         /// v2 备份没有记录段，恢复出来就是 0。
         var records: Int
         var canvases: Int
+        /// v2/v3 备份没有节点段，恢复出来就是 0。
+        var canvasNodes: Int
         var imagesRestored: Int
     }
 
@@ -96,6 +98,7 @@ enum BackupRestorer {
                 beans: outcome.beans, brews: outcome.brews, tastings: outcome.tastings,
                 reminders: outcome.reminders, phaseRules: outcome.phaseRules,
                 records: outcome.records, canvases: outcome.canvases,
+                canvasNodes: outcome.canvasNodes,
                 imagesRestored: created.count
             )
         } catch {
@@ -121,6 +124,9 @@ enum BackupRestorer {
     ) throws -> Outcome {
         let context = ModelContext(container)
         context.autosaveEnabled = false
+        /// 记录与画布的 ID 映射：节点段靠它验证引用是否成立。
+        var insertedRecords: [UUID: Record] = [:]
+        var insertedCanvases: [UUID: Canvas] = [:]
 
         do {
             for bean in try context.fetch(FetchDescriptor<Bean>()) { context.delete(bean) }
@@ -272,6 +278,7 @@ enum BackupRestorer {
                     // 一条记录不应该因为一个坏标签整条不见。
                     record.tags = row.tagIDs.compactMap { tagsByID[$0] }
                     context.insert(record)
+                    insertedRecords[row.id] = record
                 }
             }
 
@@ -287,6 +294,45 @@ enum BackupRestorer {
                     canvas.id = row.id
                     canvas.updatedAt = Date(timeIntervalSince1970: row.updatedAt)
                     context.insert(canvas)
+                    insertedCanvases[row.id] = canvas
+                }
+            }
+
+            // 画布节点：只有文件里**确实有这一段**才替换。旧备份说「不知道
+            // 有节点」，不是「节点为空」——把设备上已有的摆放当成空的删掉
+            // 是不可接受的（与 records/canvases 的兼容策略一致）。
+            var restoredNodes = 0
+            if let nodeRows = file.data.canvasNodes, file.data.canvases != nil {
+                for row in try context.fetch(FetchDescriptor<CanvasNode>()) { context.delete(row) }
+                var seen: Set<String> = []
+                for row in nodeRows {
+                    // 引用不完整的节点跳过，但不拖累整份备份：一条节点指向的
+                    // 记录可能已经在别处被删掉了，这是数据问题，不是文件问题。
+                    guard insertedCanvases[row.canvasID] != nil,
+                          insertedRecords[row.recordID] != nil else {
+                        AppLog.export.info("restore: skipped canvas node with missing reference")
+                        continue
+                    }
+                    let key = "\(row.canvasID.uuidString)|\(row.recordID.uuidString)"
+                    guard seen.insert(key).inserted else {
+                        AppLog.export.info("restore: skipped duplicate canvas node")
+                        continue
+                    }
+                    let node = CanvasNode(
+                        canvasID: row.canvasID,
+                        recordID: row.recordID,
+                        positionX: row.positionX,
+                        positionY: row.positionY,
+                        width: row.width,
+                        height: row.height,
+                        zIndex: row.zIndex,
+                        annotation: row.annotation,
+                        createdAt: Date(timeIntervalSince1970: row.createdAt)
+                    )
+                    node.id = row.id
+                    node.updatedAt = Date(timeIntervalSince1970: row.updatedAt)
+                    context.insert(node)
+                    restoredNodes += 1
                 }
             }
 
@@ -299,6 +345,7 @@ enum BackupRestorer {
                 phaseRules: file.data.phaseRules.count,
                 records: file.data.records?.count ?? 0,
                 canvases: file.data.canvases?.count ?? 0,
+                canvasNodes: restoredNodes,
                 imagesRestored: 0
             )
         } catch {
