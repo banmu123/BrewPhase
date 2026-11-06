@@ -47,6 +47,9 @@ enum DebugScreen: String, CaseIterable, Identifiable {
     case addSheet
     /// 新建画布。
     case canvasEditor
+    /// 画布工作区本身。列表到工作区要一次点击，而 `simctl` 点不了——
+    /// 「退出再进来节点还在不在」这条路只能靠它进得去。
+    case canvasWorkspace
     /// 某一类记录的新增页（默认到访，字段最多的一种）。
     case recordEditor
     /// 标签管理：改名、删除、新建。

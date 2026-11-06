@@ -4,9 +4,9 @@ import SwiftUI
 /// 一块画布在列表里的缩略内容：节点按世界坐标缩放到封面里。
 ///
 /// 它不渲染完整的 `CanvasNodeCard`：不创建播放器、不建 WebView、不请求网络、
-/// 不读原图。每一块只取最多 8 个有代表性的节点（四种载体各一个，再按创建
-/// 时间补齐），并且**用全部节点计算包围盒**——缩略图看的是真实的空间关系，
-/// 不是把四张图排成网格。
+/// 不读原图。每一块只取最多 8 个有代表性的节点（四种载体各一个，其余按「离已选
+/// 节点最远」补齐，让缩略图覆盖整块画布的分布），并且**用全部节点计算包围盒**——
+/// 缩略图看的是真实的空间关系，不是把四张图排成网格。
 struct CanvasThumbnailPreview: View {
 
     let canvas: Canvas
@@ -113,7 +113,14 @@ struct CanvasThumbnailPreview: View {
     }
 
     private func load() {
-        let nodes = CanvasNodeStore.nodes(in: canvas.id, context: context)
+        let nodes: [CanvasNode]
+        do {
+            nodes = try CanvasNodeStore.nodes(in: canvas.id, context: context)
+        } catch {
+            // 读失败保留上一张缩略图：清空会让人以为画布空了。
+            AppLog.store.error("canvas thumbnail: node load failed — \(error.localizedDescription, privacy: .public)")
+            return
+        }
         guard !nodes.isEmpty else {
             data = nil
             recordsByID = [:]
@@ -121,8 +128,14 @@ struct CanvasThumbnailPreview: View {
         }
         let ids = Array(Set(nodes.map(\.recordID)))
         let descriptor = FetchDescriptor<Record>(predicate: #Predicate { ids.contains($0.id) })
-        let records = (try? context.fetch(descriptor)) ?? []
-        recordsByID = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
+        let records: [Record]
+        do {
+            records = try context.fetch(descriptor)
+        } catch {
+            AppLog.store.error("canvas thumbnail: record load failed — \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        recordsByID = Dictionary(records.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         data = CanvasThumbnailData.make(nodes: nodes, records: records)
     }
 }
@@ -132,7 +145,6 @@ struct CanvasThumbnailPreview: View {
 /// 缩略图要画哪些节点、画在多大的范围里。纯值类型，便于离屏验证
 /// 「选点确定性」与「包围盒包含全部节点」。
 struct CanvasThumbnailData: Equatable {
-
     struct Item: Identifiable, Equatable {
         let id: UUID
         let recordID: UUID
@@ -154,7 +166,7 @@ struct CanvasThumbnailData: Equatable {
         guard !nodes.isEmpty else { return nil }
         guard let bounds = CanvasViewport.contentBounds(nodes.map(\.frame)) else { return nil }
 
-        let recordsByID = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
+        let recordsByID = Dictionary(records.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let ordered = nodes.sorted { lhs, rhs in
             if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
             return lhs.id.uuidString < rhs.id.uuidString
@@ -171,9 +183,23 @@ struct CanvasThumbnailData: Equatable {
                 used.insert(match.id)
             }
         }
-        for node in ordered where selected.count < limit && !used.contains(node.id) {
-            selected.append(node)
-            used.insert(node.id)
+
+        // 剩下的名额按「离已选节点最远」补：画布铺得开时，缩略图不能把八个
+        // 名额全用在左上角那几张旧卡上。距离优先、时间先后只做同分兜底，
+        // 所以同一份数据每次画出来的东西是一样的。
+        while selected.count < limit {
+            let candidates = ordered.filter { !used.contains($0.id) }
+            guard !candidates.isEmpty else { break }
+            let chosen = candidates.max { lhs, rhs in
+                let left = spreadScore(lhs, within: selected)
+                let right = spreadScore(rhs, within: selected)
+                if left != right { return left < right }
+                if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
+                return lhs.id.uuidString > rhs.id.uuidString
+            }
+            guard let chosen else { break }
+            selected.append(chosen)
+            used.insert(chosen.id)
         }
 
         let items = selected.prefix(limit).compactMap { node -> Item? in
@@ -182,6 +208,18 @@ struct CanvasThumbnailData: Equatable {
         }
         guard !items.isEmpty else { return nil }
         return CanvasThumbnailData(items: Array(items), bounds: bounds, total: nodes.count)
+    }
+
+    /// 候选节点离「已选中的那几张」最近有多远。空集合时无穷大（谁先谁上）。
+    private static func spreadScore(_ node: CanvasNode, within selected: [CanvasNode]) -> CGFloat {
+        guard !selected.isEmpty else { return .greatestFiniteMagnitude }
+        let center = CGPoint(x: node.frame.midX, y: node.frame.midY)
+        return selected.reduce(CGFloat.greatestFiniteMagnitude) { best, other in
+            let otherCenter = CGPoint(x: other.frame.midX, y: other.frame.midY)
+            let dx = center.x - otherCenter.x
+            let dy = center.y - otherCenter.y
+            return min(best, (dx * dx + dy * dy).squareRoot())
+        }
     }
 }
 

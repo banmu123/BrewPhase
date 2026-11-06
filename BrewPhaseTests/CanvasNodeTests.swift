@@ -53,7 +53,7 @@ final class CanvasNodeTests: XCTestCase {
             XCTAssertTrue(visible.contains(node.frame), "新节点必须落在当前可见区里")
         }
         XCTAssertFalse(nodes[0].frame.intersects(nodes[1].frame), "两条新节点不能互相盖住")
-        XCTAssertEqual(CanvasNodeStore.nodes(in: canvas.id, context: context).count, 2)
+        XCTAssertEqual(try CanvasNodeStore.nodes(in: canvas.id, context: context).count, 2)
     }
 
     /// 同一画布不允许重复添加同一条记录；重复调用是安全空操作。
@@ -66,7 +66,7 @@ final class CanvasNodeTests: XCTestCase {
                                             visibleWorldRect: visible, context: context)
 
         XCTAssertTrue(again.isEmpty, "重复添加必须被应用层挡住")
-        XCTAssertEqual(CanvasNodeStore.nodes(in: canvas.id, context: context).count, 1)
+        XCTAssertEqual(try CanvasNodeStore.nodes(in: canvas.id, context: context).count, 1)
     }
 
     /// 同一条记录可以被多块画布引用——画布是摆放，不是归属。
@@ -79,8 +79,8 @@ final class CanvasNodeTests: XCTestCase {
         _ = try CanvasNodeStore.add([record], to: canvas, visibleWorldRect: visible, context: context)
         _ = try CanvasNodeStore.add([record], to: other, visibleWorldRect: visible, context: context)
 
-        XCTAssertEqual(CanvasNodeStore.nodes(in: canvas.id, context: context).count, 1)
-        XCTAssertEqual(CanvasNodeStore.nodes(in: other.id, context: context).count, 1)
+        XCTAssertEqual(try CanvasNodeStore.nodes(in: canvas.id, context: context).count, 1)
+        XCTAssertEqual(try CanvasNodeStore.nodes(in: other.id, context: context).count, 1)
     }
 
     // MARK: - 移动
@@ -122,7 +122,7 @@ final class CanvasNodeTests: XCTestCase {
                                     visibleWorldRect: visible, context: context).first)
         let before = canvas.updatedAt
 
-        CanvasNodeStore.remove(node, context: context)
+        XCTAssertTrue(CanvasNodeStore.remove(node, context: context))
         XCTAssertGreaterThan(canvas.updatedAt, before)
     }
 
@@ -151,9 +151,9 @@ final class CanvasNodeTests: XCTestCase {
             try CanvasNodeStore.add([record], to: canvas,
                                     visibleWorldRect: visible, context: context).first)
 
-        CanvasNodeStore.remove(node, context: context)
+        XCTAssertTrue(CanvasNodeStore.remove(node, context: context))
 
-        XCTAssertTrue(CanvasNodeStore.nodes(in: canvas.id, context: context).isEmpty)
+        XCTAssertTrue(try CanvasNodeStore.nodes(in: canvas.id, context: context).isEmpty)
         XCTAssertEqual(try context.fetchCount(FetchDescriptor<Record>()), 1,
                        "移除节点不能删记录")
     }
@@ -170,9 +170,59 @@ final class CanvasNodeTests: XCTestCase {
         context.delete(victim)
         try context.save()
 
-        let remaining = CanvasNodeStore.nodes(in: canvas.id, context: context)
+        let remaining = try CanvasNodeStore.nodes(in: canvas.id, context: context)
         XCTAssertEqual(remaining.count, 1)
         XCTAssertEqual(remaining.first?.recordID, survivor.id)
+    }
+
+    /// 删除源记录时：每一块受影响的画布都要更新时间——缩略图靠它刷新，
+    /// 不更新就会一直显示一张「还有这条记录」的旧封面。
+    func testDeletingARecordTouchesEveryAffectedCanvas() throws {
+        let victim = makeRecord("要删的")
+        let survivor = makeRecord("要留的")
+        let other = Canvas(name: "另一块画布")
+        context.insert(other)
+        try context.save()
+
+        _ = try CanvasNodeStore.add([victim, survivor], to: canvas,
+                                    visibleWorldRect: visible, context: context)
+        _ = try CanvasNodeStore.add([victim], to: other,
+                                    visibleWorldRect: visible, context: context)
+
+        let firstBefore = canvas.updatedAt
+        let secondBefore = other.updatedAt
+
+        CanvasNodeStore.deleteNodes(referencing: victim.id, context: context)
+        context.delete(victim)
+        try context.save()
+
+        XCTAssertGreaterThan(canvas.updatedAt, firstBefore)
+        XCTAssertGreaterThan(other.updatedAt, secondBefore)
+        XCTAssertEqual(try CanvasNodeStore.nodes(in: canvas.id, context: context).map(\.recordID),
+                       [survivor.id], "另一条记录不受牵连")
+        XCTAssertTrue(try CanvasNodeStore.nodes(in: other.id, context: context).isEmpty)
+    }
+
+    /// 清理示例节点时，如果节点挂在**真实画布**上（记录是示例的），
+    /// 那块画布的时间也要更新；示例画布本身反正要删，不必更新。
+    func testDeletingSampleNodesTouchesTheSurvivingRealCanvas() throws {
+        let sampleRecord = makeRecord("示例记录")
+        sampleRecord.isSample = true
+        let sampleCanvas = Canvas(name: "示例画布", isSample: true)
+        context.insert(sampleCanvas)
+        try context.save()
+
+        _ = try CanvasNodeStore.add([sampleRecord], to: canvas,
+                                    visibleWorldRect: visible, context: context)
+        _ = try CanvasNodeStore.add([sampleRecord], to: sampleCanvas,
+                                    visibleWorldRect: visible, context: context)
+        let before = canvas.updatedAt
+
+        CanvasNodeStore.deleteSampleNodes(records: [sampleRecord], canvases: [sampleCanvas],
+                                          context: context)
+        try context.save()
+
+        XCTAssertGreaterThan(canvas.updatedAt, before, "真实画布的封面要跟着刷新")
     }
 
     /// 删除画布：节点一起清掉，记录原样保留。

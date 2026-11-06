@@ -5,17 +5,26 @@ import SwiftUI
 /// 再由 `CanvasViewport` 换算成世界坐标——换算只此一处。
 private let canvasScreenSpace = "canvas-screen"
 
+/// 节点在手势回调里读的实时视口参数。
+///
+/// 为什么用引用类型而不是 View 参数：`scale` 在捏合时每帧都变，作为参数传进
+/// 每个节点，就会让所有可见节点跟着重算 body。放进一个不参与视图比较的小盒子，
+/// 节点只在**手势开始那一刻**读一次，缩放过程只剩世界层的一次变换。
+private final class CanvasCamera {
+    var scale: CGFloat = 1
+    var isPinching = false
+}
+
 /// 一块画布的工作区：自由摆放记录的地方。
 ///
 /// 坐标分三层：节点存**世界坐标**；`CanvasWorldLayer` 是一个按世界尺寸布局的
 /// 容器；整层只做一次 `scaleEffect + offset`。平移/缩放时改变的是这一层变换，
-/// 而不是逐个节点重新定位——这是「整块空间一起移动」的手感来源，也是节点多
-/// 起来之后仍然跟手的关键。
+/// 而不是逐个节点重新定位——这是「整块空间一起移动」的手感来源。
 ///
-/// 手势分工：
-/// * 空白处单指拖动 → 平移（松手带短惯性）；双指捏合 → 以两指中点为锚缩放；
-/// * 节点单指拖动 → 移动节点，过程只改内存，松手写一次库；
-/// * 单击节点 → 打开原记录；长按 → 画布备注 / 移除。
+/// 数据只有一条路径：**显式读取**（`CanvasNodeStore.nodes`）→ 对账
+/// （`CanvasNodeReconciler`）→ 渲染。不挂 `@Query`：重进画布时节点必须来自
+/// 一次确定的查询，而不是「视图重建时查询恰好还没有结果」——那会让用户看到
+/// 一块空画布，再被清理逻辑当成孤儿。
 struct CanvasWorkspaceView: View {
 
     let canvas: Canvas
@@ -24,13 +33,22 @@ struct CanvasWorkspaceView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
 
-    /// 只取这块画布的节点：画布多起来时，不该把所有节点都读进内存。
-    @Query private var nodes: [CanvasNode]
-
+    @State private var nodes: [CanvasNode] = []
     @State private var recordsByID: [UUID: Record] = [:]
+
     @State private var viewport = CanvasViewport()
     @State private var canvasSize: CGSize = .zero
-    @State private var didFit = false
+    /// 画布在窗口里的位置：UIKit 报上来的两指中心是窗口坐标，靠它换成本地坐标。
+    @State private var canvasFrameInWindow: CGRect = .zero
+    /// 只在「第一次拿到非空节点」时装窗一次，之后布局由用户掌控。
+    @State private var didFitContent = false
+    /// 上一次装窗用的画布尺寸。第一次布局报上来的尺寸不一定是最终尺寸
+    /// （容器还没定下来时会先给一个占位值），尺寸变了就得重算一次。
+    @State private var fittedSize: CGSize = .zero
+    /// 用户自己平移/缩放过之后，装窗不再自动覆盖他的视角。
+    @State private var hasUserAdjusted = false
+
+    @State private var camera = CanvasCamera()
 
     @State private var playingNodeID: UUID?
     @State private var draggingNodeID: UUID?
@@ -40,6 +58,11 @@ struct CanvasWorkspaceView: View {
     @State private var magnifyBase: CanvasViewport?
     @State private var panBase: CGSize?
 
+    // 双指（UIKit 桥）：base 是手势开始时的视口，anchor 是中心点压住的世界点。
+    @State private var pinchBase: CanvasViewport?
+    @State private var pinchAnchorWorld: CGPoint?
+    @State private var nativePinchReady = false
+
     @State private var showsPicker = false
     @State private var isEditing = false
     @State private var isConfirmingDelete = false
@@ -48,15 +71,6 @@ struct CanvasWorkspaceView: View {
     @State private var actionError: String?
     /// 「打开原记录」用同一层导航推详情：详情页的工具栏依赖外层 NavigationStack。
     @State private var openRecordSheet: Record?
-
-    init(canvas: Canvas) {
-        self.canvas = canvas
-        let canvasID = canvas.id
-        _nodes = Query(
-            filter: #Predicate<CanvasNode> { $0.canvasID == canvasID },
-            sort: [SortDescriptor(\.zIndex), SortDescriptor(\.createdAt)]
-        )
-    }
 
     private var visibleWorldRect: CGRect {
         viewport.worldRect(in: canvasSize)
@@ -83,8 +97,13 @@ struct CanvasWorkspaceView: View {
         return nodes.filter { margin.intersects($0.frame) || $0.id == draggingNodeID }
     }
 
+    /// 面板/弹层在的时候不接管捏合。
+    private var pinchEnabled: Bool {
+        !showsPicker && !isEditing && annotationNode == nil
+    }
+
     var body: some View {
-        GeometryReader { _ in
+        GeometryReader { geo in
             ZStack(alignment: .topLeading) {
                 Palette.paper
 
@@ -103,11 +122,26 @@ struct CanvasWorkspaceView: View {
                 }
             }
             .coordinateSpace(.named(canvasScreenSpace))
+            // 识别器挂得上就用它（能跟随两指中心），挂不上仍由 SwiftUI 兜底。
             .simultaneousGesture(magnifyGesture)
-            .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
-                canvasSize = size
-                fitIfNeeded()
+            // 尺寸只认 `GeometryReader` 自己给的那份。实测在本页上
+            // `onGeometryChange` 会报出容器占位尺寸（800×800、甚至像素级
+            // 的 2460×2976），按它装窗会把整块内容推出屏幕。
+            .onAppear { updateCanvasSize(geo.size) }
+            .onChange(of: geo.size) { _, size in updateCanvasSize(size) }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+                canvasFrameInWindow = frame
             }
+        }
+        .background {
+            CanvasPinchBridge(
+                isEnabled: pinchEnabled,
+                onBegan: beginPinch,
+                onChange: { scale, centroid in changePinch(scale: scale, centroidInWindow: centroid) },
+                onEnded: endPinch,
+                onReady: { nativePinchReady = true }
+            )
+            .allowsHitTesting(false)
         }
         .background(Palette.paper)
         .navigationTitle(canvas.displayName)
@@ -161,15 +195,16 @@ struct CanvasWorkspaceView: View {
         } message: {
             Text(actionError ?? "")
         }
-        .task(id: nodeRecordIDs) { reloadRecords() }
+        .task { loadCanvas() }
+        .onChange(of: nodes.count) { _, _ in fitIfNeeded() }
+        .onChange(of: viewport.scale) { _, new in camera.scale = new }
+        .onChange(of: isPinching) { _, new in camera.isPinching = new }
         .onDisappear {
             // 离开画布：不留任何播放器继续出声。
             playingNodeID = nil
+            isPinching = false
+            camera.isPinching = false
         }
-    }
-
-    private var nodeRecordIDs: [UUID] {
-        nodes.map(\.recordID)
     }
 
     // MARK: - 世界层
@@ -184,8 +219,7 @@ struct CanvasWorkspaceView: View {
             playingNodeID: playingNodeID,
             draggingNodeID: draggingNodeID,
             newIDs: newIDs,
-            scale: viewport.scale,
-            isPinching: isPinching,
+            camera: camera,
             onOpen: { openRecord($0) },
             onTogglePlay: { togglePlay($0) },
             onOpenSource: { record in
@@ -194,12 +228,12 @@ struct CanvasWorkspaceView: View {
             onAnnotate: { annotationNode = $0 },
             onRemove: { pendingRemove = $0 },
             onDragBegan: { draggingNodeID = $0 },
-            onDragEnded: { node, translation in
+            onDragEnded: { node, worldTranslation in
                 draggingNodeID = nil
-                guard viewport.scale > 0 else { return }
-                let world = CGPoint(x: node.positionX + translation.width / viewport.scale,
-                                    y: node.positionY + translation.height / viewport.scale)
-                CanvasNodeStore.move(node, to: world, context: context)
+                CanvasNodeStore.move(node,
+                                     to: CGPoint(x: node.positionX + worldTranslation.width,
+                                                 y: node.positionY + worldTranslation.height),
+                                     context: context)
             }
         )
         .frame(width: bounds.width, height: bounds.height, alignment: .topLeading)
@@ -216,7 +250,7 @@ struct CanvasWorkspaceView: View {
             .onChanged { value in
                 guard !isPinching else { return }
                 let base = panBase ?? viewport.offset
-                if panBase == nil { panBase = viewport.offset }
+                if panBase == nil { panBase = viewport.offset; hasUserAdjusted = true }
                 viewport.offset = CGSize(width: base.width + value.translation.width,
                                          height: base.height + value.translation.height)
             }
@@ -236,9 +270,12 @@ struct CanvasWorkspaceView: View {
             }
     }
 
+    /// SwiftUI 兜底：只在 UIKit 识别器没挂上时生效。它拿不到两指中心的移动，
+    /// 所以只能围绕起始锚点缩放。
     private var magnifyGesture: some Gesture {
         MagnifyGesture(minimumScaleDelta: 0.01)
             .onChanged { value in
+                guard !nativePinchReady else { return }
                 isPinching = true
                 let base = magnifyBase ?? viewport
                 if magnifyBase == nil { magnifyBase = viewport }
@@ -250,6 +287,38 @@ struct CanvasWorkspaceView: View {
                 magnifyBase = nil
                 isPinching = false
             }
+    }
+
+    // MARK: - 双指（跟随两指中心）
+
+    /// 捏合开始时立刻收掉进行中的平移状态：base 清空、惯性不再接续，
+    /// 否则第二根手指落下后画布会先跳一下再缩放。
+    private func beginPinch() {
+        panBase = nil
+        hasUserAdjusted = true
+        pinchBase = viewport
+        pinchAnchorWorld = nil
+        isPinching = true
+        camera.isPinching = true
+    }
+
+    private func changePinch(scale: CGFloat, centroidInWindow: CGPoint) {
+        guard let base = pinchBase else { return }
+        let local = CGPoint(x: centroidInWindow.x - canvasFrameInWindow.minX,
+                            y: centroidInWindow.y - canvasFrameInWindow.minY)
+        if pinchAnchorWorld == nil {
+            // 手势的第一帧：把手势开始时中心点下面的世界点钉住。
+            pinchAnchorWorld = base.worldPoint(local)
+        }
+        guard let anchor = pinchAnchorWorld else { return }
+        viewport = base.pinched(to: base.scale * scale, centroid: local, anchorWorld: anchor)
+    }
+
+    private func endPinch() {
+        pinchBase = nil
+        pinchAnchorWorld = nil
+        isPinching = false
+        camera.isPinching = false
     }
 
     // MARK: - 悬浮控件
@@ -354,6 +423,7 @@ struct CanvasWorkspaceView: View {
     }
 
     private func zoom(by factor: CGFloat) {
+        hasUserAdjusted = true
         let anchor = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
         withAnimation(Motion.settle) {
             viewport = viewport.zoomed(to: viewport.scale * factor, anchor: anchor)
@@ -366,14 +436,17 @@ struct CanvasWorkspaceView: View {
             let created = try CanvasNodeStore.add(records, to: canvas,
                                                   visibleWorldRect: visibleWorldRect,
                                                   context: context)
+            guard !created.isEmpty else { return }
+            // 直接把新节点接进列表：不需要为了「已经知道的结果」再查一遍库。
+            nodes.append(contentsOf: created)
             newIDs.formUnion(created.map(\.id))
-            // 记录不在这里重复取：节点 ID 变化会触发上面的 .task(id:)
-            // 统一读一次，避免同一次添加把同一批记录读两遍。
             let ids = Set(created.map(\.id))
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(1200))
                 newIDs.subtract(ids)
             }
+            reconcileRecords()
+            fitIfNeeded()
         } catch {
             AppLog.store.error("canvas add failed: \(error.localizedDescription, privacy: .public)")
             actionError = L("没能把它们放进画布，请再试一次")
@@ -381,7 +454,11 @@ struct CanvasWorkspaceView: View {
     }
 
     private func remove(_ node: CanvasNode) {
-        CanvasNodeStore.remove(node, context: context)
+        // 只有真的落库成功，才把它从渲染列表里拿掉；失败时它还在库里，
+        // 界面就不该假装已经没了。
+        if CanvasNodeStore.remove(node, context: context) {
+            nodes.removeAll { $0.id == node.id }
+        }
         if playingNodeID == node.id { playingNodeID = nil }
     }
 
@@ -401,33 +478,60 @@ struct CanvasWorkspaceView: View {
 
     // MARK: - 记录与视口
 
-    /// 按节点引用的 ID 取记录，不把整张记录表读进内存。
-    /// 找不到的记录（极端情况下被外部删除）对应节点直接清掉。
-    private func reloadRecords() {
-        let ids = Array(Set(nodes.map(\.recordID)))
-        guard !ids.isEmpty else {
-            recordsByID = [:]
-            return
-        }
-        let descriptor = FetchDescriptor<Record>(predicate: #Predicate { ids.contains($0.id) })
-        let found = (try? context.fetch(descriptor)) ?? []
-        let mapped = Dictionary(uniqueKeysWithValues: found.map { ($0.id, $0) })
-        if mapped.keys.sorted(by: { $0.uuidString < $1.uuidString })
-            != recordsByID.keys.sorted(by: { $0.uuidString < $1.uuidString }) {
-            recordsByID = mapped
-        }
-
-        let missing = nodes.filter { mapped[$0.recordID] == nil }
-        if !missing.isEmpty {
-            AppLog.store.info("canvas: dropped \(missing.count) node(s) with missing record")
-            for node in missing { context.delete(node) }
-            try? context.save()
-        }
+    private func updateCanvasSize(_ size: CGSize) {
+        guard size.width > 0, size.height > 0 else { return }
+        canvasSize = size
+        fitIfNeeded()
+        ensureContentVisible()
     }
 
+    /// 进入画布、以及每次回到前台的第一件事：**从库里读一次节点**。
+    /// 读失败保留现有状态——宁可这一屏少几张卡，也不能把用户的摆放删掉。
+    private func loadCanvas() {
+        do {
+            nodes = try CanvasNodeStore.nodes(in: canvas.id, context: context)
+        } catch {
+            AppLog.store.error("canvas: node load failed, keeping \(nodes.count) node(s) — \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        AppLog.store.info("canvas: loaded \(nodes.count) node(s) for \(canvas.id.uuidString, privacy: .public)")
+        reconcileRecords()
+        fitIfNeeded()
+        ensureContentVisible()
+    }
+
+    /// 节点与源记录对账。清理只发生在**读取成功**之后，且只删确认取不到的节点。
+    private func reconcileRecords() {
+        let outcome = CanvasNodeReconciler.reconcile(nodes: nodes, context: context)
+        guard !outcome.didFail else { return }
+        recordsByID = outcome.recordsByID
+        AppLog.store.info("canvas: resolved \(recordsByID.count) record(s), purged \(outcome.purgedNodeIDs.count)")
+        guard !outcome.purgedNodeIDs.isEmpty else { return }
+        let purged = Set(outcome.purgedNodeIDs)
+        nodes.removeAll { purged.contains($0.id) }
+    }
+
+    /// 装窗只发生在「第一次看到非空节点」时。
+    ///
+    /// 之前是 `didFit` 一次性开关：如果视图第一次拿到尺寸时节点还没读出来，
+    /// 装窗会退化成「原点 + 100%」，等节点到了却不再装窗——坐标偏远的画布
+    /// 看起来就是一块空画布。现在空集合不占用这次机会。
     private func fitIfNeeded() {
-        guard !didFit, canvasSize.width > 0, canvasSize.height > 0 else { return }
-        didFit = true
+        guard canvasSize.width > 0, canvasSize.height > 0 else { return }
+        guard !nodes.isEmpty else {
+            if didFitContent {
+                didFitContent = false
+                fittedSize = .zero
+                viewport = CanvasViewport()
+            }
+            return
+        }
+        if didFitContent {
+            // 已装过窗：只有「尺寸变了且用户还没动过」才重新装窗。第一次布局
+            // 拿到的尺寸可能只是容器给的占位值，按它算出来的视口会把整块内容
+            // 推到屏幕外——看起来就是「节点不见了」。
+            guard !hasUserAdjusted, fittedSize != canvasSize else { return }
+        }
         fitCanvas()
     }
 
@@ -436,7 +540,26 @@ struct CanvasWorkspaceView: View {
             viewport = CanvasViewport()
             return
         }
+        didFitContent = true
+        fittedSize = canvasSize
         viewport = viewport.fitted(content: bounds, in: canvasSize)
+        AppLog.store.info("canvas fit: bounds=\(String(describing: bounds), privacy: .public) size=\(String(describing: canvasSize), privacy: .public) scale=\(viewport.scale)")
+    }
+
+    /// 兜底：整块内容都被推到屏幕外时重新装窗。
+    /// 这不是用户能用平移摆出来的状态（那需要把内容一直推出可视区），
+    /// 只可能来自视口与真实尺寸失配，恢复它比让用户面对一块空画布好。
+    private func ensureContentVisible() {
+        guard canvasSize.width > 0, canvasSize.height > 0,
+              let bounds = CanvasViewport.contentBounds(nodes.map(\.frame)) else { return }
+        let origin = viewport.screenPoint(bounds.origin)
+        let onScreen = CGRect(origin: origin,
+                              size: CGSize(width: bounds.width * viewport.scale,
+                                           height: bounds.height * viewport.scale))
+        let visible = CGRect(origin: .zero, size: canvasSize).insetBy(dx: 24, dy: 24)
+        guard !onScreen.intersects(visible) else { return }
+        AppLog.store.info("canvas: content off-screen, refitting")
+        fitCanvas()
     }
 }
 
@@ -451,8 +574,7 @@ private struct CanvasWorldLayer: View {
     let playingNodeID: UUID?
     let draggingNodeID: UUID?
     let newIDs: Set<UUID>
-    let scale: CGFloat
-    let isPinching: Bool
+    let camera: CanvasCamera
     let onOpen: (Record) -> Void
     let onTogglePlay: (UUID) -> Void
     let onOpenSource: (Record) -> Void
@@ -470,8 +592,7 @@ private struct CanvasWorldLayer: View {
                         record: record,
                         isPlaying: playingNodeID == node.id,
                         isNew: newIDs.contains(node.id),
-                        isPinching: isPinching,
-                        scale: scale,
+                        camera: camera,
                         onOpen: { onOpen(record) },
                         onTogglePlay: { onTogglePlay(node.id) },
                         onOpenSource: { onOpenSource(record) },
@@ -480,6 +601,8 @@ private struct CanvasWorldLayer: View {
                         onDragBegan: { onDragBegan(node.id) },
                         onDragEnded: { onDragEnded(node, $0) }
                     )
+                    // 节点内容与视口无关：平移/缩放时跳过它们 body 的重算。
+                    .equatable()
                     .frame(width: node.frame.width, height: node.frame.height)
                     .position(x: node.frame.midX - bounds.minX,
                               y: node.frame.midY - bounds.minY)
@@ -496,27 +619,46 @@ private struct CanvasWorldLayer: View {
 
 /// 一张节点卡：点击打开原记录、拖动移动、长按出操作菜单。
 ///
-/// 拖动只改 `translation`（内存），松手才交给存储层；卡片本身不参与视口变换，
-/// 所以平移/缩放画布不会让它们逐帧重算。
-private struct CanvasNodeLayer: View {
+/// 拖动只改 `translation`（内存，**世界单位**），松手才交给存储层。
+/// `Equatable` 只比较真正影响内容的东西：视口缩放、捏合状态、闭包身份都不参与，
+/// 所以捏合/平移时这些卡片的 body 不会被重算。
+private struct CanvasNodeLayer: View, Equatable {
 
     let node: CanvasNode
     let record: Record
     let isPlaying: Bool
     let isNew: Bool
-    let isPinching: Bool
-    let scale: CGFloat
+    /// 实时视口参数：只在手势开始那一刻读（拖动换算 / 捏合让位）。
+    let camera: CanvasCamera
     let onOpen: () -> Void
     let onTogglePlay: () -> Void
     let onOpenSource: () -> Void
     let onAnnotate: () -> Void
     let onRemove: () -> Void
     let onDragBegan: () -> Void
+    /// 世界位移（已经除过缩放），调用方直接加到世界坐标上。
     let onDragEnded: (CGSize) -> Void
 
     @State private var translation: CGSize = .zero
+    /// 拖动开始时的那一档缩放：中途视口不会变（捏合会打断拖动），
+    /// 所以屏幕位移换算成世界位移只算一次。
+    @State private var dragScale: CGFloat = 1
     @State private var isDragging = false
     @State private var appeared = false
+
+    static func == (lhs: CanvasNodeLayer, rhs: CanvasNodeLayer) -> Bool {
+        lhs.node.id == rhs.node.id
+            && lhs.node.positionX == rhs.node.positionX
+            && lhs.node.positionY == rhs.node.positionY
+            && lhs.node.annotation == rhs.node.annotation
+            && lhs.isPlaying == rhs.isPlaying
+            && lhs.isNew == rhs.isNew
+            && lhs.record.id == rhs.record.id
+            && lhs.record.updatedAt == rhs.record.updatedAt
+            && lhs.record.displayTitle == rhs.record.displayTitle
+            && lhs.record.note == rhs.record.note
+            && lhs.record.previewPath == rhs.record.previewPath
+    }
 
     var body: some View {
         CanvasNodeCard(
@@ -544,8 +686,7 @@ private struct CanvasNodeLayer: View {
                 Label("从画布移除", systemImage: "minus.circle")
             }
         }
-        .offset(x: translation.width / max(scale, 0.001),
-                y: translation.height / max(scale, 0.001))
+        .offset(x: translation.width, y: translation.height)
         .scaleEffect(appeared ? 1 : 0.97)
         .opacity(appeared ? 1 : 0)
         .onAppear {
@@ -569,19 +710,22 @@ private struct CanvasNodeLayer: View {
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 8, coordinateSpace: .named(canvasScreenSpace))
             .onChanged { value in
-                guard !isPinching else { return }
+                guard !camera.isPinching else { return }
                 if !isDragging {
                     isDragging = true
+                    dragScale = max(camera.scale, 0.001)
                     onDragBegan()
                 }
-                translation = value.translation
+                translation = CGSize(width: value.translation.width / dragScale,
+                                     height: value.translation.height / dragScale)
             }
-            .onEnded { value in
+            .onEnded { _ in
                 let wasDragging = isDragging
+                let world = translation
                 isDragging = false
                 translation = .zero
-                guard wasDragging, !isPinching else { return }
-                onDragEnded(value.translation)
+                guard wasDragging, !camera.isPinching else { return }
+                onDragEnded(world)
             }
     }
 }

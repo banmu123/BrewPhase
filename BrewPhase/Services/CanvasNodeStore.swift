@@ -12,23 +12,26 @@ enum CanvasNodeStore {
 
     // MARK: - 读取
 
-    static func nodes(in canvasID: UUID, context: ModelContext) -> [CanvasNode] {
+    /// 读取**会抛错**：把一次失败的查询伪装成「这块画布没有节点」，会让上层
+    /// 误判成空画布、把已加入的记录当成新记录重复添加，甚至把节点当成孤儿删掉。
+    /// 失败就得让调用方知道，由它决定「什么都不做」。
+    static func nodes(in canvasID: UUID, context: ModelContext) throws -> [CanvasNode] {
         let descriptor = FetchDescriptor<CanvasNode>(
             predicate: #Predicate { $0.canvasID == canvasID },
             sortBy: [SortDescriptor(\.zIndex), SortDescriptor(\.createdAt)]
         )
-        return (try? context.fetch(descriptor)) ?? []
+        return try context.fetch(descriptor)
     }
 
-    static func nodes(referencing recordID: UUID, context: ModelContext) -> [CanvasNode] {
+    static func nodes(referencing recordID: UUID, context: ModelContext) throws -> [CanvasNode] {
         let descriptor = FetchDescriptor<CanvasNode>(
             predicate: #Predicate { $0.recordID == recordID }
         )
-        return (try? context.fetch(descriptor)) ?? []
+        return try context.fetch(descriptor)
     }
 
-    static func existingRecordIDs(in canvasID: UUID, context: ModelContext) -> Set<UUID> {
-        Set(nodes(in: canvasID, context: context).map(\.recordID))
+    static func existingRecordIDs(in canvasID: UUID, context: ModelContext) throws -> Set<UUID> {
+        Set(try nodes(in: canvasID, context: context).map(\.recordID))
     }
 
     // MARK: - 添加
@@ -60,7 +63,9 @@ enum CanvasNodeStore {
                     to canvas: Canvas,
                     visibleWorldRect: CGRect,
                     context: ModelContext) throws -> [CanvasNode] {
-        let existing = nodes(in: canvas.id, context: context)
+        // 去重必须建立在一次**成功**的读取上：读失败就当空集合，会把已经在
+        // 画布上的记录再加一遍。
+        let existing = try nodes(in: canvas.id, context: context)
         let known = Set(existing.map(\.recordID))
         let fresh = records.filter { !known.contains($0.id) }
         guard !fresh.isEmpty else { return [] }
@@ -123,15 +128,20 @@ enum CanvasNodeStore {
     }
 
     /// 从画布移除一个节点。**只删节点**，源记录原样保留。
-    static func remove(_ node: CanvasNode, context: ModelContext) {
+    /// - Returns: 是否真的落库成功。界面据此决定要不要把它从渲染列表里拿掉——
+    ///   保存失败时节点仍在库里，界面不该显示成「已经没了」。
+    @discardableResult
+    static func remove(_ node: CanvasNode, context: ModelContext) -> Bool {
         let canvasID = node.canvasID
         context.delete(node)
         touchCanvas(canvasID, context: context)
         do {
             try context.save()
+            return true
         } catch {
             AppLog.store.error("canvas node remove failed: \(error.localizedDescription, privacy: .public)")
             context.rollback()
+            return false
         }
     }
 
@@ -144,29 +154,59 @@ enum CanvasNodeStore {
         (try? context.fetch(descriptor))?.first?.touch()
     }
 
-    /// 源记录被删除前调用：清掉所有画布里引用它的节点。
+    /// 源记录被删除前调用：清掉所有画布里引用它的节点，并更新**仍然存在**的
+    /// 那些画布的时间——缩略图靠 `canvas.updatedAt` 刷新，不更新就会一直显示
+    /// 一张已经少了一条内容的旧封面。
+    ///
     /// 不在这里 `save()`——调用方随后删记录，并在同一个事务里提交；
-    /// 失败时 `rollback()` 会把节点一并恢复。
+    /// 失败时 `rollback()` 会把节点与画布时间一并恢复。
     static func deleteNodes(referencing recordID: UUID, context: ModelContext) {
-        for node in nodes(referencing: recordID, context: context) {
-            context.delete(node)
+        let doomed: [CanvasNode]
+        do {
+            doomed = try nodes(referencing: recordID, context: context)
+        } catch {
+            // 读不出来就一条都不删：宁可留下稍后能自愈的孤儿节点，
+            // 也不要凭一次失败的查询去猜该删谁。
+            AppLog.store.error("canvas: node lookup failed, no cascade — \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        for node in doomed { context.delete(node) }
+        for canvasID in Set(doomed.map(\.canvasID)) {
+            touchCanvas(canvasID, context: context)
         }
     }
 
     /// 画布被删除前调用：清掉这块画布上的全部节点。
     static func deleteNodes(in canvasID: UUID, context: ModelContext) {
-        for node in nodes(in: canvasID, context: context) {
-            context.delete(node)
+        let doomed: [CanvasNode]
+        do {
+            doomed = try nodes(in: canvasID, context: context)
+        } catch {
+            AppLog.store.error("canvas: node lookup failed, no cascade — \(error.localizedDescription, privacy: .public)")
+            return
         }
+        for node in doomed { context.delete(node) }
     }
 
     /// 删除示例数据：只清挂在示例画布上、或引用示例记录的节点。
+    /// 如果一条节点挂在**真实画布**上（记录是示例的、画布不是），那块画布的时间
+    /// 也要更新；被一起删掉的示例画布不需要。
     static func deleteSampleNodes(records: [Record], canvases: [Canvas], context: ModelContext) {
         let recordIDs = Set(records.map(\.id))
         let canvasIDs = Set(canvases.map(\.id))
-        let all = (try? context.fetch(FetchDescriptor<CanvasNode>())) ?? []
-        for node in all where recordIDs.contains(node.recordID) || canvasIDs.contains(node.canvasID) {
-            context.delete(node)
+        let all: [CanvasNode]
+        do {
+            all = try context.fetch(FetchDescriptor<CanvasNode>())
+        } catch {
+            AppLog.store.error("canvas: sample node lookup failed — \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        let doomed = all.filter {
+            recordIDs.contains($0.recordID) || canvasIDs.contains($0.canvasID)
+        }
+        for node in doomed { context.delete(node) }
+        for canvasID in Set(doomed.map(\.canvasID)) where !canvasIDs.contains(canvasID) {
+            touchCanvas(canvasID, context: context)
         }
     }
 }

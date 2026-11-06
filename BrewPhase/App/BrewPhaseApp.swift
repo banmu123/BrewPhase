@@ -151,6 +151,9 @@ struct RootView: View {
 
     /// Only ever set when the app was launched for UI inspection. See `DebugLaunch`.
     @State private var debugScreen: DebugScreen?
+    /// 画布工作区要全屏呈现：sheet 给它的尺寸不是真实窗口尺寸，装窗会算错，
+    /// 截出来的图也就不能用来验收「重进画布」。
+    @State private var debugCanvas: Canvas?
 
     var body: some View {
         // 导航条与页面是上下两块，而不是把胶囊浮在内容上面：页面自己滚动到
@@ -180,6 +183,9 @@ struct RootView: View {
         .sheet(item: $debugScreen) { screen in
             debugContent(for: screen)
         }
+        .fullScreenCover(item: $debugCanvas) { canvas in
+            NavigationStack { CanvasWorkspaceView(canvas: canvas) }
+        }
         .task {
             // Reminders are planned once per launch, from the same rules the rest
             // of the app is reading — so a bag whose window moved because its rule
@@ -190,7 +196,12 @@ struct RootView: View {
             // UI inspection only: let the first frame settle before presenting.
             if let requested = DebugLaunch.screen {
                 try? await Task.sleep(for: .milliseconds(700))
-                debugScreen = requested
+                // 验收用：进画布前先把几条记录摆上去（幂等，只有带参数才会执行）。
+                if requested == .canvasWorkspace {
+                    debugCanvas = CanvasDebugSeed.prepare(context: context)
+                } else {
+                    debugScreen = requested
+                }
                 // 有些菜单动作（标记喝完 / 恢复在喝）模拟器点不到，只能替用户
                 // 走一步——截图要的就是动作发生之后的样子。
                 if let action = DebugLaunch.beanAction {
@@ -331,6 +342,9 @@ struct RootView: View {
             AddFlowView()
         case .canvasEditor:
             CanvasEditorView()
+        case .canvasWorkspace:
+            // 走 `fullScreenCover`：sheet 的尺寸不是真实窗口尺寸。
+            debugEmpty
         case .recordEditor:
             RecordEditorView(carrier: DebugLaunch.recordCarrier ?? .link,
                              initialURL: DebugLaunch.linkURL ?? "")

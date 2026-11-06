@@ -85,6 +85,51 @@ final class CanvasThumbnailDataTests: XCTestCase {
         XCTAssertEqual(first, second, "同一块画布每次打开都必须得到同一张缩略图")
     }
 
+    /// 画布铺得开时，缩略图不能把八个名额全用在左上角那几张旧卡上：
+    /// 远端的节点也要有代表，否则封面看起来像「画布只有一角有东西」。
+    func testSelectionSpreadsAcrossTheWholeCanvas() throws {
+        var records: [Record] = []
+        var nodes: [CanvasNode] = []
+        // 八张同载体的旧卡挤在左上角。
+        for index in 0..<8 {
+            let record = makeRecord(.text, "角落 \(index)")
+            records.append(record)
+            nodes.append(makeNode(record, x: CGFloat(index) * 8, y: CGFloat(index) * 8,
+                                  createdAt: TimeInterval(index)))
+        }
+        // 两张后来才加的卡，摊在很远的右下角。
+        for offset in 0..<2 {
+            let record = makeRecord(.text, "远处 \(offset)")
+            records.append(record)
+            nodes.append(makeNode(record, x: 2_400 + CGFloat(offset) * 260, y: 1_800,
+                                  createdAt: 100 + TimeInterval(offset)))
+        }
+
+        let data = try XCTUnwrap(CanvasThumbnailData.make(nodes: nodes, records: records))
+        XCTAssertEqual(data.items.count, CanvasThumbnailData.limit)
+        let farIDs = Set(nodes.suffix(2).map(\.id))
+        XCTAssertTrue(data.items.contains { farIDs.contains($0.id) },
+                      "远处的节点必须在缩略图里占一个位置")
+        XCTAssertEqual(data.bounds.maxX, 2_880, accuracy: 0.001,
+                       "包围盒仍然覆盖全部节点")
+    }
+
+    /// 选中顺序与输入顺序无关：把同一批节点倒着喂进去，结果一样。
+    func testSpatialSelectionIsDeterministicRegardlessOfInputOrder() {
+        var records: [Record] = []
+        var nodes: [CanvasNode] = []
+        for index in 0..<10 {
+            let record = makeRecord(index.isMultiple(of: 2) ? .text : .image, "第 \(index) 条")
+            records.append(record)
+            nodes.append(makeNode(record, x: CGFloat(index) * 300, y: CGFloat(index % 3) * 200,
+                                  createdAt: TimeInterval(index)))
+        }
+
+        let forward = CanvasThumbnailData.make(nodes: nodes, records: records)
+        let backward = CanvasThumbnailData.make(nodes: nodes.reversed(), records: records)
+        XCTAssertEqual(forward, backward)
+    }
+
     /// 节点指向的记录已经不在了：跳过它，其余照常画。
     func testMissingRecordIsSkipped() throws {
         let alive = makeRecord(.text, "还在")

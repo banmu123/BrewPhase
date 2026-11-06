@@ -49,7 +49,13 @@ struct CanvasRecordPicker: View {
                 }
             }
             .task {
-                existing = CanvasNodeStore.existingRecordIDs(in: canvas.id, context: context)
+                do {
+                    existing = try CanvasNodeStore.existingRecordIDs(in: canvas.id, context: context)
+                } catch {
+                    // 读不出来就暂时不标「已在画布」：真的重复选到同一条，
+                    // `CanvasNodeStore.add` 的那次读取会再去重，不会产生重复节点。
+                    AppLog.store.error("canvas picker: existing node load failed — \(error.localizedDescription, privacy: .public)")
+                }
             }
             .task(id: queryKey) {
                 try? await Task.sleep(for: .milliseconds(200))

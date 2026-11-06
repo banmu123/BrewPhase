@@ -143,4 +143,51 @@ final class CanvasPlacementTests: XCTestCase {
 
         XCTAssertGreaterThanOrEqual(origin.y, occupied[0].maxY)
     }
+
+    // MARK: - 双指中心
+
+    /// 捏合时两指中心既拉开距离也会移动。中心点下面的世界内容必须一直压在
+    /// 中心点上，否则内容会在手指底下漂——这是 `MagnifyGesture.startAnchor`
+    /// 单独做不到的那一半。
+    func testPinchKeepsTheWorldPointUnderTheMovingCentroid() {
+        let start = CanvasViewport(scale: 1, offset: CGSize(width: 30, height: -20))
+        let centroidStart = CGPoint(x: 200, y: 300)
+        let anchor = start.worldPoint(centroidStart)
+
+        // 拉开到 1.6 倍，同时中心点移到另一处。
+        let moved = start.pinched(to: 1.6,
+                                  centroid: CGPoint(x: 260, y: 240),
+                                  anchorWorld: anchor)
+
+        XCTAssertEqual(moved.scale, 1.6, accuracy: 0.0001)
+        let under = moved.screenPoint(anchor)
+        XCTAssertEqual(under.x, 260, accuracy: 0.001)
+        XCTAssertEqual(under.y, 240, accuracy: 0.001)
+    }
+
+    /// 连续缩放都从**同一个 base** 解算：先后两次变化的中间态不会累积误差，
+    /// 松手也就不会跳位。
+    func testPinchIsComputedFromTheBaseViewportNotAccumulated() {
+        let base = CanvasViewport(scale: 0.8, offset: CGSize(width: -120, height: 60))
+        let anchor = base.worldPoint(CGPoint(x: 140, y: 480))
+
+        let mid = base.pinched(to: 1.2, centroid: CGPoint(x: 150, y: 470), anchorWorld: anchor)
+        let end = base.pinched(to: 2.0, centroid: CGPoint(x: 180, y: 420), anchorWorld: anchor)
+
+        XCTAssertEqual(mid.scale, 1.2, accuracy: 0.0001)
+        XCTAssertEqual(end.scale, 2.0, accuracy: 0.0001)
+        XCTAssertEqual(end.screenPoint(anchor).x, 180, accuracy: 0.001)
+        XCTAssertEqual(end.screenPoint(anchor).y, 420, accuracy: 0.001)
+    }
+
+    /// 缩放比例有上下限；钳住之后锚点依然稳定。
+    func testPinchClampsScaleAndKeepsTheAnchor() {
+        let base = CanvasViewport(scale: 1, offset: .zero)
+        let anchor = base.worldPoint(CGPoint(x: 100, y: 100))
+        let clamped = base.pinched(to: 99, centroid: CGPoint(x: 100, y: 100), anchorWorld: anchor)
+        XCTAssertEqual(clamped.scale, CanvasViewport.maxScale, accuracy: 0.0001)
+        let under = clamped.screenPoint(anchor)
+        XCTAssertEqual(under.x, 100, accuracy: 0.001)
+        XCTAssertEqual(under.y, 100, accuracy: 0.001)
+    }
 }

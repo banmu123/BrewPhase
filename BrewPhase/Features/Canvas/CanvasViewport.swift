@@ -54,6 +54,20 @@ struct CanvasViewport: Equatable, Sendable {
         )
     }
 
+    /// 以「屏幕上的 `centroid` 压住世界点 `anchorWorld`」为约束重新算视口。
+    ///
+    /// 双指缩放时两指中心既改变距离、也会移动：距离决定 `scale`，中心决定
+    /// `offset`。两者必须一起解——只按起始锚点缩放，内容会随着手指平移在屏幕上
+    /// 漂走；这正是 `MagnifyGesture.startAnchor` 单独做不到的那一半。
+    func pinched(to newScale: CGFloat, centroid: CGPoint, anchorWorld: CGPoint) -> CanvasViewport {
+        let clamped = Self.clampedScale(newScale)
+        return CanvasViewport(
+            scale: clamped,
+            offset: CGSize(width: centroid.x - anchorWorld.x * clamped,
+                           height: centroid.y - anchorWorld.y * clamped)
+        )
+    }
+
     static func clampedScale(_ value: CGFloat) -> CGFloat {
         guard value.isFinite else { return 1 }
         return min(max(value, minScale), maxScale)
