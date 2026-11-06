@@ -217,7 +217,6 @@
 "分析" = "Analysis";
 "刚开袋，酸质冲一点" = "Just opened; the acidity is a bit sharp";
 "创建" = "Create";
-"创建一个新的内容组织空间" = "A new space to organise your content";
 "创建于 %@" = "Created %@";
 "创建时间" = "Created";
 "创建画布" = "Create canvas";
@@ -387,6 +386,7 @@
 "尽快喝完" = "Finish it soon";
 "层级匹配" = "Hierarchy match";
 "展开依据" = "Show evidence";
+"工作室还空着" = "The studio shelf is empty";
 "巧克力" = "Chocolate";
 "已关联 %@ 条与这包豆子直接相关的知识。" = "Linked %@ entries of knowledge directly relevant to this bag.";
 "已喝完" = "Finished";
@@ -464,8 +464,10 @@
 "手动记录" = "Manual note";
 "打开" = "Opening";
 "找到 %@ 条相似记录" = "Found %@ similar records";
+"把下一包豆带进来，风味档案继续写下去。" = "Bring in the next bag and keep writing the flavour archive.";
 "把总容量调整为 %@" = "Set the bag size to %@";
 "把整个豆仓带走" = "Take the whole shelf with you";
+"把第一包咖啡豆带进来，看着风味一天天打开。" = "Bring in your first bag of coffee and watch it open up day by day.";
 "把记录带走" = "Take your records with you";
 "抱歉，这次没能生成回答。" = "Sorry, no answer could be generated this time.";
 "拍下它的原因、当时的想法" = "Why you took it, what you were thinking";
@@ -574,6 +576,7 @@
 "查看变化" = "See changes";
 "查看完整分析" = "Show full analysis";
 "查看帖子" = "View post";
+"查看详情" = "Details";
 "标签" = "Tags";
 "标签会从所有记录上移除，记录本身不受影响。" = "The tag is removed from every record. The records themselves stay.";
 "标签名" = "Tag name";
@@ -660,7 +663,6 @@
 "深烘" = "Dark";
 "添加" = "Add";
 "添加一条" = "Add one";
-"添加下一包豆，继续记录你的风味轨迹。" = "Add the next bag and keep tracing how your flavours move.";
 "添加第一包豆" = "Add your first bag";
 "添加第一条" = "Add the first one";
 "添加自定义风味" = "Add a custom flavour";
@@ -843,7 +845,6 @@
 "记录于" = "Recorded";
 "记录到的风味：%@。" = "Flavours recorded: %@.";
 "记录开封日期和剩余量" = "Track the open date and how much is left";
-"记录每一包豆，看到风味怎么变化。先添加正在喝的这一包。" = "Log every bag and watch its flavour move. Start with the one you're drinking.";
 "设备" = "Equipment";
 "设备指引" = "Equipment guidance";
 "设置" = "Settings";
@@ -860,7 +861,6 @@
 "调整剩余量" = "Adjust stock";
 "调整方向与上次建议一致。" = "The change went the way the last suggestion pointed.";
 "调高一点" = "a little warmer";
-"豆仓暂时空了" = "The cellar is empty";
 "豆仓现状" = "Your cellar right now";
 "豆仓还是空的" = "Your coffee shelf is empty";
 "豆仓里还没有豆子。先加一包，喝过几次之后这里就会有话说了。" = "No bags in the cellar yet. Add one and brew it a few times, and this page will have something to say.";
@@ -881,7 +881,6 @@
 "还有 %@ 条相关资料因为篇幅没有放进来。" = "%@ more relevant items did not fit in the context.";
 "还有约 %@ 天进入窗口" = "Opens in about %@ days";
 "还比较不了这次的参数" = "This brew cannot be compared yet";
-"还没有你的咖啡豆" = "No coffee of yours yet";
 "还没有冲煮记录" = "No brews yet";
 "还没有冲煮记录\n记下第一杯，之后才能看到你的参数变化和个人规律。" = "No brews yet.\nLog the first cup and your parameter patterns will start to show up here.";
 "还没有冲煮记录。冲完随手记一笔，这里会长起来。" = "No brews yet. Log one as you drink it and this list starts to grow.";
@@ -892,6 +891,7 @@
 "还没有画布" = "No canvases yet";
 "还没有记录" = "No records yet";
 "还没有请求通知权限，添加第一包豆子时会问一次" = "Notification permission has not been asked for yet — it comes up once when you add your first bean";
+"这一批都喝完了" = "Every bag is finished";
 "这一杯和你自己表现较好的记录差得比较远。" = "This cup sits well away from your better brews.";
 "这一杯和你自己评价较高的那几次差得比较远。" = "This cup sits well away from the brews you rated higher.";
 "这一杯在你自己的记录里没有明显异常。" = "This cup shows nothing unusual against your own records.";

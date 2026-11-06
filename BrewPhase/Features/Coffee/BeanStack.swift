@@ -235,12 +235,13 @@ enum BeanDeck {
 }
 
 // MARK: - The card itself
-/// One bag, at the front of the stack.
+/// One bag, at the front of the stack — an archive card on the studio bench.
 ///
-/// Seven things and no more: picture, name, where it is from, its phase, its age,
-/// how much is left, and the one action. Everything else — the tally, the full
-/// flavour analysis, the estimate, the history — lives on the detail page. The
-/// card is an invitation, not a dashboard.
+/// The photo leads (a real picture when the user has one, a quiet ceramic
+/// placeholder when they don't), the name follows, then the phase, the track,
+/// what's left, and exactly two actions: brew it, or read the archive.
+/// Everything else — the tally, the full flavour analysis, the estimate, the
+/// history — lives on the detail page. The card is an invitation, not a dashboard.
 struct FocusedBeanCard: View {
 
     let insight: BeanInsight
@@ -256,42 +257,87 @@ struct FocusedBeanCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            hero
+
             VStack(alignment: .leading, spacing: 0) {
-                phaseRow
                 identity.padding(.top, 16)
+                phaseRow.padding(.top, 13)
                 if let reason {
                     Text(LocalizedStringKey.alreadyLocalized(reason))
                         .font(TypeScale.caption)
                         .foregroundStyle(Palette.inkSoft)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 12)
+                        .padding(.top, 11)
                 }
-                PhaseTrack(reading: reading, showsMarker: true, showsLegend: false, barHeight: 5)
-                    .padding(.top, 20)
-                stockRow.padding(.top, 13)
+                PhaseTrack(reading: reading, showsMarker: true, showsLegend: false, barHeight: 6)
+                    .padding(.top, 17)
+                stockRow.padding(.top, 14)
             }
+            .padding(.horizontal, Metric.cardPadding)
+            .padding(.top, 16)
             .contentShape(Rectangle())
             .onTapGesture(perform: onOpen)
 
-            Spacer(minLength: 22)
+            Spacer(minLength: 20)
 
             PrimaryButton(title: "开始冲煮", systemImage: "cup.and.saucer.fill", action: onBrew)
+                .padding(.horizontal, Metric.cardPadding)
+                .padding(.bottom, Metric.cardPadding)
         }
-        .padding(Metric.cardPadding)
-        .frame(maxWidth: .infinity, minHeight: 330, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: Metric.radius, style: .continuous)
-                .fill(Palette.card)
-        )
+        .frame(maxWidth: .infinity, minHeight: 372, alignment: .topLeading)
+        .background(Palette.card)
+        .clipShape(RoundedRectangle(cornerRadius: Metric.radiusLarge, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: Metric.radius, style: .continuous)
+            RoundedRectangle(cornerRadius: Metric.radiusLarge, style: .continuous)
                 .strokeBorder(Palette.hairline, lineWidth: 0.7)
         )
         .shadow(color: Palette.liftedShadow, radius: 18, x: 0, y: 8)
     }
 
+    // MARK: - Hero
+
+    /// The bag's own picture, full width and flush with the card's top corners.
+    /// Without one, a quiet ceramic placeholder holds the space so the deck
+    /// keeps one rhythm instead of jumping between card heights.
+    private var hero: some View {
+        Group {
+            if let image = ImageStore.shared.image(named: bean.imagePath, thumbnail: false) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                ZStack {
+                    Palette.well
+                    Image(systemName: "cup.and.saucer")
+                        .font(.system(size: 30, weight: .light))
+                        .foregroundStyle(Palette.latte.opacity(0.85))
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 148)
+        .clipped()
+        .accessibilityHidden(true)
+    }
+
     // MARK: - Rows
+
+    private var identity: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(bean.name.isEmpty ? LocalizedStringKey("未命名") : .alreadyLocalized(bean.name))
+                .font(TypeScale.beanName)
+                .foregroundStyle(Palette.ink)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(originLine)
+                .font(TypeScale.callout)
+                .foregroundStyle(Palette.inkSoft)
+                .lineLimit(1)
+        }
+    }
 
     private var phaseRow: some View {
         HStack(spacing: 6) {
@@ -301,38 +347,34 @@ struct FocusedBeanCard: View {
                 .foregroundStyle(phaseColor)
             Spacer(minLength: 8)
             Text(verbatim: Fmt.day(reading.dayAfterRoast))
-                .font(TypeScale.caption.monospacedDigit())
+                .font(TypeScale.dataSmall)
                 .foregroundStyle(Palette.inkFaint)
         }
     }
 
-    private var identity: some View {
-        HStack(alignment: .top, spacing: 15) {
-            BeanThumbnail(imageName: bean.imagePath, size: 92, cornerRadius: 12)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text(bean.name.isEmpty ? LocalizedStringKey("未命名") : .alreadyLocalized(bean.name))
-                    .font(TypeScale.beanName)
-                    .foregroundStyle(Palette.ink)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.8)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Text(originLine)
-                    .font(TypeScale.callout)
-                    .foregroundStyle(Palette.inkSoft)
-                    .lineLimit(1)
-            }
-            .padding(.top, 2)
-
-            Spacer(minLength: 0)
-        }
-    }
-
+    /// What's left, in monospaced data; the archive opens from the other end
+    /// of the same line, so the card keeps exactly two actions.
     private var stockRow: some View {
-        Text(L("剩余 %@", Fmt.grams(bean.remainingG)))
-            .font(TypeScale.numeral)
-            .foregroundStyle(Palette.ink)
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(L("剩余 %@", Fmt.grams(bean.remainingG)))
+                .font(TypeScale.numeral)
+                .foregroundStyle(Palette.ink)
+
+            Spacer(minLength: 8)
+
+            Button(action: onOpen) {
+                HStack(spacing: 3) {
+                    Text("查看详情")
+                        .font(TypeScale.caption)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+                .foregroundStyle(Palette.roast)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("查看详情")
+        }
     }
 
     // MARK: - Words

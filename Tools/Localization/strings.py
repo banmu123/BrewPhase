@@ -1332,6 +1332,15 @@ EN: dict[str, str] = {
     "十年前的老歌，画质修得真好。": "A ten-year-old song, and the remaster still looks great.",
     "互联网上的第一条推文。": "The first post on the internet.",
 
+    # MARK: Studio home — brand header, empty bench, archive link
+    "工作室还空着": "The studio shelf is empty",
+    "把第一包咖啡豆带进来，看着风味一天天打开。":
+        "Bring in your first bag of coffee and watch it open up day by day.",
+    "这一批都喝完了": "Every bag is finished",
+    "把下一包豆带进来，风味档案继续写下去。":
+        "Bring in the next bag and keep writing the flavour archive.",
+    "查看详情": "Details",
+
     # MARK: My Café — tabs, records and canvases
     "咖啡": "Coffee",
     "记录": "Records",

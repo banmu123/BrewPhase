@@ -65,8 +65,8 @@ struct CoffeeHomeView: View {
                     if beans.isEmpty {
                         EmptyStateView(
                             symbol: "square.stack.3d.up",
-                            title: "还没有你的咖啡豆",
-                            message: "记录每一包豆，看到风味怎么变化。先添加正在喝的这一包。",
+                            title: "工作室还空着",
+                            message: "把第一包咖啡豆带进来，看着风味一天天打开。",
                             actionLabel: "添加第一包豆",
                             action: { isAddingBean = true }
                         )
@@ -132,7 +132,14 @@ struct CoffeeHomeView: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 6) {
+                // 品牌 overline：拉丁字专属的衬线小字，中文标题不跟风。
+                Text(verbatim: "BREWPHASE / STUDIO")
+                    .font(TypeScale.brandMark)
+                    .italic()
+                    .tracking(2.4)
+                    .foregroundStyle(Palette.inkFaint)
+
                 Text("咖啡")
                     .font(TypeScale.display)
                     .foregroundStyle(Palette.ink)
@@ -178,8 +185,8 @@ struct CoffeeHomeView: View {
     private var cellarEmptied: some View {
         EmptyStateView(
             symbol: "checkmark.seal",
-            title: "豆仓暂时空了",
-            message: "添加下一包豆，继续记录你的风味轨迹。",
+            title: "这一批都喝完了",
+            message: "把下一包豆带进来，风味档案继续写下去。",
             actionLabel: "添加豆子",
             action: { isAddingBean = true }
         )
@@ -219,9 +226,7 @@ struct CoffeeHomeView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, 14)
 
-                SecondaryButton(title: "记一杯", systemImage: "plus") {
-                    isLoggingBrew = true
-                }
+                logAnotherBrew
             } else {
                 let recent = Array(brews.prefix(2))
                 ForEach(Array(recent.enumerated()), id: \.element.id) { index, brew in
@@ -237,35 +242,58 @@ struct CoffeeHomeView: View {
                     }
                 }
 
-                SecondaryButton(title: "记一杯", systemImage: "plus") {
-                    isLoggingBrew = true
-                }
-                .padding(.top, 14)
+                logAnotherBrew
             }
         }
+    }
+
+    /// 轻量级「记一杯」：一行文字加一个加号，不再是一枚胶囊按钮——
+    /// 它是工作台上的日常动作，不是一个功能入口。
+    private var logAnotherBrew: some View {
+        Button {
+            isLoggingBrew = true
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("记一杯")
+                    .font(TypeScale.callout.weight(.medium))
+            }
+            .foregroundStyle(Palette.roast)
+            .padding(.vertical, 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func brewRow(_ brew: Brew) -> some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(brew.method.trimmed.isEmpty
                          ? LocalizedStringKey("冲煮")
                          : .alreadyLocalized(brew.method))
                         .font(TypeScale.bodyMedium)
                         .foregroundStyle(Palette.ink)
 
+                    Spacer(minLength: 8)
+
                     Text(verbatim: Fmt.short(brew.date, calendar: DateMath.calendar))
-                        .font(TypeScale.caption)
+                        .font(TypeScale.dataSmall)
                         .foregroundStyle(Palette.inkFaint)
                 }
 
-                HStack(spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
                     if let beanName = brew.bean?.displayName, !beanName.isEmpty {
                         Text(LocalizedStringKey.alreadyLocalized(beanName))
                             .font(TypeScale.caption)
                             .foregroundStyle(Palette.inkSoft)
                             .lineLimit(1)
+                    }
+                    if brew.coffeeG > 0 {
+                        Text(verbatim: Fmt.doseLine(coffeeG: brew.coffeeG, waterG: brew.waterG))
+                            .font(TypeScale.numeral)
+                            .foregroundStyle(Palette.inkFaint)
                     }
                     if let taste = brew.tasteLine {
                         Text(LocalizedStringKey.alreadyLocalized(taste))

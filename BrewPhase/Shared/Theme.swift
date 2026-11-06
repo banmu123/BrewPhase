@@ -119,17 +119,40 @@ enum TypeScale {
     /// Numbers that sit in columns should not jitter.
     static let numeral = Font.system(size: 15, weight: .medium).monospacedDigit()
     static let bigNumeral = Font.system(size: 24, weight: .semibold).monospacedDigit()
+    /// Small data: a bag's day count, a date, the deck's `01 / 06`.
+    static let dataSmall = Font.system(size: 12).monospacedDigit()
     /// The app's small piece of ceremony.
     static let signature = Font.system(size: 12.5, weight: .light, design: .serif)
+    /// The brand overline — `BREWPHASE / STUDIO`. Latin only; pair with
+    /// `.tracking(2.4)` (and italic if the composition wants it) at the call
+    /// site. Chinese headings never use this: they stay on the sans ladder.
+    static let brandMark = Font.system(size: 12, weight: .medium, design: .serif)
 }
 
 enum Metric {
     static let radius: CGFloat = 16
     static let radiusSmall: CGFloat = 10
+    /// Large display surfaces — the focused bag card, full-screen panels.
+    static let radiusLarge: CGFloat = 20
     static let cardPadding: CGFloat = 18
-    static let gutter: CGFloat = 20
-    static let sectionGap: CGFloat = 26
+    /// Page gutter: the studio keeps its walls at 22pt (Design System v1 §4).
+    static let gutter: CGFloat = 22
+    static let sectionGap: CGFloat = 28
     static let tabBarInset: CGFloat = 12
+
+    /// The 4pt ladder (Design System v1 §4). Use these instead of bare numbers
+    /// so the page's breathing rhythm stays consistent.
+    enum Space {
+        static let xxs: CGFloat = 4
+        static let xs: CGFloat = 8
+        static let sm: CGFloat = 12
+        static let md: CGFloat = 16
+        static let lg: CGFloat = 20
+        static let xl: CGFloat = 24
+        static let xxl: CGFloat = 32
+        static let xxxl: CGFloat = 40
+        static let xxxxl: CGFloat = 48
+    }
 
     // MARK: - The bag stack
 
@@ -155,5 +178,7 @@ enum Motion {
     static let glide = Animation.spring(response: 0.5, dampingFraction: 0.9)
     /// Flicking to the next bag in the stack.
     static let swipe = Animation.spring(response: 0.34, dampingFraction: 0.86)
+    /// Control-level appear/disappear — between `quick` and `pop`.
+    static let standard = Animation.spring(response: 0.24, dampingFraction: 0.82)
     static let quick = Animation.easeOut(duration: 0.18)
 }
