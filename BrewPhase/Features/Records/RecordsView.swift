@@ -1,6 +1,7 @@
 import AVKit
 import SwiftData
 import SwiftUI
+import UIKit
 
 /// 记录 —— 一级页面之二，一个人的内容收集空间。
 ///
@@ -502,6 +503,7 @@ struct RecordDetailView: View {
 
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
 
     @State private var isEditing = false
     @State private var isConfirmingDelete = false
@@ -511,6 +513,11 @@ struct RecordDetailView: View {
     @State private var isRefreshing = false
     @State private var refreshFailure: LinkFailure?
     @State private var isHydratingCover = false
+    /// 本地视频的播放器：进页面建一次，重绘不重建（重建会让播放从头开始）。
+    @State private var player: AVPlayer?
+    /// 复制成功的轻量反馈。用 token 而不是布尔：连续复制两次时，
+    /// 第一次的隐藏任务不会把第二次的提示提前收走。
+    @State private var copyFeedbackToken: UUID?
 
     /// `autoPlay` 只给调试截图用：正常路径必须先点封面才会创建播放器。
     init(record: Record, autoPlay: Bool = false) {
@@ -520,94 +527,20 @@ struct RecordDetailView: View {
 
     private var tint: Color { RecordPresentation.tint(record.carrier) }
 
+    /// 详情页的展示决策：标题、作者、正文、备注、来源各自只说一遍。
+    private var presentation: RecordDetailPresentation {
+        RecordDetailPresentation(record: record)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 header
-
-                if record.carrier == .image, let image = ImageStore.shared.image(named: record.mediaPath, thumbnail: false) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: .infinity)
-                        .clipShape(RoundedRectangle(cornerRadius: Metric.radius, style: .continuous))
-                        .padding(.top, 18)
-                }
-
-                if record.carrier == .video {
-                    videoPlayer.padding(.top, 18)
-                }
-
-                if record.carrier == .link {
-                    linkMedia.padding(.top, 18)
-                }
-
-                if record.carrier == .link, let summary = record.linkSummary {
-                    Text(verbatim: summary)
-                        .font(TypeScale.callout)
-                        .foregroundStyle(Palette.inkSoft)
-                        .lineSpacing(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 16)
-                }
-
-                if !record.note.trimmed.isEmpty {
-                    Text(record.note)
-                        .font(TypeScale.body)
-                        .foregroundStyle(Palette.ink)
-                        .lineSpacing(4)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 16)
-                }
-
-                if record.carrier == .link, let url = record.openLink {
-                    Link(destination: url) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "arrow.up.right")
-                                .font(.system(size: 12, weight: .semibold))
-                            Text(verbatim: record.linkHost ?? record.urlString)
-                                .font(TypeScale.callout)
-                                .lineLimit(1)
-                            Spacer(minLength: 0)
-                        }
-                        .foregroundStyle(Palette.roast)
-                        .padding(.vertical, 12)
-                        .contentShape(Rectangle())
-                    }
-                    .padding(.top, 10)
-                    .accessibilityLabel(record.urlString)
-                }
-
-                if !record.orderedTags.isEmpty {
-                    FlowLayout(spacing: 6, lineSpacing: 6) {
-                        ForEach(record.orderedTags) { tag in
-                            Chip(text: tag.displayName, tint: Palette.inkSoft, background: Palette.well)
-                        }
-                    }
-                    .padding(.top, 16)
-                }
-
-                Hairline().padding(.top, 20)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    // 来源与作者已经写在标题下面，这里只留时间——同一件事不说两遍。
-                    detailLine("记录于", Fmt.precise(record.createdAt, calendar: DateMath.calendar))
-                }
-                .padding(.top, 16)
-
-                if needsMetadataRefresh {
-                    refreshRow.padding(.top, 16)
-                }
-
-                Button(role: .destructive) {
-                    isConfirmingDelete = true
-                } label: {
-                    Text("删除这条记录")
-                        .font(TypeScale.callout)
-                        .foregroundStyle(Palette.priority)
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 28)
+                originalContent.padding(.top, 18)
+                personalNoteSection.padding(.top, 24)
+                sourceSection.padding(.top, 24)
+                tagsSection.padding(.top, 20)
+                metadataSection.padding(.top, 24)
             }
             .padding(.horizontal, Metric.gutter)
             .padding(.top, 8)
@@ -616,11 +549,10 @@ struct RecordDetailView: View {
         .background(Palette.paper)
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .overlay(alignment: .bottom) { copyConfirmation }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("编辑") { isEditing = true }
-                    .font(TypeScale.callout)
-                    .foregroundStyle(Palette.roast)
+                moreMenu
             }
         }
         .sheet(isPresented: $isEditing) {
@@ -652,6 +584,8 @@ struct RecordDetailView: View {
         }
     }
 
+    // MARK: - 01 Header
+
     private var header: some View {
         HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 8) {
@@ -673,26 +607,21 @@ struct RecordDetailView: View {
                                 .foregroundStyle(Palette.inkFaint)
                                 .lineLimit(1)
                         }
-                        Text(.alreadyLocalized(record.repositoryName ?? record.displayTitle))
-                            .font(TypeScale.beanName)
-                            .foregroundStyle(Palette.ink)
-                            .fixedSize(horizontal: false, vertical: true)
+                        if !presentation.title.isEmpty {
+                            titleText(presentation.title)
+                        }
                     }
-                } else {
-                    Text(record.displayTitle.isEmpty
-                         ? LocalizedStringKey(record.carrier.title)
-                         : .alreadyLocalized(record.displayTitle))
-                        .font(TypeScale.beanName)
-                        .foregroundStyle(Palette.ink)
-                        .fixedSize(horizontal: false, vertical: true)
+                } else if !presentation.title.isEmpty {
+                    titleText(presentation.title)
                 }
 
-                if record.carrier == .link, let credit = record.linkCreditLine,
-                   !(record.provider == .github && record.repositoryOwner != nil) {
-                    // GitHub 的 owner 已经拆在标题上了，不再重复。
+                // 作者是辅助信息，域名属于来源区——同一件事不在两处出现。
+                if let credit = presentation.credit {
                     Text(verbatim: credit)
                         .font(TypeScale.callout)
                         .foregroundStyle(Palette.inkSoft)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if !record.repositoryStatItems.isEmpty {
@@ -721,6 +650,210 @@ struct RecordDetailView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 4)
+    }
+
+    private func titleText(_ text: String) -> some View {
+        Text(.alreadyLocalized(text))
+            .font(TypeScale.beanName)
+            .foregroundStyle(Palette.ink)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    // MARK: - 02 原始内容
+
+    /// 内容永远排在个人备注之前：先看「我收了什么」，再看「我当时怎么想」。
+    @ViewBuilder
+    private var originalContent: some View {
+        switch record.carrier {
+        case .image:
+            if let image = ImageStore.shared.image(named: record.mediaPath, thumbnail: false) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: Metric.radius, style: .continuous))
+            }
+
+        case .video:
+            videoPlayer
+
+        case .link:
+            VStack(alignment: .leading, spacing: 16) {
+                linkMedia
+                if let content = presentation.content {
+                    Text(verbatim: content)
+                        .font(TypeScale.callout)
+                        .foregroundStyle(Palette.inkSoft)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+        case .text:
+            // 文字记录的 note 就是原文：它是正文，不是备注。
+            if let content = presentation.content {
+                Text(verbatim: content)
+                    .font(TypeScale.body)
+                    .foregroundStyle(Palette.ink)
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    // MARK: - 03 我的备注
+
+    @ViewBuilder
+    private var personalNoteSection: some View {
+        if let note = presentation.personalNote {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("我的备注")
+                    .font(TypeScale.micro)
+                    .tracking(0.8)
+                    .foregroundStyle(Palette.inkFaint)
+                Text(verbatim: note)
+                    .font(TypeScale.body)
+                    .foregroundStyle(Palette.ink)
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    // MARK: - 04 来源
+
+    @ViewBuilder
+    private var sourceSection: some View {
+        if let url = presentation.sourceURL {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("来源")
+                    .font(TypeScale.micro)
+                    .tracking(0.8)
+                    .foregroundStyle(Palette.inkFaint)
+
+                Button {
+                    openURL(url)
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(verbatim: record.providerLabel ?? record.linkHost ?? url.absoluteString)
+                            .font(TypeScale.callout)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundStyle(Palette.roast)
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("打开原始来源")
+                .accessibilityHint(record.linkHost ?? url.absoluteString)
+
+                // 完整网址只是辅助：很长时中间截断，不换行撑破版面。
+                Text(verbatim: url.absoluteString)
+                    .font(TypeScale.micro)
+                    .foregroundStyle(Palette.inkFaint)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    // MARK: - 05 标签
+
+    @ViewBuilder
+    private var tagsSection: some View {
+        if !record.orderedTags.isEmpty {
+            FlowLayout(spacing: 6, lineSpacing: 6) {
+                ForEach(record.orderedTags) { tag in
+                    Chip(text: tag.displayName, tint: Palette.inkSoft, background: Palette.well)
+                }
+            }
+        }
+    }
+
+    // MARK: - 06 元数据
+
+    private var metadataSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Hairline()
+            // 来源与作者已经在标题区/来源区说过，这里只留时间。
+            detailLine("记录于", Fmt.precise(record.createdAt, calendar: DateMath.calendar))
+            if needsMetadataRefresh {
+                refreshRow
+            }
+        }
+    }
+
+    // MARK: - 更多操作
+
+    private var moreMenu: some View {
+        Menu {
+            Button {
+                isEditing = true
+            } label: {
+                Label("编辑", systemImage: "square.and.pencil")
+            }
+
+            if let url = presentation.sourceURL {
+                Button {
+                    openURL(url)
+                } label: {
+                    Label("打开原始来源", systemImage: "arrow.up.right.square")
+                }
+                Button {
+                    copyLink(url)
+                } label: {
+                    Label("复制链接", systemImage: "doc.on.doc")
+                }
+            }
+
+            Divider()
+
+            Button(role: .destructive) {
+                isConfirmingDelete = true
+            } label: {
+                Label("删除这条记录", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 17))
+                .foregroundStyle(Palette.roast)
+        }
+        .accessibilityLabel("更多操作")
+    }
+
+    @ViewBuilder
+    private var copyConfirmation: some View {
+        if copyFeedbackToken != nil {
+            Text("已复制链接")
+                .font(TypeScale.caption)
+                .foregroundStyle(Palette.card)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Capsule(style: .continuous).fill(Palette.espresso.opacity(0.92)))
+                .padding(.bottom, 24)
+                .transition(.opacity)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func copyLink(_ url: URL) {
+        UIPasteboard.general.string = url.absoluteString
+        let token = UUID()
+        withAnimation(Motion.quick) { copyFeedbackToken = token }
+        // 视觉提示一闪而过，辅助技术需要一次播报才知道复制成功了。
+        UIAccessibility.post(notification: .announcement, argument: L("已复制链接"))
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.6))
+            guard copyFeedbackToken == token else { return }
+            withAnimation(Motion.quick) { copyFeedbackToken = nil }
+        }
     }
 
     /// 链接的徽标只说平台，不说载体——「链接」这两个字对读者没有信息量。
@@ -868,12 +1001,18 @@ struct RecordDetailView: View {
 
     private func refreshMetadata() {
         guard let url = record.resolvedLink, !isRefreshing else { return }
+        // 请求发出前拍一张快照：等待期间用户可能改地址、也可能自己写了标题。
+        // 回来时只把结果交给「还是同一条、同一个地址」的记录。
+        let requestedURL = url
+        let titleAtRequest = record.title
         isRefreshing = true
         refreshFailure = nil
         Task {
             let resolution = await LinkResolver.resolve(url)
             isRefreshing = false
             guard !Task.isCancelled else { return }
+            // 用户换了地址：这份响应与记录已经无关，整份丢掉。
+            guard record.resolvedLink == requestedURL else { return }
 
             record.adopt(resolution.match)
             if resolution.metadata.status == .failed {
@@ -881,7 +1020,10 @@ struct RecordDetailView: View {
                 record.metadataStatus = resolution.metadata.status
             } else {
                 record.adopt(resolution.metadata)
-                if record.title.trimmed.isEmpty, let fetched = resolution.metadata.title {
+                // 只有「标题仍是请求发出时那一个」且为空，才接受抓回来的标题：
+                // 用户在等待期间自己写的标题优先。
+                if record.title == titleAtRequest, record.title.trimmed.isEmpty,
+                   let fetched = resolution.metadata.title {
                     record.title = fetched
                 }
             }
@@ -895,12 +1037,22 @@ struct RecordDetailView: View {
         }
     }
 
+    /// 本地视频：文件在就播，不在就明说。
+    ///
+    /// 播放器实例挂在 `@State` 上，只在进入页面（或换了文件）时创建一次。
+    /// 旧实现每次 body 求值都 `AVPlayer(url:)`，任何一次重绘——复制提示、
+    /// 元数据刷新、从编辑页返回——都会换掉播放器，正在看的视频从头开始。
     @ViewBuilder
     private var videoPlayer: some View {
         if let path = record.mediaPath, MediaStore.shared.exists(path) {
-            VideoPlayer(player: AVPlayer(url: MediaStore.shared.url(for: path)))
+            VideoPlayer(player: player)
                 .frame(height: 220)
                 .clipShape(RoundedRectangle(cornerRadius: Metric.radius, style: .continuous))
+                .task(id: record.mediaPath) {
+                    player?.pause()
+                    player = AVPlayer(url: MediaStore.shared.url(for: path))
+                }
+                .onDisappear { player?.pause() }
         } else {
             VStack(spacing: 8) {
                 Image(systemName: "video.slash")

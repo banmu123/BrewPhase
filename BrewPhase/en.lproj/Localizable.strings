@@ -358,6 +358,7 @@
 "备注：%@" = "Notes: %@";
 "复制" = "Copy";
 "复制上次冲煮" = "Copy last brew";
+"复制链接" = "Copy link";
 "多一点" = "a bit more";
 "多加一点粉" = "a little more coffee";
 "好" = "OK";
@@ -397,6 +398,7 @@
 "已关联 %@ 条与这包豆子直接相关的知识。" = "Linked %@ entries of knowledge directly relevant to this bag.";
 "已喝完" = "Finished";
 "已填入上次的参数" = "Filled in from your last brew";
+"已复制链接" = "Link copied";
 "已恢复 %@ 包豆子、%@ 条冲煮记录、%@ 条风味记录，以及 %@ 条记录、%@ 块画布。" = "Restored %@ bags, %@ brews, %@ tastings, %@ records and %@ canvases.";
 "已清理 %@ 个文件" = "Removed %@ files";
 "已经喝完了" = "This bag is finished";
@@ -462,6 +464,7 @@
 "我想建立怎样的生活？" = "What kind of life do I want to build?";
 "我最近的参数有什么变化？" = "How have my parameters changed lately?";
 "我的咖啡探索" = "My coffee trail";
+"我的备注" = "My note";
 "我的最佳参数" = "My best parameters";
 "所有数据随时可以导出带走。" = "All your data can be exported at any time.";
 "手冲/滤泡" = "filter";
@@ -469,6 +472,7 @@
 "手冲首选，V60 闷蒸 30 秒。" = "First choice for pour-over; 30-second bloom on the V60.";
 "手动记录" = "Manual note";
 "打开" = "Opening";
+"打开原始来源" = "Open original";
 "找到 %@ 条相似记录" = "Found %@ similar records";
 "把下一包豆带进来，风味档案继续写下去。" = "Bring in the next bag and keep writing the flavour archive.";
 "把总容量调整为 %@" = "Set the bag size to %@";
@@ -543,6 +547,7 @@
 "更多" = "More";
 "更多信息" = "More details";
 "更多参数" = "More parameters";
+"更多操作" = "More actions";
 "替换并恢复" = "Replace and restore";
 "最常用" = "Most used";
 "最近 %@ 天" = "last %@ days";
@@ -573,6 +578,7 @@
 "本次将沿用上次参数" = "This brew starts from those parameters";
 "本次表现" = "This cup";
 "术语" = "Terminology";
+"来源" = "Source";
 "来自 BrewPhase 知识库" = "From the BrewPhase knowledge base";
 "来自你的记录" = "From your records";
 "柑橘" = "Mandarin";
