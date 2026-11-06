@@ -86,9 +86,15 @@
   删除必须走 `CanvasNodeStore`（记录删除、画布删除、示例数据三条路径），
   与删除同一次 save；删节点永远不删记录。
 * **只存世界坐标**：屏幕位置 = 世界 × `CanvasViewport.scale` + offset；缩放只改
-  视口。`.position` 会把视图撑满父级——手势/可访问性必须挂在 `.position` 之前。
+  视口。节点不再各自 `.position/scaleEffect`——`CanvasWorldLayer` 整层只做一次
+  变换；手势在命名屏幕空间（`canvas-screen`）取位移，再 ÷ scale 得世界位移。
 * **拖动只改内存**：`@State translation` 跟手，松手才 `CanvasNodeStore.move`，
-  一次拖动一次写库。
+  一次拖动一次写库；拖动中只临时抬 zIndex。
+* **点击语义**：单击节点直接推 `RecordDetailView`；播放/暂停是独立 Button；
+  备注/移除放 contextMenu（备注写 CanvasNode）。
+* **列表缩略图**：`CanvasThumbnailPreview` 用全部节点算包围盒、最多绘 8 个
+  （四类各一 + 补齐），只读本地缩略图，不建播放器/WebView；`canvas.touch()`
+  驱动刷新。
 * **备份 v4**：`canvasNodes` 是可选段；旧备份（v2/v3）不动设备已有节点；
   坏引用节点跳过并记日志，不失败整份备份。
 
