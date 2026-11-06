@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import UIKit
 
 /// Sample coffee, for looking at the app rather than using it.
 ///
@@ -77,11 +78,25 @@ enum DemoData {
         )) ?? []
         guard !samples.isEmpty || !records.isEmpty || !canvases.isEmpty else { return false }
 
+        // 媒体文件的名先收好：落库成功之后才删盘，顺序与 RecordsView.delete 一致。
+        var imageFiles: [String] = []
+        var videoFiles: [String] = []
+        for record in records {
+            if record.carrier == .video, let media = record.mediaPath {
+                videoFiles.append(media)
+            } else if let media = record.mediaPath {
+                imageFiles.append(media)
+            }
+            if let preview = record.previewPath { imageFiles.append(preview) }
+        }
+
         for bean in samples { context.delete(bean) }
         for record in records { context.delete(record) }
         for canvas in canvases { context.delete(canvas) }
         do {
             try context.save()
+            for file in imageFiles { ImageStore.shared.delete(file) }
+            for file in videoFiles { MediaStore.shared.delete(file) }
             AppLog.store.info(
                 "sample data removed: \(samples.count) bean(s), \(records.count) record(s), \(canvases.count) canvas(es)"
             )
@@ -314,8 +329,11 @@ enum DemoData {
     // YouTube 上的 Blender 短片、X 上第一条推文），元数据在安装时静态写好，
     // 不联网。这样列表里能同时看到视频卡、仓库卡、帖子卡与普通网页卡；
     // 点进 B 站那条还能真的把官方播放器拉起来。
-    // 图片与视频载体不放假文件——本机没有素材，空占位比伪造一张图诚实。
-    // 全部带 `isSample`，与示例豆一起被那个开关整批删除。
+    // 图片与视频示例在安装时**本机生成**（两色渐变 + 一行留白），带
+    // `isSample`，随「示例数据」开关与记录一起删（`removeInstalled` 会
+    // 连媒体文件一起清）。它们存在的唯一理由：两列瀑布流的原始比例、
+    // 横竖混排与翻页，只有真的图片才看得出问题。数量 ≥ 两页（20 条），
+    // 滚动到底就能验证分页。
 
     static func installSampleRecords(context: ModelContext, today: Date = Date()) {
         func day(_ offset: Int) -> Date { DateMath.add(days: -offset, to: today) }
@@ -361,6 +379,33 @@ enum DemoData {
             // 之后卡片和详情用的都是本地缓存。
             record.metadataStatus = .partial
             return record
+        }
+
+        /// 生成一张两色渐变的示例图，存进 ImageStore，返回文件名。
+        /// 尺寸故意横竖不一：瀑布流的原始比例要拿真的比例验证。
+        func sampleImage(_ colors: [UIColor], width: CGFloat, height: CGFloat) -> String? {
+            let format = UIGraphicsImageRendererFormat.default()
+            format.scale = 1
+            let image = UIGraphicsImageRenderer(size: CGSize(width: width, height: height),
+                                                format: format).image { _ in
+                guard let context = UIGraphicsGetCurrentContext(),
+                      let gradient = CGGradient(
+                        colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                        colors: colors.map(\.cgColor) as CFArray,
+                        locations: [0, 1]) else { return }
+                context.drawLinearGradient(gradient,
+                                           start: .zero,
+                                           end: CGPoint(x: width, y: height),
+                                           options: [])
+            }
+            return try? ImageStore.shared.save(image)
+        }
+
+        func image(_ note: String, _ colors: [UIColor], width: CGFloat, height: CGFloat,
+                   createdAt: Date) -> Record {
+            Record(carrier: .image, note: L(note),
+                   mediaPath: sampleImage(colors, width: width, height: height),
+                   createdAt: createdAt, isSample: true)
         }
 
         let records: [Record] = [
@@ -422,6 +467,56 @@ enum DemoData {
                    title: L("Onibus Coffee 中目黑"),
                    note: L("二楼靠窗，能看到电车经过。点了一杯浅烘的肯尼亚，凉下来之后更像红茶。"),
                    createdAt: day(28), isSample: true),
+
+            image(L(" Saturday 手冲"), [UIColor(red: 0.72, green: 0.60, blue: 0.45, alpha: 1),
+                                      UIColor(red: 0.42, green: 0.32, blue: 0.24, alpha: 1)],
+                  width: 900, height: 700, createdAt: day(31)),
+
+            Record(carrier: .video,
+                   title: L("一杯手冲的时间"),
+                   note: L("封面是示例生成的；视频本体不在示例里，详情页会如实说。"),
+                   previewPath: sampleImage([UIColor(red: 0.55, green: 0.52, blue: 0.48, alpha: 1),
+                                             UIColor(red: 0.25, green: 0.23, blue: 0.21, alpha: 1)],
+                                            width: 1280, height: 720),
+                   createdAt: day(33), isSample: true),
+
+            image(L("浅烘第一天"), [UIColor(red: 0.87, green: 0.80, blue: 0.68, alpha: 1),
+                                   UIColor(red: 0.62, green: 0.48, blue: 0.33, alpha: 1)],
+                  width: 700, height: 1000, createdAt: day(35)),
+
+            Record(carrier: .text,
+                   note: L("磨豆机的刻度又移了半格。记录这种小事，靠的是愿意每天记，不是记得完美。"),
+                   createdAt: day(38), isSample: true),
+
+            image(L("豆仓角落"), [UIColor(red: 0.34, green: 0.38, blue: 0.33, alpha: 1),
+                                 UIColor(red: 0.16, green: 0.18, blue: 0.16, alpha: 1)],
+                  width: 800, height: 800, createdAt: day(41)),
+
+            link("https://github.com/banmu123/BrewPing",
+                 title: "banmu123/BrewPing",
+                 summary: "Cross-platform CLI remote control.",
+                 author: "banmu123",
+                 note: "另一个仓库，桌面端走它。",
+                 stars: 12, language: "Swift",
+                 createdAt: day(44)),
+
+            Record(carrier: .text,
+                   title: L("周一的店"),
+                   note: L("隔壁新开的店用了同一支豆子，做出来的却是另一种味道。手法重要，水也重要。"),
+                   createdAt: day(47), isSample: true),
+
+            image(L("滤杯与秤"), [UIColor(red: 0.78, green: 0.74, blue: 0.70, alpha: 1),
+                                 UIColor(red: 0.36, green: 0.34, blue: 0.32, alpha: 1)],
+                  width: 1000, height: 750, createdAt: day(50)),
+
+            Record(carrier: .text,
+                   note: L("今天什么也没记，只喝了咖啡。这也是记录的一部分。"),
+                   createdAt: day(53), isSample: true),
+
+            Record(carrier: .text,
+                   title: L("老豆子的最后一杯"),
+                   note: L("尾段有点空，但干净。喝完这一包，豆仓又空出一格。"),
+                   createdAt: day(56), isSample: true),
         ]
 
         let tagAssignments: [[String]] = [

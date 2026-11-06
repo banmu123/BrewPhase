@@ -13,7 +13,8 @@ struct RecordEditorView: View {
     let carrier: RecordCarrier
     private let existing: Record?
     /// 在「添加」面板里由面板接管关闭；单独弹出时自己关。
-    private let onSaved: (() -> Void)?
+    /// 参数是落库后的那条记录（有稳定 id），列表页拿它做顶部插入。
+    private let onSaved: ((Record) -> Void)?
 
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
@@ -67,7 +68,7 @@ struct RecordEditorView: View {
     init(carrier: RecordCarrier,
          existing: Record? = nil,
          initialURL: String = "",
-         onSaved: (() -> Void)? = nil) {
+         onSaved: ((Record) -> Void)? = nil) {
         self.carrier = carrier
         self.existing = existing
         self.onSaved = onSaved
@@ -753,7 +754,7 @@ struct RecordEditorView: View {
 
         savedTarget = target
         didSave = true
-        if let onSaved { onSaved() } else { dismiss() }
+        if let onSaved { onSaved(target) } else { dismiss() }
     }
 }
 

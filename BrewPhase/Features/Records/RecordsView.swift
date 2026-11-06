@@ -4,24 +4,27 @@ import SwiftUI
 
 /// 记录 —— 一级页面之二，一个人的内容收集空间。
 ///
-/// 页面只做三件事：按时间列出所有内容、按标签筛、把新的放进来。它不预设这套
-/// 内容「应该」分成几类——分类是用户自己贴的标签，随时能改；系统只认四种载体：
-/// 链接、图片、视频、文字。
+/// 页面骨架：标题与添加入口、常驻搜索、单行标签筛选，内容区交给
+/// `RecordsMasonryView` 的两列瀑布流。它不再全量 `@Query`——数据按批从
+/// `RecordsDataSource` 取，列归属由 `MasonryColumnPlanner` 决定，测高修正
+/// 走 `updateHeight`。系统只认四种载体；分类是用户自己贴的标签。
 struct RecordsView: View {
 
     @Environment(\.modelContext) private var context
 
-    @Query(sort: \Record.createdAt, order: .reverse) private var records: [Record]
+    /// 标签只有几十个，`@Query` 拉全量无所谓；记录走数据源分页。
     @Query(sort: \RecordTag.createdAt) private var tags: [RecordTag]
 
-    @State private var filter: RecordTag?
+    @State private var planner = MasonryColumnPlanner(interItemSpacing: Metric.Space.sm)
+    @State private var dataSource: RecordsDataSource?
+    @State private var searchText = ""
+    @State private var selectedTag: RecordTag?
+    /// Masonry 内容区量到的列宽。0 表示还没布局过。
+    @State private var columnWidth: CGFloat = 0
     @State private var detail: Record?
     /// 长按删除要先过确认：列表上的长按太容易误触。
     @State private var pendingDelete: Record?
     @State private var showsAdd = false
-    @State private var isSearching = false
-    @State private var query = ""
-    @FocusState private var searchFocused: Bool
 
     /// 筛选条只列「真的被用过」的标签：六个建议标签一条记录都没贴的时候，
     /// 摆六个点不动的筛选项只是噪音。
@@ -29,24 +32,13 @@ struct RecordsView: View {
         tags.filter { $0.usageCount > 0 }
     }
 
-    private var filtered: [Record] {
-        var result = records
-        if let filter {
-            result = result.filter { record in
-                (record.tags ?? []).contains { $0.id == filter.id }
-            }
-        }
-        let keyword = query.trimmed.lowercased()
-        if !keyword.isEmpty {
-            result = result.filter { record in
-                record.title.lowercased().contains(keyword)
-                || record.note.lowercased().contains(keyword)
-                || record.sourceName.lowercased().contains(keyword)
-                || (record.linkHost?.lowercased().contains(keyword) ?? false)
-                || (record.tags ?? []).contains { $0.name.lowercased().contains(keyword) }
-            }
-        }
-        return result
+    private var currentQuery: RecordsQuery {
+        RecordsQuery(searchText: searchText, tagID: selectedTag?.id)
+    }
+
+    /// 防抖的触发键：搜索词或标签变化才重启 `.task(id:)`。
+    private var queryKey: String {
+        currentQuery.searchText + "|" + (currentQuery.tagID?.uuidString ?? "")
     }
 
     var body: some View {
@@ -54,15 +46,10 @@ struct RecordsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     header
-
-                    if isSearching {
-                        searchField.padding(.top, 14)
-                    }
-
+                    searchField.padding(.top, 12)
                     if !filters.isEmpty {
-                        filterBar.padding(.top, 14)
+                        filterBar.padding(.top, 10)
                     }
-
                     content.padding(.top, 16)
                 }
                 .padding(.horizontal, Metric.gutter)
@@ -75,11 +62,20 @@ struct RecordsView: View {
                 RecordDetailView(record: record)
             }
             .sheet(isPresented: $showsAdd) {
-                AddFlowView()
+                AddFlowView { record in
+                    handleSavedRecord(record)
+                }
             }
-            .task {
-                guard filter == nil, let name = DebugLaunch.recordTagName else { return }
-                filter = tags.first { $0.name == name || $0.name == L(name) }
+            // 搜索输入防抖：停手 250ms 才真正重查重建，打字过程不发请求。
+            .task(id: queryKey) {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard !Task.isCancelled else { return }
+                reloadForCurrentQuery()
+            }
+            // 从详情页返回、sheet 收起后核对一遍：被删除或被编辑出筛选范围
+            // 的已加载记录，连同它的列位一起撤下。不补拉新记录。
+            .onAppear {
+                reconcileAfterReturn()
             }
             .confirmationDialog(
                 "删除这条记录？",
@@ -104,39 +100,11 @@ struct RecordsView: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text("记录")
-                    .font(TypeScale.display)
-                    .foregroundStyle(Palette.ink)
-
-                if !records.isEmpty {
-                    Text(L("%@ 条", String(records.count)))
-                        .font(TypeScale.caption)
-                        .foregroundStyle(Palette.inkFaint)
-                }
-            }
+            Text("记录")
+                .font(TypeScale.display)
+                .foregroundStyle(Palette.ink)
 
             Spacer(minLength: 0)
-
-            Button {
-                withAnimation(Motion.settle) {
-                    isSearching.toggle()
-                    if isSearching {
-                        searchFocused = true
-                    } else {
-                        query = ""
-                    }
-                }
-            } label: {
-                Image(systemName: isSearching ? "xmark" : "magnifyingglass")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Palette.inkSoft)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(Palette.card))
-                    .overlay(Circle().strokeBorder(Palette.hairline, lineWidth: 0.8))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(isSearching ? "关闭搜索" : "搜索")
 
             Button {
                 showsAdd = true
@@ -158,14 +126,13 @@ struct RecordsView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Palette.inkFaint)
-            TextField("搜索标题、备注、标签", text: $query)
+            TextField("搜索标题、备注、标签", text: $searchText)
                 .font(TypeScale.body)
                 .foregroundStyle(Palette.ink)
-                .focused($searchFocused)
                 .submitLabel(.search)
-            if !query.isEmpty {
+            if !searchText.isEmpty {
                 Button {
-                    query = ""
+                    searchText = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 14))
@@ -183,13 +150,13 @@ struct RecordsView: View {
     private var filterBar: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 7) {
-                FilterChip(title: L("全部"), isOn: filter == nil) {
-                    withAnimation(Motion.quick) { filter = nil }
+                FilterChip(title: L("全部"), isOn: selectedTag == nil) {
+                    withAnimation(Motion.quick) { selectedTag = nil }
                 }
                 ForEach(filters) { tag in
-                    FilterChip(title: tag.displayName, isOn: filter?.id == tag.id) {
+                    FilterChip(title: tag.displayName, isOn: selectedTag?.id == tag.id) {
                         withAnimation(Motion.quick) {
-                            filter = filter?.id == tag.id ? nil : tag
+                            selectedTag = selectedTag?.id == tag.id ? nil : tag
                         }
                     }
                 }
@@ -200,29 +167,71 @@ struct RecordsView: View {
         .scrollClipDisabled()
     }
 
-    // MARK: - 列表
+    // MARK: - 内容
 
     @ViewBuilder
     private var content: some View {
-        if records.isEmpty {
-            EmptyStateView(
-                symbol: "rectangle.stack",
-                title: "还没有记录",
-                message: "一段网页、一张照片、一段视频、一句话。放进来，再决定它对你意味着什么。",
-                actionLabel: "添加第一条",
-                action: { showsAdd = true }
+        if let dataSource, !dataSource.records.isEmpty {
+            RecordsMasonryView(
+                planner: $planner,
+                dataSource: dataSource,
+                onMeasure: { id, height in
+                    measure(id: id, height: height)
+                },
+                onNearBottom: {
+                    loadNextPage()
+                },
+                onOpen: { detail = $0 },
+                onDelete: { pendingDelete = $0 },
+                onWidthChange: { width in
+                    adjustToWidth(width)
+                }
             )
-            .padding(.top, 28)
-        } else if filtered.isEmpty {
-            VStack(spacing: 8) {
-                Text(query.trimmed.isEmpty ? "这个标签下还没有记录。" : "没有匹配的记录。")
+        } else {
+            emptyState
+        }
+    }
+
+    /// 三种空：还没记录（工作台空着）；搜索没命中（给清除搜索的出口）；
+    /// 标签下没有内容（给返回全部的出口）。不用假数据填页面。
+    @ViewBuilder
+    private var emptyState: some View {
+        if let dataSource, dataSource.lastLoadFailed {
+            VStack(spacing: 10) {
+                Text("这批记录没能读出来。")
                     .font(TypeScale.callout)
                     .foregroundStyle(Palette.inkSoft)
-                if query.trimmed.isEmpty {
+                Button {
+                    reloadForCurrentQuery()
+                } label: {
+                    Text("重新加载")
+                        .font(TypeScale.callout)
+                        .foregroundStyle(Palette.roast)
+                }
+                .buttonStyle(.plain)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 60)
+        } else if currentQuery.isActive {
+            VStack(spacing: 10) {
+                Text(selectedTag == nil ? "没有匹配的记录。" : "这个标签下还没有记录。")
+                    .font(TypeScale.callout)
+                    .foregroundStyle(Palette.inkSoft)
+                if !searchText.trimmed.isEmpty {
                     Button {
-                        showsAdd = true
+                        searchText = ""
                     } label: {
-                        Text("添加一条")
+                        Text("清除搜索")
+                            .font(TypeScale.callout)
+                            .foregroundStyle(Palette.roast)
+                    }
+                    .buttonStyle(.plain)
+                }
+                if selectedTag != nil {
+                    Button {
+                        selectedTag = nil
+                    } label: {
+                        Text("返回全部")
                             .font(TypeScale.callout)
                             .foregroundStyle(Palette.roast)
                     }
@@ -231,31 +240,101 @@ struct RecordsView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 60)
+        } else if dataSource == nil {
+            // 首批还在路上：一小会儿的安静，不放骨架屏假卡片。
+            ProgressView()
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 60)
         } else {
-            LazyVStack(spacing: 10) {
-                ForEach(filtered) { record in
-                    Button {
-                        detail = record
-                    } label: {
-                        RecordCard(record: record)
-                    }
-                    .buttonStyle(CardButtonStyle())
-                    .contextMenu {
-                        Button(role: .destructive) {
-                            pendingDelete = record
-                        } label: {
-                            Label("删除这条记录", systemImage: "trash")
-                        }
-                    }
-                }
-            }
+            EmptyStateView(
+                symbol: "rectangle.stack",
+                title: "还没有记录",
+                message: "一段网页、一张照片、一段视频、一句话。放进来，再决定它对你意味着什么。",
+                actionLabel: "添加第一条",
+                action: { showsAdd = true }
+            )
+            .padding(.top, 28)
         }
     }
 
-    // MARK: - 删除
+    // MARK: - 布局协调
+
+    /// 一条记录的布局项：图片/封面按真实比例估算，其余按窄列文本近似。
+    private func layoutItem(for record: Record) -> MasonryLayoutItem {
+        let imagePath = record.carrier == .image ? record.mediaPath : record.previewPath
+        let image = ImageStore.shared.imageDimensions(named: imagePath)
+        let estimated = RecordCardHeightEstimator.estimate(
+            for: record, columnWidth: effectiveColumnWidth, image: image)
+        return MasonryLayoutItem(id: record.id, height: estimated)
+    }
+
+    /// 列宽还没量到时用 16 Pro 单列的近似值顶着：估算只影响初始分派，
+    /// 实测回传后自会修正。
+    private var effectiveColumnWidth: CGFloat {
+        columnWidth > 0 ? columnWidth : 170
+    }
+
+    /// 搜索 / 标签变化：数据面与布局面在同一步里重建（§七）。
+    private func reloadForCurrentQuery() {
+        if dataSource == nil {
+            dataSource = RecordsDataSource(context: context)
+        }
+        guard let dataSource else { return }
+        dataSource.reload(query: currentQuery)
+        planner.rebuild(with: dataSource.records.map(layoutItem))
+    }
+
+    /// 实测高度回传。只在差异明显时写回（0.75pt 以下视为同一块内容），
+    /// `updateHeight` 不换列，所以这次回传不会引起任何已渲染卡片移动，
+    /// 也就不会形成测量循环。
+    private func measure(id: UUID, height: CGFloat) {
+        if let current = planner.height(of: id), abs(current - height) > 0.75 {
+            planner.updateHeight(of: id, to: height)
+        }
+    }
+
+    /// 两列触底共用的取数闸门：新记录按估算值 `append` 进各自的列尾。
+    private func loadNextPage() {
+        guard let dataSource else { return }
+        let fresh = dataSource.loadMore()
+        guard !fresh.isEmpty else { return }
+        planner.append(fresh.map(layoutItem))
+    }
+
+    /// 内容区宽度变化（首帧、旋屏、机型不同）：列宽重算后按新宽度重估。
+    /// 宽度重建是设计系统允许的重建场景——归属可能变，但这是用户可感知的
+    /// 几何变化，不是闪动。
+    private func adjustToWidth(_ contentWidth: CGFloat) {
+        let gap = CGFloat(Metric.Space.sm)
+        let newColumnWidth = max(0, (contentWidth - gap) / 2)
+        guard abs(newColumnWidth - columnWidth) > 0.5 else { return }
+        columnWidth = newColumnWidth
+        if let dataSource, !dataSource.records.isEmpty {
+            planner.rebuild(with: dataSource.records.map(layoutItem))
+        }
+    }
+
+    // MARK: - 新增、删除与协调
+
+    /// 编辑器保存成功：匹配当前筛选才插进布局顶部；不匹配就安静放过，
+    /// 不清除用户的筛选条件。
+    private func handleSavedRecord(_ record: Record) {
+        guard currentQuery.matches(record) else { return }
+        dataSource?.insertNewAtTop(record)
+        planner.insertNewest(layoutItem(for: record))
+    }
+
+    /// 从详情页返回 / sheet 收起后的核对：撤下被删除或被编辑出筛选范围的
+    /// 记录（连同列位），其余原样。
+    private func reconcileAfterReturn() {
+        guard let dataSource, !dataSource.records.isEmpty else { return }
+        for id in dataSource.staleIDs() {
+            planner.remove(id: id)
+            dataSource.remove(id: id)
+        }
+    }
 
     /// 与豆子删除同一个次序：**先让数据库删成功，再动磁盘上的文件**。
-    /// 反过来一旦落库失败，就是「记录还在、文件没了」。
     private func delete(_ record: Record) {
         let media = record.mediaPath
         let preview = record.previewPath
@@ -268,6 +347,8 @@ struct RecordsView: View {
             context.rollback()
             return
         }
+        planner.remove(id: record.id)
+        dataSource?.remove(id: record.id)
         if carrier == .video {
             MediaStore.shared.delete(media)
         } else {

@@ -1,4 +1,21 @@
 import UIKit
+import ImageIO
+
+/// 一张图片的像素尺寸与展示宽高比。
+///
+/// 只装两个整数——卡片按列宽和这个比例预留高度（`高 = 列宽 ÷ 宽高比`），
+/// 图片加载前后卡片就不必跳动。比例在宽或高不成立时返回 nil，由调用方
+/// 退到中性占位比例。
+struct ImageDimensions: Equatable, Sendable {
+    let pixelWidth: Int
+    let pixelHeight: Int
+
+    /// 宽 ÷ 高。宽或高为 0 时返回 nil——一张不成立的图不该给出比例。
+    var aspectRatio: CGFloat? {
+        guard pixelWidth > 0, pixelHeight > 0 else { return nil }
+        return CGFloat(pixelWidth) / CGFloat(pixelHeight)
+    }
+}
 
 /// Owns every image file the app writes (§21).
 ///
@@ -33,6 +50,15 @@ final class ImageStore: @unchecked Sendable {
     private let fileManager = FileManager.default
     private let directory: URL
     private let cache = NSCache<NSString, UIImage>()
+    /// 尺寸元信息的内存缓存。ImageIO 只读文件头，但缓存让第二次询问连
+    /// 文件都不碰；NSCache 自动响应内存压力，不需要手工清理策略。
+    private let dimensionsCache = NSCache<NSString, DimensionsBox>()
+
+    /// `NSCache` 只收类类型，包一层不可变盒子。
+    private final class DimensionsBox: Sendable {
+        let value: ImageDimensions
+        init(_ value: ImageDimensions) { self.value = value }
+    }
 
     private init() {
         let base = fileManager
@@ -94,6 +120,16 @@ final class ImageStore: @unchecked Sendable {
         }
 
         cache.setObject(display, forKey: Self.cacheKey(name, thumbnail: false))
+        // 尺寸顺手预热：刚落盘的图，第一次询问尺寸不该再碰磁盘。
+        if let displayDimensions = Self.dimensions(of: display) {
+            dimensionsCache.setObject(DimensionsBox(displayDimensions),
+                                      forKey: Self.fileName(for: name, thumbnail: false) as NSString)
+        }
+        if let thumb = Self.downscaled(image, maxDimension: Self.thumbnailDimension),
+           let thumbDimensions = Self.dimensions(of: thumb) {
+            dimensionsCache.setObject(DimensionsBox(thumbDimensions),
+                                      forKey: Self.fileName(for: name, thumbnail: true) as NSString)
+        }
         AppLog.images.debug("stored image \(name, privacy: .public)")
 
         // A new image means the old one, if any, is the caller's business — see
@@ -124,6 +160,40 @@ final class ImageStore: @unchecked Sendable {
         return nil
     }
 
+    // MARK: - 尺寸元信息
+
+    /// 读取一张已存图片的像素尺寸（按展示方向校正过）。
+    ///
+    /// ImageIO 只读文件头，不解码整张位图；结果进内存缓存，第二次询问
+    /// 不再碰磁盘。缩略图与展示图是两个文件，`thumbnail` 决定读哪一个。
+    /// 文件不存在或读不出属性时返回 nil——调用方用中性占位比例，卡片照常
+    /// 出现。保存时两个尺寸已经写进缓存（`save` 顺手预热），正常路径
+    /// 第一次询问也不落盘。
+    func imageDimensions(named name: String?, thumbnail: Bool = false) -> ImageDimensions? {
+        guard let name, !name.isEmpty else { return nil }
+        let key = Self.fileName(for: name, thumbnail: thumbnail) as NSString
+        if let box = dimensionsCache.object(forKey: key) { return box.value }
+
+        guard let source = CGImageSourceCreateWithURL(url(for: name, thumbnail: thumbnail) as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0 else {
+            return nil
+        }
+
+        // 展示方向校正：orientation 5–8（横竖互换的四种）像素宽高要交换。
+        // 保存流程会把方向烤进位图，但外部下载的封面不总走那条路，这里统一兜住。
+        let orientation = properties[kCGImagePropertyOrientation] as? UInt32 ?? 1
+        let swapped = (5...8).contains(orientation)
+        let dimensions = swapped
+            ? ImageDimensions(pixelWidth: height, pixelHeight: width)
+            : ImageDimensions(pixelWidth: width, pixelHeight: height)
+
+        dimensionsCache.setObject(DimensionsBox(dimensions), forKey: key)
+        return dimensions
+    }
+
     // MARK: - Deleting
 
     /// Removes both sizes. Called when a bean is deleted, so image lifetime is
@@ -138,6 +208,8 @@ final class ImageStore: @unchecked Sendable {
         remove(url(for: name, thumbnail: true))
         cache.removeObject(forKey: Self.cacheKey(name, thumbnail: false))
         cache.removeObject(forKey: Self.cacheKey(name, thumbnail: true))
+        dimensionsCache.removeObject(forKey: Self.fileName(for: name, thumbnail: false) as NSString)
+        dimensionsCache.removeObject(forKey: Self.fileName(for: name, thumbnail: true) as NSString)
     }
 
     private func remove(_ url: URL) {
@@ -208,6 +280,16 @@ final class ImageStore: @unchecked Sendable {
     /// 恢复后调用：文件名可能被重新写入，缓存里的旧图不能再被读到。
     func clearCache() {
         cache.removeAllObjects()
+        dimensionsCache.removeAllObjects()
+    }
+
+    /// 位图的像素尺寸。`size` 是点，乘上 `scale` 才是像素——
+    /// 保存管线里 `format.scale = 1`，两者一致，但这里不做这个假设。
+    private static func dimensions(of image: UIImage) -> ImageDimensions? {
+        let width = Int((image.size.width * image.scale).rounded())
+        let height = Int((image.size.height * image.scale).rounded())
+        guard width > 0, height > 0 else { return nil }
+        return ImageDimensions(pixelWidth: width, pixelHeight: height)
     }
 
     // MARK: - Scaling

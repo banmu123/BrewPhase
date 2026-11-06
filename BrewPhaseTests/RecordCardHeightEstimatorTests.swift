@@ -1,0 +1,121 @@
+import XCTest
+@testable import BrewPhase
+
+/// `RecordCardHeightEstimator` 的契约：比例数学必须精确，文本近似必须
+/// 单调、有界。估算不必像素级正确，但「横图比竖图矮」「长文比短文高」
+/// 这类关系错了，列分配就会系统性偏斜。
+final class RecordCardHeightEstimatorTests: XCTestCase {
+
+    private let width: CGFloat = 200
+
+    // MARK: - 图片比例
+
+    /// 竖图 100×200（宽高比 0.5）：列宽 200 → 图高 400。
+    func testPortraitImageHeightFollowsTheRatio() {
+        let record = Record(carrier: .image, note: "看")
+        let dims = ImageDimensions(pixelWidth: 100, pixelHeight: 200)
+        let estimate = RecordCardHeightEstimator.estimate(for: record,
+                                                          columnWidth: width, image: dims)
+        // 图 400 + 呼吸 8 + 备注 1 行(17+2) + meta 17。用户没填标题，
+        // displayTitle 的备注回退不参与窄卡排版（避免同一句话出现两遍）。
+        XCTAssertEqual(estimate, 444, accuracy: 0.5)
+    }
+
+    /// 拿不到尺寸：4:3 占位。
+    func testMissingDimensionsFallBackToThePlaceholderRatio() {
+        let record = Record(carrier: .image)
+        let estimate = RecordCardHeightEstimator.estimate(for: record,
+                                                          columnWidth: width, image: nil)
+        // 图 150（200 ÷ 4/3）+ 呼吸 8 + meta 17
+        XCTAssertEqual(estimate, 175, accuracy: 0.5)
+    }
+
+    /// 极端比例的两端钳制：横到极致不再压扁，竖到极致不再顶穿一屏。
+    func testExtremeRatiosAreClamped() {
+        let record = Record(carrier: .image)
+        let wide = RecordCardHeightEstimator.estimate(
+            for: record, columnWidth: width,
+            image: ImageDimensions(pixelWidth: 2000, pixelHeight: 100))
+        let tall = RecordCardHeightEstimator.estimate(
+            for: record, columnWidth: width,
+            image: ImageDimensions(pixelWidth: 100, pixelHeight: 2000))
+        let floorExpected: CGFloat = CGFloat(72) + 8 + 17
+        let capExpected: CGFloat = CGFloat(520) + 8 + 17
+        XCTAssertEqual(wide, floorExpected, accuracy: 0.5, "横图钳到 72pt 下限")
+        XCTAssertEqual(tall, capExpected, accuracy: 0.5, "竖图钳到 520pt 上限")
+    }
+
+    /// 同一条记录，列宽变宽 → 图片等比变高。
+    func testImageHeightScalesWithColumnWidth() {
+        let record = Record(carrier: .image)
+        let dims = ImageDimensions(pixelWidth: 100, pixelHeight: 100) // 1:1
+        let narrow = RecordCardHeightEstimator.estimate(for: record, columnWidth: 160, image: dims)
+        let wide = RecordCardHeightEstimator.estimate(for: record, columnWidth: 220, image: dims)
+        let expectedDiff: CGFloat = 60
+        XCTAssertEqual(wide - narrow, expectedDiff, accuracy: 0.5, "1:1 图高差 = 列宽差")
+    }
+
+    /// 视频封面拿不到尺寸时按 9:16 竖版习惯（高 = 宽 × 9/16）。
+    func testVideoPosterFallbackRatio() {
+        let record = Record(carrier: .video, title: "一只猫", sourceName: "本机")
+        let estimate = RecordCardHeightEstimator.estimate(for: record,
+                                                          columnWidth: width, image: nil)
+        // 封面 112.5 + 呼吸 8 + 标题 21 + 4 + 来源 15 + 2 + meta 17
+        XCTAssertEqual(estimate, 179.5, accuracy: 0.5)
+    }
+
+    // MARK: - 文本
+
+    func testLongerNoteMeansTallerTextCard() {
+        let short = Record(carrier: .text, note: "一句话。")
+        let long = Record(carrier: .text, note: String(repeating: "这句话很长，", count: 40))
+        let shortEstimate = RecordCardHeightEstimator.estimate(for: short, columnWidth: width, image: nil)
+        let longEstimate = RecordCardHeightEstimator.estimate(for: long, columnWidth: width, image: nil)
+        XCTAssertGreaterThan(longEstimate, shortEstimate)
+    }
+
+    /// 长文按行数上限封顶：八行正文 + 标题，不会无限生长。
+    func testVeryLongTextIsCapped() {
+        let record = Record(carrier: .text,
+                            title: String(repeating: "题", count: 60),
+                            note: String(repeating: "字", count: 4000))
+        let estimate = RecordCardHeightEstimator.estimate(for: record, columnWidth: width, image: nil)
+        // 标题 2×26 + 6，正文 8×21，底 28，meta 17，尾 8 —— 上界之内。
+        let cap: CGFloat = CGFloat(2) * 26 + 6 + CGFloat(8) * 21 + 28 + 17 + 8
+        XCTAssertLessThanOrEqual(estimate, cap + 0.5)
+    }
+
+    /// 空标题不占行：图片卡带标题比不带标题高。
+    func testMissingTitleDoesNotReserveSpace() {
+        let withTitle = Record(carrier: .image, title: "有标题", note: "")
+        let withoutTitle = Record(carrier: .image, note: "")
+        let withEstimate = RecordCardHeightEstimator.estimate(for: withTitle, columnWidth: width, image: nil)
+        let withoutEstimate = RecordCardHeightEstimator.estimate(for: withoutTitle, columnWidth: width, image: nil)
+        let titleBlock: CGFloat = 21 + 4
+        XCTAssertEqual(withEstimate - withoutEstimate, titleBlock, accuracy: 0.5)
+    }
+
+    // MARK: - 四种载体
+
+    func testAllCarriersProducePositiveReasonableEstimates() {
+        let link = Record(carrier: .link, title: "BrewPhase",
+                          urlString: "https://github.com/banmu123/BrewPhase")
+        let image = Record(carrier: .image, note: "一张图")
+        let video = Record(carrier: .video, title: "一段视频")
+        let text = Record(carrier: .text, note: "一句话")
+        for record in [link, image, video, text] {
+            let estimate = RecordCardHeightEstimator.estimate(for: record,
+                                                              columnWidth: width, image: nil)
+            XCTAssertGreaterThanOrEqual(estimate, 64, "\(record.carrier) 不得低于下限")
+            XCTAssertLessThan(estimate, 1500, "\(record.carrier) 不该顶到上限")
+        }
+    }
+
+    /// 载体一致、内容一致 → 估算确定。
+    func testEstimatesAreDeterministic() {
+        let record = Record(carrier: .text, title: "稳定", note: "同样的输入")
+        let first = RecordCardHeightEstimator.estimate(for: record, columnWidth: width, image: nil)
+        let second = RecordCardHeightEstimator.estimate(for: record, columnWidth: width, image: nil)
+        XCTAssertEqual(first, second)
+    }
+}

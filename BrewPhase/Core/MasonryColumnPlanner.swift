@@ -94,6 +94,13 @@ struct MasonryColumnPlanner: Equatable, Sendable {
             entries.append(Entry(id: id, height: height))
         }
 
+        /// 顶部插入：高度会计与 append 完全相同，落点是列首。
+        fileprivate mutating func insertFirst(id: UUID, height: CGFloat, spacing: CGFloat) {
+            if !entries.isEmpty { totalHeight += spacing }
+            totalHeight += height
+            entries.insert(Entry(id: id, height: height), at: 0)
+        }
+
         /// 移除一条：拔掉最后一条时**直接置 0**，不留浮点漂移。
         fileprivate mutating func remove(at index: Int, spacing: CGFloat) {
             let entry = entries.remove(at: index)
@@ -144,20 +151,37 @@ struct MasonryColumnPlanner: Equatable, Sendable {
 
     /// 最短列优先：高度比大小 → 平局比条数 → 再平局进左列。
     /// 空规划器两条都是 0、条数都是 0 → 完全平局 → 首条必进左列。
-    private mutating func place(_ item: MasonryLayoutItem) {
+    private func shorterColumn() -> MasonryColumn {
         let left = states[.left] ?? ColumnState()
         let right = states[.right] ?? ColumnState()
-
-        let column: MasonryColumn
         if left.totalHeight != right.totalHeight {
-            column = left.totalHeight < right.totalHeight ? .left : .right
-        } else if left.entries.count != right.entries.count {
-            column = left.entries.count < right.entries.count ? .left : .right
-        } else {
-            column = .left
+            return left.totalHeight < right.totalHeight ? .left : .right
         }
+        if left.entries.count != right.entries.count {
+            return left.entries.count < right.entries.count ? .left : .right
+        }
+        return .left
+    }
 
+    private mutating func place(_ item: MasonryLayoutItem) {
+        let column = shorterColumn()
         states[column]?.append(id: item.id, height: item.height, spacing: interItemSpacing)
+        placement[item.id] = column
+    }
+
+    // MARK: - 新记录顶部插入
+
+    /// 一条刚保存的新记录：插进目标列的**第一个**位置。
+    ///
+    /// 选列规则与分页追加完全一致（累计高度 → 条数 → 左列），落点却不同：
+    /// 新记录在时间上排在所有已加载内容之前，所以它去列首——这正是它不能
+    /// 复用 `append` 的原因，两者的视觉顺序相反。目标列原本非空时，顶部
+    /// 插入多出一份列内间距；空列没有。id 已存在时忽略（不得重复展示）；
+    /// 空布局时按完全平局规则自然进左列。
+    mutating func insertNewest(_ item: MasonryLayoutItem) {
+        guard placement[item.id] == nil else { return }
+        let column = shorterColumn()
+        states[column]?.insertFirst(id: item.id, height: item.height, spacing: interItemSpacing)
         placement[item.id] = column
     }
 

@@ -1341,6 +1341,30 @@ EN: dict[str, str] = {
         "Bring in the next bag and keep writing the flavour archive.",
     "查看详情": "Details",
 
+    "另一个仓库，桌面端走它。": "The other repository — the desktop side lives there.",
+    "周一的店": "The shop on Monday",
+    # MARK: Records Masonry — empty states, pagination, samples
+    "清除搜索": "Clear search",
+    "返回全部": "Back to everything",
+    "这批记录没能读出来。": "This batch of records could not be read.",
+    "重新加载": "Reload",
+    " Saturday 手冲": "Saturday pour-over",
+    "一杯手冲的时间": "The time a pour-over takes",
+    "封面是示例生成的；视频本体不在示例里，详情页会如实说。":
+        "The cover is generated for the sample set; the video file itself is not included, and the detail page will say so.",
+    "浅烘第一天": "Day one of the light roast",
+    "豆仓角落": "A corner of the bean shelf",
+    "滤杯与秤": "Dripper and scale",
+    "磨豆机的刻度又移了半格。记录这种小事，靠的是愿意每天记，不是记得完美。":
+        "The grinder dial moved half a step again. Small records like this are kept by showing up daily, not by being perfect.",
+    "隔壁新开的店用了同一支豆子，做出来的却是另一种味道。手法重要，水也重要。":
+        "The new shop next door pulled the same bean and it tasted like another coffee. Technique matters; so does water.",
+    "今天什么也没记，只喝了咖啡。这也是记录的一部分。":
+        "Nothing recorded today, just coffee drunk. That too is part of the record.",
+    "老豆子的最后一杯": "The last cup of an old bag",
+    "尾段有点空，但干净。喝完这一包，豆仓又空出一格。":
+        "The tail was a bit thin but clean. Finishing this bag opens a slot on the shelf.",
+
     # MARK: My Café — tabs, records and canvases
     "咖啡": "Coffee",
     "记录": "Records",

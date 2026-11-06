@@ -478,4 +478,120 @@ final class MasonryColumnPlannerTests: XCTestCase {
         XCTAssertEqual(mutable.totalHeight(of: .left), 100, accuracy: 0.001)
         XCTAssertEqual(mutable.totalHeight(of: .right), 100, accuracy: 0.001)
     }
+
+    // MARK: - insertNewest（Phase 2：新记录顶部插入）
+
+    /// 手算轨迹：rebuild [A200, B300, C150, D400] → 左 [A,C]=362，右 [B,D]=712。
+    /// 新记录 N180：右列更短（712 > 362? 不——左 362 < 右 712 → 左列），插在 A 上面。
+    func testNewestGoesToTheTopOfTheShorterColumn() {
+        var planner = makePlanner()
+        let (a, b, c, d) = canonicalBatch()
+        planner.rebuild(with: [a, b, c, d])
+
+        let newest = MasonryLayoutItem(id: UUID(), height: 180)
+        planner.insertNewest(newest)
+
+        XCTAssertEqual(planner.column(of: newest.id), .left, "左 362 < 右 712，短者是左列")
+        XCTAssertEqual(planner.items(in: .left).map(\.id).first, newest.id, "必须在自己列的顶部")
+        XCTAssertEqual(planner.items(in: .left).map(\.id), [newest.id, a.id, c.id], "其余记录顺序不变")
+        XCTAssertEqual(planner.items(in: .right).map(\.id), [b.id, d.id], "另一列原样")
+        XCTAssertEqual(planner.totalHeight(of: .left), 554, accuracy: 0.001) // 362 + 12 + 180
+        assertTotalsMatchEntries(planner)
+    }
+
+    /// 空布局：完全平局 → 新记录进左列，且没有多余间距。
+    func testInsertNewestIntoEmptyLayoutGoesLeftWithoutSpacing() {
+        var planner = makePlanner()
+        let newest = MasonryLayoutItem(id: UUID(), height: 140)
+        planner.insertNewest(newest)
+        XCTAssertEqual(planner.column(of: newest.id), .left)
+        XCTAssertEqual(planner.totalHeight(of: .left), 140, accuracy: 0.001)
+        XCTAssertEqual(planner.items(in: .left).map(\.id), [newest.id])
+    }
+
+    /// 连续插入多条：每一条都在自己所属列的顶部，后插的排在先插的上面。
+    func testRepeatedInsertsStackAtTheirColumnTops() {
+        var planner = makePlanner()
+        let (a, b, c, d) = canonicalBatch()
+        planner.rebuild(with: [a, b, c, d])
+
+        let n1 = MasonryLayoutItem(id: UUID(), height: 60)   // 左 362 < 右 712 → 左顶，左 434
+        planner.insertNewest(n1)
+        let n2 = MasonryLayoutItem(id: UUID(), height: 260)  // 左 434 < 右 712 → 左顶，左 706
+        planner.insertNewest(n2)
+        let n3 = MasonryLayoutItem(id: UUID(), height: 90)   // 左 706 < 右 712 → 左顶，左 808
+        planner.insertNewest(n3)
+
+        XCTAssertEqual(planner.items(in: .left).map(\.id), [n3.id, n2.id, n1.id, a.id, c.id],
+                       "后插的始终在先插的上面")
+        XCTAssertEqual(planner.items(in: .right).map(\.id), [b.id, d.id])
+        XCTAssertEqual(planner.totalHeight(of: .left), 808, accuracy: 0.001)
+        XCTAssertEqual(planner.totalHeight(of: .right), 712, accuracy: 0.001)
+        assertTotalsMatchEntries(planner)
+    }
+
+    /// 已存在的 id：忽略插入，高度与归属都不动。
+    func testInsertNewestWithAnExistingIDIsIgnored() {
+        var planner = makePlanner()
+        let (a, b, c, d) = canonicalBatch()
+        planner.rebuild(with: [a, b, c, d])
+        let snapshot = planner
+
+        planner.insertNewest(MasonryLayoutItem(id: a.id, height: 999))
+        XCTAssertEqual(planner, snapshot)
+        XCTAssertEqual(planner.height(of: a.id), 200)
+        XCTAssertEqual(planner.column(of: a.id), .left)
+    }
+
+    /// 顶部插入之后继续分页追加：追加从「当前累计高度」出发，谁短去谁。
+    func testAppendContinuesCorrectlyAfterAnInsert() {
+        var planner = makePlanner()
+        let (a, b, c, d) = canonicalBatch()
+        planner.rebuild(with: [a, b, c, d])
+
+        let newest = MasonryLayoutItem(id: UUID(), height: 180)
+        planner.insertNewest(newest) // 左 [N,A,C] = 562；右 [B,D] = 712
+
+        let older = MasonryLayoutItem(id: UUID(), height: 100)
+        planner.append([older])      // 左 562 < 右 712 → 左尾
+        XCTAssertEqual(planner.items(in: .left).map(\.id),
+                       [newest.id, a.id, c.id, older.id], "旧记录追加到列尾，不碰顶部")
+        XCTAssertEqual(planner.totalHeight(of: .left), 666, accuracy: 0.001)
+        assertTotalsMatchEntries(planner)
+    }
+
+    /// 顶部插入后的测高修正：列归属不动，累计随之修正，后续追加用修正值。
+    func testUpdateHeightAfterInsertKeepsTheColumn() {
+        var planner = makePlanner()
+        let (a, b, c, d) = canonicalBatch()
+        planner.rebuild(with: [a, b, c, d])
+
+        let newest = MasonryLayoutItem(id: UUID(), height: 180)
+        planner.insertNewest(newest) // 左 362+12+180 = 562
+        planner.updateHeight(of: newest.id, to: 600) // 左 982
+
+        XCTAssertEqual(planner.column(of: newest.id), .left, "测高不得换列")
+        XCTAssertEqual(planner.items(in: .left).first?.id, newest.id)
+        XCTAssertEqual(planner.totalHeight(of: .left), 974, accuracy: 0.001)
+
+        let next = MasonryLayoutItem(id: UUID(), height: 100)
+        planner.append([next]) // 左 982 > 右 712 → 右
+        XCTAssertEqual(planner.column(of: next.id), .right,
+                       "修正后的累计必须驱动后续分配")
+        assertTotalsMatchEntries(planner)
+    }
+
+    /// 插入与删除混用：拔掉插入的记录，顶部空隙（间距）也一并收回。
+    func testRemoveAnInsertedNewestRestoresTheColumn() {
+        var planner = makePlanner()
+        let (a, b, c, d) = canonicalBatch()
+        planner.rebuild(with: [a, b, c, d])
+        let newest = MasonryLayoutItem(id: UUID(), height: 180)
+        planner.insertNewest(newest) // 左 562
+        planner.remove(id: newest.id)
+
+        XCTAssertEqual(planner.items(in: .left).map(\.id), [a.id, c.id])
+        XCTAssertEqual(planner.totalHeight(of: .left), 362, accuracy: 0.001)
+        assertTotalsMatchEntries(planner)
+    }
 }

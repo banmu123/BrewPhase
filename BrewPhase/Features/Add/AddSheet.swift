@@ -17,6 +17,10 @@ struct AddFlowView: View {
 
     @Environment(\.dismiss) private var dismiss
 
+    /// 保存成功的回调，参数是**落库后的那条记录**（有稳定 id）。
+    /// 列表页用它把新记录插进瀑布流顶部。
+    var onSaved: ((Record) -> Void)? = nil
+
     @State private var carrier: RecordCarrier?
     @State private var savedInside = false
 
@@ -30,9 +34,10 @@ struct AddFlowView: View {
                     dismiss()
                 }
             }) { picked in
-                RecordEditorView(carrier: picked, onSaved: {
+                RecordEditorView(carrier: picked, onSaved: { saved in
                     savedInside = true
                     carrier = nil
+                    onSaved?(saved)
                 })
             }
     }
