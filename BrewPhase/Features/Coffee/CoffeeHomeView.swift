@@ -70,10 +70,11 @@ struct CoffeeHomeView: View {
                             actionLabel: "添加第一包豆",
                             action: { isAddingBean = true }
                         )
+                        // 构图值：空态与页头之间的一次深呼吸，不在梯子上。
                         .padding(.top, 44)
                     } else {
                         if activeInsights.isEmpty {
-                            cellarEmptied.padding(.top, 30)
+                            cellarEmptied.padding(.top, Metric.Space.xxl)
                         } else {
                             BeanStack(
                                 items: activeInsights,
@@ -85,18 +86,20 @@ struct CoffeeHomeView: View {
                                     brewingBean = beans.first { $0.id == insight.id }
                                 }
                             )
-                            // 堆叠里靠后的卡片会向上探出两档（各 13pt），这点
-                            // 间距必须留够，否则它会压住上面那行「N 包在喝」。
-                            .padding(.top, 38)
+                            // 堆叠里靠后的卡片会向上探出两档（各 stackPeek 13pt），
+                            // 再加一格呼吸（sm 12）——压住「N 包在喝」就是事故。
+                            .padding(.top, Metric.stackPeek * 2 + Metric.Space.sm)
                         }
 
-                        brewsSection.padding(.top, 32)
+                        brewsSection.padding(.top, Metric.Space.xxl)
                         finishedSection
                     }
                 }
                 .padding(.horizontal, Metric.gutter)
+                // 顶端一线呼吸：刻意小于一格梯子（6pt），标题不必再往下让。
                 .padding(.top, 6)
-                .padding(.bottom, 28)
+                // 页尾收尾与区块间距同值（28），但语义是页尾而非区块。
+                .padding(.bottom, Metric.sectionGap)
             }
             .background(Palette.paper)
             // 页面自己带标题，导航栏不再重复一遍——也让堆叠卡片更靠近顶部。
@@ -200,7 +203,7 @@ struct CoffeeHomeView: View {
         VStack(alignment: .leading, spacing: 0) {
             Hairline()
 
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: Metric.Space.xs) {
                 SectionLabel(title: "最近冲煮")
                 Spacer(minLength: 0)
                 NavigationLink {
@@ -217,7 +220,7 @@ struct CoffeeHomeView: View {
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.top, 16)
+            .padding(.top, Metric.Space.md)
 
             if brews.isEmpty {
                 Text("还没有冲煮记录。冲完随手记一笔，这里会长起来。")
@@ -319,7 +322,7 @@ struct CoffeeHomeView: View {
     private var finishedSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             if !finishedBeans.isEmpty {
-                Hairline().padding(.top, 20)
+                Hairline().padding(.top, Metric.Space.lg)
 
                 Button {
                     withAnimation(Motion.settle) { showsFinished.toggle() }
@@ -336,7 +339,7 @@ struct CoffeeHomeView: View {
                             .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(Palette.inkFaint)
                     }
-                    .padding(.vertical, 16)
+                    .padding(.vertical, Metric.Space.md)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

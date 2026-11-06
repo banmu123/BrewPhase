@@ -294,6 +294,20 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(loaded.size.width, 120, accuracy: 1)
     }
 
+    /// 首页 hero 读的是缩略图；缩略图文件缺失（旧备份恢复、历史数据）时必须
+    /// 静默回退到展示图，而不是让卡片空一块。v1.1 QA §1 的降级契约。
+    func testAMissingThumbnailFallsBackToTheDisplayImage() throws {
+        let name = try ImageStore.shared.save(makeImage(width: 800, height: 600))
+        defer { ImageStore.shared.delete(name) }
+
+        try FileManager.default.removeItem(
+            at: ImageStore.shared.url(for: name, thumbnail: true))
+        ImageStore.shared.clearCache()
+
+        let loaded = try XCTUnwrap(ImageStore.shared.image(named: name, thumbnail: true))
+        XCTAssertEqual(max(loaded.size.width, loaded.size.height), 800, accuracy: 1)
+    }
+
     func testReplacingAnImageRemovesTheOldFile() throws {
         // `ImageStore.replace` 不在了：它「写完新的就删旧的」发生在数据库落库
         // 之前，落库一旦失败，记录就会指向一个已经被删掉的文件。图片的更替

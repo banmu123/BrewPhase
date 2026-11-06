@@ -160,9 +160,9 @@ enum Metric {
     static let stackPeek: CGFloat = 13
     /// How much each card behind the focused one shrinks.
     static let stackDepthScale: CGFloat = 0.045
-    /// Horizontal room the focused card keeps from the page gutter, so the deck
-    /// reads as a deck rather than as a full-width page.
-    static let stackInset: CGFloat = 6
+    // 注意：这里没有「卡片与页面留白的水平距离」Token——deck 与页面同宽，
+    // 由 `Metric.gutter` 统一收口。曾有的 `stackInset` 是零引用的死值，
+    // v1.1 QA 时移除（§4：Token 必须有真实使用者）。
 }
 
 // MARK: - Motion

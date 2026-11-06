@@ -178,6 +178,33 @@ Canvas 重设计的唯一权威来源。
 
 ---
 
+## 8.1 档案卡（FocusedBeanCard）v1.1 增补
+
+**图片策略（QA §1）**：
+
+- 首页 hero 读 **400px 缩略图**（`ImageStore.thumbnailDimension`，测试钉值）；
+  详情页继续读 1400px 展示图。deck 常驻 ≤ 4 张卡，缩略图把解码内存压到
+  展示图的约 1/9。
+- 缩略图文件缺失（旧备份恢复）时 `ImageStore` 静默回退展示图，卡片不空。
+- 陶瓷占位与照片 hero 同高同宽（148pt），deck 只有一个节奏。
+
+**陶瓷占位（QA §2）**：
+
+- 灰面（`well`）+ 顶部受光 / 底部落影两段极淡透明渐变（哑光层次，不是可见渐变条）。
+- 图形语言只有一件：`BeanGlyph`（椭圆 + 缓 S 中缝的线性豆形，latte 描边），
+  托在 66pt 细线圈（盘沿）里，旋转 -14°。
+- 左下一行拉丁 overline `AWAITING PHOTOGRAPH`（brandMark 斜体 + tracking 2.2，
+  inkSoft）；品牌 overline 一律拉丁字，与 `BREWPHASE / STUDIO` 同一套语言。
+- 禁止：网络图、大面积渐变、装饰纹理、随烘焙度换色。
+
+**构图值（QA §4）**：卡片内部尺寸收进 `CardLayout`（heroHeight 148 /
+minHeight 372 / 五级行距 16-13-11-17-14 / actionGap 20），每个值有语义注释；
+页面级间距落在 `Metric.Space` 梯子或 `gutter` / `sectionGap` 上。
+堆叠顶部间距用公式表达：`stackPeek × 2 + Space.sm`。死 Token（`stackInset`）
+已移除——Token 必须有真实使用者。
+
+---
+
 ## 9. 无障碍与国际化
 
 - 全部文案走 `L()` / `strings.py` 双语表（`generate.py` / `check.py` 把关）。

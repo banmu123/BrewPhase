@@ -113,6 +113,9 @@ struct BeanStack: View {
             }
             .onEnded { value in
                 guard pan != 0 else { return }
+                // 组件专用的滑动阈值（v1.1 QA §4）：跟手 20% 卡宽、下限 44pt
+                // （一个点击区的宽度）、上限 84pt（防轻扫过灵）。调试时动过它，
+                // 三张切卡截图都要复核。
                 let threshold = min(84, max(width * 0.2, 44))
                 let momentum = value.predictedEndTranslation.width
                 var target = index
@@ -260,32 +263,32 @@ struct FocusedBeanCard: View {
             hero
 
             VStack(alignment: .leading, spacing: 0) {
-                identity.padding(.top, 16)
-                phaseRow.padding(.top, 13)
+                identity.padding(.top, CardLayout.identityGap)
+                phaseRow.padding(.top, CardLayout.phaseGap)
                 if let reason {
                     Text(LocalizedStringKey.alreadyLocalized(reason))
                         .font(TypeScale.caption)
                         .foregroundStyle(Palette.inkSoft)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 11)
+                        .padding(.top, CardLayout.reasonGap)
                 }
                 PhaseTrack(reading: reading, showsMarker: true, showsLegend: false, barHeight: 6)
-                    .padding(.top, 17)
-                stockRow.padding(.top, 14)
+                    .padding(.top, CardLayout.trackGap)
+                stockRow.padding(.top, CardLayout.stockGap)
             }
             .padding(.horizontal, Metric.cardPadding)
-            .padding(.top, 16)
+            .padding(.top, CardLayout.identityGap)
             .contentShape(Rectangle())
             .onTapGesture(perform: onOpen)
 
-            Spacer(minLength: 20)
+            Spacer(minLength: CardLayout.actionGap)
 
             PrimaryButton(title: "开始冲煮", systemImage: "cup.and.saucer.fill", action: onBrew)
                 .padding(.horizontal, Metric.cardPadding)
                 .padding(.bottom, Metric.cardPadding)
         }
-        .frame(maxWidth: .infinity, minHeight: 372, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: CardLayout.minHeight, alignment: .topLeading)
         .background(Palette.card)
         .clipShape(RoundedRectangle(cornerRadius: Metric.radiusLarge, style: .continuous))
         .overlay(
@@ -298,27 +301,67 @@ struct FocusedBeanCard: View {
     // MARK: - Hero
 
     /// The bag's own picture, full width and flush with the card's top corners.
-    /// Without one, a quiet ceramic placeholder holds the space so the deck
-    /// keeps one rhythm instead of jumping between card heights.
+    /// Loaded from the **400px thumbnail** (v1.1 QA §1): the deck keeps up to
+    /// four cards alive, and a 1400px display copy per card costs ~9× the
+    /// decoded memory of a thumbnail for a band that renders at 148pt. The
+    /// detail page still reads the full-size image. `ImageStore` falls back to
+    /// the display copy when a thumbnail file is missing (older backups), so
+    /// the deck never shows an empty frame for a bean that has a photo.
     private var hero: some View {
         Group {
-            if let image = ImageStore.shared.image(named: bean.imagePath, thumbnail: false) {
+            if let image = ImageStore.shared.image(named: bean.imagePath, thumbnail: true) {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
             } else {
-                ZStack {
-                    Palette.well
-                    Image(systemName: "cup.and.saucer")
-                        .font(.system(size: 30, weight: .light))
-                        .foregroundStyle(Palette.latte.opacity(0.85))
-                }
+                ceramic
             }
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 148)
+        .frame(height: CardLayout.heroHeight)
         .clipped()
         .accessibilityHidden(true)
+    }
+
+    /// 无照片时的陶瓷展示区（v1.1 QA §2）。灰面上部受光、底部落影——两段
+    /// 极淡的透明渐变做出陶面哑光，中央一粒手绘的豆形原画托在细线圈里，
+    /// 左下一行拉丁 overline 收尾。它与照片 hero 同高同宽，保证整个 deck
+    /// 只有一个节奏；不用网络图、不做大面积渐变、不加装饰纹理。
+    private var ceramic: some View {
+        ZStack {
+            Palette.well
+
+            LinearGradient(colors: [Palette.card.opacity(0.55), .clear],
+                           startPoint: .top,
+                           endPoint: UnitPoint(x: 0.5, y: 0.6))
+            LinearGradient(colors: [.clear, Palette.wellDeep.opacity(0.9)],
+                           startPoint: UnitPoint(x: 0.5, y: 0.55),
+                           endPoint: .bottom)
+
+            ZStack {
+                Circle()
+                    .strokeBorder(Palette.latte.opacity(0.4), lineWidth: 0.8)
+                BeanGlyph()
+                    .stroke(Palette.latte, lineWidth: 1.3)
+                    .rotationEffect(.degrees(-14))
+                    .frame(width: 38, height: 26)
+            }
+            .frame(width: 66, height: 66)
+
+            VStack {
+                Spacer()
+                HStack {
+                    Text(verbatim: "AWAITING PHOTOGRAPH")
+                        .font(TypeScale.brandMark)
+                        .italic()
+                        .tracking(2.2)
+                        .foregroundStyle(Palette.inkSoft)
+                    Spacer()
+                }
+                .padding(.leading, Metric.cardPadding)
+                .padding(.bottom, 12)
+            }
+        }
     }
 
     // MARK: - Rows
@@ -390,5 +433,43 @@ struct FocusedBeanCard: View {
         if let detail = verdict.details.first { return detail }
         if let closing = verdict.closing { return closing }
         return reading.phase == .resting ? verdict.headline : nil
+    }
+}
+
+/// 档案卡的构图值（v1.1 QA §4）。这些尺寸不属于 4pt 梯子——它们是这张卡
+/// 专属的版式：hero 决定整个 deck 的节奏，minHeight 保证一屏放得下主卡，
+/// 行间距是逐行收紧再放宽的「档案秩序」。改任何一个，七张验收截图都要重拍。
+private enum CardLayout {
+    /// 照片 hero 与陶瓷占位的共同高度——deck 的节奏由它定。
+    static let heroHeight: CGFloat = 148
+    /// 卡片下限：单行名字 + 单行理由的卡在 16 Pro 上的自然高度；内容更多时
+    /// 卡片向下生长，不裁文字。
+    static let minHeight: CGFloat = 372
+    /// 名称区（上、下两处：hero 之后与卡身顶部同值，保持一个呼吸单位）。
+    static let identityGap: CGFloat = 16
+    /// 名称 → 阶段行。
+    static let phaseGap: CGFloat = 13
+    /// 阶段行 → 理由。
+    static let reasonGap: CGFloat = 11
+    /// 理由 → 阶段轨道。
+    static let trackGap: CGFloat = 17
+    /// 轨道 → 余量行。
+    static let stockGap: CGFloat = 14
+    /// 内容 → 主按钮之间的最小空隙。
+    static let actionGap: CGFloat = 20
+}
+
+/// 一粒咖啡豆的线性原画：外轮廓椭圆，中缝一条缓 S 曲线。没有图片资源——
+/// 纯 `Path`，它是陶瓷占位里唯一的图形语言。
+private struct BeanGlyph: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.addEllipse(in: rect)
+        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.midX, y: rect.maxY),
+            control: CGPoint(x: rect.width * 0.8, y: rect.height * 0.5)
+        )
+        return path
     }
 }

@@ -33,6 +33,16 @@ final class StudioDesignTokensTests: XCTestCase {
         XCTAssertEqual(Metric.sectionGap, 28, "一级区块间距 28pt（规范 §4）")
     }
 
+    // MARK: - 首页 hero 的图片契约（v1.1 QA §1）
+
+    func testDeckHeroReadsThe400pxThumbnail() {
+        // BeanStack 最多保留四张可见卡，hero 用缩略图（长边 400px）把解码内存
+        // 压到展示图的约 1/9；详情页仍读 1400px 展示图。这个常量是首页画质与
+        // 性能的平衡点——改动它之前先重拍七张验收截图。
+        XCTAssertEqual(ImageStore.thumbnailDimension, 400)
+        XCTAssertEqual(ImageStore.maxDimension, 1400)
+    }
+
     // MARK: - 圆角分层
 
     func testRadiusIsLayered() {
