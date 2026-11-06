@@ -60,6 +60,14 @@ enum CanvasDebugSeed {
         AppLog.store.info("canvas debug seed: \(created.count) node(s) placed")
     }
 
+    /// `-BrewPhaseCanvasPicker yes`：进画布后直接把「添加记录」面板打开。
+    static var opensPicker: Bool {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-BrewPhaseCanvasPicker") else { return false }
+        let next = args.indices.contains(index + 1) ? args[index + 1] : "yes"
+        return next != "no" && next != "false" && next != "0"
+    }
+
     /// 工作区要打开的那块画布：优先示例/最近编辑那块。
     static func workspaceCanvas(context: ModelContext) -> Canvas? {
         var descriptor = FetchDescriptor<Canvas>(sortBy: [SortDescriptor(\.updatedAt, order: .reverse)])

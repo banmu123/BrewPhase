@@ -1411,6 +1411,7 @@ EN: dict[str, str] = {
     "从画布移除": "Remove from canvas",
     "暂停": "Pause",
     "缩小画布": "Zoom out",
+    "放大画布": "Zoom in",
     "从记录里挑几样东西放进来，再按你的想法摆开。": "Pick a few things from your records and arrange them your way.",
     "加入 %@": "Add %@",
     "加入画布": "Add to canvas",

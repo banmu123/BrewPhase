@@ -173,17 +173,17 @@ struct CanvasRecordPicker: View {
             guard !already else { return }
             toggle(record)
         } label: {
-            HStack(spacing: 10) {
-                Image(systemName: record.carrier == .link ? record.provider.symbol : record.carrier.symbol)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(RecordPresentation.tint(record.carrier))
-                    .frame(width: 22)
+            HStack(spacing: 12) {
+                // 先看到内容，再读标题：图片/视频/网页给缩略图，文字给几行正文，
+                // 找东西靠「认得出来」，不是靠读一串标题。
+                CanvasPickerThumbnail(record: record)
 
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(.alreadyLocalized(record.displayTitle.isEmpty ? record.carrier.title : record.displayTitle))
                         .font(TypeScale.bodyMedium)
                         .foregroundStyle(Palette.ink)
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
                     Text(verbatim: subtitle(for: record))
                         .font(TypeScale.micro)
                         .foregroundStyle(Palette.inkFaint)
@@ -198,12 +198,12 @@ struct CanvasRecordPicker: View {
                         .foregroundStyle(Palette.inkFaint)
                 } else {
                     Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 17, weight: .regular))
+                        .font(.system(size: 18, weight: .regular))
                         .foregroundStyle(isOn ? Palette.roast : Palette.inkFaint.opacity(0.5))
                 }
             }
             .padding(.horizontal, Metric.gutter)
-            .padding(.vertical, 11)
+            .padding(.vertical, 10)
             .contentShape(Rectangle())
             .opacity(already ? 0.5 : 1)
         }
@@ -247,5 +247,74 @@ struct CanvasRecordPicker: View {
         guard !picked.isEmpty else { return }
         onAdd(picked)
         dismiss()
+    }
+}
+
+// MARK: - 选择器里的内容缩略图
+
+/// 一条记录在「添加记录」面板里的小样：只读本地缓存，不建播放器、不请求网络。
+private struct CanvasPickerThumbnail: View {
+
+    let record: Record
+    private let side: CGFloat = 64
+
+    var body: some View {
+        ZStack {
+            switch record.carrier {
+            case .image:
+                picture(record.mediaPath, symbol: "photo")
+            case .video:
+                ZStack {
+                    picture(record.previewPath, symbol: "video")
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Palette.card)
+                        .padding(7)
+                        .background(Circle().fill(Palette.espresso.opacity(0.72)))
+                }
+            case .link:
+                picture(record.previewPath, symbol: record.provider.symbol)
+            case .text:
+                textLines
+            }
+        }
+        .frame(width: side, height: side)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Palette.hairline, lineWidth: 0.7)
+        )
+    }
+
+    @ViewBuilder
+    private func picture(_ path: String?, symbol: String) -> some View {
+        if let image = ImageStore.shared.image(named: path, thumbnail: true) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: side, height: side)
+                .clipped()
+        } else {
+            ZStack {
+                Palette.well
+                Image(systemName: symbol)
+                    .font(.system(size: 15, weight: .light))
+                    .foregroundStyle(RecordPresentation.tint(record.carrier).opacity(0.75))
+            }
+        }
+    }
+
+    /// 文字记录没有图：用几行「正文形状」的细线表示，和画布缩略图同一套语言。
+    private var textLines: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Capsule().fill(Palette.inkSoft.opacity(0.5)).frame(height: 3)
+            Capsule().fill(Palette.inkFaint.opacity(0.42)).frame(height: 2)
+            Capsule().fill(Palette.inkFaint.opacity(0.42)).frame(height: 2)
+            Capsule().fill(Palette.inkFaint.opacity(0.30)).frame(width: side * 0.45, height: 2)
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .frame(width: side, height: side, alignment: .topLeading)
+        .background(Palette.card)
     }
 }

@@ -38,8 +38,6 @@ struct CanvasWorkspaceView: View {
 
     @State private var viewport = CanvasViewport()
     @State private var canvasSize: CGSize = .zero
-    /// 画布在窗口里的位置：UIKit 报上来的两指中心是窗口坐标，靠它换成本地坐标。
-    @State private var canvasFrameInWindow: CGRect = .zero
     /// 只在「第一次拿到非空节点」时装窗一次，之后布局由用户掌控。
     @State private var didFitContent = false
     /// 上一次装窗用的画布尺寸。第一次布局报上来的尺寸不一定是最终尺寸
@@ -57,11 +55,6 @@ struct CanvasWorkspaceView: View {
     @State private var isPinching = false
     @State private var magnifyBase: CanvasViewport?
     @State private var panBase: CGSize?
-
-    // 双指（UIKit 桥）：base 是手势开始时的视口，anchor 是中心点压住的世界点。
-    @State private var pinchBase: CanvasViewport?
-    @State private var pinchAnchorWorld: CGPoint?
-    @State private var nativePinchReady = false
 
     @State private var showsPicker = false
     @State private var isEditing = false
@@ -97,11 +90,6 @@ struct CanvasWorkspaceView: View {
         return nodes.filter { margin.intersects($0.frame) || $0.id == draggingNodeID }
     }
 
-    /// 面板/弹层在的时候不接管捏合。
-    private var pinchEnabled: Bool {
-        !showsPicker && !isEditing && annotationNode == nil
-    }
-
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
@@ -122,26 +110,12 @@ struct CanvasWorkspaceView: View {
                 }
             }
             .coordinateSpace(.named(canvasScreenSpace))
-            // 识别器挂得上就用它（能跟随两指中心），挂不上仍由 SwiftUI 兜底。
             .simultaneousGesture(magnifyGesture)
             // 尺寸只认 `GeometryReader` 自己给的那份。实测在本页上
             // `onGeometryChange` 会报出容器占位尺寸（800×800、甚至像素级
             // 的 2460×2976），按它装窗会把整块内容推出屏幕。
             .onAppear { updateCanvasSize(geo.size) }
             .onChange(of: geo.size) { _, size in updateCanvasSize(size) }
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
-                canvasFrameInWindow = frame
-            }
-        }
-        .background {
-            CanvasPinchBridge(
-                isEnabled: pinchEnabled,
-                onBegan: beginPinch,
-                onChange: { scale, centroid in changePinch(scale: scale, centroidInWindow: centroid) },
-                onEnded: endPinch,
-                onReady: { nativePinchReady = true }
-            )
-            .allowsHitTesting(false)
         }
         .background(Palette.paper)
         .navigationTitle(canvas.displayName)
@@ -195,7 +169,14 @@ struct CanvasWorkspaceView: View {
         } message: {
             Text(actionError ?? "")
         }
-        .task { loadCanvas() }
+        .task {
+            loadCanvas()
+            // UI 验收用：`simctl` 点不到右下角的添加按钮。
+            if CanvasDebugSeed.opensPicker {
+                try? await Task.sleep(for: .milliseconds(700))
+                showsPicker = true
+            }
+        }
         .onChange(of: nodes.count) { _, _ in fitIfNeeded() }
         .onChange(of: viewport.scale) { _, new in camera.scale = new }
         .onChange(of: isPinching) { _, new in camera.isPinching = new }
@@ -270,13 +251,13 @@ struct CanvasWorkspaceView: View {
             }
     }
 
-    /// SwiftUI 兜底：只在 UIKit 识别器没挂上时生效。它拿不到两指中心的移动，
-    /// 所以只能围绕起始锚点缩放。
+    /// 双指缩放：以手势起始的两指中点为锚，内容在放大时不会从手指底下跑掉。
+    /// 这里**不用** UIKit 识别器桥：真机上它会抢走捏合，缩放直接失效。
     private var magnifyGesture: some Gesture {
         MagnifyGesture(minimumScaleDelta: 0.01)
             .onChanged { value in
-                guard !nativePinchReady else { return }
                 isPinching = true
+                hasUserAdjusted = true
                 let base = magnifyBase ?? viewport
                 if magnifyBase == nil { magnifyBase = viewport }
                 let anchor = CGPoint(x: value.startAnchor.x * canvasSize.width,
@@ -289,51 +270,25 @@ struct CanvasWorkspaceView: View {
             }
     }
 
-    // MARK: - 双指（跟随两指中心）
-
-    /// 捏合开始时立刻收掉进行中的平移状态：base 清空、惯性不再接续，
-    /// 否则第二根手指落下后画布会先跳一下再缩放。
-    private func beginPinch() {
-        panBase = nil
-        hasUserAdjusted = true
-        pinchBase = viewport
-        pinchAnchorWorld = nil
-        isPinching = true
-        camera.isPinching = true
-    }
-
-    private func changePinch(scale: CGFloat, centroidInWindow: CGPoint) {
-        guard let base = pinchBase else { return }
-        let local = CGPoint(x: centroidInWindow.x - canvasFrameInWindow.minX,
-                            y: centroidInWindow.y - canvasFrameInWindow.minY)
-        if pinchAnchorWorld == nil {
-            // 手势的第一帧：把手势开始时中心点下面的世界点钉住。
-            pinchAnchorWorld = base.worldPoint(local)
-        }
-        guard let anchor = pinchAnchorWorld else { return }
-        viewport = base.pinched(to: base.scale * scale, centroid: local, anchorWorld: anchor)
-    }
-
-    private func endPinch() {
-        pinchBase = nil
-        pinchAnchorWorld = nil
-        isPinching = false
-        camera.isPinching = false
-    }
-
     // MARK: - 悬浮控件
 
     private var floatingControls: some View {
         VStack(spacing: 10) {
-            floatingButton(symbol: "plus", filled: true, label: "添加记录到画布") {
+            // 添加素材是这里唯一「写数据」的动作，和下面的视角控制分开。
+            floatingButton(symbol: "rectangle.badge.plus", filled: true, label: "添加记录到画布") {
                 showsPicker = true
+            }
+            .padding(.bottom, 6)
+
+            floatingButton(symbol: "plus.magnifyingglass", label: "放大画布") {
+                zoom(by: 1.25)
+            }
+            floatingButton(symbol: "minus.magnifyingglass", label: "缩小画布") {
+                zoom(by: 1 / 1.25)
             }
             floatingButton(symbol: "arrow.up.left.and.arrow.down.right",
                            label: "缩放到适合内容") {
                 withAnimation(Motion.settle) { fitCanvas() }
-            }
-            floatingButton(symbol: "minus", label: "缩小画布") {
-                zoom(by: 1 / 1.25)
             }
 
             Text(verbatim: "\(Int((viewport.scale * 100).rounded()))%")
@@ -740,22 +695,27 @@ private struct CanvasDotGrid: View {
 
     var body: some View {
         SwiftUI.Canvas { context, size in
-            let spacing = 26 * viewport.scale
-            guard spacing >= 12 else { return }
+            guard viewport.scale > 0.01 else { return }
+            // 世界间距按 2 的幂放大/缩小，让**屏幕**间距始终落在 14–40pt。
+            // 缩到 35% 时点阵仍然在（旧实现直接隐藏，整块画布看着是空白的）。
+            var spacing: CGFloat = 26
+            while spacing * viewport.scale < 14 { spacing *= 2 }
+            while spacing * viewport.scale > 40 { spacing /= 2 }
+            let step = spacing * viewport.scale
             let radius: CGFloat = 1.05
-            let startX = viewport.offset.width.truncatingRemainder(dividingBy: spacing) - spacing
-            let startY = viewport.offset.height.truncatingRemainder(dividingBy: spacing) - spacing
+            let startX = viewport.offset.width.truncatingRemainder(dividingBy: step) - step
+            let startY = viewport.offset.height.truncatingRemainder(dividingBy: step) - step
 
             var path = Path()
             var y = startY
-            while y < size.height + spacing {
+            while y < size.height + step {
                 var x = startX
-                while x < size.width + spacing {
+                while x < size.width + step {
                     path.addEllipse(in: CGRect(x: x - radius, y: y - radius,
                                                width: radius * 2, height: radius * 2))
-                    x += spacing
+                    x += step
                 }
-                y += spacing
+                y += step
             }
             context.fill(path, with: .color(Palette.inkFaint.opacity(0.22)))
         }
