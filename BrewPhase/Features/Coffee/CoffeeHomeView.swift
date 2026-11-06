@@ -26,8 +26,6 @@ struct CoffeeHomeView: View {
     @State private var cardIndex = DebugLaunch.cardIndex ?? 0
     /// 已喝完的豆子收在折叠入口里，不占活跃堆叠。
     @State private var showsFinished = false
-    /// 统一添加入口。咖啡页是它的主场，记录页与画布页复用同一个面板。
-    @State private var showsAdd = false
     @State private var showsSettings = false
 
     // MARK: - Derived
@@ -107,9 +105,6 @@ struct CoffeeHomeView: View {
             .navigationDestination(item: $detailBean) { bean in
                 BeanDetailView(bean: bean)
             }
-            .sheet(isPresented: $showsAdd) {
-                AddFlowView()
-            }
             .sheet(isPresented: $showsSettings) {
                 MoreView()
             }
@@ -170,7 +165,7 @@ struct CoffeeHomeView: View {
             .accessibilityLabel("设置")
 
             Button {
-                showsAdd = true
+                isAddingBean = true
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 15, weight: .semibold))
@@ -179,7 +174,8 @@ struct CoffeeHomeView: View {
                     .background(Circle().fill(Palette.espresso))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("添加")
+            // 这一页是豆仓：加号只加豆子，不是 Records 的内容收集面板。
+            .accessibilityLabel("添加咖啡豆")
         }
         .padding(.top, 10)
     }

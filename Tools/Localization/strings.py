@@ -1370,7 +1370,7 @@ EN: dict[str, str] = {
     "记录": "Records",
     "画布": "Canvas",
     "设置": "Settings",
-    "添加": "Add",
+    "添加咖啡豆": "Add coffee beans",
     "关闭": "Close",
     "编辑": "Edit",
     "全部": "All",

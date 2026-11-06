@@ -130,6 +130,31 @@ final class BeanDeckTests: XCTestCase {
         XCTAssertEqual(resolved.focusedID, shelf[0])
     }
 
+    /// 删掉焦点豆**前面**的一包：焦点跟着自己的豆走（位置前移一格），
+    /// 不跳回第一包——这是「删除非焦点豆不该打断阅读」的契约。
+    func testDeletingABeanBeforeTheFocusKeepsTheFocusedBean() {
+        let shelf = [UUID(), UUID(), UUID(), UUID()]
+        let focused = shelf[2]
+        var withoutSecond = shelf
+        withoutSecond.remove(at: 1)
+
+        let resolved = BeanDeck.resolvedFocus(focusedID: focused, index: 2, ids: withoutSecond)
+        XCTAssertEqual(resolved.index, 1, "同一包豆换了个位置，deck 跟上")
+        XCTAssertEqual(resolved.focusedID, focused, "不能跳到别的豆")
+    }
+
+    /// 删掉焦点豆**后面**的一包：焦点位置不动。
+    func testDeletingABeanAfterTheFocusLeavesTheIndexAlone() {
+        let shelf = [UUID(), UUID(), UUID(), UUID()]
+        let focused = shelf[1]
+        var withoutTail = shelf
+        withoutTail.remove(at: 3)
+
+        let resolved = BeanDeck.resolvedFocus(focusedID: focused, index: 1, ids: withoutTail)
+        XCTAssertEqual(resolved.index, 1)
+        XCTAssertEqual(resolved.focusedID, focused)
+    }
+
     /// 货架空了：一切归零。BeanStack 在 Coffee 首页此时已整体卸载，但类型
     /// 必须自洽——空列表上没有「焦点」可言。
     func testFocusResolvesToNothingWhenTheShelfEmpties() {

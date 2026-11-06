@@ -101,6 +101,10 @@ struct BeanDetailView: View {
         // 名字已经在正文里以 26pt 出现一次了，导航栏不必再说一遍。
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        // Coffee 首页把导航栏藏起来做无栏构图；详情页必须显式要回来——
+        // 否则右上角的 More Menu（编辑 / 调整剩余量 / 删除）没有落点，
+        // 用户会以为这包豆既不能改也不能删。作用域在这一页，不影响首页。
+        .toolbar(.visible, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
