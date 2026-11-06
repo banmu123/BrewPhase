@@ -13,7 +13,6 @@ struct CanvasNodeCard: View {
     let record: Record
     var annotation: String = ""
     var isPlaying: Bool
-    var isSelected: Bool
     var onTogglePlay: () -> Void
     var onOpenSource: () -> Void
 
@@ -76,9 +75,12 @@ struct CanvasNodeCard: View {
         ZStack(alignment: .bottomLeading) {
             if isPlaying {
                 playerSurface
+                    // 播放中给一个明确的暂停口，别让用户只能离开画布才能停。
+                    .overlay(alignment: .topTrailing) {
+                        pauseBadge.padding(8)
+                    }
             } else {
                 posterSurface(showsPlay: canPlay)
-                    .onTapGesture { if canPlay { onTogglePlay() } }
                 mediaCaption
             }
         }
@@ -121,7 +123,18 @@ struct CanvasNodeCard: View {
 
     // MARK: - 链接
 
+    @ViewBuilder
     private var linkCard: some View {
+        if isPlaying, canPlay {
+            // 官方嵌入的播放器占满整张卡：240pt 宽的节点里再塞标题只会两边都小。
+            playerSurface
+                .overlay(alignment: .topTrailing) { pauseBadge.padding(8) }
+        } else {
+            linkBody
+        }
+    }
+
+    private var linkBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .center) {
                 if let image = ImageStore.shared.image(named: record.previewPath, thumbnail: true) {
@@ -138,7 +151,6 @@ struct CanvasNodeCard: View {
             .frame(maxWidth: .infinity)
             .frame(height: 96)
             .clipped()
-            .onTapGesture { if canPlay { onTogglePlay() } }
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(record.displayTitle.isEmpty
@@ -244,15 +256,39 @@ struct CanvasNodeCard: View {
         }
     }
 
+    /// 播放是一个**独立按钮**：点它只播放，不会冒泡成「打开详情」。
     private var playBadge: some View {
-        ZStack {
-            Circle().fill(Palette.card.opacity(0.92))
-                .frame(width: 34, height: 34)
-            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Palette.espresso)
-                .offset(x: isPlaying ? 0 : 1)
+        Button(action: onTogglePlay) {
+            ZStack {
+                Circle().fill(Palette.card.opacity(0.92))
+                    .frame(width: 34, height: 34)
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Palette.espresso)
+                    .offset(x: isPlaying ? 0 : 1)
+            }
+            .frame(width: 44, height: 44)
+            .contentShape(Circle())
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isPlaying ? "暂停" : "播放")
+    }
+
+    /// 播放器自己的控件在上方；这个角标只负责“停”。
+    private var pauseBadge: some View {
+        Button(action: onTogglePlay) {
+            ZStack {
+                Circle().fill(Color.black.opacity(0.45))
+                    .frame(width: 30, height: 30)
+                Image(systemName: "pause.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 44, height: 44)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("暂停")
     }
 
     private func posterSurface(showsPlay: Bool) -> some View {

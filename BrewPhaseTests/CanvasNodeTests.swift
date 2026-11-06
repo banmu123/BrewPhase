@@ -100,6 +100,47 @@ final class CanvasNodeTests: XCTestCase {
         XCTAssertEqual(stored.positionY, -45.25, accuracy: 0.001)
     }
 
+    /// 移动节点也要更新画布时间：列表按「最近编辑」排序，缩略图也靠它刷新。
+    func testMovingANodeTouchesTheCanvas() throws {
+        let record = makeRecord("拖动")
+        try context.save()
+        let node = try XCTUnwrap(
+            try CanvasNodeStore.add([record], to: canvas,
+                                    visibleWorldRect: visible, context: context).first)
+        let before = canvas.updatedAt
+
+        CanvasNodeStore.move(node, to: CGPoint(x: 50, y: 60), context: context)
+        XCTAssertGreaterThan(canvas.updatedAt, before)
+    }
+
+    /// 移除节点同样更新画布时间，但只在移除成功后。
+    func testRemovingANodeTouchesTheCanvas() throws {
+        let record = makeRecord("移除")
+        try context.save()
+        let node = try XCTUnwrap(
+            try CanvasNodeStore.add([record], to: canvas,
+                                    visibleWorldRect: visible, context: context).first)
+        let before = canvas.updatedAt
+
+        CanvasNodeStore.remove(node, context: context)
+        XCTAssertGreaterThan(canvas.updatedAt, before)
+    }
+
+    /// 画布备注落到节点上，不写回 Record。
+    func testAnnotationGoesToTheNodeNotTheRecord() throws {
+        let record = makeRecord("原备注")
+        record.note = "记录自己的备注"
+        try context.save()
+        let node = try XCTUnwrap(
+            try CanvasNodeStore.add([record], to: canvas,
+                                    visibleWorldRect: visible, context: context).first)
+
+        CanvasNodeStore.setAnnotation("画布上的想法", on: node, context: context)
+
+        XCTAssertEqual(node.annotation, "画布上的想法")
+        XCTAssertEqual(record.note, "记录自己的备注", "画布备注不能覆盖记录备注")
+    }
+
     // MARK: - 移除与级联
 
     /// 从画布移除节点：记录必须还在。

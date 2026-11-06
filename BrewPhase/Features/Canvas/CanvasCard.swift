@@ -50,7 +50,7 @@ struct CanvasCover: View {
     }
 }
 
-/// 画布在列表里的样子：封面 + 名字 + 一句说明。
+/// 画布在列表里的样子：真实内容缩略图 + 名字 + 一句说明。
 struct CanvasCard: View {
 
     let canvas: Canvas
@@ -58,7 +58,8 @@ struct CanvasCard: View {
     var body: some View {
         Card(padding: 10) {
             VStack(alignment: .leading, spacing: 0) {
-                CanvasCover(name: canvas.name, height: 96)
+                // 有节点就画真实摆放；空画布才退回名字色块。
+                CanvasThumbnailPreview(canvas: canvas, height: 96)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(LocalizedStringKey.alreadyLocalized(canvas.displayName))

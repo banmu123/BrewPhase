@@ -96,9 +96,11 @@ enum CanvasNodeStore {
     }
 
     /// 移动一个节点并落库。拖动过程只改内存状态，结束时才走这里。
+    /// 画布的 `updatedAt` 跟着走：列表按「最近编辑」排序，也靠它刷新缩略图。
     static func move(_ node: CanvasNode, to origin: CGPoint, context: ModelContext) {
         node.move(to: origin)
         node.touch()
+        touchCanvas(node.canvasID, context: context)
         do {
             try context.save()
         } catch {
@@ -107,9 +109,24 @@ enum CanvasNodeStore {
         }
     }
 
+    /// 画布备注是节点自己的字段，只更新节点与画布时间，不碰 Record。
+    static func setAnnotation(_ text: String, on node: CanvasNode, context: ModelContext) {
+        node.annotation = text.trimmed
+        node.touch()
+        touchCanvas(node.canvasID, context: context)
+        do {
+            try context.save()
+        } catch {
+            AppLog.store.error("canvas annotation failed: \(error.localizedDescription, privacy: .public)")
+            context.rollback()
+        }
+    }
+
     /// 从画布移除一个节点。**只删节点**，源记录原样保留。
     static func remove(_ node: CanvasNode, context: ModelContext) {
+        let canvasID = node.canvasID
         context.delete(node)
+        touchCanvas(canvasID, context: context)
         do {
             try context.save()
         } catch {
@@ -119,6 +136,13 @@ enum CanvasNodeStore {
     }
 
     // MARK: - 级联清理（不单独 save，和调用方的删除同一次提交）
+
+    /// 画布时间：只在节点集合或摆放真的变了之后更新，不在拖动过程中调用。
+    static func touchCanvas(_ canvasID: UUID, context: ModelContext) {
+        var descriptor = FetchDescriptor<Canvas>(predicate: #Predicate { $0.id == canvasID })
+        descriptor.fetchLimit = 1
+        (try? context.fetch(descriptor))?.first?.touch()
+    }
 
     /// 源记录被删除前调用：清掉所有画布里引用它的节点。
     /// 不在这里 `save()`——调用方随后删记录，并在同一个事务里提交；

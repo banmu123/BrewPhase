@@ -1,17 +1,21 @@
 import SwiftData
 import SwiftUI
 
+/// 画布屏幕坐标空间的唯一名字。手势在这个空间里拿到的是**屏幕点**，
+/// 再由 `CanvasViewport` 换算成世界坐标——换算只此一处。
+private let canvasScreenSpace = "canvas-screen"
+
 /// 一块画布的工作区：自由摆放记录的地方。
 ///
-/// 坐标系分两层——节点存**世界坐标**，视口存 `scale/offset`。手势只改视口或
-/// 节点自己的世界坐标，绝不把屏幕像素写进模型：换个屏幕尺寸、换个缩放比例，
-/// 节点之间的相对位置仍然是用户摆的那个样子。
+/// 坐标分三层：节点存**世界坐标**；`CanvasWorldLayer` 是一个按世界尺寸布局的
+/// 容器；整层只做一次 `scaleEffect + offset`。平移/缩放时改变的是这一层变换，
+/// 而不是逐个节点重新定位——这是「整块空间一起移动」的手感来源，也是节点多
+/// 起来之后仍然跟手的关键。
 ///
-/// 手势分工（冲突是这类页面的头号问题）：
-/// * 空白处单指拖动 → 平移视口；双指捏合 → 以两指中点为锚缩放（任意位置可捏）；
-/// * 节点上的单指拖动 → 移动节点；拖动过程只改内存偏移，松手才写库；
-/// * 点击节点 → 选中；双击 → 打开原记录。
-/// 捏合开始后节点拖动会让位（`isPinching`），不会一边缩放一边把卡片拖走。
+/// 手势分工：
+/// * 空白处单指拖动 → 平移（松手带短惯性）；双指捏合 → 以两指中点为锚缩放；
+/// * 节点单指拖动 → 移动节点，过程只改内存，松手写一次库；
+/// * 单击节点 → 打开原记录；长按 → 画布备注 / 移除。
 struct CanvasWorkspaceView: View {
 
     let canvas: Canvas
@@ -28,9 +32,9 @@ struct CanvasWorkspaceView: View {
     @State private var canvasSize: CGSize = .zero
     @State private var didFit = false
 
-    @State private var selectedNodeID: UUID?
     @State private var playingNodeID: UUID?
     @State private var draggingNodeID: UUID?
+    @State private var newIDs: Set<UUID> = []
 
     @State private var isPinching = false
     @State private var magnifyBase: CanvasViewport?
@@ -42,8 +46,7 @@ struct CanvasWorkspaceView: View {
     @State private var annotationNode: CanvasNode?
     @State private var pendingRemove: CanvasNode?
     @State private var actionError: String?
-    /// 「打开原记录」用同一层导航推详情，而不是另开一个 sheet——
-    /// 详情页的工具栏与返回按钮都依赖外层的 NavigationStack。
+    /// 「打开原记录」用同一层导航推详情：详情页的工具栏依赖外层 NavigationStack。
     @State private var openRecordSheet: Record?
 
     init(canvas: Canvas) {
@@ -55,18 +58,21 @@ struct CanvasWorkspaceView: View {
         )
     }
 
-    /// 当前视口覆盖的世界矩形——新节点落位、可见性裁剪都用它。
     private var visibleWorldRect: CGRect {
         viewport.worldRect(in: canvasSize)
     }
 
-    private var selectedNode: CanvasNode? {
-        nodes.first { $0.id == selectedNodeID }
+    /// 世界层的布局范围：包住所有节点，并留出向外拖动的余量。
+    /// 它只在节点集合/位置变化时重算，平移缩放不会动它。
+    private var worldBounds: CGRect {
+        guard let content = CanvasViewport.contentBounds(nodes.map(\.frame)) else {
+            return CGRect(x: -400, y: -400, width: 800, height: 800)
+        }
+        return content.insetBy(dx: -800, dy: -800)
     }
 
-    /// 只渲染视口附近的节点：画布上可能有上百个节点，屏幕外的卡片不该
-    /// 常驻视图树（更不该为它们保留任何播放器）。留 20% 的余量，拖动到
-    /// 边缘时不会闪。
+    /// 只渲染视口附近的节点；正在拖的节点固定保留，免得拖到边缘被裁掉
+    /// 而中断手势。
     private var visibleNodes: [CanvasNode] {
         let rect = visibleWorldRect
         guard rect.width > 0, rect.height > 0 else { return [] }
@@ -74,33 +80,29 @@ struct CanvasWorkspaceView: View {
                             y: rect.minY - rect.height * 0.2,
                             width: rect.width * 1.4,
                             height: rect.height * 1.4)
-        // 正在拖或刚选中的节点必须留在树里：拖到边缘时被裁掉会中断手势，
-        // 松手的落点就丢了。
-        let pinned = Set([selectedNodeID, draggingNodeID].compactMap { $0 })
-        return nodes.filter { margin.intersects($0.frame) || pinned.contains($0.id) }
+        return nodes.filter { margin.intersects($0.frame) || $0.id == draggingNodeID }
     }
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
+        GeometryReader { _ in
+            ZStack(alignment: .topLeading) {
                 Palette.paper
 
-                // 空白处：平移 + 取消选择。放在节点下层，节点的拖动不会被抢走。
+                CanvasDotGrid(viewport: viewport)
+                    .allowsHitTesting(false)
+
+                // 空白处：单指平移。节点在自己的视图里处理拖动，不会被这里抢走。
                 Color.clear
                     .contentShape(Rectangle())
                     .gesture(panGesture)
-                    .onTapGesture { select(nil) }
 
-                ForEach(visibleNodes) { node in
-                    if let record = recordsByID[node.recordID] {
-                        nodeLayer(node: node, record: record)
-                    }
-                }
+                worldLayer
 
                 if nodes.isEmpty {
                     emptyCanvas
                 }
             }
+            .coordinateSpace(.named(canvasScreenSpace))
             .simultaneousGesture(magnifyGesture)
             .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
                 canvasSize = size
@@ -118,8 +120,8 @@ struct CanvasWorkspaceView: View {
         .navigationDestination(item: $openRecordSheet) { record in
             RecordDetailView(record: record)
         }
-        .safeAreaInset(edge: .bottom) { bottomBar }
-        .sheet(isPresented: $showsPicker, onDismiss: reloadRecords) {
+        .overlay(alignment: .bottomTrailing) { floatingControls }
+        .sheet(isPresented: $showsPicker) {
             CanvasRecordPicker(canvas: canvas) { picked in
                 add(picked)
             }
@@ -170,29 +172,29 @@ struct CanvasWorkspaceView: View {
         nodes.map(\.recordID)
     }
 
-    // MARK: - 节点层
+    // MARK: - 世界层
 
-    private func nodeLayer(node: CanvasNode, record: Record) -> some View {
-        // 定位在 CanvasNodeLayer 内部完成（它知道自己被拖动时的偏移）。
-        // 这里**只**给层级：外层再 .position 一次会把整层坐标系搬走。
-        CanvasNodeLayer(
-            node: node,
-            record: record,
-            viewport: viewport,
-            isSelected: selectedNodeID == node.id,
-            isPlaying: playingNodeID == node.id,
+    /// 整块世界只做一次变换。节点在层内用自己的世界坐标定位。
+    private var worldLayer: some View {
+        let bounds = worldBounds
+        return CanvasWorldLayer(
+            bounds: bounds,
+            nodes: visibleNodes,
+            recordsByID: recordsByID,
+            playingNodeID: playingNodeID,
+            draggingNodeID: draggingNodeID,
+            newIDs: newIDs,
+            scale: viewport.scale,
             isPinching: isPinching,
-            onSelect: { select(node.id) },
-            onOpen: { openRecord(record) },
-            onTogglePlay: { togglePlay(node.id) },
-            onOpenSource: {
+            onOpen: { openRecord($0) },
+            onTogglePlay: { togglePlay($0) },
+            onOpenSource: { record in
                 if let url = record.openLink { openURL(url) }
             },
-            onDragBegan: {
-                draggingNodeID = node.id
-                select(node.id)
-            },
-            onDragEnded: { translation in
+            onAnnotate: { annotationNode = $0 },
+            onRemove: { pendingRemove = $0 },
+            onDragBegan: { draggingNodeID = $0 },
+            onDragEnded: { node, translation in
                 draggingNodeID = nil
                 guard viewport.scale > 0 else { return }
                 let world = CGPoint(x: node.positionX + translation.width / viewport.scale,
@@ -200,13 +202,17 @@ struct CanvasWorkspaceView: View {
                 CanvasNodeStore.move(node, to: world, context: context)
             }
         )
-        .zIndex(selectedNodeID == node.id || draggingNodeID == node.id ? 10_000 : Double(node.zIndex))
+        .frame(width: bounds.width, height: bounds.height, alignment: .topLeading)
+        .scaleEffect(viewport.scale, anchor: .topLeading)
+        .offset(x: viewport.offset.width + bounds.minX * viewport.scale,
+                y: viewport.offset.height + bounds.minY * viewport.scale)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     // MARK: - 手势
 
     private var panGesture: some Gesture {
-        DragGesture(minimumDistance: 6)
+        DragGesture(minimumDistance: 4)
             .onChanged { value in
                 guard !isPinching else { return }
                 let base = panBase ?? viewport.offset
@@ -214,8 +220,19 @@ struct CanvasWorkspaceView: View {
                 viewport.offset = CGSize(width: base.width + value.translation.width,
                                          height: base.height + value.translation.height)
             }
-            .onEnded { _ in
+            .onEnded { value in
                 panBase = nil
+                // 惯性：把预测位移的一小段收进一次短动画。衰减快、不弹回；
+                // 新手势从落点继续，不会和它打架。
+                let extra = CGSize(
+                    width: (value.predictedEndTranslation.width - value.translation.width) * 0.28,
+                    height: (value.predictedEndTranslation.height - value.translation.height) * 0.28
+                )
+                guard abs(extra.width) + abs(extra.height) > 20 else { return }
+                withAnimation(.easeOut(duration: 0.42)) {
+                    viewport.offset = CGSize(width: viewport.offset.width + extra.width,
+                                             height: viewport.offset.height + extra.height)
+                }
             }
     }
 
@@ -235,98 +252,48 @@ struct CanvasWorkspaceView: View {
             }
     }
 
-    // MARK: - 底部
+    // MARK: - 悬浮控件
 
-    @ViewBuilder
-    private var bottomBar: some View {
-        if let node = selectedNode, let record = recordsByID[node.recordID] {
-            selectedBar(node: node, record: record)
-        } else {
-            canvasBar
-        }
-    }
-
-    private var canvasBar: some View {
-        HStack(spacing: Metric.Space.sm) {
-            Button {
+    private var floatingControls: some View {
+        VStack(spacing: 10) {
+            floatingButton(symbol: "plus", filled: true, label: "添加记录到画布") {
                 showsPicker = true
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("添加记录")
-                        .font(TypeScale.callout.weight(.medium))
-                }
-                .foregroundStyle(Palette.card)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 11)
-                .background(Capsule(style: .continuous).fill(Palette.espresso))
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("添加记录到画布")
-
-            Spacer(minLength: 0)
-
-            Button {
+            floatingButton(symbol: "arrow.up.left.and.arrow.down.right",
+                           label: "缩放到适合内容") {
                 withAnimation(Motion.settle) { fitCanvas() }
-            } label: {
-                Text(verbatim: "\(Int((viewport.scale * 100).rounded()))%")
-                    .font(TypeScale.caption.monospacedDigit())
-                    .foregroundStyle(Palette.inkSoft)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
-                    .background(Capsule(style: .continuous).fill(Palette.card))
-                    .overlay(Capsule(style: .continuous).strokeBorder(Palette.hairline, lineWidth: 0.8))
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("缩放到适合内容")
+            floatingButton(symbol: "minus", label: "缩小画布") {
+                zoom(by: 1 / 1.25)
+            }
+
+            Text(verbatim: "\(Int((viewport.scale * 100).rounded()))%")
+                .font(TypeScale.micro.monospacedDigit())
+                .foregroundStyle(Palette.inkFaint)
+                .padding(.top, 2)
         }
-        .padding(.horizontal, Metric.gutter)
-        .padding(.bottom, 10)
-        .padding(.top, 6)
-        .background(Palette.paper)
-        .overlay(alignment: .top) { Hairline() }
+        .padding(.trailing, 18)
+        .padding(.bottom, 22)
     }
 
-    private func selectedBar(node: CanvasNode, record: Record) -> some View {
-        HStack(spacing: 4) {
-            selectionButton(title: "打开", systemImage: "arrow.up.right.square") {
-                openRecord(record)
-            }
-            selectionButton(title: "备注", systemImage: "text.bubble") {
-                annotationNode = node
-            }
-            selectionButton(title: "移除", systemImage: "minus.circle", role: .destructive) {
-                pendingRemove = node
-            }
-            Spacer(minLength: 0)
-            selectionButton(title: "完成", systemImage: "xmark") {
-                select(nil)
-            }
-        }
-        .padding(.horizontal, Metric.gutter)
-        .padding(.vertical, 6)
-        .background(Palette.paper)
-        .overlay(alignment: .top) { Hairline() }
-    }
-
-    private func selectionButton(title: LocalizedStringKey,
-                                 systemImage: String,
-                                 role: ButtonRole? = nil,
-                                 action: @escaping () -> Void) -> some View {
-        Button(role: role, action: action) {
-            VStack(spacing: 3) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 15, weight: .regular))
-                Text(title)
-                    .font(TypeScale.micro)
-            }
-            .foregroundStyle(role == .destructive ? Palette.priority : Palette.inkSoft)
-            .frame(width: 56, height: 44)
-            .contentShape(Rectangle())
+    private func floatingButton(symbol: String,
+                                filled: Bool = false,
+                                label: LocalizedStringKey,
+                                action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(filled ? Palette.card : Palette.inkSoft)
+                .frame(width: 46, height: 46)
+                .background(Circle().fill(filled ? Palette.espresso : Palette.card))
+                .overlay(Circle().strokeBorder(filled ? .clear : Palette.hairline, lineWidth: 0.8))
+                .shadow(color: Palette.liftedShadow.opacity(0.45), radius: 9, x: 0, y: 4)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
+
+    // MARK: - 空画布
 
     private var emptyCanvas: some View {
         VStack(spacing: 10) {
@@ -351,96 +318,7 @@ struct CanvasWorkspaceView: View {
             .padding(.top, 2)
         }
         .padding(.horizontal, 40)
-        .allowsHitTesting(true)
-    }
-
-    // MARK: - 操作
-
-    private func select(_ id: UUID?) {
-        selectedNodeID = id
-        // 换了焦点就不再让上一个节点继续出声。
-        if id == nil || id != playingNodeID { playingNodeID = nil }
-    }
-
-    private func togglePlay(_ id: UUID) {
-        playingNodeID = playingNodeID == id ? nil : id
-    }
-
-    private func openRecord(_ record: Record) {
-        playingNodeID = nil
-        // 用同一层导航推详情：详情页的工具栏/返回按钮依赖外层 NavigationStack，
-        // 塞进一个裸 sheet 会把右上角菜单藏掉。
-        openRecordSheet = record
-    }
-
-    private func add(_ records: [Record]) {
-        guard !records.isEmpty else { return }
-        do {
-            try CanvasNodeStore.add(records, to: canvas, visibleWorldRect: visibleWorldRect, context: context)
-            reloadRecords()
-        } catch {
-            AppLog.store.error("canvas add failed: \(error.localizedDescription, privacy: .public)")
-            actionError = L("没能把它们放进画布，请再试一次")
-        }
-    }
-
-    private func remove(_ node: CanvasNode) {
-        CanvasNodeStore.remove(node, context: context)
-        if selectedNodeID == node.id { selectedNodeID = nil }
-        if playingNodeID == node.id { playingNodeID = nil }
-    }
-
-    private func deleteCanvas() {
-        CanvasNodeStore.deleteNodes(in: canvas.id, context: context)
-        context.delete(canvas)
-        do {
-            try context.save()
-        } catch {
-            AppLog.store.error("canvas delete failed: \(error.localizedDescription, privacy: .public)")
-            context.rollback()
-            actionError = L("没能删除，请再试一次")
-            return
-        }
-        dismiss()
-    }
-
-    // MARK: - 记录与视口
-
-    /// 按节点引用的 ID 取记录，不把整张记录表读进内存。
-    /// 找不到的记录（极端情况下被外部删除、旧备份遗留）对应的节点直接清掉，
-    /// 不留一个点开就空白的节点。
-    private func reloadRecords() {
-        let ids = Array(Set(nodes.map(\.recordID)))
-        guard !ids.isEmpty else {
-            recordsByID = [:]
-            return
-        }
-        let descriptor = FetchDescriptor<Record>(predicate: #Predicate { ids.contains($0.id) })
-        let found = (try? context.fetch(descriptor)) ?? []
-        recordsByID = Dictionary(uniqueKeysWithValues: found.map { ($0.id, $0) })
-
-        let missing = nodes.filter { recordsByID[$0.recordID] == nil }
-        if !missing.isEmpty {
-            AppLog.store.info("canvas: dropped \(missing.count) node(s) with missing record")
-            for node in missing { context.delete(node) }
-            try? context.save()
-        }
-    }
-
-    /// 第一次拿到尺寸时把内容装进窗口；之后尺寸变化（旋屏）不再打扰用户
-    /// 已经调好的视口，只保留节点自己的世界坐标。
-    private func fitIfNeeded() {
-        guard !didFit, canvasSize.width > 0, canvasSize.height > 0 else { return }
-        didFit = true
-        fitCanvas()
-    }
-
-    private func fitCanvas() {
-        guard let bounds = CanvasViewport.contentBounds(nodes.map(\.frame)) else {
-            viewport = CanvasViewport()
-            return
-        }
-        viewport = viewport.fitted(content: bounds, in: canvasSize)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var moreMenu: some View {
@@ -463,68 +341,233 @@ struct CanvasWorkspaceView: View {
         }
         .accessibilityLabel("更多操作")
     }
+
+    // MARK: - 操作
+
+    private func togglePlay(_ id: UUID) {
+        playingNodeID = playingNodeID == id ? nil : id
+    }
+
+    private func openRecord(_ record: Record) {
+        playingNodeID = nil
+        openRecordSheet = record
+    }
+
+    private func zoom(by factor: CGFloat) {
+        let anchor = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+        withAnimation(Motion.settle) {
+            viewport = viewport.zoomed(to: viewport.scale * factor, anchor: anchor)
+        }
+    }
+
+    private func add(_ records: [Record]) {
+        guard !records.isEmpty else { return }
+        do {
+            let created = try CanvasNodeStore.add(records, to: canvas,
+                                                  visibleWorldRect: visibleWorldRect,
+                                                  context: context)
+            newIDs.formUnion(created.map(\.id))
+            // 记录不在这里重复取：节点 ID 变化会触发上面的 .task(id:)
+            // 统一读一次，避免同一次添加把同一批记录读两遍。
+            let ids = Set(created.map(\.id))
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(1200))
+                newIDs.subtract(ids)
+            }
+        } catch {
+            AppLog.store.error("canvas add failed: \(error.localizedDescription, privacy: .public)")
+            actionError = L("没能把它们放进画布，请再试一次")
+        }
+    }
+
+    private func remove(_ node: CanvasNode) {
+        CanvasNodeStore.remove(node, context: context)
+        if playingNodeID == node.id { playingNodeID = nil }
+    }
+
+    private func deleteCanvas() {
+        CanvasNodeStore.deleteNodes(in: canvas.id, context: context)
+        context.delete(canvas)
+        do {
+            try context.save()
+        } catch {
+            AppLog.store.error("canvas delete failed: \(error.localizedDescription, privacy: .public)")
+            context.rollback()
+            actionError = L("没能删除，请再试一次")
+            return
+        }
+        dismiss()
+    }
+
+    // MARK: - 记录与视口
+
+    /// 按节点引用的 ID 取记录，不把整张记录表读进内存。
+    /// 找不到的记录（极端情况下被外部删除）对应节点直接清掉。
+    private func reloadRecords() {
+        let ids = Array(Set(nodes.map(\.recordID)))
+        guard !ids.isEmpty else {
+            recordsByID = [:]
+            return
+        }
+        let descriptor = FetchDescriptor<Record>(predicate: #Predicate { ids.contains($0.id) })
+        let found = (try? context.fetch(descriptor)) ?? []
+        let mapped = Dictionary(uniqueKeysWithValues: found.map { ($0.id, $0) })
+        if mapped.keys.sorted(by: { $0.uuidString < $1.uuidString })
+            != recordsByID.keys.sorted(by: { $0.uuidString < $1.uuidString }) {
+            recordsByID = mapped
+        }
+
+        let missing = nodes.filter { mapped[$0.recordID] == nil }
+        if !missing.isEmpty {
+            AppLog.store.info("canvas: dropped \(missing.count) node(s) with missing record")
+            for node in missing { context.delete(node) }
+            try? context.save()
+        }
+    }
+
+    private func fitIfNeeded() {
+        guard !didFit, canvasSize.width > 0, canvasSize.height > 0 else { return }
+        didFit = true
+        fitCanvas()
+    }
+
+    private func fitCanvas() {
+        guard let bounds = CanvasViewport.contentBounds(nodes.map(\.frame)) else {
+            viewport = CanvasViewport()
+            return
+        }
+        viewport = viewport.fitted(content: bounds, in: canvasSize)
+    }
 }
 
-// MARK: - 单个节点的定位与手势
+// MARK: - 世界层
 
-/// 负责「这张节点卡在世界里的哪个屏幕位置」以及拖动/点击。
+/// 一次变换承载所有节点：平移/缩放只改这一层，节点自己的视图不重新定位。
+private struct CanvasWorldLayer: View {
+
+    let bounds: CGRect
+    let nodes: [CanvasNode]
+    let recordsByID: [UUID: Record]
+    let playingNodeID: UUID?
+    let draggingNodeID: UUID?
+    let newIDs: Set<UUID>
+    let scale: CGFloat
+    let isPinching: Bool
+    let onOpen: (Record) -> Void
+    let onTogglePlay: (UUID) -> Void
+    let onOpenSource: (Record) -> Void
+    let onAnnotate: (CanvasNode) -> Void
+    let onRemove: (CanvasNode) -> Void
+    let onDragBegan: (UUID) -> Void
+    let onDragEnded: (CanvasNode, CGSize) -> Void
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(nodes) { node in
+                if let record = recordsByID[node.recordID] {
+                    CanvasNodeLayer(
+                        node: node,
+                        record: record,
+                        isPlaying: playingNodeID == node.id,
+                        isNew: newIDs.contains(node.id),
+                        isPinching: isPinching,
+                        scale: scale,
+                        onOpen: { onOpen(record) },
+                        onTogglePlay: { onTogglePlay(node.id) },
+                        onOpenSource: { onOpenSource(record) },
+                        onAnnotate: { onAnnotate(node) },
+                        onRemove: { onRemove(node) },
+                        onDragBegan: { onDragBegan(node.id) },
+                        onDragEnded: { onDragEnded(node, $0) }
+                    )
+                    .frame(width: node.frame.width, height: node.frame.height)
+                    .position(x: node.frame.midX - bounds.minX,
+                              y: node.frame.midY - bounds.minY)
+                    // 拖动的卡片临时抬到最上层；只改渲染层级，不写库。
+                    .zIndex(node.id == draggingNodeID ? 10_000 : Double(node.zIndex))
+                }
+            }
+        }
+        .frame(width: bounds.width, height: bounds.height, alignment: .topLeading)
+    }
+}
+
+// MARK: - 单个节点
+
+/// 一张节点卡：点击打开原记录、拖动移动、长按出操作菜单。
 ///
-/// 拖动过程中只改 `translation`（内存），松手才把屏幕位移换算成世界位移交给
-/// 上层；因此一次拖动只产生**一次** SwiftData 写入，而不是每一帧一次。
+/// 拖动只改 `translation`（内存），松手才交给存储层；卡片本身不参与视口变换，
+/// 所以平移/缩放画布不会让它们逐帧重算。
 private struct CanvasNodeLayer: View {
 
     let node: CanvasNode
     let record: Record
-    let viewport: CanvasViewport
-    let isSelected: Bool
     let isPlaying: Bool
+    let isNew: Bool
     let isPinching: Bool
-    let onSelect: () -> Void
+    let scale: CGFloat
     let onOpen: () -> Void
     let onTogglePlay: () -> Void
     let onOpenSource: () -> Void
+    let onAnnotate: () -> Void
+    let onRemove: () -> Void
     let onDragBegan: () -> Void
     let onDragEnded: (CGSize) -> Void
 
     @State private var translation: CGSize = .zero
     @State private var isDragging = false
-
-    private var frame: CGRect { node.frame }
+    @State private var appeared = false
 
     var body: some View {
         CanvasNodeCard(
             record: record,
             annotation: node.annotation,
             isPlaying: isPlaying,
-            isSelected: isSelected,
             onTogglePlay: onTogglePlay,
             onOpenSource: onOpenSource
         )
-        .frame(width: frame.width, height: frame.height)
-        .overlay(
-            RoundedRectangle(cornerRadius: CanvasNodeCard.cornerRadius, style: .continuous)
-                .strokeBorder(Palette.roast.opacity(isSelected ? 0.55 : 0), lineWidth: 1.2)
-        )
-        .scaleEffect(viewport.scale, anchor: .topLeading)
-        // 手势与可访问性必须挂在缩放后的卡片上，**在 .position 之前**：
-        // .position 会把视图撑满父级，挂到它后面等于整块画布都是热区。
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { onOpen() }
-        .onTapGesture { onSelect() }
+        .onTapGesture {
+            // 播放中把点击让给播放器控件：碰视频不该跳走。
+            if !isPlaying { onOpen() }
+        }
         .gesture(dragGesture)
+        .contextMenu {
+            Button { onOpen() } label: {
+                Label("打开原记录", systemImage: "arrow.up.right.square")
+            }
+            Button { onAnnotate() } label: {
+                Label("画布备注", systemImage: "text.bubble")
+            }
+            Divider()
+            Button(role: .destructive) { onRemove() } label: {
+                Label("从画布移除", systemImage: "minus.circle")
+            }
+        }
+        .offset(x: translation.width / max(scale, 0.001),
+                y: translation.height / max(scale, 0.001))
+        .scaleEffect(appeared ? 1 : 0.97)
+        .opacity(appeared ? 1 : 0)
+        .onAppear {
+            guard !appeared else { return }
+            if isNew {
+                withAnimation(.easeOut(duration: 0.18)) { appeared = true }
+            } else {
+                appeared = true
+            }
+        }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(verbatim: record.displayTitle.isEmpty
                                  ? record.carrier.title
                                  : record.displayTitle))
-        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityHint("双击打开原记录")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("打开原记录")
         .accessibilityAction(named: "打开原记录") { onOpen() }
-        .position(x: viewport.screenPoint(frame.origin).x + frame.width / 2 + translation.width,
-                  y: viewport.screenPoint(frame.origin).y + frame.height / 2 + translation.height)
+        .accessibilityAction(named: "从画布移除") { onRemove() }
     }
 
     private var dragGesture: some Gesture {
-        DragGesture(minimumDistance: 8)
+        DragGesture(minimumDistance: 8, coordinateSpace: .named(canvasScreenSpace))
             .onChanged { value in
                 guard !isPinching else { return }
                 if !isDragging {
@@ -534,11 +577,45 @@ private struct CanvasNodeLayer: View {
                 translation = value.translation
             }
             .onEnded { value in
+                let wasDragging = isDragging
                 isDragging = false
                 translation = .zero
-                guard !isPinching else { return }
+                guard wasDragging, !isPinching else { return }
                 onDragEnded(value.translation)
             }
+    }
+}
+
+// MARK: - 点阵背景
+
+/// 轻点阵：像纸面一样随空间一起移动、一起缩放。不画网格线，密度随缩放
+/// 自动收敛，放大时不会变成一张噪点图。
+private struct CanvasDotGrid: View {
+
+    let viewport: CanvasViewport
+
+    var body: some View {
+        SwiftUI.Canvas { context, size in
+            let spacing = 26 * viewport.scale
+            guard spacing >= 12 else { return }
+            let radius: CGFloat = 1.05
+            let startX = viewport.offset.width.truncatingRemainder(dividingBy: spacing) - spacing
+            let startY = viewport.offset.height.truncatingRemainder(dividingBy: spacing) - spacing
+
+            var path = Path()
+            var y = startY
+            while y < size.height + spacing {
+                var x = startX
+                while x < size.width + spacing {
+                    path.addEllipse(in: CGRect(x: x - radius, y: y - radius,
+                                               width: radius * 2, height: radius * 2))
+                    x += spacing
+                }
+                y += spacing
+            }
+            context.fill(path, with: .color(Palette.inkFaint.opacity(0.22)))
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -586,23 +663,13 @@ struct CanvasNodeAnnotationView: View {
                         .foregroundStyle(Palette.inkSoft)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("保存") { save() }
-                        .foregroundStyle(Palette.roast)
+                    Button("保存") {
+                        CanvasNodeStore.setAnnotation(text, on: node, context: context)
+                        dismiss()
+                    }
+                    .foregroundStyle(Palette.roast)
                 }
             }
         }
-    }
-
-    private func save() {
-        node.annotation = text.trimmed
-        node.touch()
-        do {
-            try context.save()
-        } catch {
-            AppLog.store.error("canvas annotation failed: \(error.localizedDescription, privacy: .public)")
-            context.rollback()
-            return
-        }
-        dismiss()
     }
 }

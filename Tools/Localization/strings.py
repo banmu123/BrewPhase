@@ -1408,6 +1408,9 @@ EN: dict[str, str] = {
     # Canvas
     "从画布移除这个节点？": "Remove this node from the canvas?",
     "从记录中添加": "Add from records",
+    "从画布移除": "Remove from canvas",
+    "暂停": "Pause",
+    "缩小画布": "Zoom out",
     "从记录里挑几样东西放进来，再按你的想法摆开。": "Pick a few things from your records and arrange them your way.",
     "加入 %@": "Add %@",
     "加入画布": "Add to canvas",

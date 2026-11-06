@@ -104,6 +104,37 @@ final class CanvasPlacementTests: XCTestCase {
         }
     }
 
+    /// 节点多起来之后，落位不能退化成一次「扫全图」。100 / 300 / 500 个
+    /// 占位节点各跑一次：结果仍可用（不压住已有节点、同批不重叠），
+    /// 且耗时留在一次点击可接受的范围里。
+    func testPlacementStaysUsableWithHundredsOfOccupiedFrames() {
+        let size = CGSize(width: 220, height: 170)
+        for count in [100, 300, 500] {
+            var occupied: [CGRect] = []
+            let columns = 20
+            for index in 0..<count {
+                occupied.append(CGRect(x: CGFloat(index % columns) * 240,
+                                       y: CGFloat(index / columns) * 200,
+                                       width: 220, height: 170))
+            }
+            let visible = CGRect(x: 0, y: 0, width: 1_200, height: 2_000)
+
+            let start = CFAbsoluteTimeGetCurrent()
+            let origins = CanvasPlacement.origins(
+                sizes: Array(repeating: size, count: 4),
+                occupied: occupied, in: visible)
+            let elapsed = CFAbsoluteTimeGetCurrent() - start
+
+            XCTAssertEqual(origins.count, 4)
+            XCTAssertLessThan(elapsed, 0.2, "\(count) 个占位节点下的落位耗时")
+            for origin in origins {
+                let frame = CGRect(origin: origin, size: size)
+                XCTAssertFalse(occupied.contains { $0.intersects(frame) },
+                               "\(count) 个占位时不能压住已有节点")
+            }
+        }
+    }
+
     /// 可见区被占满时：顺着已有内容的下方排，而不是叠上去。
     func testWhenTheVisibleAreaIsFullNodesGoBelowTheContent() {
         let occupied = [CGRect(x: -200, y: -200, width: 900, height: 1_200)]
