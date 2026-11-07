@@ -3,6 +3,9 @@ import type { RecordCarrier, RecordDraft, RecordItem, RecordTag } from '@shared/
 import { carrierLabel } from '@shared/contracts'
 import { api, formatDate } from '../../shared/api'
 import { SearchIcon } from '../../shared/icons'
+import { RecordTilePreview } from './preview/RecordTilePreview'
+import { detectPlatform } from './preview/platform'
+import { formatCount } from './preview/preview-model'
 
 const CARRIERS: (RecordCarrier | null)[] = [null, 'link', 'image', 'video', 'text']
 
@@ -189,9 +192,7 @@ export function RecordsPage() {
                       <a className="detail-link" href={selected.urlString} target="_blank" rel="noreferrer">
                         {selected.urlString}
                       </a>
-                      <span style={{ display: 'block', marginTop: 6 }}>
-                        链接元数据（标题/封面）在桌面端暂不抓取，同步后由 iOS 补齐。
-                      </span>
+                      <LinkMetaLine item={selected} />
                     </p>
                   )}
 
@@ -221,8 +222,8 @@ export function RecordsPage() {
 }
 
 /**
- * 收藏网格里的一块内容：图片/链接/视频以封面为主角，文字以正文摘录为主角。
- * 每条记录都应该像「值得保存的一条内容」，而不是表格里的一行。
+ * 收藏网格里的一块内容：媒体区按平台差异化渲染（GitHub 像 GitHub、
+ * 视频像视频、X 像 X），标题/标签/时间保持既有排版。
  */
 function RecordTile(props: {
   item: RecordItem
@@ -231,31 +232,28 @@ function RecordTile(props: {
   onClick: () => void
 }) {
   const { item } = props
-  const mediaFile = item.previewPath ?? item.mediaPath
-  const showImage =
-    (item.carrier === 'image' || item.carrier === 'link' || item.carrier === 'video') &&
-    Boolean(mediaFile)
+  const platform = useMemo(() => detectPlatform(item), [item])
+  const previewTitle = useMemo(() => {
+    if (platform.platform === 'github' && item.platformContentID) return item.platformContentID
+    if (item.title.trim()) return item.title
+    return item.summary.trim().split('\n')[0] || carrierLabel[item.carrier]
+  }, [platform, item])
 
   return (
     <button
       className="record-tile"
       data-active={props.active}
+      data-platform={platform.platform}
       onClick={props.onClick}
-      aria-label={item.title || carrierLabel[item.carrier]}
+      aria-label={previewTitle || carrierLabel[item.carrier]}
     >
-      <span className={`record-tile__media${item.carrier === 'text' ? ' record-tile__media--text' : ''}`}>
-        {showImage ? (
-          <img src={api.records.mediaUrl(mediaFile ?? '')} alt="" loading="lazy" />
-        ) : item.carrier === 'text' ? (
-          <span className="record-tile__excerpt">{item.note || item.title || '一段文字'}</span>
-        ) : (
-          <span className="record-tile__media-fallback">{carrierLabel[item.carrier]}</span>
-        )}
+      <span className={`record-tile__media${item.carrier === 'text' ? ' record-tile__media--text' : ' record-tile__media--platform'}`}>
+        <RecordTilePreview item={item} mediaUrl={(name) => api.records.mediaUrl(name)} />
       </span>
       <span className="record-tile__body">
-        <span className="record-tile__title">{item.title || carrierLabel[item.carrier]}</span>
+        <span className="record-tile__title">{previewTitle || carrierLabel[item.carrier]}</span>
         <span className="record-tile__meta">
-          <span>{carrierLabel[item.carrier]}</span>
+          <span data-platform-label={platform.platform}>{platform.label}</span>
           <span>{formatDate(item.createdAt)}</span>
           {props.tagNames.map((name) => (
             <span key={name} className="tag">
@@ -266,6 +264,27 @@ function RecordTile(props: {
       </span>
     </button>
   )
+}
+
+/** 详情侧栏的平台元信息行：仓库统计 / 视频来源 / 网页域名，如实展示。 */
+function LinkMetaLine(props: { item: RecordItem }) {
+  const { item } = props
+  const platform = detectPlatform(item)
+  const stats: string[] = []
+  if (item.repositoryLanguage) stats.push(item.repositoryLanguage)
+  if (item.repositoryStars !== null && item.repositoryStars > 0) stats.push(`★ ${formatCount(item.repositoryStars)}`)
+  if (item.repositoryForks !== null && item.repositoryForks > 0) stats.push(`Fork ${formatCount(item.repositoryForks)}`)
+
+  if (platform.platform === 'github' && stats.length > 0) {
+    return <span style={{ display: 'block', marginTop: 6 }}>仓库 · {stats.join(' · ')}</span>
+  }
+  if (platform.platform === 'youtube' || platform.platform === 'bilibili') {
+    return <span style={{ display: 'block', marginTop: 6 }}>视频 · {platform.label}{item.authorName ? ` · ${item.authorName}` : ''}</span>
+  }
+  if (item.sourceName || item.authorName) {
+    return <span style={{ display: 'block', marginTop: 6 }}>{[item.sourceName, item.authorName].filter(Boolean).join(' · ')}</span>
+  }
+  return null
 }
 
 function NewRecordForm(props: {

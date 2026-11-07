@@ -843,6 +843,228 @@ textarea {
   position: relative;
 }
 
+/* ===== 平台差异化预览（Records）：同一卡片系统，平台各自的内容结构 ===== */
+
+.preview-media {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.preview-media--auto {
+  height: auto;
+  min-height: 132px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 9px;
+  padding: 30px 14px 13px;
+  text-align: left;
+}
+
+.preview-thumb {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.preview-thumb--inline {
+  position: static;
+  inset: auto;
+  height: auto;
+  max-height: 150px;
+  border-radius: 8px;
+  border: 1px solid var(--hairline);
+}
+
+.preview-chip {
+  position: absolute;
+  top: 9px;
+  left: 9px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(250, 249, 246, 0.92);
+  border: 1px solid var(--hairline);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  max-width: calc(100% - 18px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preview-media--auto .preview-chip {
+  position: static;
+  align-self: flex-start;
+}
+
+.preview-play {
+  position: absolute;
+  z-index: 2;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(24, 19, 14, 0.55);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-left: 2px;
+  transition: transform 0.16s ease, background 0.16s ease;
+}
+
+.record-tile:hover .preview-play {
+  transform: scale(1.05);
+  background: rgba(24, 19, 14, 0.68);
+}
+
+.preview-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  opacity: 0.72;
+}
+
+.preview-fallback__label {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+}
+
+/* GitHub 仓库信息卡：代码工具的气质，mono 标识 + 统计行 */
+.preview-repo {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.preview-repo__id {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-callout);
+  font-weight: 600;
+  color: var(--espresso);
+  min-width: 0;
+}
+
+.preview-repo__id .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-repo__desc {
+  font-size: var(--fs-footnote, 12px);
+  color: var(--ink-soft);
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.preview-repo__stats {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.preview-repo__stats span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.preview-repo__lang {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.preview-repo__lang-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--roast);
+  display: inline-block;
+}
+
+/* X 动态：作者 + 正文主体，文本才是卡片的主角 */
+.preview-x {
+  background: var(--card);
+}
+
+.preview-x__author {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.preview-x__avatar {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--cream);
+  border: 1px solid var(--hairline);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.preview-x__id {
+  min-width: 0;
+}
+
+.preview-x__name {
+  font-size: var(--fs-callout);
+  font-weight: 500;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
+.preview-x__body {
+  font-size: var(--fs-footnote, 12px);
+  color: var(--ink-soft);
+  line-height: 1.65;
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.preview-x__body--ghost {
+  color: var(--ink-faint);
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: normal;
+}
+
 .record-tile__media img {
   width: 100%;
   height: 100%;

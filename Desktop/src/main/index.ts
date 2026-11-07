@@ -26,6 +26,12 @@ protocol.registerSchemesAsPrivileged([
   }
 ])
 
+// 便携/测试场景：库与媒体目录整体重定向。必须在 requestSingleInstanceLock
+// 之前设置——实例锁文件就在 userData 里，重定向后不同目录可各自持锁。
+if (process.env.BREWPHASE_USER_DATA_DIR) {
+  app.setPath('userData', process.env.BREWPHASE_USER_DATA_DIR)
+}
+
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
