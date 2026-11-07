@@ -82,14 +82,3 @@ export function editField<K extends 'title' | 'note' | 'urlString'>(
 export function editTags(form: InspectorForm, tagIds: string[]): InspectorForm {
   return { ...form, tagIds, tagsDirty: true }
 }
-
-/** 这条记录有没有用户改过、但还没保存的内容。 */
-export function hasPendingEdits(form: InspectorForm, item: InspectorSource): boolean {
-  if (form.id !== item.id) return false
-  return (
-    (form.titleDirty && form.title !== item.title) ||
-    (form.noteDirty && form.note !== item.note) ||
-    (form.urlDirty && form.urlString !== item.urlString) ||
-    (form.tagsDirty && !sameIds(form.tagIds, item.tagIds))
-  )
-}

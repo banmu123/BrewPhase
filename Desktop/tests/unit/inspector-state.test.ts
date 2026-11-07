@@ -3,7 +3,6 @@ import {
   createInspectorForm,
   editField,
   editTags,
-  hasPendingEdits,
   mergeInspectorItem,
   type InspectorSource
 } from '../../src/renderer/src/features/records/inspector-state'
@@ -100,16 +99,6 @@ describe('RecordInspector 自动补全与用户编辑优先级', () => {
     const form = createInspectorForm(source({ tagIds: ['tag-a'] }))
     const merged = mergeInspectorItem(form, source({ tagIds: ['tag-a', 'tag-c'] }))
     expect(merged.tagIds).toEqual(['tag-a', 'tag-c'])
-  })
-
-  it('hasPendingEdits 只认「改过且与当前记录不同」', () => {
-    let form = createInspectorForm(source({ title: '原标题' }))
-    expect(hasPendingEdits(form, source({ title: '原标题' }))).toBe(false)
-    form = editField(form, 'title', '新标题')
-    expect(hasPendingEdits(form, source({ title: '原标题' }))).toBe(true)
-    // 改回原值 → 不再算未保存修改
-    form = editField(form, 'title', '原标题')
-    expect(hasPendingEdits(form, source({ title: '原标题' }))).toBe(false)
   })
 
   it('自动补全与用户编辑同时发生：只保留用户那一个字段', () => {
