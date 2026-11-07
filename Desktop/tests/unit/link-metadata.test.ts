@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { parseLink } from '../../src/shared/link-parser'
 import {
   assertAllowedUrl,
+  createGuardedLookup,
   isPublicAddress,
   isPublicIPv4,
-  isPublicIPv6
+  isPublicIPv6,
+  safeFetchText,
+  type RequestOnce
 } from '../../src/main/metadata/metadata-security'
 import {
   extractHtmlMetadata,
@@ -287,5 +290,103 @@ describe('resolver 边界', () => {
     expect(first.title).toBe('并发')
     expect(second.title).toBe('并发')
     expect(fetcher.calls).toHaveLength(1)
+  })
+})
+
+describe('安全层：DNS 校验与重定向（注入）', () => {
+  const OPTS = { accept: 'text/html', maxBytes: 1024, allowedTypes: ['text/html'] }
+
+  it('DNS 返回私有 IP → 连接被拒（DNS rebinding 语义：校验的就是实际连接 IP）', async () => {
+    const guarded = createGuardedLookup((_host, _opts, callback) => {
+      callback(null, [{ address: '10.0.0.8', family: 4 }])
+    })
+    await expect(
+      new Promise((resolve, reject) => {
+        guarded('evil.example', { all: true }, (error, address) => (error ? reject(error) : resolve(address)))
+      })
+    ).rejects.toThrow('blocked private address')
+  })
+
+  it('DNS 混合私有与公网 → 只回填公网地址', async () => {
+    const guarded = createGuardedLookup((_host, _opts, callback) => {
+      callback(null, [
+        { address: '192.168.1.2', family: 4 },
+        { address: '93.184.216.34', family: 4 }
+      ])
+    })
+    const address = await new Promise<string>((resolve, reject) => {
+      guarded('mixed.example', { all: true }, (error, resolved) =>
+        error ? reject(error) : resolve(String(resolved))
+      )
+    })
+    expect(address).toBe('93.184.216.34')
+  })
+
+  it('DNS 只有 IPv6 loopback → 拒绝', async () => {
+    const guarded = createGuardedLookup((_host, _opts, callback) => {
+      callback(null, [{ address: '::1', family: 6 }])
+    })
+    await expect(
+      new Promise((resolve, reject) => {
+        guarded('v6.example', { all: true }, (error, address) => (error ? reject(error) : resolve(address)))
+      })
+    ).rejects.toThrow('blocked private address')
+  })
+
+  it('重定向到私有 IP → 第二跳预检拒绝', async () => {
+    const fakeRequest: RequestOnce = async () => ({
+      status: 301,
+      headers: { location: 'http://127.0.0.1/admin' },
+      body: Buffer.alloc(0)
+    })
+    await expect(safeFetchText('https://example.com/start', OPTS, fakeRequest)).rejects.toThrow(
+      'private address blocked'
+    )
+  })
+
+  it('重定向到 localhost 域名 → 拒绝', async () => {
+    const fakeRequest: RequestOnce = async () => ({
+      status: 302,
+      headers: { location: 'http://localhost:47821/api/status' },
+      body: Buffer.alloc(0)
+    })
+    await expect(safeFetchText('https://example.com/start', OPTS, fakeRequest)).rejects.toThrow('host not allowed')
+  })
+
+  it('超过 3 次重定向 → too many redirects', async () => {
+    const fakeRequest: RequestOnce = async (url) => ({
+      status: 302,
+      headers: { location: `https://example.com/hop-${url.pathname.length}` },
+      body: Buffer.alloc(0)
+    })
+    await expect(safeFetchText('https://example.com/a', OPTS, fakeRequest)).rejects.toThrow('too many redirects')
+  })
+
+  it('3xx 但缺少 Location → 明确报错', async () => {
+    const fakeRequest: RequestOnce = async () => ({ status: 302, headers: {}, body: Buffer.alloc(0) })
+    await expect(safeFetchText('https://example.com/a', OPTS, fakeRequest)).rejects.toThrow('redirect without location')
+  })
+
+  it('相对 Location 按当前地址解析，且逐跳重新校验', async () => {
+    let calls = 0
+    const fakeRequest: RequestOnce = async () => {
+      calls += 1
+      if (calls === 1) {
+        return { status: 302, headers: { location: '/next' }, body: Buffer.alloc(0) }
+      }
+      return { status: 200, headers: { 'content-type': 'text/html' }, body: Buffer.from('<title>ok</title>') }
+    }
+    const result = await safeFetchText('https://example.com/first', OPTS, fakeRequest)
+    expect(result.url).toBe('https://example.com/next')
+    expect(result.body).toContain('ok')
+  })
+
+  it('Content-Type 不在白名单 → 拒绝（非 HTML 不解析）', async () => {
+    const fakeRequest: RequestOnce = async () => ({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: Buffer.from('{}')
+    })
+    await expect(safeFetchText('https://example.com/a', OPTS, fakeRequest)).rejects.toThrow('content-type not allowed')
   })
 })

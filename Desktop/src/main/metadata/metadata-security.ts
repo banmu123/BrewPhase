@@ -127,14 +127,21 @@ export function assertAllowedUrl(raw: string): URL {
   return url
 }
 
+/** DNS 解析器签名（默认 node:dns.lookup，测试可注入假 DNS）。 */
+export type DnsResolver = (
+  hostname: string,
+  options: { all: true; verbatim: true },
+  callback: (error: Error | null, addresses: Array<{ address: string; family: number }>) => void
+) => void
+
 /**
  * 连接时 DNS 校验：解析全部地址，任一私有即拒绝连接（保守策略），
  * 否则回填第一个公网地址。DNS rebinding 在校验与连接之间没有窗口——
  * 校验的就是即将连接的 IP。
  */
-export function createGuardedLookup(): LookupFunction {
+export function createGuardedLookup(resolve: DnsResolver = lookup as unknown as DnsResolver): LookupFunction {
   return (hostname, options, callback) => {
-    lookup(hostname, { all: true, verbatim: true }, (error, addresses) => {
+    resolve(hostname, { all: true, verbatim: true }, (error, addresses) => {
       if (error) {
         callback(error, '', 4)
         return
@@ -156,9 +163,12 @@ export function createGuardedLookup(): LookupFunction {
 
 // MARK: - 抓取
 
-type RawResponse = { status: number; headers: Record<string, string | string[] | undefined>; body: Buffer }
+export type RawResponse = { status: number; headers: Record<string, string | string[] | undefined>; body: Buffer }
 
-function requestOnce(url: URL, opts: FetchOptions): Promise<RawResponse> {
+/** 单跳请求签名（默认真实 socket；测试注入假响应，覆盖重定向逻辑）。 */
+export type RequestOnce = (url: URL, opts: FetchOptions) => Promise<RawResponse>
+
+export function requestOnce(url: URL, opts: FetchOptions): Promise<RawResponse> {
   return new Promise((resolve, reject) => {
     const isHttps = url.protocol === 'https:'
     const requester = isHttps ? httpsRequest : httpRequest
@@ -219,10 +229,14 @@ function headerValue(headers: RawResponse['headers'], name: string): string {
  * 安全抓取：手动跟随重定向（每跳都重新校验 URL + 目标 IP），
  * 限制返回类型与大小。任何一步失败抛出可读错误，由上层归一为 failed。
  */
-export async function safeFetchText(rawUrl: string, opts: FetchOptions): Promise<FetchResult> {
+export async function safeFetchText(
+  rawUrl: string,
+  opts: FetchOptions,
+  requestImpl: RequestOnce = requestOnce
+): Promise<FetchResult> {
   let current = assertAllowedUrl(rawUrl)
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
-    const response = await requestOnce(current, opts)
+    const response = await requestImpl(current, opts)
     if (response.status >= 300 && response.status < 400) {
       const location = headerValue(response.headers, 'location')
       if (!location) throw new Error(`redirect without location (${response.status})`)
