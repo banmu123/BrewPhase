@@ -166,7 +166,7 @@ export function CoffeePage() {
                 {rule && phase && (
                   <div className="phase-track">
                     {(['resting', 'opening', 'peak', 'declining'] as const).map((item) => (
-                      <div key={item} data-on={item === phase} />
+                      <div key={item} data-on={item === phase} data-phase={item} />
                     ))}
                   </div>
                 )}
@@ -428,8 +428,8 @@ function BrewForm(props: {
 
   return (
     <form
-      className="stack"
-      style={{ background: 'var(--card)', padding: 12, borderRadius: 10, marginBottom: 14 }}
+      className="stack panel"
+      style={{ marginBottom: 14 }}
       onSubmit={async (event) => {
         event.preventDefault()
         setBusy(true)

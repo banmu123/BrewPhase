@@ -147,7 +147,7 @@ export function RecordsPage() {
                   <span>{carrierLabel[item.carrier]}</span>
                   <span>{formatDate(item.createdAt)}</span>
                   {item.tagIds.slice(0, 2).map((id) => (
-                    <span key={id} className="badge">
+                    <span key={id} className="tag">
                       {tagName.get(id) ?? '标签'}
                     </span>
                   ))}
@@ -238,8 +238,8 @@ function NewRecordForm(props: {
 
   return (
     <form
-      className="stack"
-      style={{ background: 'var(--card)', padding: 12, borderRadius: 10, marginBottom: 14 }}
+      className="stack panel"
+      style={{ marginBottom: 14 }}
       onSubmit={async (event) => {
         event.preventDefault()
         setBusy(true)

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Group, Image as KonvaImage, Layer, Rect, Stage, Text } from 'react-konva'
+import { Group, Image as KonvaImage, Layer, Rect, Shape, Stage, Text } from 'react-konva'
+import type { Context } from 'konva/lib/Context'
 import type { Canvas, CanvasNodeWithRecord, CanvasViewport, RecordItem } from '@shared/contracts'
 import { zoomAt } from '@shared/contracts'
 import { api, formatDate } from '../../shared/api'
+import { refreshThemeColors, themeColors } from '../../shared/tokens'
 
 /**
  * Canvas：无限画布的第一版。
@@ -10,6 +12,9 @@ import { api, formatDate } from '../../shared/api'
  * 坐标系只有一套：节点存**世界坐标**，Stage 承担缩放与平移。拖动结束时把
  * 节点的新世界坐标写库（一次拖动一次写入），平移/缩放只改视口、不动数据。
  * 手绘笔迹这一版只有表结构，工具在 Phase 4（见 docs/CANVAS_SPEC.md）。
+ *
+ * 视觉与 iOS 的 CanvasWorkspaceView 同一套令牌：中性浅灰底、白卡、细边、
+ * 点阵背景；颜色一律走 `shared/tokens.ts`（CSS 变量是唯一来源）。
  */
 export function CanvasPage() {
   const [canvases, setCanvases] = useState<Canvas[]>([])
@@ -61,6 +66,11 @@ export function CanvasPage() {
       .list({ search: '', carrier: null, tagId: null, limit: 60, offset: 0 })
       .then(setRecords)
       .catch((cause: Error) => setError(cause.message))
+  }, [])
+
+  useEffect(() => {
+    // 画布渲染读不到 CSS：挂载时把设计令牌取一次（HMR 或主题调整后再取）。
+    refreshThemeColors()
   }, [])
 
   useEffect(() => {
@@ -164,6 +174,9 @@ export function CanvasPage() {
                 panRef.current = null
               }}
             >
+              <Layer listening={false}>
+                <DotGrid width={size.width} height={size.height} viewport={viewport} />
+              </Layer>
               <Layer>
                 {nodes.map((node) => (
                   <CanvasNodeShape
@@ -298,6 +311,8 @@ function CanvasNodeShape(props: {
         ? node.recordPreviewPath
         : null
   )
+  const colors = themeColors()
+  const radius = 16
 
   return (
     <Group
@@ -310,44 +325,124 @@ function CanvasNodeShape(props: {
         void props.onMoved(event.target.x(), event.target.y())
       }}
     >
-      <Rect
-        width={node.width}
-        height={node.height}
-        fill="#fffdf8"
-        cornerRadius={10}
-        stroke={props.selected ? '#7a4a2b' : '#e2d8c8'}
-        strokeWidth={props.selected ? 2 : 1}
-        shadowColor="rgba(59,43,34,0.10)"
-        shadowBlur={props.selected ? 14 : 6}
-        shadowOffsetY={3}
-      />
       {image ? (
-        <KonvaImage image={image} width={node.width} height={node.height} listening={false} />
+        <>
+          {/* 图片按卡片圆角裁切，封面就是卡片的全部内容 */}
+          <Group
+            clipFunc={(ctx) =>
+              roundedRectPath(ctx, 0, 0, node.width, node.height, radius)
+            }
+          >
+            <KonvaImage image={image} width={node.width} height={node.height} listening={false} />
+          </Group>
+          <Rect
+            width={node.width}
+            height={node.height}
+            cornerRadius={radius}
+            stroke={props.selected ? colors.espresso : colors.hairline}
+            strokeWidth={props.selected ? 1.5 : 1}
+            listening={false}
+          />
+        </>
       ) : (
         <>
+          {/* 白卡 + 细边，默认无阴影：与 iOS 的 CanvasNodeCard 同一条原则 */}
+          <Rect
+            width={node.width}
+            height={node.height}
+            fill={colors.card}
+            cornerRadius={radius}
+            stroke={props.selected ? colors.espresso : colors.hairline}
+            strokeWidth={props.selected ? 1.5 : 1}
+          />
           <Text
-            x={14}
-            y={14}
-            width={node.width - 28}
+            x={16}
+            y={16}
+            width={node.width - 32}
             text={node.recordTitle || '未命名记录'}
             fontSize={13}
             fontStyle="600"
-            fill="#2b211b"
-            lineHeight={1.35}
+            fontFamily={KONVA_FONT}
+            fill={colors.ink}
+            lineHeight={1.4}
             wrap="word"
             ellipsis
-            height={node.height - 40}
+            height={node.height - 46}
           />
           <Text
-            x={14}
-            y={node.height - 24}
-            text={node.recordCarrier === 'text' ? '文字' : node.recordCarrier === 'link' ? '链接' : node.recordCarrier === 'video' ? '视频' : '图片'}
-            fontSize={10}
-            fill="#a3937f"
+            x={16}
+            y={node.height - 26}
+            text={carrierLabelOf(node.recordCarrier)}
+            fontSize={10.5}
+            fontFamily={KONVA_FONT}
+            fill={colors.inkFaint}
           />
         </>
       )}
     </Group>
+  )
+}
+
+const KONVA_FONT = "-apple-system, 'PingFang SC', 'Segoe UI', sans-serif"
+
+function carrierLabelOf(carrier: string): string {
+  return carrier === 'text'
+    ? '文字'
+    : carrier === 'link'
+      ? '链接'
+      : carrier === 'video'
+        ? '视频'
+        : '图片'
+}
+
+function roundedRectPath(
+  ctx: Context,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number
+): void {
+  const r = Math.min(radius, width / 2, height / 2)
+  ctx.beginPath()
+  ctx.moveTo(x + r, y)
+  ctx.arcTo(x + width, y, x + width, y + height, r)
+  ctx.arcTo(x + width, y + height, x, y + height, r)
+  ctx.arcTo(x, y + height, x, y, r)
+  ctx.arcTo(x, y, x + width, y, r)
+  ctx.closePath()
+}
+
+/**
+ * 点阵背景：世界坐标网格，屏幕间距钳在 14–40px（与 iOS CanvasDotGrid
+ * 同一条规则）——缩到多小点阵都在，放大也不会糊成噪点。
+ */
+function DotGrid(props: { width: number; height: number; viewport: CanvasViewport }) {
+  const { width, height, viewport } = props
+  return (
+    <Shape
+      sceneFunc={(context) => {
+        const colors = themeColors()
+        const { scale, offsetX, offsetY } = viewport
+        if (scale <= 0) return
+        let spacing = 26 // 世界间距基准
+        while (spacing * scale < 14) spacing *= 2
+        while (spacing * scale > 40) spacing /= 2
+        const x0 = -offsetX / scale
+        const y0 = -offsetY / scale
+        const x1 = (width - offsetX) / scale
+        const y1 = (height - offsetY) / scale
+        const radius = 1.1 / scale
+        context.fillStyle = colors.wellDeep
+        for (let wx = Math.floor(x0 / spacing) * spacing; wx <= x1; wx += spacing) {
+          for (let wy = Math.floor(y0 / spacing) * spacing; wy <= y1; wy += spacing) {
+            context.beginPath()
+            context.arc(wx, wy, radius, 0, Math.PI * 2)
+            context.fill()
+          }
+        }
+      }}
+    />
   )
 }
 

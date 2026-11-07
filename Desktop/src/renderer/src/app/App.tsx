@@ -1,17 +1,18 @@
 import { useEffect, useState } from 'react'
 import type { AppInfo } from '@shared/contracts'
 import { api } from '../shared/api'
+import { BeanIcon, CanvasIcon, RecordsIcon, SlidersIcon } from '../shared/icons'
 import { CanvasPage } from '../features/canvas/CanvasPage'
 import { CoffeePage } from '../features/coffee/CoffeePage'
 import { RecordsPage } from '../features/records/RecordsPage'
 import { SettingsPage } from '../features/settings/SettingsPage'
 import { useAppStore, type ModuleKey } from './store'
 
-const MODULES: { key: ModuleKey; label: string; glyph: string }[] = [
-  { key: 'coffee', label: '咖啡', glyph: '◍' },
-  { key: 'records', label: '记录', glyph: '▤' },
-  { key: 'canvas', label: '画布', glyph: '◫' },
-  { key: 'settings', label: '更多', glyph: '⋯' }
+const MODULES: { key: ModuleKey; label: string; icon: typeof BeanIcon }[] = [
+  { key: 'coffee', label: '咖啡', icon: BeanIcon },
+  { key: 'records', label: '记录', icon: RecordsIcon },
+  { key: 'canvas', label: '画布', icon: CanvasIcon },
+  { key: 'settings', label: '更多', icon: SlidersIcon }
 ]
 
 /**
@@ -34,18 +35,21 @@ export function App() {
     <div className="shell">
       <aside className="rail">
         <div className="rail__brand">BREWPHASE</div>
-        {MODULES.map((item) => (
-          <button
-            key={item.key}
-            className="rail__item"
-            data-active={module === item.key}
-            onClick={() => setModule(item.key)}
-            aria-label={item.label}
-          >
-            <span style={{ fontSize: 16 }}>{item.glyph}</span>
-            <span>{item.label}</span>
-          </button>
-        ))}
+        {MODULES.map((item) => {
+          const Icon = item.icon
+          return (
+            <button
+              key={item.key}
+              className="rail__item"
+              data-active={module === item.key}
+              onClick={() => setModule(item.key)}
+              aria-label={item.label}
+            >
+              <Icon size={19} />
+              <span>{item.label}</span>
+            </button>
+          )
+        })}
         <div className="rail__spacer" />
         <div className="rail__meta">
           {info ? `v${info.appVersion}` : '—'}
