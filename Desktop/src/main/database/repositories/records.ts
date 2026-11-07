@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, like, or, sql } from 'drizzle-orm'
 import type { RecordDraft, RecordItem, RecordQuery, RecordTag } from '../../../shared/contracts'
 import type { Db } from '../client'
 import type { ResolvedLinkMetadata } from '../../metadata/metadata-normalizer'
+import { parseLink } from '../../../shared/link-parser'
 import { records, recordTagLinks, recordTags } from '../schema'
 import { recordChange } from './sync-log'
 
@@ -75,8 +76,8 @@ export function createRecord(db: Db, deviceId: string, draft: RecordDraft): Reco
         summary: draft.summary,
         mediaPath: draft.mediaPath,
         previewPath: draft.previewPath,
-        // 链接的元数据由保存后的异步解析补全；其余载体没有这回事。
-        metadataStatus: draft.carrier === 'link' && draft.urlString.trim() ? 'pending' : 'idle',
+        // 链接的元数据由保存后的异步解析补全；非法 URL 直接 failed。
+        metadataStatus: initialLinkStatus(draft.carrier, draft.urlString),
         createdAt: at,
         updatedAt: at
       })
@@ -116,7 +117,7 @@ export function updateRecord(db: Db, deviceId: string, id: string, draft: Record
         repositoryForks: urlChanged ? null : previous?.repositoryForks ?? null,
         repositoryLicense: urlChanged ? null : previous?.repositoryLicense ?? null,
         metadataStatus: urlChanged
-          ? (draft.carrier === 'link' && draft.urlString.trim() ? 'pending' : 'idle')
+          ? initialLinkStatus(draft.carrier, draft.urlString)
           : (previous?.metadataStatus ?? 'idle'),
         mediaPath: draft.mediaPath,
         previewPath: draft.previewPath,
@@ -141,10 +142,14 @@ export function applyResolvedMetadata(
   db: Db,
   deviceId: string,
   id: string,
+  expectedUrl: string,
   resolved: ResolvedLinkMetadata
 ): RecordItem | null {
   const row = db.select().from(records).where(eq(records.id, id)).get()
+  // 记录已删除 → 丢弃结果，不留孤儿数据（§第三轮 3）
   if (!row) return null
+  // 抓取期间载体/URL 变了 → 旧结果作废：不能拿旧链接的封面盖新链接
+  if (row.carrier !== 'link' || row.urlString !== expectedUrl) return null
   const at = Date.now()
   const hadSuccess = ['ok', 'resolved', 'partial'].includes(row.metadataStatus)
   const keepPreviousStatus = resolved.status === 'failed' && hadSuccess
@@ -154,7 +159,7 @@ export function applyResolvedMetadata(
 
   db.transaction((tx) => {
     const scoped = tx as unknown as Db
-    scoped
+    const result = scoped
       .update(records)
       .set({
         provider: resolved.provider,
@@ -172,11 +177,23 @@ export function applyResolvedMetadata(
         metadataStatus: keepPreviousStatus ? 'ok' : nextStatus,
         updatedAt: at
       })
-      .where(eq(records.id, id))
+      // WHERE 里带上 URL 一致性：检查与写入之间没有竞态窗口
+      .where(and(eq(records.id, id), eq(records.urlString, expectedUrl)))
       .run()
-    recordChange(scoped, { deviceId, entityType: 'record', entityId: id, operation: 'update' })
+    if (result.changes > 0) {
+      recordChange(scoped, { deviceId, entityType: 'record', entityId: id, operation: 'update' })
+    }
   })
   return getRecord(db, id)
+}
+
+/**
+ * 链接记录的初始元数据状态：非链接载体 idle；链接且 URL 合法 pending；
+ * **URL 非法直接 failed**——没人会去解析它，pending 会永远挂着（§第三轮 5）。
+ */
+function initialLinkStatus(carrier: string, urlString: string): 'idle' | 'pending' | 'failed' {
+  if (carrier !== 'link' || !urlString.trim()) return 'idle'
+  return parseLink(urlString).valid ? 'pending' : 'failed'
 }
 
 /** 删记录：外键 ON DELETE CASCADE 会带走标签关系与引用它的画布节点。 */

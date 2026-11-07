@@ -32,7 +32,7 @@ export async function resolveGeneric(parsed: ParsedLink, fetchText: TextFetcher)
     const html = extractHtmlMetadata(response.body)
     metadata.title = html.title
     metadata.description = html.description
-    metadata.thumbnailUrl = normalizeThumbnail(html.image)
+    metadata.thumbnailUrl = normalizeThumbnail(html.image, response.url)
     metadata.authorName = html.author
     metadata.sourceName = html.siteName ?? metadata.sourceName
     metadata.status = metadata.title || metadata.description || metadata.thumbnailUrl ? 'success' : 'failed'

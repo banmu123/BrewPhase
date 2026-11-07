@@ -352,6 +352,11 @@ function NewRecordForm(props: {
         setBusy(true)
         setError(null)
         try {
+          if (props.carrier === 'link' && url.trim() && parsed && !parsed.valid) {
+            setError('这不是有效的网页地址，未保存')
+            setBusy(false)
+            return
+          }
           await props.onSubmit({
             carrier: props.carrier,
             title: title.trim(),
@@ -411,7 +416,11 @@ function NewRecordForm(props: {
       </div>
       {error && <div className="error">{error}</div>}
       <div className="row">
-        <button className="button button--primary" type="submit" disabled={busy}>
+        <button
+          className="button button--primary"
+          type="submit"
+          disabled={busy || (props.carrier === 'link' && url.trim() !== '' && parsed != null && !parsed.valid)}
+        >
           {busy ? '保存中…' : '保存'}
         </button>
         <button className="button button--ghost" type="button" onClick={props.onCancel}>

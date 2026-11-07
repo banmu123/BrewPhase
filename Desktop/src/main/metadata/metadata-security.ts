@@ -78,14 +78,36 @@ export function isPublicIPv4(address: string): boolean {
 }
 
 /** 公网 IPv6：排除 loopback/未指定/ULA/link-local/组播/IPv4 映射（按 IPv4 判）。 */
+/**
+ * IPv4-mapped IPv6（`::ffff:a.b.c.d` 或十六进制 `::ffff:7f00:1`）还原成 IPv4。
+ * 十六进制形式是常见绕过手法（`::ffff:7f00:1` 就是 127.0.0.1），必须覆盖。
+ */
+export function ipv4FromMappedIPv6(address: string): string | null {
+  const normalized = address.toLowerCase().replace(/^\[|\]$/g, '')
+  const mapped =
+    normalized.match(/^::ffff:(.+)$/) ?? normalized.match(/^(?:0{1,4}:){5}ffff:(.+)$/)
+  if (!mapped) return null
+  const tail = mapped[1]
+  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(tail)) return tail
+  // 十六进制两段：7f00:1 → 127.0.0.1
+  const parts = tail.split(':')
+  if (parts.length === 2 && parts.every((part) => /^[0-9a-f]{1,4}$/.test(part))) {
+    const hi = Number.parseInt(parts[0], 16)
+    const lo = Number.parseInt(parts[1], 16)
+    return [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join('.')
+  }
+  return null
+}
+
 export function isPublicIPv6(address: string): boolean {
   const normalized = address.toLowerCase().replace(/^\[|\]$/g, '')
   if (normalized === '::1' || normalized === '::') return false
+  // 映射地址先还原 IPv4，再走统一的公网规则（十六进制形式也覆盖）
+  const mapped = ipv4FromMappedIPv6(normalized)
+  if (mapped) return isPublicIPv4(mapped)
   if (normalized.startsWith('fc') || normalized.startsWith('fd')) return false // ULA fc00::/7
   if (/^fe[89ab]/.test(normalized)) return false // link-local fe80::/10
   if (normalized.startsWith('ff')) return false // 组播
-  const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
-  if (mapped) return isPublicIPv4(mapped[1])
   return true
 }
 
@@ -142,17 +164,34 @@ export type DnsResolver = (
 export function createGuardedLookup(resolve: DnsResolver = lookup as unknown as DnsResolver): LookupFunction {
   return (hostname, options, callback) => {
     resolve(hostname, { all: true, verbatim: true }, (error, addresses) => {
+      // Node 的 LookupFunction 有两种回调契约（20+ 的 autoSelectFamily 会传
+      // `all: true` 并期待数组）。必须按外部传入的 options.all 回填对应形状，
+      // 否则连接层拿到错误的返回类型（P0，第三轮修复）。
+      const wantsAll = Boolean((options as { all?: boolean }).all)
       if (error) {
-        callback(error, '', 4)
+        if (wantsAll) (callback as unknown as (e: Error, a: []) => void)(error, [])
+        else callback(error, '', 4)
         return
       }
       if (!addresses || addresses.length === 0) {
-        callback(new Error('dns returned no address'), '', 4)
+        const empty = new Error('dns returned no address')
+        if (wantsAll) (callback as unknown as (e: Error, a: []) => void)(empty, [])
+        else callback(empty, '', 4)
         return
       }
       const safe = addresses.filter((entry) => isPublicAddress(entry.address))
       if (safe.length === 0) {
-        callback(new Error('blocked private address'), '', 4)
+        const blocked = new Error('blocked private address')
+        if (wantsAll) (callback as unknown as (e: Error, a: []) => void)(blocked, [])
+        else callback(blocked, '', 4)
+        return
+      }
+      if (wantsAll) {
+        // 保持解析器给出的顺序；连接层自己做 Happy Eyeballs
+        ;(callback as unknown as (e: null, a: Array<{ address: string; family: number }>) => void)(
+          null,
+          safe.map((entry) => ({ address: entry.address, family: entry.family }))
+        )
         return
       }
       const first = safe[0]

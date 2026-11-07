@@ -268,6 +268,7 @@ describe('磁盘持久化', () => {
 })
 
 describe('链接元数据持久化（§五 / §九）', () => {
+  const GITHUB_URL = 'https://github.com/banmu123/BrewPhase'
   function linkDraft(overrides: Partial<RecordDraft> = {}): RecordDraft {
     return recordDraft({
       carrier: 'link',
@@ -314,7 +315,7 @@ describe('链接元数据持久化（§五 / §九）', () => {
       handle.deviceId,
       linkDraft({ title: '我自己的标题', note: '我的备注' })
     )
-    const updated = recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, withTitle.id, resolved())
+    const updated = recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, withTitle.id, GITHUB_URL, resolved())
     expect(updated?.title).toBe('我自己的标题')
     expect(updated?.note).toBe('我的备注')
     expect(updated?.summary).toBe('Coffee studio')
@@ -322,17 +323,18 @@ describe('链接元数据持久化（§五 / §九）', () => {
     expect(updated?.metadataStatus).toBe('ok')
 
     const emptyTitle = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft())
-    const filled = recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, emptyTitle.id, resolved())
+    const filled = recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, emptyTitle.id, GITHUB_URL, resolved())
     expect(filled?.title).toBe('banmu123/BrewPhase')
   })
 
   it('刷新失败但已有成功结果：保留 ok 与旧数据', () => {
     const created = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft())
-    recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, resolved())
+    recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, GITHUB_URL, resolved())
     const failed = recordsRepo.applyResolvedMetadata(
       handle.db,
       handle.deviceId,
       created.id,
+      GITHUB_URL,
       resolved({ status: 'failed', thumbnailUrl: null, repositoryStars: null, description: null })
     )
     expect(failed?.metadataStatus).toBe('ok')
@@ -342,7 +344,7 @@ describe('链接元数据持久化（§五 / §九）', () => {
 
   it('URL 修改后旧平台元数据被清空；标题保留', () => {
     const created = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft({ title: '旧标题' }))
-    recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, resolved())
+    recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, GITHUB_URL, resolved())
 
     const updated = recordsRepo.updateRecord(handle.db, handle.deviceId, created.id, {
       ...linkDraft({ title: '旧标题' }),
@@ -363,7 +365,7 @@ describe('链接元数据持久化（§五 / §九）', () => {
 
   it('URL 未变时更新不清元数据', () => {
     const created = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft())
-    recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, resolved())
+    recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, GITHUB_URL, resolved())
     const updated = recordsRepo.updateRecord(handle.db, handle.deviceId, created.id, {
       ...linkDraft({ title: '改个标题' })
     })
@@ -374,5 +376,118 @@ describe('链接元数据持久化（§五 / §九）', () => {
   it('非 link 载体：metadataStatus 为 idle，元数据写入不改变载体', () => {
     const created = recordsRepo.createRecord(handle.db, handle.deviceId, recordDraft({ carrier: 'text' }))
     expect(created.metadataStatus).toBe('idle')
+  })
+})
+
+describe('元数据异步写入竞态（§第三轮 3 / 5）', () => {
+  const GITHUB_URL = 'https://github.com/banmu123/BrewPhase'
+  const YOUTUBE_URL = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+
+  function GitHub() {
+    return {
+      provider: 'github' as const,
+      contentId: 'banmu123/BrewPhase',
+      canonicalUrl: GITHUB_URL,
+      title: 'banmu123/BrewPhase',
+      description: 'Coffee studio',
+      thumbnailUrl: 'https://opengraph.githubassets.com/1/banmu123/BrewPhase',
+      sourceName: 'GitHub',
+      authorName: 'banmu123',
+      repositoryLanguage: 'Swift',
+      repositoryStars: 12,
+      repositoryForks: 3,
+      repositoryLicense: 'MIT',
+      status: 'success' as const
+    }
+  }
+
+  it('抓取期间 URL 改为 YouTube：GitHub 旧结果丢弃，新链接元数据不被覆盖', () => {
+    const created = recordsRepo.createRecord(
+      handle.db,
+      handle.deviceId,
+      recordDraft({
+        carrier: 'link',
+        urlString: GITHUB_URL,
+        canonicalURL: GITHUB_URL,
+        platformContentID: 'banmu123/BrewPhase',
+        provider: 'github'
+      })
+    )
+    const expectedUrl = created.urlString
+
+    // 模拟网络请求尚未完成时用户把 URL 改成了 YouTube
+    recordsRepo.updateRecord(handle.db, handle.deviceId, created.id, {
+      carrier: 'link',
+      title: '',
+      note: '',
+      urlString: YOUTUBE_URL,
+      canonicalURL: YOUTUBE_URL,
+      platformContentID: 'dQw4w9WgXcQ',
+      provider: 'youtube',
+      sourceName: '',
+      authorName: '',
+      summary: '',
+      mediaPath: null,
+      previewPath: null,
+      tagIds: []
+    })
+
+    // GitHub 的结果此刻才回来 → 必须被丢弃
+    const applied = recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, expectedUrl, GitHub())
+    expect(applied).toBeNull()
+
+    const fresh = recordsRepo.getRecord(handle.db, created.id)
+    expect(fresh?.provider).toBe('youtube')
+    expect(fresh?.platformContentID).toBe('dQw4w9WgXcQ')
+    expect(fresh?.thumbnailURLString).toBeNull()
+    expect(fresh?.repositoryStars).toBeNull()
+    expect(fresh?.metadataStatus).toBe('pending')
+  })
+
+  it('抓取期间记录被删除：结果丢弃，不产生孤儿数据', () => {
+    const created = recordsRepo.createRecord(
+      handle.db,
+      handle.deviceId,
+      recordDraft({ carrier: 'link', urlString: GITHUB_URL, canonicalURL: GITHUB_URL, provider: 'github' })
+    )
+    const expectedUrl = created.urlString
+    recordsRepo.deleteRecord(handle.db, handle.deviceId, created.id)
+
+    const applied = recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, expectedUrl, GitHub())
+    expect(applied).toBeNull()
+    expect(recordsRepo.getRecord(handle.db, created.id)).toBeNull()
+  })
+
+  it('非法 URL 直接 failed，不留下永久 pending', () => {
+    const created = recordsRepo.createRecord(
+      handle.db,
+      handle.deviceId,
+      recordDraft({ carrier: 'link', urlString: 'javascript:alert(1)', provider: 'generic' })
+    )
+    expect(created.metadataStatus).toBe('failed')
+  })
+
+  it('URL 改成非法值时同样落到 failed', () => {
+    const created = recordsRepo.createRecord(
+      handle.db,
+      handle.deviceId,
+      recordDraft({ carrier: 'link', urlString: GITHUB_URL, canonicalURL: GITHUB_URL, provider: 'github' })
+    )
+    const updated = recordsRepo.updateRecord(handle.db, handle.deviceId, created.id, {
+      carrier: 'link',
+      title: '',
+      note: '',
+      urlString: 'file:///etc/passwd',
+      canonicalURL: null,
+      platformContentID: null,
+      provider: 'generic',
+      sourceName: '',
+      authorName: '',
+      summary: '',
+      mediaPath: null,
+      previewPath: null,
+      tagIds: []
+    })
+    expect(updated.metadataStatus).toBe('failed')
   })
 })

@@ -97,12 +97,16 @@ export function extractHtmlMetadata(html: string): HtmlMetadata {
   }
 }
 
-/** 只接受 https 的远程图片 URL（http 图片会被 CSP 拦截，也没有理由降级）。 */
-export function normalizeThumbnail(raw: string | null | undefined): string | null {
+/**
+ * 只接受 https 的远程图片 URL。`baseUrl` 是**最终响应 URL**：页面里的
+ * `/images/cover.jpg` 或 `//cdn.example.com/a.jpg` 这类相对/协议相对地址
+ * 会按它解析；解析后仍非 https 的一律拒绝（http 图会被 CSP 拦，也不该降级）。
+ */
+export function normalizeThumbnail(raw: string | null | undefined, baseUrl?: string): string | null {
   const text = (raw ?? '').trim()
   if (!text) return null
   try {
-    const url = new URL(text)
+    const url = baseUrl ? new URL(text, baseUrl) : new URL(text)
     if (url.protocol !== 'https:') return null
     return url.toString()
   } catch {

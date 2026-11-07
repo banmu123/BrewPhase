@@ -3,6 +3,7 @@ import { parseLink } from '../../src/shared/link-parser'
 import {
   assertAllowedUrl,
   createGuardedLookup,
+  ipv4FromMappedIPv6,
   isPublicAddress,
   isPublicIPv4,
   isPublicIPv6,
@@ -315,7 +316,7 @@ describe('安全层：DNS 校验与重定向（注入）', () => {
       ])
     })
     const address = await new Promise<string>((resolve, reject) => {
-      guarded('mixed.example', { all: true }, (error, resolved) =>
+      guarded('mixed.example', { all: false }, (error, resolved) =>
         error ? reject(error) : resolve(String(resolved))
       )
     })
@@ -388,5 +389,133 @@ describe('安全层：DNS 校验与重定向（注入）', () => {
       body: Buffer.from('{}')
     })
     await expect(safeFetchText('https://example.com/a', OPTS, fakeRequest)).rejects.toThrow('content-type not allowed')
+  })
+})
+
+describe('DNS lookup 回调契约（§第三轮 1）', () => {
+  const addresses = [{ address: '93.184.216.34', family: 4 }, { address: '2606:4700:4700::1111', family: 6 }]
+
+  function invoke(lookupFn: ReturnType<typeof createGuardedLookup>, all: boolean): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      ;(lookupFn as unknown as (host: string, options: { all?: boolean }, cb: (...args: unknown[]) => void) => void)(
+        'example.com',
+        all ? { all: true } : {},
+        (error: unknown, second: unknown, third: unknown) => {
+          if (error) reject(error)
+          else resolve(all ? second : { address: second, family: third })
+        }
+      )
+    })
+  }
+
+  it('options.all === true → 返回 {address, family} 数组（autoSelectFamily 契约）', async () => {
+    const guarded = createGuardedLookup((_host, _opts, callback) => callback(null, addresses))
+    const result = (await invoke(guarded, true)) as Array<{ address: string; family: number }>
+    expect(Array.isArray(result)).toBe(true)
+    expect(result).toEqual(addresses)
+  })
+
+  it('options.all !== true → 返回单个地址 + family', async () => {
+    const guarded = createGuardedLookup((_host, _opts, callback) => callback(null, addresses))
+    const result = (await invoke(guarded, false)) as { address: string; family: number }
+    expect(result.address).toBe('93.184.216.34')
+    expect(result.family).toBe(4)
+  })
+
+  it('DNS 失败：两种模式都把错误传出去', async () => {
+    const guarded = createGuardedLookup((_host, _opts, callback) => callback(new Error('nxdomain'), []))
+    await expect(invoke(guarded, true)).rejects.toThrow('nxdomain')
+    await expect(invoke(guarded, false)).rejects.toThrow('nxdomain')
+  })
+
+  it('全部地址私有：两种模式都报 blocked private address', async () => {
+    const guarded = createGuardedLookup((_host, _opts, callback) =>
+      callback(null, [{ address: '192.168.1.9', family: 4 }])
+    )
+    await expect(invoke(guarded, true)).rejects.toThrow('blocked private address')
+    await expect(invoke(guarded, false)).rejects.toThrow('blocked private address')
+  })
+
+  it('all:true 时只回填安全地址（私有项被过滤）', async () => {
+    const guarded = createGuardedLookup((_host, _opts, callback) =>
+      callback(null, [
+        { address: '10.0.0.2', family: 4 },
+        { address: '93.184.216.34', family: 4 }
+      ])
+    )
+    const result = (await invoke(guarded, true)) as Array<{ address: string }>
+    expect(result.map((entry) => entry.address)).toEqual(['93.184.216.34'])
+  })
+})
+
+describe('IPv4-mapped IPv6 绕过（§第三轮 2）', () => {
+  it('点分与十六进制映射都按 IPv4 规则拒绝私有地址', () => {
+    for (const address of [
+      '::ffff:127.0.0.1',
+      '::ffff:7f00:1',
+      '::ffff:10.0.0.1',
+      '::ffff:a00:1',
+      '::ffff:169.254.169.254',
+      '::ffff:a9fe:a9fe',
+      '0:0:0:0:0:ffff:7f00:1'
+    ]) {
+      expect(isPublicIPv6(address), address).toBe(false)
+      expect(isPublicAddress(address), address).toBe(false)
+    }
+  })
+
+  it('公网映射地址通过（十六进制与点分一致）', () => {
+    expect(ipv4FromMappedIPv6('::ffff:7f00:1')).toBe('127.0.0.1')
+    expect(ipv4FromMappedIPv6('::ffff:808:808')).toBe('8.8.8.8')
+    expect(isPublicIPv6('::ffff:8.8.8.8')).toBe(true)
+    expect(isPublicIPv6('::ffff:808:808')).toBe(true)
+  })
+
+  it('URL 直接使用映射地址 → 预检拒绝', () => {
+    expect(() => assertAllowedUrl('http://[::ffff:7f00:1]/x')).toThrow()
+    expect(() => assertAllowedUrl('http://[::ffff:127.0.0.1]/x')).toThrow()
+    expect(() => assertAllowedUrl('http://[::ffff:a9fe:a9fe]/latest/meta-data')).toThrow()
+  })
+
+  it('DNS 返回映射地址 → 连接被拒', async () => {
+    const guarded = createGuardedLookup((_host, _opts, callback) =>
+      callback(null, [{ address: '::ffff:7f00:1', family: 6 }])
+    )
+    await expect(
+      new Promise((resolve, reject) => {
+        guarded('rebind.example', { all: true }, (error, address) => (error ? reject(error) : resolve(address)))
+      })
+    ).rejects.toThrow('blocked private address')
+  })
+})
+
+describe('相对 OG 图片（§第三轮 4）', () => {
+  it('相对/协议相对地址按最终 URL 解析成 https', () => {
+    expect(normalizeThumbnail('/images/cover.jpg', 'https://blog.example.com/post/1')).toBe(
+      'https://blog.example.com/images/cover.jpg'
+    )
+    expect(normalizeThumbnail('//cdn.example.com/a.jpg', 'https://blog.example.com/post/1')).toBe(
+      'https://cdn.example.com/a.jpg'
+    )
+    expect(normalizeThumbnail('cover.jpg', 'https://blog.example.com/post/1')).toBe(
+      'https://blog.example.com/post/cover.jpg'
+    )
+  })
+
+  it('base 是 http 时相对图仍是 http → 拒绝；data: 拒绝', () => {
+    expect(normalizeThumbnail('/a.jpg', 'http://blog.example.com/post/1')).toBeNull()
+    expect(normalizeThumbnail('data:image/png;base64,AA', 'https://blog.example.com/')).toBeNull()
+  })
+
+  it('generic provider 用最终 URL 解析相对 og:image', async () => {
+    const fetcher = mockFetcher([
+      {
+        match: 'blog.example.com',
+        body: '<meta property="og:image" content="/images/cover.jpg"><title>相对图</title>',
+        contentType: 'text/html'
+      }
+    ])
+    const resolved = await resolveMetadata(parseLink('https://blog.example.com/post/1'), fetcher)
+    expect(resolved.thumbnailUrl).toBe('https://blog.example.com/images/cover.jpg')
   })
 })

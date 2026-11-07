@@ -1,4 +1,5 @@
 import { parseLink } from '../../shared/link-parser'
+import { emptyMetadata } from './metadata-normalizer'
 import type { RecordItem } from '../../shared/contracts'
 import type { Db } from '../database/client'
 import { applyResolvedMetadata, getRecord } from '../database/repositories/records'
@@ -24,7 +25,18 @@ export async function resolveRecordMetadata(
   if (record.carrier !== 'link' || !record.urlString.trim()) return record
   if (!force && record.metadataStatus === 'ok') return record
   const parsed = parseLink(record.urlString)
-  if (!parsed.valid) return record
-  const resolved = await resolveMetadataDeduped(record.urlString)
-  return applyResolvedMetadata(db, deviceId, id, resolved)
+  if (!parsed.valid) {
+    // 防御：非法 URL 不抓取，但也不能留在 pending（UI 已阻止保存，这里兜底）。
+    if (record.metadataStatus === 'pending') {
+      return applyResolvedMetadata(db, deviceId, id, record.urlString, {
+        ...emptyMetadata('generic', ''),
+        errorMessage: '不是有效的网页地址'
+      })
+    }
+    return record
+  }
+  // 请求开始时锁定 URL：写入时会核对它，期间被改过就丢弃结果（§第三轮 3）。
+  const expectedUrl = record.urlString
+  const resolved = await resolveMetadataDeduped(expectedUrl)
+  return applyResolvedMetadata(db, deviceId, id, expectedUrl, resolved)
 }

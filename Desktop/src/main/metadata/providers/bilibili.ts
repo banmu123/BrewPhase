@@ -48,7 +48,7 @@ export async function resolveBilibili(parsed: ParsedLink, fetchText: TextFetcher
       const html = extractHtmlMetadata(response.body)
       metadata.title = cleanBilibiliTitle(html.title)
       metadata.description = html.description
-      metadata.thumbnailUrl = normalizeThumbnail(html.image)
+      metadata.thumbnailUrl = normalizeThumbnail(html.image, response.url)
       metadata.authorName = html.author
       metadata.status = metadata.title || metadata.thumbnailUrl ? 'success' : 'failed'
       return metadata
@@ -68,7 +68,7 @@ export async function resolveBilibili(parsed: ParsedLink, fetchText: TextFetcher
     const html = extractHtmlMetadata(response.body)
     metadata.title = cleanBilibiliTitle(html.title)
     metadata.description = html.description
-    metadata.thumbnailUrl = normalizeThumbnail(html.image)
+    metadata.thumbnailUrl = normalizeThumbnail(html.image, response.url)
     metadata.authorName = html.author
     metadata.status = metadata.title || metadata.thumbnailUrl ? 'success' : 'failed'
     if (metadata.status === 'failed') metadata.errorMessage = '页面没有可用的公开元数据'
