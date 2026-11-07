@@ -1,0 +1,241 @@
+import type { Database } from 'better-sqlite3'
+
+/**
+ * 迁移是**数组 + user_version**，不是一坨 `.sql` 文件。
+ *
+ * 理由：打包后的应用里读不到源码目录里的 SQL 文件（asar 里路径会变），而
+ * 迁移失败必须让应用停在可控状态。DDL 内联成字符串，谁在什么时候加了一版
+ * 一目了然，也不依赖 drizzle-kit 的 journal 文件是否被打进包里。
+ *
+ * 规则：只追加，不修改已发布的版本；改表 = 新加一版。
+ */
+export type Migration = { version: number; name: string; sql: string }
+
+const INIT_SQL = `
+CREATE TABLE IF NOT EXISTS beans (
+  id TEXT PRIMARY KEY NOT NULL,
+  name TEXT NOT NULL,
+  roaster TEXT NOT NULL DEFAULT '',
+  origin TEXT NOT NULL DEFAULT '',
+  process TEXT NOT NULL DEFAULT '',
+  roast_level TEXT NOT NULL DEFAULT 'medium',
+  roast_date INTEGER,
+  purchase_date INTEGER,
+  open_date INTEGER,
+  weight_g REAL NOT NULL DEFAULT 0,
+  remaining_g REAL NOT NULL DEFAULT 0,
+  price REAL NOT NULL DEFAULT 0,
+  channel TEXT NOT NULL DEFAULT '',
+  image_path TEXT,
+  flavor_tags_raw TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active',
+  stock_counted_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS beans_updated_at_idx ON beans (updated_at);
+
+CREATE TABLE IF NOT EXISTS brews (
+  id TEXT PRIMARY KEY NOT NULL,
+  bean_id TEXT NOT NULL REFERENCES beans(id) ON DELETE CASCADE,
+  date INTEGER NOT NULL,
+  method TEXT NOT NULL DEFAULT '',
+  grinder TEXT NOT NULL DEFAULT '',
+  grind_size TEXT NOT NULL DEFAULT '',
+  water_temp REAL NOT NULL DEFAULT 0,
+  coffee_g REAL NOT NULL DEFAULT 0,
+  water_g REAL NOT NULL DEFAULT 0,
+  time_seconds INTEGER NOT NULL DEFAULT 0,
+  score INTEGER NOT NULL DEFAULT 0,
+  acidity INTEGER NOT NULL DEFAULT 0,
+  sweetness INTEGER NOT NULL DEFAULT 0,
+  bitterness INTEGER NOT NULL DEFAULT 0,
+  body INTEGER NOT NULL DEFAULT 0,
+  aftertaste INTEGER NOT NULL DEFAULT 0,
+  flavor_tags_raw TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT '',
+  stock_deducted_g REAL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS brews_bean_idx ON brews (bean_id, date);
+
+CREATE TABLE IF NOT EXISTS tastings (
+  id TEXT PRIMARY KEY NOT NULL,
+  bean_id TEXT NOT NULL REFERENCES beans(id) ON DELETE CASCADE,
+  brew_id TEXT,
+  date INTEGER NOT NULL,
+  day_after_roast INTEGER NOT NULL DEFAULT 0,
+  flavor_tags_raw TEXT NOT NULL DEFAULT '',
+  score INTEGER NOT NULL DEFAULT 0,
+  notes TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT 'manual',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tastings_bean_idx ON tastings (bean_id, date);
+
+CREATE TABLE IF NOT EXISTS phase_rules (
+  id TEXT PRIMARY KEY NOT NULL,
+  roast_level TEXT NOT NULL,
+  rest_min_days INTEGER NOT NULL DEFAULT 2,
+  rest_max_days INTEGER NOT NULL DEFAULT 5,
+  peak_start_day INTEGER NOT NULL DEFAULT 5,
+  peak_end_day INTEGER NOT NULL DEFAULT 21,
+  decline_start_day INTEGER NOT NULL DEFAULT 21,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS phase_reminders (
+  id TEXT PRIMARY KEY NOT NULL,
+  bean_id TEXT NOT NULL REFERENCES beans(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  fire_date INTEGER NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS reminders_bean_idx ON phase_reminders (bean_id);
+
+CREATE TABLE IF NOT EXISTS records (
+  id TEXT PRIMARY KEY NOT NULL,
+  carrier TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  url_string TEXT NOT NULL DEFAULT '',
+  canonical_url TEXT,
+  provider TEXT NOT NULL DEFAULT 'generic',
+  platform_content_id TEXT,
+  source_name TEXT NOT NULL DEFAULT '',
+  author_name TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT '',
+  media_path TEXT,
+  preview_path TEXT,
+  thumbnail_url_string TEXT,
+  metadata_status TEXT NOT NULL DEFAULT 'idle',
+  repository_stars INTEGER,
+  repository_forks INTEGER,
+  repository_language TEXT,
+  is_sample INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS records_created_idx ON records (created_at);
+CREATE INDEX IF NOT EXISTS records_carrier_idx ON records (carrier);
+
+CREATE TABLE IF NOT EXISTS record_tags (
+  id TEXT PRIMARY KEY NOT NULL,
+  name TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS record_tags_name_idx ON record_tags (name);
+
+CREATE TABLE IF NOT EXISTS record_tag_links (
+  record_id TEXT NOT NULL REFERENCES records(id) ON DELETE CASCADE,
+  tag_id TEXT NOT NULL REFERENCES record_tags(id) ON DELETE CASCADE,
+  PRIMARY KEY (record_id, tag_id)
+);
+
+CREATE TABLE IF NOT EXISTS canvases (
+  id TEXT PRIMARY KEY NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS canvas_nodes (
+  id TEXT PRIMARY KEY NOT NULL,
+  canvas_id TEXT NOT NULL REFERENCES canvases(id) ON DELETE CASCADE,
+  record_id TEXT NOT NULL REFERENCES records(id) ON DELETE CASCADE,
+  position_x REAL NOT NULL DEFAULT 0,
+  position_y REAL NOT NULL DEFAULT 0,
+  width REAL NOT NULL DEFAULT 240,
+  height REAL NOT NULL DEFAULT 180,
+  z_index INTEGER NOT NULL DEFAULT 0,
+  annotation TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS nodes_canvas_idx ON canvas_nodes (canvas_id);
+CREATE INDEX IF NOT EXISTS nodes_record_idx ON canvas_nodes (record_id);
+CREATE UNIQUE INDEX IF NOT EXISTS nodes_canvas_record_idx ON canvas_nodes (canvas_id, record_id);
+
+CREATE TABLE IF NOT EXISTS canvas_strokes (
+  id TEXT PRIMARY KEY NOT NULL,
+  canvas_id TEXT NOT NULL REFERENCES canvases(id) ON DELETE CASCADE,
+  tool_type TEXT NOT NULL DEFAULT 'pen',
+  points TEXT NOT NULL DEFAULT '[]',
+  color TEXT NOT NULL DEFAULT '#3b2b22',
+  width REAL NOT NULL DEFAULT 2,
+  opacity REAL NOT NULL DEFAULT 1,
+  z_index INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS strokes_canvas_idx ON canvas_strokes (canvas_id);
+
+CREATE TABLE IF NOT EXISTS sync_meta (
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  origin_device_id TEXT NOT NULL,
+  modified_at INTEGER NOT NULL,
+  operation_id TEXT NOT NULL,
+  deleted_at INTEGER,
+  PRIMARY KEY (entity_type, entity_id)
+);
+CREATE INDEX IF NOT EXISTS sync_meta_rev_idx ON sync_meta (revision);
+
+CREATE TABLE IF NOT EXISTS change_log (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  operation TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  payload TEXT,
+  device_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS change_log_entity_idx ON change_log (entity_type, entity_id);
+
+CREATE TABLE IF NOT EXISTS devices (
+  id TEXT PRIMARY KEY NOT NULL,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  public_key TEXT NOT NULL DEFAULT '',
+  token_hash TEXT NOT NULL,
+  paired_at INTEGER NOT NULL,
+  last_seen_at INTEGER,
+  revoked_at INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS devices_token_idx ON devices (token_hash);
+
+CREATE TABLE IF NOT EXISTS local_state (
+  key TEXT PRIMARY KEY NOT NULL,
+  value TEXT NOT NULL
+);
+`
+
+export const migrations: Migration[] = [{ version: 1, name: 'init', sql: INIT_SQL }]
+
+/**
+ * 逐版执行，每版一个事务。失败时**不吞异常**：调用方（`openDatabase`）会把
+ * 应用停在「数据库不可用」状态，而不是继续用一个半迁移的库。
+ */
+export function migrate(sqlite: Database): void {
+  const current = Number(sqlite.pragma('user_version', { simple: true }) ?? 0)
+  for (const migration of migrations) {
+    if (migration.version <= current) continue
+    sqlite.exec('BEGIN')
+    try {
+      sqlite.exec(migration.sql)
+      sqlite.pragma(`user_version = ${migration.version}`)
+      sqlite.exec('COMMIT')
+    } catch (error) {
+      sqlite.exec('ROLLBACK')
+      throw new Error(
+        `migration ${migration.version} (${migration.name}) failed: ${(error as Error).message}`
+      )
+    }
+  }
+}

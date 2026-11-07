@@ -1,0 +1,45 @@
+import { _electron as electron, expect, test } from '@playwright/test'
+
+/**
+ * E2E 冒烟：真的把 Electron 拉起来，确认主进程能开库、preload 桥能通、
+ * 三个模块的入口都在。跑之前需要 `pnpm build`——这里启动的是打包产物，
+ * 不是 dev server，这样连 preload 的产物路径也一起验证了。
+ *
+ * 环境注意：
+ * - 必须剥掉 ELECTRON_RUN_AS_NODE——有些宿主环境（CI、终端复用器）会设它，
+ *   那会让 Electron 以普通 Node 运行，`require('electron')` 变成路径字符串，
+ *   主进程第一行就崩。这不是应用代码的问题，是启动环境的问题。
+ * - 无 GPU 的受限环境加 --no-sandbox / --disable-gpu，只影响测试进程，
+ *   不写进应用默认配置。
+ */
+function launchEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env }
+  delete env.ELECTRON_RUN_AS_NODE
+  return env
+}
+
+test('应用启动、连上本地库、三个模块可切换', async () => {
+  const app = await electron.launch({
+    args: ['.', '--no-sandbox', '--disable-gpu'],
+    env: launchEnv()
+  })
+  const page = await app.firstWindow()
+
+  await expect(page.locator('.rail__brand')).toHaveText('BREWPHASE')
+  await expect(page.getByRole('button', { name: '咖啡' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '记录' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '画布' })).toBeVisible()
+
+  // 通过 preload 桥拿一次应用信息：能拿到就说明 IPC + 数据库都通了。
+  const info = await page.evaluate(async () => window.brewphase.app.info())
+  expect(info.dbSchemaVersion).toBe(1)
+  expect(info.syncProtocolVersion).toBe(1)
+
+  await page.getByRole('button', { name: '记录' }).click()
+  await expect(page.getByRole('heading', { name: '记录' })).toBeVisible()
+
+  await page.getByRole('button', { name: '画布' }).click()
+  await expect(page.getByRole('heading', { name: '画布' })).toBeVisible()
+
+  await app.close()
+})
