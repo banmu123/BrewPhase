@@ -11,8 +11,8 @@ import { migrate } from '../../src/main/database/migrations'
 import { NonceStore, sha256, verifyRequest, expectedSignature, randomToken } from '../../src/main/sync/auth'
 import { SyncServer } from '../../src/main/sync/server'
 import { PairingService } from '../../src/main/sync/pairing-service'
-import { applyBatch, canonical, fingerprint, type SyncBatch } from '../../src/main/sync/snapshot-importer'
-import { finalizeMedia, writeChunk, checkManifest, type MediaManifestEntry } from '../../src/main/sync/media-transfer'
+import { applyBatch, canonical, fingerprint, recordTagLinkId, type SyncBatch } from '../../src/main/sync/snapshot-importer'
+import { finalizeMedia, writeChunk, checkManifest, receivedBytes, type MediaManifestEntry } from '../../src/main/sync/media-transfer'
 
 function openDb(): Database.Database {
   const sqlite = new Database(':memory:')
@@ -145,6 +145,8 @@ describe('请求鉴权（Bearer + Timestamp + Nonce + HMAC）', () => {
 describe('快照合并（非破坏性，幂等）', () => {
   let db: Database.Database
   const beanId = '11111111-1111-4111-8111-111111111111'
+  const recordId = '77777777-7777-4777-8777-777777777777'
+  const tagId = '66666666-6666-4666-8666-666666666666'
 
   function beanPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
@@ -238,15 +240,16 @@ describe('快照合并（非破坏性，幂等）', () => {
     expect(conflict).toBeTruthy()
   })
 
-  it('删除 → tombstone 生效；重复删除 skipped；级联删除跟随外键', () => {
-    applyBatch(db, beanBatch(beanFingerprint(beanPayload())), 'dev1')
+  it('删除（带基线指纹）→ 生效；重复删除 skipped；级联删除跟随外键', () => {
+    const fp1 = beanFingerprint(beanPayload())
+    applyBatch(db, beanBatch(fp1), 'dev1')
     db.prepare(
       `insert into brews (id, bean_id, date, created_at) values (?, ?, ?, ?)`
     ).run('22222222-2222-4222-8222-222222222222', beanId, Date.now(), Date.now())
 
     const batch: SyncBatch = {
       operations: [
-        { entityType: 'bean', upserts: [], deletes: [{ id: beanId }] }
+        { entityType: 'bean', upserts: [], deletes: [{ id: beanId, expectedFingerprint: fp1 }] }
       ]
     }
     const first = applyBatch(db, batch, 'dev1')
@@ -258,32 +261,237 @@ describe('快照合并（非破坏性，幂等）', () => {
     expect(second.skippedCount).toBe(1)
   })
 
-  it('PhaseRule 按 roastLevel 匹配：不产生第二条 medium 规则', () => {
+  it('删除不带基线指纹而行存在 → 删除冲突，桌面数据保留', () => {
+    applyBatch(db, beanBatch(beanFingerprint(beanPayload())), 'dev1')
+    const outcome = applyBatch(
+      db,
+      { operations: [{ entityType: 'bean', upserts: [], deletes: [{ id: beanId }] }] },
+      'dev1'
+    )
+    expect(outcome.conflictCount).toBe(1)
+    expect((db.prepare('select count(*) as n from beans').get() as { n: number }).n).toBe(1)
+    const conflict = db
+      .prepare('select remote_operation, local_fingerprint from sync_conflicts')
+      .get() as { remote_operation: string; local_fingerprint: string }
+    expect(conflict.remote_operation).toBe('delete')
+    expect(conflict.local_fingerprint).not.toBe('~')
+  })
+
+  it('桌面端改过后删除 → 删除冲突；同指纹重发去重；远端指纹变化才新增', () => {
+    const fp1 = beanFingerprint(beanPayload())
+    applyBatch(db, beanBatch(fp1), 'dev1')
+    db.prepare('update beans set remaining_g = 99 where id = ?').run(beanId)
+
+    const deleteBatch: SyncBatch = {
+      operations: [
+        { entityType: 'bean', upserts: [], deletes: [{ id: beanId, expectedFingerprint: fp1 }] }
+      ]
+    }
+    const first = applyBatch(db, deleteBatch, 'dev1')
+    expect(first.conflictCount).toBe(1)
+    expect((db.prepare('select count(*) as n from beans').get() as { n: number }).n).toBe(1)
+
+    // 同一基线指纹的删除重发 → 复用未裁决冲突，不膨胀。
+    const second = applyBatch(db, deleteBatch, 'dev1')
+    expect(second.conflictCount).toBe(1)
+    expect(
+      (db.prepare('select count(*) as n from sync_conflicts').get() as { n: number }).n
+    ).toBe(1)
+
+    // iOS 端内容真的变了（基线也推进）→ 新指纹的新冲突。
+    const third = applyBatch(
+      db,
+      { operations: [{ entityType: 'bean', upserts: [], deletes: [{ id: beanId, expectedFingerprint: beanFingerprint(beanPayload({ remainingG: 130 })) }] }] },
+      'dev1'
+    )
+    expect(third.conflictCount).toBe(1)
+    expect(
+      (db.prepare('select count(*) as n from sync_conflicts').get() as { n: number }).n
+    ).toBe(2)
+  })
+
+  it('applyBatch 逐条 results：成功/跳过/冲突/失败各归其位', () => {
+    const fp = beanFingerprint(beanPayload())
+    // bean：applied；同名 bean 再来一条（不同 id）：applied；
+    // brew 引用缺失：failed；桌面改过的 bean：conflict
+    applyBatch(db, beanBatch(fp), 'dev1')
+    db.prepare('update beans set remaining_g = 99 where id = ?').run(beanId)
+
+    const conflictFp = fp
+    const newBeanId = '99999999-9999-4999-8999-999999999999'
+    const outcome = applyBatch(
+      db,
+      {
+        operations: [
+          {
+            entityType: 'bean',
+            upserts: [
+              { id: beanId, fingerprint: conflictFp, payload: beanPayload() },
+              { id: newBeanId, fingerprint: beanFingerprint(beanPayload({ name: '新豆子' })), payload: beanPayload({ name: '新豆子' }) }
+            ],
+            deletes: []
+          },
+          {
+            entityType: 'brew',
+            upserts: [{ id: '55555555-5555-4555-8555-555555555555', fingerprint: 'x', payload: { beanId: '00000000-0000-4000-8000-000000000000' } }],
+            deletes: []
+          }
+        ]
+      },
+      'dev1'
+    )
+    const byId = new Map(outcome.results.map((item) => [item.id, item.status]))
+    expect(byId.get(beanId)).toBe('conflict')
+    expect(byId.get(newBeanId)).toBe('applied')
+    expect(byId.get('55555555-5555-4555-8555-555555555555')).toBe('failed')
+    // 基线只推进成功那条；冲突条目的基线不动。
+    const baselines = db
+      .prepare('select entity_id from sync_baseline where entity_type = ?')
+      .all('bean') as Array<{ entity_id: string }>
+    expect(baselines.map((row) => row.entity_id)).toEqual([beanId, newBeanId].sort())
+  })
+
+  it('recordTagLink：插入、缺引用 failed、重复 skipped、删除', () => {
+    applyBatch(db, beanBatch(beanFingerprint(beanPayload())), 'dev1')
+    db.prepare(
+      `insert into records (id, carrier, created_at, updated_at) values (?, 'text', ?, ?)`
+    ).run(recordId, Date.now(), Date.now())
+    db.prepare(
+      `insert into record_tags (id, name, created_at) values (?, '开发', ?)`
+    ).run(tagId, Date.now())
+
+    const linkId = recordTagLinkId(recordId, tagId)
+    const linkFp = fingerprint(canonical([recordId, tagId]))
+    const linkBatch: SyncBatch = {
+      operations: [
+        {
+          entityType: 'recordTagLink',
+          upserts: [{ id: linkId, fingerprint: linkFp, payload: { recordId, tagId } }],
+          deletes: []
+        }
+      ]
+    }
+    const first = applyBatch(db, linkBatch, 'dev1')
+    expect(first.appliedCount).toBe(1)
+    const second = applyBatch(db, linkBatch, 'dev1')
+    expect(second.skippedCount).toBe(1)
+    expect(
+      (db.prepare('select count(*) as n from record_tag_links').get() as { n: number }).n
+    ).toBe(1)
+
+    // 缺引用：tag 不存在 → failed
+    const missing = applyBatch(
+      db,
+      {
+        operations: [
+          {
+            entityType: 'recordTagLink',
+            upserts: [{ id: recordTagLinkId(recordId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'), fingerprint: 'x', payload: { recordId, tagId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' } }],
+            deletes: []
+          }
+        ]
+      },
+      'dev1'
+    )
+    expect(missing.failedItems).toHaveLength(1)
+
+    // 删除关系
+    const removed = applyBatch(
+      db,
+      { operations: [{ entityType: 'recordTagLink', upserts: [], deletes: [{ id: linkId }] }] },
+      'dev1'
+    )
+    expect(removed.appliedCount).toBe(1)
+    expect(
+      (db.prepare('select count(*) as n from record_tag_links').get() as { n: number }).n
+    ).toBe(0)
+  })
+
+  it('createdAt：iOS 带原始时间就保留；缺省才补 now', () => {
+    const createdAt = Date.now() - 86_400_000
+    applyBatch(db, beanBatch(beanFingerprint(beanPayload()), beanPayload({ createdAt })), 'dev1')
+    const row = db.prepare('select created_at from beans').get() as { created_at: number }
+    expect(row.created_at).toBe(createdAt)
+
+    const secondId = '88888888-8888-4888-8888-888888888888'
+    applyBatch(
+      db,
+      {
+        operations: [
+          {
+            entityType: 'bean',
+            upserts: [{ id: secondId, fingerprint: beanFingerprint(beanPayload({ name: '无时间' })), payload: beanPayload({ name: '无时间' }) }],
+            deletes: []
+          }
+        ]
+      },
+      'dev1'
+    )
+    const fallback = db.prepare('select created_at from beans where id = ?').get(secondId) as { created_at: number }
+    expect(Math.abs(fallback.created_at - Date.now())).toBeLessThan(10_000)
+  })
+
+  it('PhaseRule：两端默认规则字段一致（UUID 不同）→ skipped，不产生重复', () => {
     db.prepare(
       `insert into phase_rules (id, roast_level, rest_min_days, rest_max_days, peak_start_day, peak_end_day, decline_start_day, enabled, updated_at)
        values ('33333333-3333-4333-8333-333333333333', 'medium', 2, 5, 5, 21, 21, 1, ?)`
     ).run(Date.now())
-
-    const payload = {
-      roastLevel: 'medium',
-      restMinDays: 3,
-      restMaxDays: 6,
-      peakStartDay: 6,
-      peakEndDay: 24,
-      declineStartDay: 24,
-      enabled: true
-    }
+    const payload = { roastLevel: 'medium', restMinDays: 2, restMaxDays: 5, peakStartDay: 5, peakEndDay: 21, declineStartDay: 21, enabled: true }
     const fp = fingerprint(canonical([payload.roastLevel, payload.restMinDays, payload.restMaxDays, payload.peakStartDay, payload.peakEndDay, payload.declineStartDay, payload.enabled]))
     const outcome = applyBatch(
       db,
       { operations: [{ entityType: 'phaseRule', upserts: [{ id: '44444444-4444-4444-8444-444444444444', fingerprint: fp, payload }], deletes: [] }] },
       'dev1'
     )
+    expect(outcome.skippedCount).toBe(1)
+    expect((db.prepare('select count(*) as n from phase_rules').get() as { n: number }).n).toBe(1)
+  })
+
+  it('PhaseRule：iOS 改过而桌面规则无基线 → 冲突保留桌面；裁决路径之外不覆盖', () => {
+    db.prepare(
+      `insert into phase_rules (id, roast_level, rest_min_days, rest_max_days, peak_start_day, peak_end_day, decline_start_day, enabled, updated_at)
+       values ('33333333-3333-4333-8333-333333333333', 'medium', 2, 5, 5, 21, 21, 1, ?)`
+    ).run(Date.now())
+    const payload = { roastLevel: 'medium', restMinDays: 3, restMaxDays: 6, peakStartDay: 6, peakEndDay: 24, declineStartDay: 24, enabled: true }
+    const fp = fingerprint(canonical([payload.roastLevel, payload.restMinDays, payload.restMaxDays, payload.peakStartDay, payload.peakEndDay, payload.declineStartDay, payload.enabled]))
+    const outcome = applyBatch(
+      db,
+      { operations: [{ entityType: 'phaseRule', upserts: [{ id: '44444444-4444-4444-8444-444444444444', fingerprint: fp, payload }], deletes: [] }] },
+      'dev1'
+    )
+    expect(outcome.conflictCount).toBe(1)
+    const rules = db.prepare('select id, rest_min_days from phase_rules').all() as Array<{ id: string; rest_min_days: number }>
+    expect(rules).toHaveLength(1)
+    expect(rules[0].rest_min_days).toBe(2)
+  })
+
+  it('PhaseRule：桌面规则有基线且未改动 → iOS 修改原位生效，基线记到桌面行', () => {
+    const seed = { roastLevel: 'medium', restMinDays: 2, restMaxDays: 5, peakStartDay: 5, peakEndDay: 21, declineStartDay: 21, enabled: true }
+    const seedFp = fingerprint(canonical([seed.roastLevel, seed.restMinDays, seed.restMaxDays, seed.peakStartDay, seed.peakEndDay, seed.declineStartDay, seed.enabled]))
+    // iOS 先把默认规则同步过来（无桌面规则 → 插入 iOS UUID）
+    applyBatch(
+      db,
+      { operations: [{ entityType: 'phaseRule', upserts: [{ id: '44444444-4444-4444-8444-444444444444', fingerprint: seedFp, payload: seed }], deletes: [] }] },
+      'dev1'
+    )
+    // iOS 改了规则（桌面端未动，基线==本地）→ 原位覆盖
+    const changed = { ...seed, restMinDays: 3 }
+    const changedFp = fingerprint(canonical([changed.roastLevel, changed.restMinDays, changed.restMaxDays, changed.peakStartDay, changed.peakEndDay, changed.declineStartDay, changed.enabled]))
+    const outcome = applyBatch(
+      db,
+      { operations: [{ entityType: 'phaseRule', upserts: [{ id: '44444444-4444-4444-8444-444444444444', fingerprint: changedFp, payload: changed }], deletes: [] }] },
+      'dev1'
+    )
     expect(outcome.appliedCount).toBe(1)
     const rules = db.prepare('select id, rest_min_days from phase_rules').all() as Array<{ id: string; rest_min_days: number }>
     expect(rules).toHaveLength(1)
-    expect(rules[0].id).toBe('33333333-3333-4333-8333-333333333333')
+    expect(rules[0].id).toBe('44444444-4444-4444-8444-444444444444')
     expect(rules[0].rest_min_days).toBe(3)
+    // 基线记在桌面行 id 上（行身份），而不是悬空的 iOS UUID。
+    const baseline = db
+      .prepare('select entity_id from sync_baseline where entity_type = ?')
+      .all('phaseRule') as Array<{ entity_id: string }>
+    expect(baseline).toEqual([{ entity_id: '44444444-4444-4444-8444-444444444444' }])
   })
 
   it('引用缺失 → failedItems 带原因，不静默丢弃', () => {
@@ -377,6 +585,16 @@ describe('媒体分块传输', () => {
     expect(outcome.rejected).toHaveLength(1)
     expect(outcome.missing).toHaveLength(0)
   })
+
+  it('同一文件并发写入 → 互斥生效，内容不交错', async () => {
+    const concurrentName = 'abcdef12-3456-4789-8abc-def012345679.mp4'
+    const first = writeChunk(concurrentName, 0, Buffer.alloc(1024, 1))
+    const second = writeChunk(concurrentName, 1024, Buffer.alloc(1024, 2))
+    const results = await Promise.all([first, second])
+    expect(results.every((result) => result.ok)).toBe(true)
+    const received = await receivedBytes(concurrentName)
+    expect(received).toBe(2048)
+  })
 })
 
 describe('HTTP 路由 wire format（与 iOS 客户端逐字段对齐）', () => {
@@ -446,14 +664,16 @@ describe('HTTP 路由 wire format（与 iOS 客户端逐字段对齐）', () => 
     expect(payload.protocolVersion).toBe(1)
   })
 
-  it('同一配对码第二次兑换 → 401（一次性）', async () => {
+  it('GET /api/sync/media/offset 拒绝 unsafe name（路径穿越防护）', async () => {
     await startServer()
     const { code } = server.pairingPayload()
-    const body = pairBody({ pairingCode: code, deviceName: 'iPhone' })
-    const first = await fetch(`${baseUrl}/api/pair`, body)
-    expect(first.status).toBe(200)
-    const second = await fetch(`${baseUrl}/api/pair`, body)
-    expect(second.status).toBe(401)
+    const pair = await fetch(`${baseUrl}/api/pair`, pairBody({ pairingCode: code, deviceName: 'iPhone' }))
+    const { token } = (await pair.json()) as { token: string }
+    const response = await fetch(
+      `${baseUrl}/api/sync/media/offset?name=${encodeURIComponent('../../etc/passwd.jpg')}`,
+      { headers: { authorization: `Bearer ${token}` } }
+    )
+    expect(response.status).toBe(400)
   })
 
   it('旧字段名 code 仍可兑换（兼容兜底）', async () => {
@@ -461,5 +681,62 @@ describe('HTTP 路由 wire format（与 iOS 客户端逐字段对齐）', () => 
     const { code } = server.pairingPayload()
     const response = await fetch(`${baseUrl}/api/pair`, pairBody({ code, deviceName: 'iPhone' }))
     expect(response.status).toBe(200)
+  })
+
+  it('同来源连续猜错 5 次 → HTTP 429（双维限速走到路由层）', async () => {
+    await startServer()
+    server.pairingPayload() // 生成一个码（猜错的对象）
+    let lastStatus = 0
+    for (let index = 0; index < 5; index += 1) {
+      const response = await fetch(
+        `${baseUrl}/api/pair`,
+        pairBody({ pairingCode: 'definitely-wrong-code', deviceName: 'iPhone' })
+      )
+      lastStatus = response.status
+    }
+    expect(lastStatus).toBe(401)
+    const limited = await fetch(
+      `${baseUrl}/api/pair`,
+      pairBody({ pairingCode: 'definitely-wrong-code', deviceName: 'iPhone' })
+    )
+    expect(limited.status).toBe(429)
+  })
+})
+
+describe('端口与地址策略（统一端口）', () => {
+  let db: Database.Database
+  let server: SyncServer
+
+  beforeEach(() => {
+    db = openDb()
+    server = new SyncServer(db, 'bp_desk_test', 'BrewPhase · test', () => {})
+  })
+
+  afterEach(() => {
+    server.stop()
+    db.close()
+  })
+
+  it('首选端口被占 → 统一回落到探测端口（所有地址同一端口）', async () => {
+    const probe = createNetServer()
+    const busyPort = await new Promise<number>((resolve) => {
+      probe.listen(0, '127.0.0.1', () => {
+        const address = probe.address()
+        resolve(typeof address === 'object' && address ? address.port : 0)
+      })
+    })
+    try {
+      const state = await server.start(['127.0.0.1'], busyPort)
+      expect(state.running).toBe(true)
+      expect(state.port).not.toBeNull()
+      expect(state.port).not.toBe(busyPort)
+    } finally {
+      await new Promise<void>((resolve) => probe.close(() => resolve()))
+    }
+  })
+
+  it('空地址列表 → 明确失败，不回落 127.0.0.1', async () => {
+    await expect(server.start([], 47821)).rejects.toThrow('没有可绑定的局域网地址')
+    expect(server.stateFor().running).toBe(false)
   })
 })

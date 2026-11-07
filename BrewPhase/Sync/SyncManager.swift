@@ -1,12 +1,14 @@
 import Foundation
 import SwiftData
+import CryptoKit
 
 /// 同步编排：配对 → 清单 → 指纹差异 → 批量应用 → 媒体分块 → 基线更新。
 ///
 /// 增量策略：**快照指纹差异**（Phase 2 任务书 §9）。iOS 没有统一 change log，
 /// 不依赖 updatedAt——每次与本地保存的上次成功基线比对指纹：
-/// 新增/修改 → upsert；基线有而当前没有 → tombstone 删除。
-/// 只有桌面端确认成功后才更新基线；失败时基线不动，可安全重试。
+/// 新增/修改 → upsert；基线有而当前没有 → tombstone 删除（带基线指纹）。
+/// **基线按桌面端逐条结果提交**（§7.2）：applied/skipped 才推进，conflict/failed
+/// 保留原基线等裁决或重试；整批 200 不代表全部成功。
 @MainActor
 final class SyncManager: ObservableObject {
     enum Phase: Equatable {
@@ -24,6 +26,8 @@ final class SyncManager: ObservableObject {
     private let defaults: UserDefaults
     private static let baselineKey = "sync.baseline.v1"
     private static let lastSyncKey = "sync.lastSyncAt"
+
+    private static let chunkSize = 256 * 1024
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -88,13 +92,16 @@ final class SyncManager: ObservableObject {
             let batches = try builder.allBatches()
             let previous = baseline
 
-            // 数据批次（顺序即依赖顺序）
+            // 数据批次（顺序即依赖顺序；tagLink 依赖 record 与 tag，已在两者之后）
             var applied = 0, skipped = 0, conflicts = 0, failed = 0
             for (index, batch) in batches.enumerated() {
                 phase = .sendingData(index + 1)
-                let upserts = batch.upserts.filter { previous[batch.entityType]?[$0.id] != $0.fingerprint }
-                let deletedIDs = previous[batch.entityType]?.keys.filter { !batch.currentIDs.contains($0) } ?? []
-                let deletes = deletedIDs.map { SyncDelete(id: $0) }
+                let previousForEntity = previous[batch.entityType] ?? [:]
+                let upserts = batch.upserts.filter { previousForEntity[$0.id] != $0.fingerprint }
+                let deletedIDs = previousForEntity.keys.filter { !batch.currentIDs.contains($0) }.sorted()
+                let deletes = deletedIDs.map { id in
+                    SyncDelete(id: id, expectedFingerprint: previousForEntity[id])
+                }
                 guard !upserts.isEmpty || !deletes.isEmpty else { continue }
                 let outcome = try await client.apply(
                     SyncBatch(operations: [SyncOperation(
@@ -105,35 +112,26 @@ final class SyncManager: ObservableObject {
                 skipped += outcome.skippedCount
                 conflicts += outcome.conflictCount
                 failed += outcome.failedItems?.count ?? 0
-                if outcome.failedItems?.isEmpty == false {
-                    // 引用缺失等失败：保留基线，让下一次重试；本轮继续其余实体。
-                    continue
-                }
-                var entityBaseline = previous[batch.entityType] ?? [:]
-                for upsert in batch.upserts { entityBaseline[upsert.id] = upsert.fingerprint }
-                for id in deletedIDs { entityBaseline.removeValue(forKey: id) }
-                var next = baseline
-                next[batch.entityType] = entityBaseline
-                baseline = next
+                commitBaseline(
+                    entityType: batch.entityType,
+                    upserts: upserts,
+                    deletedIDs: deletedIDs,
+                    outcome: outcome
+                )
             }
 
-            // 媒体：清单比对 → 只传缺失的 → 分块 + 整文件校验
-            let manifest = try builder.mediaManifest()
-            let check = try await client.mediaManifest(manifest)
-            let missing = check.missing
+            // 媒体：清单比对 → 只传缺失的 → 流式分块 + 增量哈希 + 整文件校验。
+            // 本地引用读不到 → 显式计入 failed（§4.3），不静默跳过。
+            let manifestResult = builder.mediaManifest()
+            failed += manifestResult.errors.count
+            let missing = manifestResult.entries.isEmpty
+                ? []
+                : try await client.mediaManifest(manifestResult.entries).missing
             for (index, entry) in missing.enumerated() {
                 phase = .sendingMedia(index + 1, missing.count)
-                guard let data = builder.mediaData(for: entry.name) else {
+                if try await uploadMedia(entry, builder: builder, client: client) == false {
                     failed += 1
-                    continue
                 }
-                var offset = try await client.resumedOffset(name: entry.name)
-                while offset < data.count {
-                    let end = min(offset + 256 * 1024, data.count)
-                    try await client.uploadChunk(name: entry.name, offset: offset, data: data.subdata(in: offset..<end))
-                    offset = end
-                }
-                try await client.finalizeMedia(name: entry.name, sha256: entry.sha256, byteSize: entry.byteSize)
             }
 
             lastSyncAt = Date()
@@ -142,6 +140,84 @@ final class SyncManager: ObservableObject {
         } catch {
             phase = .failed(error.localizedDescription)
         }
+    }
+
+    /// 单个媒体文件的流式上传（§9）：FileHandle 分块读，增量 SHA-256 覆盖
+    /// 整个文件（含断点续传时跳过的前缀），绝不把整个视频装进内存。
+    /// 返回 false 表示这个文件失败（计 failed），不中断其余文件。
+    private func uploadMedia(
+        _ entry: MediaManifestEntry,
+        builder: SyncSnapshotBuilder,
+        client: SyncNetworkClient
+    ) async throws -> Bool {
+        guard let handle = builder.mediaHandle(for: entry.name) else { return false }
+        defer { try? handle.close() }
+        do {
+            var hasher = SHA256()
+            var fileSize = 0
+            let resumed = try await client.resumedOffset(name: entry.name)
+            // 断点续传：前缀只喂哈希不上传，保证 finalize 的整文件哈希完整。
+            try handle.seek(toOffset: 0)
+            while fileSize < resumed {
+                guard let prefix = try handle.read(upToCount: Self.chunkSize), !prefix.isEmpty else { break }
+                hasher.update(data: prefix)
+                fileSize += prefix.count
+            }
+            var uploaded = fileSize
+            while let chunk = try handle.read(upToCount: Self.chunkSize), !chunk.isEmpty {
+                hasher.update(data: chunk)
+                fileSize += chunk.count
+                try await client.uploadChunk(name: entry.name, offset: uploaded, data: chunk)
+                uploaded += chunk.count
+            }
+            let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+            try await client.finalizeMedia(name: entry.name, sha256: digest, byteSize: fileSize)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// 逐条基线提交（§7.2）。桌面端 results 缺失（旧版本）时退回整批语义。
+    private func commitBaseline(
+        entityType: String,
+        upserts: [SyncUpsert],
+        deletedIDs: [String],
+        outcome: ApplyOutcome
+    ) {
+        var entityBaseline = baseline[entityType] ?? [:]
+        var hasChange = false
+
+        if let results = outcome.results, !results.isEmpty {
+            let byID = Dictionary(results.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            for upsert in upserts {
+                guard let status = byID[upsert.id]?.status else { continue }
+                if status == "applied" || status == "skipped" {
+                    entityBaseline[upsert.id] = upsert.fingerprint
+                    hasChange = true
+                }
+                // conflict / failed：基线不动，等裁决或重试。
+            }
+            for id in deletedIDs {
+                guard let status = byID[id]?.status else { continue }
+                if status == "applied" || status == "skipped" {
+                    // applied = 删除生效；skipped = 桌面端本就没有（幂等收敛）。
+                    entityBaseline.removeValue(forKey: id)
+                    hasChange = true
+                }
+                // 删除冲突：保留 tombstone 基线，等待裁决后下轮重发。
+            }
+        } else if outcome.failedItems?.isEmpty != false {
+            // 旧服务端（无逐条结果）：只有整批无失败才推进（原语义）。
+            for upsert in upserts { entityBaseline[upsert.id] = upsert.fingerprint }
+            for id in deletedIDs { entityBaseline.removeValue(forKey: id) }
+            hasChange = true
+        }
+
+        guard hasChange else { return }
+        var next = baseline
+        next[entityType] = entityBaseline
+        baseline = next
     }
 }
 
@@ -156,9 +232,10 @@ enum SyncError: LocalizedError {
 }
 
 extension SyncNetworkClient {
-    /** 断点续传：问服务端这个文件已收到多少字节。 */
+    /** 断点续传：问服务端这个文件已收到多少字节。文件名按查询参数编码。 */
     func resumedOffset(name: String) async throws -> Int {
-        guard let url = URL(string: "\(baseURL)/api/sync/media/offset?name=\(name)") else { return 0 }
+        guard let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "\(baseURL)/api/sync/media/offset?name=\(encoded)") else { return 0 }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }

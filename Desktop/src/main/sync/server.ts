@@ -3,6 +3,7 @@ import type { Database } from 'better-sqlite3'
 import { NonceStore, sha256, verifyRequest } from './auth'
 import { PairingService } from './pairing-service'
 import { applyBatch, type SyncBatch } from './snapshot-importer'
+import { isSafeMediaName } from '../media/store'
 import {
   checkManifest,
   finalizeMedia,
@@ -26,6 +27,19 @@ import {
 const PROTOCOL_VERSION = 1
 const MAX_JSON_BODY = 8 * 1024 * 1024
 const MAX_CHUNK_BODY = CHUNK_SIZE + 64 * 1024
+
+/** 探测一个当前空闲的端口（绑定 0 由 OS 分配后释放）。 */
+function probeFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer()
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      const port = typeof address === 'object' && address ? address.port : 0
+      server.close(() => (port > 0 ? resolve(port) : reject(new Error('no free port'))))
+    })
+    server.on('error', reject)
+  })
+}
 
 export type SyncServerState = {
   running: boolean
@@ -53,58 +67,73 @@ export class SyncServer {
 
   start(addresses: string[], preferredPort: number): Promise<SyncServerState> {
     if (this.servers.length > 0) return Promise.resolve(this.stateFor())
-    const targets = addresses.length > 0 ? addresses : ['127.0.0.1']
-    return new Promise((resolve, reject) => {
-      let settled = false
-      let lastError: Error | null = null
-      let bound = 0
-      const servers: Server[] = []
+    // 所有发布地址必须共用**同一个端口**（§10）：多网卡各自回落 listen(0)
+    // 会让二维码里的 host/port 组合对不上一部分地址。
+    const targets = addresses.filter((address) => address.length > 0)
+    if (targets.length === 0) {
+      return Promise.reject(new Error('没有可绑定的局域网地址'))
+    }
+    type Attempt = { kind: 'fixed'; port: number } | { kind: 'probe' }
+    const attempts: Attempt[] = [{ kind: 'fixed', port: preferredPort }]
+    for (let index = 0; index < 5; index += 1) attempts.push({ kind: 'probe' })
 
-      for (const address of targets) {
+    const attemptStart = async (): Promise<SyncServerState> => {
+      let lastError: Error | null = null
+      for (const attempt of attempts) {
+        const port = attempt.kind === 'fixed' ? attempt.port : await probeFreePort()
+        try {
+          const servers = await this.bindAll(port, targets)
+          this.servers = servers
+          this.activePort = port
+          this.boundAddresses = targets
+          this.onChanged()
+          return this.stateFor()
+        } catch (error) {
+          lastError = error as Error
+        }
+      }
+      throw lastError ?? new Error('无法绑定同步服务端口')
+    }
+    return attemptStart()
+  }
+
+  /** 把全部地址绑到同一个端口；任何一个失败就整体回滚（不留半启动状态）。 */
+  private bindAll(port: number, targets: string[]): Promise<Server[]> {
+    return new Promise((resolve, reject) => {
+      const opened: Server[] = []
+      let settled = false
+      const fail = (error: Error): void => {
+        if (settled) return
+        settled = true
+        for (const server of opened) server.close()
+        reject(error)
+      }
+      targets.forEach((address, index) => {
         const server = createServer((request, response) => {
           void this.handle(request, response)
         })
-        server.on('error', (error) => {
-          lastError = error as Error
-        })
-        server.listen(preferredPort, address, () => {
-          bound += 1
-          if (!settled && bound > 0) {
+        opened.push(server)
+        server.on('error', fail)
+        server.listen(port, address, () => {
+          if (settled) return
+          if (opened.every((item) => item.listening)) {
             settled = true
-            this.servers = servers
-            this.boundAddresses = targets
-            this.activePort = preferredPort
-            this.onChanged()
-            resolve(this.stateFor())
+            resolve(opened)
           }
         })
-        // 端口被占：换一个端口重试一次（每个地址独立尝试）。
-        server.on('error', () => {
-          if (server.listening) return
-          server.listen(0, address, () => {
-            const addressInfo = server.address()
-            const actualPort = typeof addressInfo === 'object' ? addressInfo?.port ?? null : null
-            bound += 1
-            servers.push(server)
-            if (this.activePort === null && actualPort) this.activePort = actualPort
-            this.boundAddresses = targets
-            this.servers = servers
-            if (!settled) {
+        if (index === targets.length - 1) {
+          // 兜底： listen 回调都可能不来（极端系统状态），超时判负。
+          setTimeout(() => {
+            if (settled) return
+            if (opened.every((item) => item.listening)) {
               settled = true
-              this.onChanged()
-              resolve(this.stateFor())
+              resolve(opened)
+            } else {
+              fail(new Error(`部分地址绑定 ${port} 超时`))
             }
-          })
-        })
-        servers.push(server)
-      }
-
-      setTimeout(() => {
-        if (!settled && lastError) {
-          for (const server of servers) server.close()
-          reject(lastError)
+          }, 1500)
         }
-      }, 1500)
+      })
     })
   }
 
@@ -243,6 +272,8 @@ export class SyncServer {
 
       if (route === 'GET /api/sync/media/offset') {
         const name = String(url.searchParams.get('name') ?? '')
+        // 文件名先过白名单再进路径计算（防 query 参数路径穿越）。
+        if (!isSafeMediaName(name)) return this.json(response, 400, { error: 'unsafe media name' })
         return this.json(response, 200, { received: await receivedBytes(name) })
       }
 

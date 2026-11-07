@@ -248,9 +248,18 @@ CREATE TABLE IF NOT EXISTS sync_conflicts (
 CREATE INDEX IF NOT EXISTS sync_conflicts_entity_idx ON sync_conflicts (entity_type, entity_id);
 `
 
+const CONFLICT_DELETE_OP_SQL = `
+-- 003：冲突记录区分「远端更新」与「远端删除」（§6.2 删除冲突保护）。
+-- 旧行按默认 'upsert' 读取，语义不变。
+ALTER TABLE sync_conflicts ADD COLUMN remote_operation TEXT NOT NULL DEFAULT 'upsert';
+CREATE INDEX IF NOT EXISTS sync_conflicts_dedup_idx
+  ON sync_conflicts (entity_type, entity_id, remote_fingerprint, remote_operation);
+`
+
 export const migrations: Migration[] = [
   { version: 1, name: 'init', sql: INIT_SQL },
-  { version: 2, name: 'sync-align-ios', sql: SYNC_ALIGN_SQL }
+  { version: 2, name: 'sync-align-ios', sql: SYNC_ALIGN_SQL },
+  { version: 3, name: 'conflict-delete-operation', sql: CONFLICT_DELETE_OP_SQL }
 ]
 
 /**

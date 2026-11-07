@@ -234,6 +234,12 @@ function SyncSection() {
                   {new Date(conflict.createdAt).toLocaleString()}
                 </span>
               </div>
+              {conflict.remoteOperation === 'delete' && (
+                <div className="note" style={{ marginBottom: 8 }}>
+                  手机端删除了这条记录，但电脑端修改过它。保留则两端各留一份；
+                  接受将删除电脑端的这条记录。
+                </div>
+              )}
               <div className="row">
                 <button
                   className="button"
@@ -247,11 +253,16 @@ function SyncSection() {
                 <button
                   className="button button--primary"
                   onClick={async () => {
+                    const message =
+                      conflict.remoteOperation === 'delete'
+                        ? '确认删除电脑端的这条记录？（手机端已删除）'
+                        : undefined
+                    if (message && !window.confirm(message)) return
                     setStatus(await api.sync.resolveConflict(conflict.id, 'remote'))
                     setConflicts(await api.sync.conflicts())
                   }}
                 >
-                  接受手机版本
+                  {conflict.remoteOperation === 'delete' ? '接受删除' : '接受手机版本'}
                 </button>
               </div>
             </div>

@@ -17,6 +17,13 @@ import { lanAddresses } from './network-address'
 export const SYNC_PORT = 47821
 export const SYNC_PROTOCOL_VERSION = 1
 
+/** 冲突裁决按实体名找表；record_tag_links 是复合主键关系表，删除走专用分支。 */
+const TABLE_FOR_CONFLICT: Record<string, string | null> = {
+  bean: 'beans', brew: 'brews', tasting: 'tastings', phaseRule: 'phase_rules',
+  phaseReminder: 'phase_reminders', record: 'records', recordTag: 'record_tags',
+  recordTagLink: null, canvas: 'canvases', canvasNode: 'canvas_nodes'
+}
+
 type Row = Record<string, unknown>
 
 export type SyncStatus = {
@@ -116,8 +123,13 @@ export class SyncService {
   async startPairing(): Promise<SyncStatus> {
     const server = this.requireServer()
     const state = server.stateFor()
+    // 二维码 host 只放真实局域网地址（§10）：没有 LAN 地址时宁可不出码，
+    // 也绝不给手机一个连不上的 127.0.0.1。
+    const addresses = lanAddresses()
+    if (addresses.length === 0) {
+      throw new Error('未检测到局域网地址：请确认这台 Mac 已连接 Wi-Fi 或网线，然后重新点「连接新手机」。')
+    }
     const { code, expiresAt } = server.pairingPayload()
-    const addresses = state.addresses.length > 0 ? state.addresses : ['127.0.0.1']
     const params = new URLSearchParams({
       host: addresses[0],
       hosts: addresses.join(','),
@@ -144,13 +156,14 @@ export class SyncService {
     return this.status()
   }
 
-  /** 冲突列表（含摘要），供设置页展示。 */
+  /** 冲突列表（含摘要与操作类型），供设置页展示。 */
   conflicts(): Array<{
     id: string
     entityType: string
     entityId: string
     localFingerprint: string
     remoteFingerprint: string
+    remoteOperation: 'upsert' | 'delete'
     createdAt: number
     remoteSummary: string
   }> {
@@ -163,14 +176,19 @@ export class SyncService {
       entityId: String(row.entity_id),
       localFingerprint: String(row.local_fingerprint),
       remoteFingerprint: String(row.remote_fingerprint),
+      remoteOperation: String(row.remote_operation ?? 'upsert') === 'delete' ? 'delete' : 'upsert',
       createdAt: Number(row.created_at),
-      remoteSummary: summarize(row.remote_payload as string)
+      remoteSummary:
+        String(row.remote_operation ?? 'upsert') === 'delete'
+          ? '(手机端删除了这条记录)'
+          : summarize(row.remote_payload as string)
     }))
   }
 
   /**
    * 冲突裁决：`local` 删除冲突记录并把本地版本记为新基线（手机下次同步会
-   * 收到冲突）；`remote` 接受手机版本（payload 已在冲突表里）。
+   * 收到冲突/重发）；`remote` 接受手机版本。删除冲突的 `remote` 意味着
+   * **删除电脑端这条记录**并清基线（§6.3）。
    */
   resolveConflict(id: string, resolution: 'local' | 'remote'): SyncStatus {
     const row = this.sqlite
@@ -178,11 +196,25 @@ export class SyncService {
       .get(id) as Row | undefined
     if (!row) return this.status()
 
+    const entityType = String(row.entity_type) as EntityType
+    const entityId = String(row.entity_id)
+    const isDelete = String(row.remote_operation ?? 'upsert') === 'delete'
+
     if (resolution === 'remote') {
-      const payload = JSON.parse(String(row.remote_payload)) as Record<string, unknown>
-      this.applySingle(row.entity_type as EntityType, String(row.entity_id), payload)
+      if (isDelete) {
+        const name = TABLE_FOR_CONFLICT[entityType]
+        if (name) {
+          this.sqlite.prepare(`delete from ${name} where id = ?`).run(entityId)
+          this.sqlite
+            .prepare('delete from sync_baseline where entity_type = ? and entity_id = ?')
+            .run(entityType, entityId)
+        }
+      } else {
+        const payload = JSON.parse(String(row.remote_payload)) as Record<string, unknown>
+        this.applySingle(entityType, entityId, payload)
+      }
     } else {
-      const localFp = this.localFingerprintFor(row.entity_type as EntityType, String(row.entity_id))
+      const localFp = this.localFingerprintFor(entityType, entityId)
       if (localFp) {
         this.sqlite
           .prepare(
@@ -199,12 +231,7 @@ export class SyncService {
   }
 
   private applySingle(entityType: EntityType, id: string, payload: Record<string, unknown>): void {
-    const table: Record<string, string> = {
-      bean: 'beans', brew: 'brews', tasting: 'tastings', phaseRule: 'phase_rules',
-      phaseReminder: 'phase_reminders', record: 'records', recordTag: 'record_tags',
-      canvas: 'canvases', canvasNode: 'canvas_nodes'
-    }
-    const name = table[entityType]
+    const name = TABLE_FOR_CONFLICT[entityType]
     if (!name) return
     const columns: string[] = []
     const values: unknown[] = []
@@ -235,12 +262,7 @@ export class SyncService {
   }
 
   private localFingerprintFor(entityType: EntityType, id: string): string | null {
-    const table: Record<string, string> = {
-      bean: 'beans', brew: 'brews', tasting: 'tastings', phaseRule: 'phase_rules',
-      phaseReminder: 'phase_reminders', record: 'records', recordTag: 'record_tags',
-      canvas: 'canvases', canvasNode: 'canvas_nodes'
-    }
-    const name = table[entityType]
+    const name = TABLE_FOR_CONFLICT[entityType]
     if (!name) return null
     const row = this.sqlite.prepare(`select * from ${name} where id = ?`).get(id) as Row | undefined
     if (!row) return null

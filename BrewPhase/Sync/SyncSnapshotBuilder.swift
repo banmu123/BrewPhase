@@ -5,8 +5,9 @@ import CryptoKit
 /// 从真实 SwiftData 构建同步批次：payload + 规范指纹 + 媒体清单。
 ///
 /// 指纹字段序与桌面端 `snapshot-importer.ts` 的 `localFingerprint` 逐一对应
-/// （SYNC_PROTOCOL.md §指纹）；**不含时间戳**。媒体以内容哈希为身份，
-/// 路径不参与指纹（两端的存储名不同）。
+/// （SYNC_PROTOCOL.md §指纹）；**不含时间戳**——`createdAt` 只进 payload（桌面
+/// 端保留原始创建时间），不进指纹。媒体路径（文件名）两端同名，进 payload
+/// 与指纹（2026-11-07 起，之前缺失会让已上传文件与记录脱钩）。
 struct SyncSnapshotBuilder {
     let context: ModelContext
 
@@ -14,6 +15,12 @@ struct SyncSnapshotBuilder {
         var entityType: String
         var upserts: [SyncUpsert]
         var currentIDs: Set<String>
+    }
+
+    /// 媒体清单 + 显式错误报告（§4.3）：本地引用读不到不再静默跳过。
+    struct MediaManifestResult {
+        var entries: [MediaManifestEntry] = []
+        var errors: [String] = []
     }
 
     // MARK: - 各实体
@@ -34,7 +41,8 @@ struct SyncSnapshotBuilder {
                 "flavorTagsRaw": .init(bean.flavorTagsRaw), "notes": .init(bean.notes),
                 "status": .init(bean.statusRaw),
                 "stockCountedAt": .init(epochMillis(bean.stockCountedAt)),
-                "isSample": .init(bean.isSample)
+                "isSample": .init(bean.isSample),
+                "createdAt": .init(epochMillis(bean.createdAt))
             ]
             let fp = SyncFingerprint.of(SyncFingerprint.canonical([
                 bean.name, bean.roaster, bean.origin, bean.process, bean.roastLevelRaw,
@@ -62,7 +70,8 @@ struct SyncSnapshotBuilder {
                 "bitterness": .init(brew.bitterness), "body": .init(brew.body),
                 "aftertaste": .init(brew.aftertaste),
                 "flavorTagsRaw": .init(brew.flavorTagsRaw), "notes": .init(brew.notes),
-                "stockDeductedG": .init(brew.stockDeductedG)
+                "stockDeductedG": .init(brew.stockDeductedG),
+                "createdAt": .init(epochMillis(brew.createdAt))
             ]
             let fp = SyncFingerprint.of(SyncFingerprint.canonical([
                 brew.bean?.id.uuidString, epochMillis(brew.date),
@@ -86,7 +95,8 @@ struct SyncSnapshotBuilder {
                 "date": .init(epochMillis(tasting.date) ?? 0),
                 "dayAfterRoast": .init(tasting.dayAfterRoast),
                 "flavorTagsRaw": .init(tasting.flavorTagsRaw), "score": .init(tasting.score),
-                "notes": .init(tasting.notes), "source": .init(tasting.sourceRaw)
+                "notes": .init(tasting.notes), "source": .init(tasting.sourceRaw),
+                "createdAt": .init(epochMillis(tasting.createdAt))
             ]
             let fp = SyncFingerprint.of(SyncFingerprint.canonical([
                 tasting.bean?.id.uuidString, tasting.brewID?.uuidString, epochMillis(tasting.date),
@@ -124,7 +134,8 @@ struct SyncSnapshotBuilder {
                 "beanId": .init(reminder.bean?.id.uuidString ?? ""),
                 "kind": .init(reminder.kindRaw),
                 "fireDate": .init(epochMillis(reminder.fireDate) ?? 0),
-                "enabled": .init(reminder.enabled)
+                "enabled": .init(reminder.enabled),
+                "createdAt": .init(epochMillis(reminder.createdAt))
             ]
             let fp = SyncFingerprint.of(SyncFingerprint.canonical([
                 reminder.bean?.id.uuidString, reminder.kindRaw,
@@ -154,7 +165,10 @@ struct SyncSnapshotBuilder {
                 "repositoryIssues": .init(record.repositoryIssues),
                 "repositoryLanguage": .init(record.repositoryLanguage),
                 "repositoryLicense": .init(record.repositoryLicense),
-                "isSample": .init(record.isSample)
+                "mediaPath": .init(record.mediaPath),
+                "previewPath": .init(record.previewPath),
+                "isSample": .init(record.isSample),
+                "createdAt": .init(epochMillis(record.createdAt))
             ]
             let fp = SyncFingerprint.of(SyncFingerprint.canonical([
                 record.carrierRaw, record.title, record.note, record.urlString,
@@ -164,7 +178,9 @@ struct SyncSnapshotBuilder {
                 record.thumbnailURLString, record.metadataStatusRaw,
                 Double(record.repositoryStars), Double(record.repositoryForks),
                 Double(record.repositoryIssues), record.repositoryLanguage,
-                record.repositoryLicense, record.isSample
+                record.repositoryLicense,
+                record.mediaPath, record.previewPath,
+                record.isSample
             ]))
             return SyncUpsert(id: record.id.uuidString, fingerprint: fp, payload: payload)
         }
@@ -174,11 +190,40 @@ struct SyncSnapshotBuilder {
     func tagBatches() throws -> [EntityBatch] {
         let tags = try context.fetch(FetchDescriptor<RecordTag>())
         let upserts = tags.map { tag -> SyncUpsert in
-            let payload: [String: AnyCodableValue] = ["name": .init(tag.name)]
+            let payload: [String: AnyCodableValue] = [
+                "name": .init(tag.name),
+                "createdAt": .init(epochMillis(tag.createdAt))
+            ]
             let fp = SyncFingerprint.of(SyncFingerprint.canonical([tag.name]))
             return SyncUpsert(id: tag.id.uuidString, fingerprint: fp, payload: payload)
         }
         return [EntityBatch(entityType: "recordTag", upserts: upserts, currentIDs: Set(tags.map { $0.id.uuidString }))]
+    }
+
+    /// Record ↔ Tag 多对多关系（§5）。id 是**确定性**的 `recordId:tagId`，
+    /// 两端同一构造；不按名字匹配（同名标签、改名都不影响关系身份）。
+    func recordTagLinkBatches() throws -> [EntityBatch] {
+        let records = try context.fetch(FetchDescriptor<Record>())
+        var upserts: [SyncUpsert] = []
+        var ids = Set<String>()
+        for record in records {
+            for tag in record.tags ?? [] {
+                let linkID = "\(record.id.uuidString):\(tag.id.uuidString)"
+                guard ids.insert(linkID).inserted else { continue }
+                let fp = SyncFingerprint.of(SyncFingerprint.canonical([
+                    record.id.uuidString, tag.id.uuidString
+                ]))
+                upserts.append(SyncUpsert(
+                    id: linkID,
+                    fingerprint: fp,
+                    payload: [
+                        "recordId": .init(record.id.uuidString),
+                        "tagId": .init(tag.id.uuidString)
+                    ]
+                ))
+            }
+        }
+        return [EntityBatch(entityType: "recordTagLink", upserts: upserts, currentIDs: ids)]
     }
 
     func canvasBatches() throws -> [EntityBatch] {
@@ -186,7 +231,8 @@ struct SyncSnapshotBuilder {
         let upserts = canvases.map { canvas -> SyncUpsert in
             let payload: [String: AnyCodableValue] = [
                 "name": .init(canvas.name), "note": .init(canvas.note),
-                "isSample": .init(canvas.isSample)
+                "isSample": .init(canvas.isSample),
+                "createdAt": .init(epochMillis(canvas.createdAt))
             ]
             let fp = SyncFingerprint.of(SyncFingerprint.canonical([canvas.name, canvas.note, canvas.isSample]))
             return SyncUpsert(id: canvas.id.uuidString, fingerprint: fp, payload: payload)
@@ -202,7 +248,8 @@ struct SyncSnapshotBuilder {
                 "recordId": .init(node.recordID.uuidString),
                 "positionX": .init(node.positionX), "positionY": .init(node.positionY),
                 "width": .init(node.width), "height": .init(node.height),
-                "zIndex": .init(node.zIndex), "annotation": .init(node.annotation)
+                "zIndex": .init(node.zIndex), "annotation": .init(node.annotation),
+                "createdAt": .init(epochMillis(node.createdAt))
             ]
             let fp = SyncFingerprint.of(SyncFingerprint.canonical([
                 node.canvasID.uuidString, node.recordID.uuidString,
@@ -215,46 +262,58 @@ struct SyncSnapshotBuilder {
     }
 
     /// 全量批次，实体按依赖顺序（bean → brew → tasting → rule → reminder →
-    /// tag → record → canvas → node），桌面端事务里按同一顺序写。
+    /// tag → record → **tagLink** → canvas → node）；tagLink 依赖 record 与 tag，
+    /// 必须在两者之后。
     func allBatches() throws -> [EntityBatch] {
         try beanBatches() + brewBatches() + tastingBatches() + phaseRuleBatches()
             + reminderBatches() + tagBatches() + recordBatches()
+            + recordTagLinkBatches()
             + canvasBatches() + nodeBatches()
     }
 
     // MARK: - 媒体清单
 
     /// 收集全部被引用的媒体文件。视频本体走 MediaStore，图片/封面走 ImageStore；
-    /// 不假设 iOS 备份的附件清单——**直接按模型引用枚举**。
-    func mediaManifest() throws -> [MediaManifestEntry] {
-        var entries: [MediaManifestEntry] = []
+    /// **直接按模型引用枚举**。引用了但本地读不到 → 显式进 `errors`（§4.3），
+    /// 不静默跳过；大文件流式哈希，不整读进内存（§9）。
+    func mediaManifest() -> MediaManifestResult {
+        var result = MediaManifestResult()
         var seen = Set<String>()
 
         func add(name: String?, mediaType: String) {
-            guard let name, !name.isEmpty, !seen.contains(name) else { return }
-            seen.insert(name)
+            guard let name, !name.isEmpty else { return }
+            guard seen.insert(name).inserted else { return }
             let url: URL
             if mediaType == "video" {
                 url = MediaStore.shared.url(for: name)
             } else {
                 url = ImageStore.shared.url(for: name, thumbnail: name.contains("_thumb"))
             }
-            guard let data = try? Data(contentsOf: url) else { return }
-            entries.append(
+            guard let digest = Self.fileSHA256(at: url) else {
+                result.errors.append("\(mediaType) 文件无法读取：\(name)")
+                return
+            }
+            result.entries.append(
                 MediaManifestEntry(
                     name: name,
-                    sha256: Self.sha256(data),
-                    byteSize: data.count,
+                    sha256: digest.sha256,
+                    byteSize: digest.byteSize,
                     mediaType: mediaType,
                     mimeType: Self.mimeType(of: name)
                 )
             )
         }
 
-        let beans = try context.fetch(FetchDescriptor<Bean>())
+        guard let beans = try? context.fetch(FetchDescriptor<Bean>()) else {
+            result.errors.append("豆子数据无法读取，媒体清单不完整")
+            return result
+        }
         for bean in beans { add(name: bean.imagePath, mediaType: "image") }
 
-        let records = try context.fetch(FetchDescriptor<Record>())
+        guard let records = try? context.fetch(FetchDescriptor<Record>()) else {
+            result.errors.append("记录数据无法读取，媒体清单不完整")
+            return result
+        }
         for record in records {
             if record.carrier == .video {
                 add(name: record.mediaPath, mediaType: "video")
@@ -263,18 +322,31 @@ struct SyncSnapshotBuilder {
             }
             add(name: record.previewPath, mediaType: "preview")
         }
-        return entries
+        return result
     }
 
-    func mediaData(for name: String) -> Data? {
+    /// 上传用读取句柄：调用方分块读 + 增量哈希，不把整个视频装进内存（§9）。
+    func mediaHandle(for name: String) -> FileHandle? {
         let url = name.hasSuffix(".mov") || name.hasSuffix(".mp4") || name.hasSuffix(".m4v")
             ? MediaStore.shared.url(for: name)
             : ImageStore.shared.url(for: name, thumbnail: name.contains("_thumb"))
-        return try? Data(contentsOf: url)
+        return try? FileHandle(forReadingFrom: url)
     }
 
-    static func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    /// 流式 SHA-256 + 字节数：内存占用恒为一块（256KB）。
+    static func fileSHA256(at url: URL) -> (sha256: String, byteSize: Int)? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        var size = 0
+        while true {
+            let chunk = (try? handle.read(upToCount: 256 * 1024)) ?? Data()
+            if chunk.isEmpty { break }
+            hasher.update(data: chunk)
+            size += chunk.count
+        }
+        let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        return (digest, size)
     }
 
     /// 按真实字节判 MIME（魔数），不信任扩展名。

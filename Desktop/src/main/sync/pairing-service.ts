@@ -6,18 +6,23 @@ import type { Database } from 'better-sqlite3'
  * 配对服务：一次性高熵配对码（2 分钟），换每设备独立 Token。
  *
  * 安全策略沿用 BrewPing `PairingStore`（实际设备验证过）：
- * - 码**只存哈希**，内存里不保留明文；比较恒定时间；
+ * - 码 128-bit 熵（`randomBytes(16)`），**只存哈希**，服务里不留明文；
+ *   明文只在 `issue()` 返回值里出现一次，由调用方（设置页二维码）持有；
  * - 「无码可兑」不计入失败（猜一个不存在的码不该把合法用户锁在门外）；
  * - 双维限速：单来源 + 全局，来源有界（256，LRU）；
  * - 配对成功立即消费配对码、清该来源失败记录，并签发独立 token（只落哈希）。
+ *
+ * 生命周期（2026-11-07 起）：`issue()` 每次生成**新码**并立即作废旧码——
+ * 不再为了「2 分钟内重复调用返回同一个码」而缓存明文。二维码由调用方
+ * `SyncService` 自己保存在界面状态里，状态轮询/重渲染不会换码。
  */
 export const PAIRING_TTL_MS = 120_000
 
 export type PairingPayload = { code: string; expiresAt: number }
 
-/** 12 位高熵码：比 6 位数字强 400 万倍以上，扫码场景不需要人手输入。 */
+/** 128-bit 高熵码（base64url 22 字符），扫码场景不需要人手输入。 */
 function randomPairingCode(): string {
-  return randomBytes(9).toString('base64url').slice(0, 12)
+  return randomBytes(16).toString('base64url')
 }
 
 type FailureRecord = { failures: number[]; blockedUntil: number; lastSeen: number }
@@ -35,20 +40,14 @@ export class PairingService {
   private readonly cooldownMs = 60_000
   private readonly maxSources = 256
 
-  /** 生成（或复用未过期的）配对码。 */
+  /** 生成新配对码；旧码（如果有）立即作废。 */
   issue(): PairingPayload {
     const now = Date.now()
-    if (this.codeHash && now - this.issuedAt < PAIRING_TTL_MS) {
-      return { code: this.currentCode, expiresAt: this.issuedAt + PAIRING_TTL_MS }
-    }
     const code = randomPairingCode()
-    this.currentCode = code
     this.codeHash = sha256(code)
     this.issuedAt = now
     return { code, expiresAt: now + PAIRING_TTL_MS }
   }
-
-  private currentCode = ''
 
   /** 作废当前码并换新的（用户怀疑泄露时一键换）。 */
   rotate(): PairingPayload {
@@ -100,7 +99,8 @@ export class PairingService {
 
   /**
    * 用配对码换 Token。`source` 是对端地址（限速分桶，nil 归 "unknown" 桶，
-   * 不给「没地址就不限速」留缺口）。
+   * 不给「没地址就不限速」留缺口）。API 边界的字段名由 server 层统一为
+   * `pairingCode`；这里的参数名 `code` 只描述「待验证的码」本身。
    */
   exchange(
     code: string,
@@ -125,7 +125,6 @@ export class PairingService {
 
     // 成功：码立即作废，签发这台设备专属 token（库里只存哈希）。
     this.codeHash = null
-    this.currentCode = ''
     this.failuresBySource.delete(sourceKey)
 
     const token = randomToken()

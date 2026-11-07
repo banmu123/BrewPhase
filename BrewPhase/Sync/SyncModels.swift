@@ -100,8 +100,11 @@ struct SyncUpsert: Codable {
     var payload: [String: AnyCodableValue]
 }
 
+/// 删除意图。`expectedFingerprint` 是**上一次成功同步时的基线指纹**（不是当前值）：
+/// 桌面端拿它与本地现行指纹比对，一致才允许删除，否则进删除冲突（§6 非破坏性）。
 struct SyncDelete: Codable {
     var id: String
+    var expectedFingerprint: String?
 }
 
 struct SyncOperation: Codable {
@@ -112,6 +115,14 @@ struct SyncOperation: Codable {
 
 struct SyncBatch: Codable {
     var operations: [SyncOperation]
+}
+
+/// 逐条结果（§7）：iOS 按它决定基线推进，绝不能「整批 200 就全部提交」。
+struct SyncItemResult: Codable {
+    var entityType: String
+    var id: String
+    var status: String
+    var reason: String?
 }
 
 /// JSON 值容器：payload 里有嵌套可选与混合类型。
@@ -158,6 +169,8 @@ struct ApplyOutcome: Codable {
     var skippedCount: Int
     var conflictCount: Int
     var failedItems: [FailedItem]?
+    /// 桌面端逐条结果；旧服务端没有时按整批处理（向后兼容）。
+    var results: [SyncItemResult]?
 
     struct FailedItem: Codable {
         var id: String

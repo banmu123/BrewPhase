@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { promises as fs } from 'node:fs'
+import { createReadStream, promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { ensureMediaDir, isSafeMediaName, mediaDir } from '../media/store'
 
@@ -10,8 +10,10 @@ import { ensureMediaDir, isSafeMediaName, mediaDir } from '../media/store'
  *   但**完整保存**，不丢弃原始文件。
  * - 名字沿用 iOS 侧存储名（UUID + 扩展名），过 `isSafeMediaName` + 扩展名
  *   白名单双重校验，renderer 与远端都拿不到任意路径。
- * - 分块 256KB：块内容哈希随块传输校验，整文件哈希在 finalize 校验；
- *   失败任务留在 .incoming 由下一次 finalize/清理覆盖。
+ * - 分块 256KB：请求体完整性由 HMAC（覆盖 body）保证；**独立 chunk 哈希未
+ *   实现**，整文件哈希在 finalize 时流式校验（不整读进内存）；失败任务留
+ *   在 .incoming 由下一次 finalize/清理覆盖。
+ * - 同名分块写入互斥（内存锁）：并发 chunk 不会交错追加导致偏移错乱。
  */
 
 const CHUNK_SIZE = 256 * 1024
@@ -51,9 +53,15 @@ function validate(entry: MediaManifestEntry): string | null {
   return null
 }
 
-async function fileSha256(path: string): Promise<string> {
-  const buffer = await fs.readFile(path)
-  return createHash('sha256').update(buffer).digest('hex')
+/** 流式 SHA-256：大视频不整读进内存（§9）。 */
+function fileSha256(path: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256')
+    const stream = createReadStream(path)
+    stream.on('data', (chunk: Buffer) => hash.update(chunk))
+    stream.on('end', () => resolve(hash.digest('hex')))
+    stream.on('error', reject)
+  })
 }
 
 /** 比对清单：已有的（文件存在且哈希一致）不再传输。 */
@@ -91,7 +99,12 @@ function partPath(name: string): string {
   return join(incomingDir(), `${name}.part`)
 }
 
-/** 追加一块。`offset` 必须与当前临时文件长度一致（断点续传由客户端按已收字节数续）。 */
+/**
+ * 追加一块。`offset` 必须与当前临时文件长度一致（断点续传由客户端按已收
+ * 字节数续）。同名分块在进程内串行化，并发到达时按到达顺序生效。
+ */
+const chunkLocks = new Map<string, Promise<unknown>>()
+
 export async function writeChunk(
   name: string,
   offset: number,
@@ -103,6 +116,23 @@ export async function writeChunk(
   if (chunk.length === 0 || chunk.length > CHUNK_SIZE) {
     return { ok: false, reason: `chunk size must be 1..${CHUNK_SIZE}` }
   }
+  const previous = chunkLocks.get(name) ?? Promise.resolve()
+  const task = previous.then(() => appendChunk(name, offset, chunk), () => appendChunk(name, offset, chunk))
+  chunkLocks.set(
+    name,
+    task.then(
+      () => undefined,
+      () => undefined
+    )
+  )
+  return task
+}
+
+async function appendChunk(
+  name: string,
+  offset: number,
+  chunk: Buffer
+): Promise<{ ok: true; received: number } | { ok: false; reason: string }> {
   await ensureIncoming()
   const part = partPath(name)
   let current = 0
@@ -119,8 +149,9 @@ export async function writeChunk(
   return { ok: true, received: offset + chunk.length }
 }
 
-/** 收到的字节数（断点续传的起点）。 */
+/** 收到的字节数（断点续传的起点）。名字必须先过白名单。 */
 export async function receivedBytes(name: string): Promise<number> {
+  if (!isSafeMediaName(name)) return 0
   try {
     const stat = await fs.stat(partPath(name))
     return stat.size
@@ -138,12 +169,12 @@ export async function finalizeMedia(
   if (!isSafeMediaName(name)) return { ok: false, reason: 'unsafe name' }
   const part = partPath(name)
   try {
-    const buffer = await fs.readFile(part)
-    if (buffer.length !== byteSize) {
+    const stat = await fs.stat(part)
+    if (stat.size !== byteSize) {
       await fs.rm(part, { force: true })
-      return { ok: false, reason: `size mismatch: expected ${byteSize}, got ${buffer.length}` }
+      return { ok: false, reason: `size mismatch: expected ${byteSize}, got ${stat.size}` }
     }
-    const actual = createHash('sha256').update(buffer).digest('hex')
+    const actual = await fileSha256(part)
     if (actual !== sha256) {
       await fs.rm(part, { force: true })
       return { ok: false, reason: 'sha256 mismatch' }

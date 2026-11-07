@@ -138,6 +138,8 @@ export type SyncConflictItem = {
   entityId: string
   localFingerprint: string
   remoteFingerprint: string
+  /** 'upsert' = 远端内容冲突；'delete' = 手机删除 vs 电脑改动（§6.2）。 */
+  remoteOperation: 'upsert' | 'delete'
   createdAt: number
   remoteSummary: string
 }
