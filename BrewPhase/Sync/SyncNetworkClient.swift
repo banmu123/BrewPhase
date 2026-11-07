@@ -53,8 +53,9 @@ struct SyncNetworkClient {
     }
 
     func pair(pairingCode: String, deviceName: String) async throws -> PairResponse {
-        let body: [String: String] = ["pairingCode": pairingCode, "deviceName": deviceName]
-        return try await post("api/pair", body: body, authenticated: false)
+        struct PairBody: Codable { var pairingCode: String; var deviceName: String }
+        let payload = try JSONEncoder().encode(PairBody(pairingCode: pairingCode, deviceName: deviceName))
+        return try await post("api/pair", bodyData: payload, authenticated: false)
     }
 
     // MARK: - 同步
@@ -70,17 +71,16 @@ struct SyncNetworkClient {
     }
 
     func apply(_ batch: SyncBatch) async throws -> ApplyOutcome {
-        try await post("api/sync/apply", body: batch, authenticated: true)
+        // SyncBatch 是 Swift struct：必须走 JSONEncoder。JSONSerialization
+        // 遇到 Swift struct 会抛无法捕获的 NSException（2026-11-07 真机
+        // 「开始同步即崩溃」的根因）。
+        let payload = try JSONEncoder().encode(batch)
+        return try await post("api/sync/apply", bodyData: payload, authenticated: true)
     }
 
     func mediaManifest(_ entries: [MediaManifestEntry]) async throws -> MediaManifestCheck {
-        let body: [String: Any] = ["media": entries.map { entry in
-            [
-                "name": entry.name, "sha256": entry.sha256, "byteSize": entry.byteSize,
-                "mediaType": entry.mediaType, "mimeType": entry.mimeType
-            ] as [String: Any]
-        }]
-        return try await post("api/sync/media/manifest", body: body, authenticated: true)
+        let payload = try JSONEncoder().encode(["media": entries])
+        return try await post("api/sync/media/manifest", bodyData: payload, authenticated: true)
     }
 
     func uploadChunk(name: String, offset: Int, data: Data) async throws {
@@ -105,8 +105,9 @@ struct SyncNetworkClient {
     }
 
     func finalizeMedia(name: String, sha256: String, byteSize: Int) async throws {
-        let body: [String: Any] = ["name": name, "sha256": sha256, "byteSize": byteSize]
-        let _: [String: String] = try await post("api/sync/media/finalize", body: body, authenticated: true)
+        struct FinalizeBody: Codable { var name: String; var sha256: String; var byteSize: Int }
+        let payload = try JSONEncoder().encode(FinalizeBody(name: name, sha256: sha256, byteSize: byteSize))
+        let _: [String: String] = try await post("api/sync/media/finalize", bodyData: payload, authenticated: true)
     }
 
     // MARK: - 传输原语
@@ -119,17 +120,18 @@ struct SyncNetworkClient {
         return try decode(data, response)
     }
 
-    private func post<T: Decodable>(_ path: String, body: Any, authenticated: Bool) async throws -> T {
-        let payload = try JSONSerialization.data(withJSONObject: body)
+    /// 所有请求体统一走 JSONEncoder（Swift struct 安全）；JSONSerialization
+    /// 只允许出现在「确定传入纯 Foundation 集合」的场景，这里已全部消除。
+    private func post<T: Decodable>(_ path: String, bodyData: Data, authenticated: Bool) async throws -> T {
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         if authenticated {
             guard let token else { throw ClientError.http(401, "未配对") }
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            sign(&request, body: payload)
+            sign(&request, body: bodyData)
         }
-        request.httpBody = payload
+        request.httpBody = bodyData
         let (data, response) = try await session.data(for: request)
         return try decode(data, response)
     }

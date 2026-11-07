@@ -53,4 +53,26 @@ final class SyncModelsTests: XCTestCase {
         )
         XCTAssertEqual(single?.candidateHosts, ["192.168.1.9"])
     }
+
+    /// 回归（2026-11-07 真机崩溃）：SyncBatch 必须走 JSONEncoder 且键名与
+    /// 桌面端一致；JSONSerialization 遇到 Swift struct 会抛无法捕获的
+    /// NSException（「开始同步即闪退」的根因）。
+    func testSyncBatchEncodesWithTSCompatibleKeys() throws {
+        let batch = SyncBatch(operations: [SyncOperation(
+            entityType: "bean",
+            upserts: [SyncUpsert(id: "id-1", fingerprint: "fp-1", payload: ["name": .string("豆子"), "remainingG": .double(158)])],
+            deletes: [SyncDelete(id: "id-2", expectedFingerprint: "fp-old")]
+        )])
+        let data = try JSONEncoder().encode(batch)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let operation = try XCTUnwrap((object["operations"] as? [[String: Any]])?.first)
+        XCTAssertEqual(operation["entityType"] as? String, "bean")
+        let upsert = try XCTUnwrap((operation["upserts"] as? [[String: Any]])?.first)
+        XCTAssertEqual(upsert["id"] as? String, "id-1")
+        XCTAssertEqual(upsert["fingerprint"] as? String, "fp-1")
+        XCTAssertEqual((upsert["payload"] as? [String: Any])?["name"] as? String, "豆子")
+        let deletion = try XCTUnwrap((operation["deletes"] as? [[String: Any]])?.first)
+        XCTAssertEqual(deletion["id"] as? String, "id-2")
+        XCTAssertEqual(deletion["expectedFingerprint"] as? String, "fp-old")
+    }
 }
