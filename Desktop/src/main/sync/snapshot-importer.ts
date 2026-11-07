@@ -236,12 +236,13 @@ function toColumns(payload: Record<string, unknown>): Record<string, unknown> {
 
 function insertRow(sqlite: Database, table: string, id: string, columns: Record<string, unknown>): void {
   // 指纹**不含时间戳**（避免 iOS 触碰 updatedAt 触发假变更）。created_at 等
-  // 业务时间：iOS payload 带了就用原始值（§11），缺省（旧客户端）才补 now。
+  // 业务时间：iOS payload 带了就用原始值（§11）；缺省或 null（旧客户端/
+  // 传输异常）才补 now——NOT NULL 列必须有值，null 直接插入只会报约束失败。
   const info = sqlite.prepare(`pragma table_info(${table})`).all() as Array<{ name: string; notnull: number; dflt_value: unknown }>
   const filled = { ...columns }
   for (const column of info) {
     if (column.name !== 'created_at' && column.name !== 'updated_at') continue
-    if (filled[column.name] === undefined) filled[column.name] = Date.now()
+    if (filled[column.name] === undefined || filled[column.name] === null) filled[column.name] = Date.now()
   }
   const names = ['id', ...Object.keys(filled)]
   const placeholders = names.map(() => '?').join(', ')
@@ -345,6 +346,10 @@ function cryptoId(): string {
 export function applyBatch(sqlite: Database, batch: SyncBatch, sourceDeviceId: string): ApplyResult {
   const result: ApplyResult = { appliedCount: 0, skippedCount: 0, conflictCount: 0, failedItems: [], results: [] }
   const mark = (item: SyncItemResult): void => {
+    if (item.status === 'failed') {
+      // 排障：真机同步失败的每条原因必须可见（2026-11-07 真机 52 条全败取证）。
+      console.error(`[sync] failed ${item.entityType} ${item.id}: ${item.reason ?? 'unknown'}`)
+    }
     result.results.push(item)
     switch (item.status) {
       case 'applied': result.appliedCount += 1; break

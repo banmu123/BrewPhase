@@ -223,6 +223,12 @@ export class SyncServer {
         if (!auth.ok) return this.json(response, auth.status, { error: auth.error })
         const batch = JSON.parse(bodyResult.body.toString('utf8')) as SyncBatch
         const outcome = applyBatch(this.sqlite, batch, device.id)
+        if (outcome.failedItems.length > 0) {
+          // 排障取证：真机同步失败时把请求体前段与失败原因打进主进程日志。
+          console.error(
+            `[sync] apply ${outcome.failedItems.length} failed; body head: ${bodyResult.body.toString('utf8').slice(0, 600)}`
+          )
+        }
         this.touchDevice(device.id, true)
         this.onChanged()
         return this.json(response, 200, outcome)

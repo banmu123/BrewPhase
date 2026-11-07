@@ -154,6 +154,11 @@ enum AnyCodableValue: Codable {
         case let value as String: self = .string(value)
         case let value as Bool: self = .bool(value)
         case let value as Int: self = .int(value)
+            // epochMillis 返回 Int64?：Swift 运行时对 Any 里的 Int64 不会
+            // 动态转换成 Int（实测 `Int64 as? Int` 为 nil），漏掉这个分支
+            // 会让全部时间戳静默变 null（2026-11-07 真机 record_tags
+            // created_at NOT NULL 失败的根因）。
+        case let value as Int64: self = .int(Int(value))
         case let value as Double: self = .double(value)
         default: self = .null
         }

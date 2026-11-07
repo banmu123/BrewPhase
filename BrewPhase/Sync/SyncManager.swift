@@ -22,6 +22,8 @@ final class SyncManager: ObservableObject {
 
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var lastSyncAt: Date?
+    /// 最近一次同步的具体失败原因（供界面显示与排障）。
+    @Published private(set) var lastFailedReasons: [String] = []
     /// 最近一次同步的媒体统计（结果汇总展示；以真实清单/上传结果为准）。
     struct MediaStats: Equatable {
         var images: Int
@@ -174,6 +176,7 @@ final class SyncManager: ObservableObject {
             }
             phase = .preparing
             lastMediaStats = nil
+            lastFailedReasons = []
             let client = SyncNetworkClient(host: device.host, port: device.port, token: device.token)
             _ = try await client.manifest()
 
@@ -201,6 +204,9 @@ final class SyncManager: ObservableObject {
                 skipped += outcome.skippedCount
                 conflicts += outcome.conflictCount
                 failed += outcome.failedItems?.count ?? 0
+                for item in outcome.failedItems ?? [] {
+                    lastFailedReasons.append("\(batch.entityType) #\(item.id.prefix(8)): \(item.reason)")
+                }
                 commitBaseline(
                     entityType: batch.entityType,
                     upserts: upserts,

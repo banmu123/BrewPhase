@@ -75,4 +75,17 @@ final class SyncModelsTests: XCTestCase {
         XCTAssertEqual(deletion["id"] as? String, "id-2")
         XCTAssertEqual(deletion["expectedFingerprint"] as? String, "fp-old")
     }
+
+    /// 回归（2026-11-07 真机）：epochMillis 的 Int64? 必须保留为 JSON 数字，
+    /// 不能因 AnyCodableValue.init 缺 Int64 分支静默变 null（record_tags
+    /// created_at NOT NULL 失败的根因）。
+    func testAnyCodableValuePreservesInt64Timestamps() throws {
+        let value = AnyCodableValue(epochMillis(Date(timeIntervalSince1970: 1_782_000_000)))
+        let data = try JSONEncoder().encode(["t": value])
+        XCTAssertEqual(String(data: data, encoding: .utf8), #"{"t":1782000000000}"#)
+        // 可空时间戳为 nil 时才是显式 null
+        let nilValue = AnyCodableValue(epochMillis(nil))
+        let nilData = try JSONEncoder().encode(["t": nilValue])
+        XCTAssertEqual(String(data: nilData, encoding: .utf8), #"{"t":null}"#)
+    }
 }

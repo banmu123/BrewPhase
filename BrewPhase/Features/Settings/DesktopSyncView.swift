@@ -122,6 +122,18 @@ struct DesktopSyncView: View {
                         .font(TypeScale.caption)
                         .foregroundStyle(Palette.inkSoft)
                 }
+                if failed > 0 {
+                    ForEach(Array(manager.lastFailedReasons.prefix(4).enumerated()), id: \.offset) { _, reason in
+                        Text(reason)
+                            .font(TypeScale.caption)
+                            .foregroundStyle(Palette.priority)
+                    }
+                    if manager.lastFailedReasons.count > 4 {
+                        Text("…等 \(manager.lastFailedReasons.count) 条失败")
+                            .font(TypeScale.caption)
+                            .foregroundStyle(Palette.inkFaint)
+                    }
+                }
             }
         case .failed(let message):
             Text(message).font(TypeScale.caption).foregroundStyle(Palette.priority)

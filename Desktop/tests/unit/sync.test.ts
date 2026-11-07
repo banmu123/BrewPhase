@@ -431,6 +431,18 @@ describe('快照合并（非破坏性，幂等）', () => {
     expect(Math.abs(fallback.created_at - Date.now())).toBeLessThan(10_000)
   })
 
+  it('created_at 为 null 的 payload（旧客户端/传输异常）→ 补 now，不报 NOT NULL（真机回归）', () => {
+    const payload = { ...beanPayload(), createdAt: null }
+    const outcome = applyBatch(
+      db,
+      { operations: [{ entityType: 'bean', upserts: [{ id: beanId, fingerprint: beanFingerprint(beanPayload()), payload }], deletes: [] }] },
+      'dev1'
+    )
+    expect(outcome.appliedCount).toBe(1)
+    const row = db.prepare('select created_at from beans where id = ?').get(beanId) as { created_at: number }
+    expect(row.created_at).toBeGreaterThan(0)
+  })
+
   it('PhaseRule：两端默认规则字段一致（UUID 不同）→ skipped，不产生重复', () => {
     db.prepare(
       `insert into phase_rules (id, roast_level, rest_min_days, rest_max_days, peak_start_day, peak_end_day, decline_start_day, enabled, updated_at)
