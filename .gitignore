@@ -10,3 +10,8 @@ Tools/CoffeeAI/runs/
 Tools/CoffeeAI/data/splits/
 Tools/CoffeeAI/**/*.safetensors
 Tools/CoffeeAI/**/*.gguf
+
+# macOS / Xcode 本机噪声
+.DS_Store
+*.xcuserstate
+xcuserdata/
