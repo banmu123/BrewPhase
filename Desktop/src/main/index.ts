@@ -5,6 +5,7 @@ import { openDatabase, type DatabaseHandle } from './database/client'
 import { registerIpc } from './ipc/register'
 import { MEDIA_HOST, MEDIA_SCHEME, mediaFilePath } from './media/store'
 import { createMainWindow } from './window'
+import { SyncService } from './sync/sync-service'
 
 /**
  * 主进程入口。
@@ -14,6 +15,7 @@ import { createMainWindow } from './window'
  */
 
 let db: DatabaseHandle | null = null
+let syncService: SyncService | null = null
 const devServerUrl = process.env.ELECTRON_RENDERER_URL ?? null
 
 // 自定义协议必须在 app ready 之前声明权限：媒体图片要给 <img> 用。
@@ -50,7 +52,18 @@ function bootstrap(): void {
   })
 
   applyCsp(session.defaultSession, devServerUrl)
-  registerIpc({ db, devServerUrl })
+
+  // 同步服务：按持久化开关恢复（用户启用过才监听端口）。
+  syncService = new SyncService(db.sqlite, () => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send('sync:changed')
+    }
+  })
+  void syncService.restore().catch((error) => {
+    console.error('[sync] restore failed', error)
+  })
+
+  registerIpc({ db, devServerUrl, sync: syncService })
   createMainWindow({ devServerUrl })
 
   app.on('activate', () => {

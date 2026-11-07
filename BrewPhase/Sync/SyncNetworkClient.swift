@@ -1,0 +1,147 @@
+import Foundation
+import CryptoKit
+
+/// 桌面端同步服务的 HTTP 客户端。
+///
+/// 鉴权与桌面端 `auth.ts` 同一套：Bearer token；写请求加
+/// `x-bp-timestamp / x-bp-nonce / x-bp-signature`，签名 =
+/// `HMAC-SHA256(token, timestamp \n nonce \n sha256(body))`。
+/// 第一版为局域网 HTTP（威胁模型与 BrewPing 相同；TLS 见协议文档的下一步）。
+struct SyncNetworkClient {
+    var host: String
+    var port: Int
+    var token: String?
+
+    let session: URLSession
+
+    init(host: String, port: Int, token: String?) {
+        self.host = host
+        self.port = port
+        self.token = token
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 20
+        configuration.timeoutIntervalForResource = 300
+        self.session = URLSession(configuration: configuration)
+    }
+
+    var baseURL: URL {
+        URL(string: "http://\(host):\(port)")!
+    }
+
+    enum ClientError: LocalizedError {
+        case http(Int, String)
+        case invalidResponse
+
+        var errorDescription: String? {
+            switch self {
+            case .http(let status, let message): return "服务返回 \(status)：\(message)"
+            case .invalidResponse: return "服务响应无法解析"
+            }
+        }
+    }
+
+    // MARK: - 配对
+
+    func pair(pairingCode: String, deviceName: String) async throws -> PairResponse {
+        let body: [String: String] = ["pairingCode": pairingCode, "deviceName": deviceName]
+        return try await post("api/pair", body: body, authenticated: false)
+    }
+
+    // MARK: - 同步
+
+    struct Manifest: Codable {
+        var protocolVersion: Int
+        var desktopDeviceId: String
+        var entityCounts: [String: Int]
+    }
+
+    func manifest() async throws -> Manifest {
+        try await get("api/sync/manifest")
+    }
+
+    func apply(_ batch: SyncBatch) async throws -> ApplyOutcome {
+        try await post("api/sync/apply", body: batch, authenticated: true)
+    }
+
+    func mediaManifest(_ entries: [MediaManifestEntry]) async throws -> MediaManifestCheck {
+        let body: [String: Any] = ["media": entries.map { entry in
+            [
+                "name": entry.name, "sha256": entry.sha256, "byteSize": entry.byteSize,
+                "mediaType": entry.mediaType, "mimeType": entry.mimeType
+            ] as [String: Any]
+        }]
+        return try await post("api/sync/media/manifest", body: body, authenticated: true)
+    }
+
+    func uploadChunk(name: String, offset: Int, data: Data) async throws {
+        var request = URLRequest(url: baseURL.appendingPathComponent("api/sync/media/chunk"))
+        request.httpMethod = "POST"
+        request.setValue("application/octet-stream", forHTTPHeaderField: "content-type")
+        sign(&request, body: data)
+        request.url = URL(string: "\(baseURL)/api/sync/media/chunk?name=\(name)&offset=\(offset)")
+        request.httpBody = data
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw ClientError.http(status, "chunk rejected")
+        }
+    }
+
+    func finalizeMedia(name: String, sha256: String, byteSize: Int) async throws {
+        let body: [String: Any] = ["name": name, "sha256": sha256, "byteSize": byteSize]
+        let _: [String: String] = try await post("api/sync/media/finalize", body: body, authenticated: true)
+    }
+
+    // MARK: - 传输原语
+
+    private func get<T: Decodable>(_ path: String) async throws -> T {
+        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        request.httpMethod = "GET"
+        if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        let (data, response) = try await session.data(for: request)
+        return try decode(data, response)
+    }
+
+    private func post<T: Decodable>(_ path: String, body: Any, authenticated: Bool) async throws -> T {
+        let payload = try JSONSerialization.data(withJSONObject: body)
+        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        if authenticated {
+            guard let token else { throw ClientError.http(401, "未配对") }
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            sign(&request, body: payload)
+        }
+        request.httpBody = payload
+        let (data, response) = try await session.data(for: request)
+        return try decode(data, response)
+    }
+
+    /// 写请求签名头。TS 侧 `expectedSignature(token, timestamp, nonce, sha256(body))`。
+    private func sign(_ request: inout URLRequest, body: Data) {
+        guard let token else { return }
+        let timestamp = String(Int(Date().timeIntervalSince1970 * 1000))
+        let nonce = UUID().uuidString
+        let bodyHash = Self.sha256(body)
+        let key = SymmetricKey(data: Data(token.utf8))
+        let message = Data("\(timestamp)\n\(nonce)\n\(bodyHash)".utf8)
+        let signature = HMAC<SHA256>.authenticationCode(for: message, using: key)
+        let signatureHex = signature.map { String(format: "%02x", $0) }.joined()
+        request.setValue(timestamp, forHTTPHeaderField: "x-bp-timestamp")
+        request.setValue(nonce, forHTTPHeaderField: "x-bp-nonce")
+        request.setValue(signatureHex, forHTTPHeaderField: "x-bp-signature")
+    }
+
+    static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func decode<T: Decodable>(_ data: Data, _ response: URLResponse) throws -> T {
+        guard let http = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else {
+            let message = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? ""
+            throw ClientError.http(http.statusCode, message)
+        }
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+}

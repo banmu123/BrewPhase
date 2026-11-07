@@ -1,6 +1,7 @@
 import type { Bean, BeanDraft, Brew, BrewDraft, PhaseRule, Tasting, TastingDraft } from './entities/coffee'
 import type { Canvas, CanvasNode, CanvasNodeWithRecord } from './entities/canvas'
 import type { ImportImageResult, RecordDraft, RecordItem, RecordQuery, RecordTag } from './entities/records'
+import type { SyncStatus, SyncConflictItem } from './sync'
 import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from './version'
 
 export * from './version'
@@ -51,6 +52,15 @@ export interface RendererApi {
     importImage: () => Promise<ImportImageResult | null>
     /** `bpmedia://media/<fileName>`；只接受主进程校验过的文件名。 */
     mediaUrl: (fileName: string) => string
+  }
+  sync: {
+    status: () => Promise<SyncStatus>
+    enable: (enabled: boolean) => Promise<SyncStatus>
+    startPairing: () => Promise<SyncStatus>
+    revokeDevice: (id: string) => Promise<SyncStatus>
+    conflicts: () => Promise<SyncConflictItem[]>
+    resolveConflict: (id: string, resolution: 'local' | 'remote') => Promise<SyncStatus>
+    onChanged: (listener: () => void) => () => void
   }
   canvas: {
     list: () => Promise<Canvas[]>

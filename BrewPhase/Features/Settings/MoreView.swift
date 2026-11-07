@@ -51,7 +51,7 @@ struct MoreView: View {
                     SectionHeader(title: "本地智能")
                     AskSettingsSection()
 
-                    // 数据：导出与图片，全部在本机。
+                    // 数据：导出与图片，全部在本机。桌面同步把手机数据送到电脑。
                     SectionHeader(title: "数据", detail: "都在本机")
                     dataBlock
 
@@ -211,6 +211,15 @@ struct MoreView: View {
                     isExporting = true
                 } label: {
                     navRow(title: "导出", detail: "JSON · CSV 表格（不含图片）")
+                }
+                .buttonStyle(.plain)
+
+                CardDivider()
+
+                NavigationLink {
+                    DesktopSyncView()
+                } label: {
+                    navRow(title: "桌面同步", detail: "扫码配对 · iPhone → 电脑")
                 }
                 .buttonStyle(.plain)
 

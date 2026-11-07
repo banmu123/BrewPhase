@@ -30,6 +30,7 @@ export const beans = sqliteTable(
     flavorTagsRaw: text('flavor_tags_raw').notNull().default(''),
     notes: text('notes').notNull().default(''),
     status: text('status').notNull().default('active'),
+    isSample: integer('is_sample', { mode: 'boolean' }).notNull().default(false),
     stockCountedAt: integer('stock_counted_at'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull()
@@ -133,8 +134,12 @@ export const records = sqliteTable(
     previewPath: text('preview_path'),
     thumbnailUrlString: text('thumbnail_url_string'),
     metadataStatus: text('metadata_status').notNull().default('idle'),
+    contentKind: text('content_kind').notNull().default(''),
+    linkPage: integer('link_page').notNull().default(1),
     repositoryStars: integer('repository_stars'),
     repositoryForks: integer('repository_forks'),
+    repositoryIssues: integer('repository_issues'),
+    repositoryLicense: text('repository_license'),
     repositoryLanguage: text('repository_language'),
     isSample: integer('is_sample', { mode: 'boolean' }).notNull().default(false),
     createdAt: integer('created_at').notNull(),
@@ -171,6 +176,7 @@ export const canvases = sqliteTable('canvases', {
   id: text('id').primaryKey(),
   name: text('name').notNull().default(''),
   note: text('note').notNull().default(''),
+  isSample: integer('is_sample', { mode: 'boolean' }).notNull().default(false),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull()
 })
@@ -267,6 +273,7 @@ export const devices = sqliteTable(
     tokenHash: text('token_hash').notNull(),
     pairedAt: integer('paired_at').notNull(),
     lastSeenAt: integer('last_seen_at'),
+    lastSyncAt: integer('last_sync_at'),
     revokedAt: integer('revoked_at')
   },
   (table) => [uniqueIndex('devices_token_idx').on(table.tokenHash)]
@@ -276,6 +283,23 @@ export const devices = sqliteTable(
 export const localState = sqliteTable('local_state', {
   key: text('key').primaryKey(),
   value: text('value').notNull()
+})
+
+export const syncBaseline = sqliteTable('sync_baseline', {
+  entityType: text('entity_type').notNull(),
+  entityId: text('entity_id').notNull(),
+  fingerprint: text('fingerprint').notNull(),
+  syncedAt: integer('synced_at').notNull()
+}, (table) => [primaryKey({ columns: [table.entityType, table.entityId] })])
+
+export const syncConflicts = sqliteTable('sync_conflicts', {
+  id: text('id').primaryKey(),
+  entityType: text('entity_type').notNull(),
+  entityId: text('entity_id').notNull(),
+  localFingerprint: text('local_fingerprint').notNull(),
+  remoteFingerprint: text('remote_fingerprint').notNull(),
+  remotePayload: text('remote_payload').notNull(),
+  createdAt: integer('created_at').notNull()
 })
 
 export const schema = {
@@ -291,7 +315,10 @@ export const schema = {
   canvasNodes,
   canvasStrokes,
   syncMeta,
-  changeLog,
   devices,
+  syncBaseline,
+  syncConflicts,
+  changeLog,
   localState
 }
+

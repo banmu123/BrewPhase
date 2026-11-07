@@ -216,7 +216,42 @@ CREATE TABLE IF NOT EXISTS local_state (
 );
 `
 
-export const migrations: Migration[] = [{ version: 1, name: 'init', sql: INIT_SQL }]
+const SYNC_ALIGN_SQL = `
+-- 002：对齐 iOS 真实模型（Phase 2），全部为追加变更，不改历史列。
+ALTER TABLE beans ADD COLUMN is_sample INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE canvases ADD COLUMN is_sample INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE records ADD COLUMN content_kind TEXT NOT NULL DEFAULT '';
+ALTER TABLE records ADD COLUMN link_page INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE records ADD COLUMN repository_issues INTEGER;
+ALTER TABLE records ADD COLUMN repository_license TEXT;
+ALTER TABLE devices ADD COLUMN last_sync_at INTEGER;
+
+-- 每实体同步基线：内容指纹（SHA-256），Brew/Tasting 没有 updatedAt，靠它判变更。
+CREATE TABLE IF NOT EXISTS sync_baseline (
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  synced_at INTEGER NOT NULL,
+  PRIMARY KEY (entity_type, entity_id)
+);
+
+-- 两端同 UUID 不同内容：先落冲突表，绝不静默覆盖。
+CREATE TABLE IF NOT EXISTS sync_conflicts (
+  id TEXT PRIMARY KEY NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  local_fingerprint TEXT NOT NULL,
+  remote_fingerprint TEXT NOT NULL,
+  remote_payload TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sync_conflicts_entity_idx ON sync_conflicts (entity_type, entity_id);
+`
+
+export const migrations: Migration[] = [
+  { version: 1, name: 'init', sql: INIT_SQL },
+  { version: 2, name: 'sync-align-ios', sql: SYNC_ALIGN_SQL }
+]
 
 /**
  * 逐版执行，每版一个事务。失败时**不吞异常**：调用方（`openDatabase`）会把

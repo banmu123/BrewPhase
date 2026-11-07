@@ -155,7 +155,14 @@ type CanvasRow = typeof canvases.$inferSelect
 type NodeRow = typeof canvasNodes.$inferSelect
 
 function toCanvas(row: CanvasRow): Canvas {
-  return { id: row.id, name: row.name, note: row.note, createdAt: row.createdAt, updatedAt: row.updatedAt }
+  return {
+    id: row.id,
+    name: row.name,
+    note: row.note,
+    isSample: row.isSample,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  }
 }
 
 function toNode(row: NodeRow): CanvasNode {

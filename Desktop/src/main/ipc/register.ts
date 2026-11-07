@@ -1,4 +1,4 @@
-import { ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { z } from 'zod'
 import { IPC, ipcRequestSchemas } from '../../shared/contracts/validation/ipc'
 import type { DatabaseHandle } from '../database/client'
@@ -28,6 +28,7 @@ import {
 } from '../database/repositories/records'
 import { addNode, createCanvas, deleteCanvas, listCanvases, listNodes, moveNode, removeNode } from '../database/repositories/canvas'
 import { importImageFromDialog } from '../media/store'
+import type { SyncService } from '../sync/sync-service'
 import { DEFAULT_PHASE_RULES } from '../../shared/domain/phase'
 import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from '../../shared/contracts/version'
 
@@ -39,8 +40,12 @@ import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from '../../sha
  * 2. 参数必须能通过 zod（`ipcRequestSchemas`），任何多余字段都不会流进 SQL；
  * 3. 抛回 renderer 的错误只带 message，不带栈与路径。
  */
-export function registerIpc(params: { db: DatabaseHandle; devServerUrl: string | null }): void {
-  const { db, devServerUrl } = params
+export function registerIpc(params: {
+  db: DatabaseHandle
+  devServerUrl: string | null
+  sync: SyncService
+}): void {
+  const { db, devServerUrl, sync } = params
 
   // 首次启动铺默认阶段规则（之后由用户或同步决定，不覆盖）。
   seedPhaseRulesIfEmpty(db.db, DEFAULT_PHASE_RULES)
@@ -149,6 +154,19 @@ export function registerIpc(params: { db: DatabaseHandle; devServerUrl: string |
     removeNode(db.db, db.deviceId, (input as { id: string }).id)
     return null
   })
+
+  // MARK: - 设备同步
+
+  handle(IPC.syncStatus, () => sync.status())
+  handle(IPC.syncEnable, (input) => sync.enable(Boolean(input)))
+  handle(IPC.syncStartPairing, () => sync.startPairing())
+  handle(IPC.syncRevokeDevice, (input) => sync.revokeDevice((input as { id: string }).id))
+  handle(IPC.syncConflicts, () => sync.conflicts())
+  handle(IPC.syncResolveConflict, (input) => {
+    const value = input as { id: string; resolution: 'local' | 'remote' }
+    return sync.resolveConflict(value.id, value.resolution)
+  })
+
 }
 
 /**

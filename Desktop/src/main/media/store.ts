@@ -21,6 +21,9 @@ const DISPLAY_MAX_EDGE = 2_048
 const PREVIEW_MAX_EDGE = 480
 
 export function mediaDir(): string {
+  // 测试与便携场景可覆盖；正常运行永远用 userData。
+  const override = process.env.BREWPHASE_USER_DATA_DIR
+  if (override) return path.join(override, 'media')
   return path.join(app.getPath('userData'), 'media')
 }
 
@@ -30,7 +33,7 @@ export async function ensureMediaDir(): Promise<void> {
 
 /** 只接受我们自己生成的两种名字，任何路径分隔符都视为攻击。 */
 export function isSafeMediaName(name: string): boolean {
-  return /^[A-Za-z0-9_-]{8,64}(_thumb)?\.(jpg|png|webp)$/.test(name)
+  return /^[A-Za-z0-9_-]{8,64}(_thumb)?\.(jpg|png|webp|mov|mp4|m4v)$/.test(name)
 }
 
 export function mediaFilePath(name: string): string {

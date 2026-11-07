@@ -35,6 +35,13 @@ export const IPC = {
   recordUpdate: 'records:update',
   recordDelete: 'records:delete',
   recordImportImage: 'records:import-image',
+
+  syncStatus: 'sync:status',
+  syncEnable: 'sync:enable',
+  syncStartPairing: 'sync:start-pairing',
+  syncRevokeDevice: 'sync:revoke-device',
+  syncConflicts: 'sync:conflicts',
+  syncResolveConflict: 'sync:resolve-conflict',
   tagsList: 'records:tags:list',
   tagCreate: 'records:tag:create',
   tagDelete: 'records:tag:delete',
@@ -71,6 +78,14 @@ export const ipcRequestSchemas = {
   [IPC.recordUpdate]: z.object({ id: z.string().uuid(), draft: recordDraftSchema }),
   [IPC.recordDelete]: z.object({ id: z.string().uuid() }),
   [IPC.recordImportImage]: z.void(),
+
+  // 设备同步（Phase 2）
+  [IPC.syncStatus]: z.void(),
+  [IPC.syncEnable]: z.boolean(),
+  [IPC.syncStartPairing]: z.void(),
+  [IPC.syncRevokeDevice]: z.object({ id: z.string().min(1) }),
+  [IPC.syncConflicts]: z.void(),
+  [IPC.syncResolveConflict]: z.object({ id: z.string().min(1), resolution: z.enum(['local', 'remote']) }),
   [IPC.tagsList]: z.void(),
   [IPC.tagCreate]: z.object({ name: z.string().min(1).max(40) }),
   [IPC.tagDelete]: z.object({ id: z.string().uuid() }),

@@ -9,6 +9,7 @@ export const canvasSchema = z.object({
   id: z.string().uuid(),
   name: z.string().max(120).default(''),
   note: z.string().max(2_000).default(''),
+  isSample: z.boolean().default(false),
   createdAt: z.number().int(),
   updatedAt: z.number().int()
 })

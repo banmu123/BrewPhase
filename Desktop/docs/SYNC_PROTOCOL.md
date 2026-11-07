@@ -1,61 +1,96 @@
-# 局域网同步协议 v1（草案，仅结构）
+# BrewPhase 同步协议 v2（iOS → Desktop，局域网，已实现）
 
-> 本阶段只定义协议与类型（`src/shared/contracts/sync`），**没有实现服务端**。
-> 不要把它当成「已经能同步」——界面与文档都必须保持这个口径。
+> v1 只有结构没有实现；**v2 起为已落地的传输协议**。安全模型沿用
+> BrewPing 已验证的设计（见 `BREWPING_REUSE_AUDIT.md`），数据语义见
+> `FEATURE_PARITY_AUDIT.md`。
 
-## 1. 拓扑
+## 0. 总则
 
-Desktop 是 **Host**，iOS 是配对客户端。不依赖云、不需要账号、不上传第三方。
+- 方向：第一版 **iOS → Desktop** 单向；协议字段为未来双向预留
+  （`originDeviceId` / `revision` / tombstone）。
+- 传输：局域网 HTTP（端口首选 **47821**，被占自动回落并把实际端口写进二维码）。
+  **TLS 是下一跳**：协议字段 `certificateFingerprint` 已预留，落地后两端同时升级。
+  当前防护 = 一次性高熵配对码 + 每设备独立 Token（服务端只存 SHA-256）+
+  时间戳/nonce/HMAC 防重放；威胁模型与 BrewPing 现行版本一致。
+- 发现：二维码直连（`host`/`hosts` 候选）。Bonjour（`_brewphase._tcp`）作为
+  增强项后置，TXT 约定：`deviceId/deviceName/protocolVersion/port`。
 
-## 2. 配对流程
+## 1. 配对
 
-1. Desktop 启动本地 HTTP 服务（默认端口 47821），用 Bonjour `_brewphase._tcp` 广播。
-2. 用户点「配对」→ 生成一次性配对码（6 位，2 分钟有效，服务端只存哈希）。
-3. 二维码内容 = `PairingPayload`：`{v, host, port, deviceId, deviceName, pairingCode, expiresAt}`。
-4. iOS 扫码（mDNS 失败时手输 IP:端口）→ `POST /v1/pair`，带 `PairRequest`
-   （配对码 + 客户端 deviceId + 名称 + Ed25519 公钥）。
-5. 服务端校验码未过期、未使用 → 生成 `accessToken`（随机 32 字节，只存哈希），
-   返回 `PairResponse`；客户端存钥匙串。配对码立即作废。
+1. 桌面端「连接新手机」→ 生成 12 位高熵码（仅存 SHA-256），**2 分钟有效、一次性**；
+   二维码 = `brewphase://pair?host=&hosts=&port=&deviceId=&deviceName=&pairingCode=&protocolVersion=1&expiresAt=`。
+2. iOS 扫码（AVFoundation；解析只有 `SyncPairingLink.parse` 一处）→
+   `POST /api/pair {pairingCode, deviceName}`。
+3. 校验（恒定时间比较 + 双维限速：单源 5 次/5 分钟、全局 30 次/5 分钟、冷却 60s、
+   「无码可兑不计数」）→ 签发 32 字节 Token：桌面端存哈希进 `devices` 表，
+   iOS 存 Keychain；**码立即作废**。
+4. 响应：`{token, deviceId, desktopDeviceId, desktopDeviceName, protocolVersion}`。
 
-## 3. 每个请求的认证
+## 2. 请求鉴权
 
-```
-Authorization: Bearer <token>
-X-Device-Id: <clientDeviceId>
-X-Timestamp: <unix ms>
-X-Nonce: <16+ 字节随机>
-X-Signature: HMAC-SHA256(token, method + path + timestamp + nonce + bodySha256)
-```
+| 项 | 规则 |
+|---|---|
+| 身份 | `Authorization: Bearer <token>`（服务端 `sha256(token)` 查 `devices`，`revoked_at` 非空拒绝） |
+| 读（GET） | 仅 Bearer（重放无害，同 BrewPing） |
+| 写（POST） | 额外 `x-bp-timestamp`（ms，窗口 ±120s）+ `x-bp-nonce`（有界去重 2048）+ `x-bp-signature = HMAC-SHA256(token, timestamp \n nonce \n sha256(body))` |
 
-- 时间窗 ±5 分钟；`(deviceId, nonce)` 在窗口内去重（防重放）。
-- token 可撤销：`devices.revoked_at` 非空即拒绝。
+## 3. 接口
 
-## 4. 数据交换
+| 路由 | 说明 |
+|---|---|
+| `GET /api/status` | 无鉴权健康检查 `{service, protocolVersion}` |
+| `GET /api/sync/manifest` | 各实体计数（导入前预检查） |
+| `POST /api/sync/apply` | 批量合并（见 §4），返回 `{appliedCount, skippedCount, conflictCount, failedItems[]}` |
+| `POST /api/sync/media/manifest` | 清单比对 → `{missing[], have[], rejected[]}` |
+| `POST /api/sync/media/chunk?name=&offset=` | 256KB 分块追加；offset 必须等于已收字节数（断点续传查询 `GET /api/sync/media/offset`） |
+| `POST /api/sync/media/finalize` | 整文件 SHA-256 校验 → 原子落位；失败清理临时文件 |
 
-| 接口 | 作用 |
-| --- | --- |
-| `GET /v1/snapshot?since=<revision>` | 增量快照：`SnapshotFrame`（实体 JSON + 媒体清单） |
-| `GET /v1/media/<sha256>?offset=&length=` | 媒体按块下载（256KB/块），逐块 SHA-256 |
-| `POST /v1/changes` | 客户端上报本地 change log 批次 |
+## 4. 合并语义（非破坏性）
 
-- 实体以 `EntityType` + `entityId` 标识；每条的 `revision` 单调递增。
-- 删除用 **tombstone**（`deletedAt`），不是「查不到」。
-- 媒体以文件名的 SHA-256 为内容地址；重复文件只传一次。
+对每条 upsert（id + fingerprint + payload）：
 
-## 5. 冲突处理
+| 桌面端状态 | 动作 |
+|---|---|
+| 行不存在 | 插入（`created_at/updated_at` 缺省补 now），记基线指纹 |
+| 本地指纹 == 来端指纹 | 跳过（幂等：重复同步不重复插入、不重复扣库存） |
+| 基线存在且基线 == 本地指纹 | 桌面端没改过 → 接受 iOS 覆盖 |
+| 基线存在且基线 == 来端指纹 | iOS 没改、桌面端改了 → **冲突**，保留本地 |
+| 其余（两端都改 / 无基线） | **冲突**，保留本地 |
 
-同一实体两端都改过（两边 revision 都 > 上次同步点）时**不静默覆盖**：
+- 冲突落 `sync_conflicts`（双方指纹 + 远端 payload），设置页可裁决
+  「保留电脑版本 / 接受手机版本」；未裁决不影响其他数据。
+- 删除（tombstone）：行存在 → 删除 + 清基线（外键级联随之）；不存在 → skipped。
+- 引用缺失（如 brew 指向不存在的 bean）→ `failedItems` 带原因，**不静默丢弃**，
+  也不让单条失败拖垮整批。
+- **PhaseRule 特例**：按 `roastLevel` 匹配既有规则原位更新（两端默认规则 UUID
+  各自生成），同一烘焙度只保留一份有效规则。
+- 整批一个事务；事务失败整批回滚并报告。
 
-1. 服务端返回 `Conflict`（两端 revision 与 modifiedAt）；
-2. 客户端可选择 `keepLocal / keepRemote / mergeLater`；
-3. `mergeLater` 保留两份草稿，等用户在界面上决定。
+## 5. 指纹（两端同规则）
 
-Phase 2 只做前两步；「字段级自动合并」不在计划内——那需要每个字段的语义，
-不是通用算法能解决的。
+`SHA-256(规范串)`；规范串 = 固定字段序 + `\u{1F}` 分隔；字符串原样、`nil` → `~`、
+布尔 → `true/false`、数字 → 最多 6 位小数去尾零（跨语言 `1` ≡ `1.0`）。
+**不含时间戳**（防 iOS 触碰 updatedAt 造成假变更）。字段序见
+`snapshot-importer.ts localFingerprint` 与 `SyncSnapshotBuilder.swift`，两处互为镜像，
+改一处必须改另一处并同步测试。
 
-## 6. 明确不做
+## 6. 媒体
 
-- 不做云中转，不做跨网段穿透；
-- 不传整个 SQLite 文件（会把两端的 schema 绑死）；
-- 不把 iOS 的系统通知 identifier 传过来（各端自己重建本地通知）；
-- 不同步 `EmbeddingRecord` 等派生索引。
+- 清单项：`{name, sha256, byteSize, mediaType, mimeType}`；mimeType 按扩展名 +
+  iOS 侧真实字节判定；视频（mov/mp4/m4v）由 **MediaStore 单独枚举**，
+  不依赖 iOS 备份的 JPG 附件清单。
+- 名字沿用 iOS 存储名，桌面端 `isSafeMediaName` + 扩展名白名单双重校验。
+- 分块 256KB；块级追加校验偏移、整文件校验 SHA-256；临时区 `.incoming` →
+  校验通过原子 rename 进媒体目录；失败清临时文件。
+- 桌面端第一版**完整保存视频文件**（不丢弃），界面先展示封面与信息。
+
+## 7. 游标语义（区分）
+
+- `change_log.seq`：桌面端全局变更流水（未来双向拉取的游标）。
+- `sync_baseline`（entity_type, entity_id → fingerprint）：**本方向**的去重基线。
+- 两者不可混用；本版 iOS 端基线存 UserDefaults（非敏感），桌面端基线入库。
+
+## 8. 时间
+
+全部 **epoch 毫秒**。iOS `Date` 转换带防御：秒值（< 1e11）自动 ×1000。
+业务 UUID 原样保留，禁止重新生成。

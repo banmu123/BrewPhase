@@ -86,3 +86,19 @@ Canvas 1─n CanvasStroke (cascade)
 
 `sync_meta` 与 `change_log` 不改变业务表，只记录「谁在什么时候改了哪条、改到第几版」。
 每次写操作与业务写入**同一个事务**，避免出现「数据改了、日志没记」的洞。
+
+---
+
+## Phase 2 附录：同步对齐后的修订（2026-11-07）
+
+迁移 002（`sync-align-ios`）后，本表的「Desktop 缺失」列已全部补齐：
+
+- `beans.is_sample` / `canvases.is_sample`：示例数据标记随数据同步。
+- `records.content_kind / link_page / repository_issues / repository_license`：
+  iOS LinkProvider 体系的完整元数据。
+- `devices.last_sync_at`：每设备独立 Token（服务端只存哈希），可撤销。
+- 新表 `sync_baseline`（内容指纹基线）/ `sync_conflicts`（两端同改的裁决队列）。
+- `phase_reminders`：v1 建表，本版纳入同步实体（只同步意图，不同步系统通知
+  identifier——每端自行重建通知）。
+
+逐字段核对记录见 `FEATURE_PARITY_AUDIT.md`。

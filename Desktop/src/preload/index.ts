@@ -40,6 +40,19 @@ const api: RendererApi = {
     importImage: () => invoke(IPC.recordImportImage),
     mediaUrl: (fileName: string) => `bpmedia://media/${encodeURIComponent(fileName)}`
   },
+  sync: {
+    status: () => invoke(IPC.syncStatus),
+    enable: (enabled) => invoke(IPC.syncEnable, enabled),
+    startPairing: () => invoke(IPC.syncStartPairing),
+    revokeDevice: (id) => invoke(IPC.syncRevokeDevice, { id }),
+    conflicts: () => invoke(IPC.syncConflicts),
+    resolveConflict: (id, resolution) => invoke(IPC.syncResolveConflict, { id, resolution }),
+    onChanged: (listener) => {
+      const wrapped = () => listener()
+      ipcRenderer.on('sync:changed', wrapped)
+      return () => ipcRenderer.removeListener('sync:changed', wrapped)
+    }
+  },
   canvas: {
     list: () => invoke(IPC.canvasesList),
     create: (name, note = '') => invoke(IPC.canvasCreate, { name, note }),
