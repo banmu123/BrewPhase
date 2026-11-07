@@ -233,11 +233,18 @@ function RecordTile(props: {
 }) {
   const { item } = props
   const platform = useMemo(() => detectPlatform(item), [item])
+  // 平台标签：链接用平台识别，本地媒体与文字用载体名——本地内容不该显示「网页」。
+  const metaLabel = item.carrier === 'link' ? platform.label : carrierLabel[item.carrier]
   const previewTitle = useMemo(() => {
     if (platform.platform === 'github' && item.platformContentID) return item.platformContentID
     if (item.title.trim()) return item.title
     return item.summary.trim().split('\n')[0] || carrierLabel[item.carrier]
   }, [platform, item])
+  // 视频平台把频道/UP 主带进元信息行（§顺手检查 2）。
+  const metaAuthor =
+    (platform.platform === 'youtube' || platform.platform === 'bilibili') && item.authorName
+      ? item.authorName
+      : null
 
   return (
     <button
@@ -253,7 +260,8 @@ function RecordTile(props: {
       <span className="record-tile__body">
         <span className="record-tile__title">{previewTitle || carrierLabel[item.carrier]}</span>
         <span className="record-tile__meta">
-          <span data-platform-label={platform.platform}>{platform.label}</span>
+          <span data-platform-label={platform.platform}>{metaLabel}</span>
+          {metaAuthor && <span>{metaAuthor}</span>}
           <span>{formatDate(item.createdAt)}</span>
           {props.tagNames.map((name) => (
             <span key={name} className="tag">

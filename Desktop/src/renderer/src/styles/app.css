@@ -1007,6 +1007,33 @@ textarea {
   display: inline-block;
 }
 
+/* og 图之上的仓库信息条：半透明底保证图上可读 */
+.preview-repo__bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(250, 249, 246, 0.94);
+  border-top: 1px solid var(--hairline);
+  min-width: 0;
+}
+
+.preview-repo__bar .preview-repo__id {
+  font-size: var(--fs-footnote, 12px);
+  min-width: 0;
+}
+
+.preview-repo__bar .preview-repo__stats {
+  flex: none;
+  gap: 10px;
+}
+
 /* X 动态：作者 + 正文主体，文本才是卡片的主角 */
 .preview-x {
   background: var(--card);

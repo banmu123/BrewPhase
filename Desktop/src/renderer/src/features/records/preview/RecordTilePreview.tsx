@@ -103,11 +103,34 @@ function GitHubPreview(props: { preview: RecordPreview }) {
     <span className="preview-media preview-media--auto">
       <PlatformChip preview={preview} />
       {preview.remoteImage ? (
-        <RemoteThumb
-          src={preview.remoteImage}
-          alt={preview.repositoryName ?? preview.title}
-          fallback={<RepoCardBody preview={preview} />}
-        />
+        <>
+          <RemoteThumb
+            src={preview.remoteImage}
+            alt={preview.repositoryName ?? preview.title}
+            fallback={<RepoCardBody preview={preview} />}
+          />
+          {/* og 图之上仍保留仓库身份与统计（§顺手检查 1），不因有图而丢失。 */}
+          <span className="preview-repo__bar">
+            <span className="preview-repo__id">
+              <GitHubMark size={12} />
+              <span className="mono">{preview.repositoryName || preview.title}</span>
+            </span>
+            <span className="preview-repo__stats">
+              {preview.language && (
+                <span className="preview-repo__lang">
+                  <span className="preview-repo__lang-dot" />
+                  {preview.language}
+                </span>
+              )}
+              {preview.stars !== null && preview.stars > 0 && (
+                <span><StarGlyph /> {formatCount(preview.stars)}</span>
+              )}
+              {preview.forks !== null && preview.forks > 0 && (
+                <span><ForkGlyph /> {formatCount(preview.forks)}</span>
+              )}
+            </span>
+          </span>
+        </>
       ) : (
         <RepoCardBody preview={preview} />
       )}

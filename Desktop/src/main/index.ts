@@ -99,12 +99,14 @@ app.on('before-quit', () => {
  * 响应头不能。开发时放开 HMR 需要的 ws 与 eval，生产收紧到最小。
  */
 function applyCsp(target: Electron.Session, dev: string | null): void {
+  // img-src 的 https: 是远程缩略图（og:image、i.ytimg.com）的加载通道；
+  // 失败由组件落平台 fallback，不放宽 connect-src/script-src 等其他指令。
   const policy = dev
     ? [
         "default-src 'self'",
         "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
         "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' bpmedia: data: blob:",
+        "img-src 'self' bpmedia: data: https: blob:",
         "font-src 'self' data:",
         "connect-src 'self' ws: http://localhost:* http://127.0.0.1:*"
       ].join('; ')
@@ -112,7 +114,7 @@ function applyCsp(target: Electron.Session, dev: string | null): void {
         "default-src 'self'",
         "script-src 'self'",
         "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' bpmedia: data:",
+        "img-src 'self' bpmedia: data: https:",
         "font-src 'self' data:",
         "connect-src 'self'"
       ].join('; ')
