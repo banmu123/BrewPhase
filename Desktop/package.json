@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:live": "METADATA_LIVE_SMOKE=1 vitest run --config vitest.live.config.ts",
     "e2e": "playwright test",
     "db:generate": "drizzle-kit generate",
     "dist": "electron-vite build && electron-builder"

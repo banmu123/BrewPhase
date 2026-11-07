@@ -105,3 +105,25 @@ describe('通用网页与非法输入', () => {
     expect(providerLabel.generic).toBe('网页')
   })
 })
+
+describe('X 动态 ID 边界（§第四轮 真实网络 smoke 发现）', () => {
+  it('早期推文的短 ID 也能识别（status/20 就是第一条推文）', () => {
+    const parsed = parseLink('https://x.com/jack/status/20')
+    expect(parsed.provider).toBe('x')
+    expect(parsed.contentId).toBe('20')
+    expect(parsed.authorHint).toBe('jack')
+  })
+
+  it('现代雪花 ID 正常识别', () => {
+    const parsed = parseLink('https://twitter.com/elonmusk/status/1585841080431337472?s=20')
+    expect(parsed.provider).toBe('x')
+    expect(parsed.contentId).toBe('1585841080431337472')
+    expect(parsed.authorHint).toBe('elonmusk')
+  })
+
+  it('非数字 / 非 status 路径不冒充动态', () => {
+    expect(parseLink('https://x.com/jack').contentId).toBeNull()
+    expect(parseLink('https://x.com/jack/status/photos').contentId).toBeNull()
+    expect(parseLink('https://x.com/jack/status/12345678901234567890123').contentId).toBeNull()
+  })
+})

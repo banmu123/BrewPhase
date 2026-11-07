@@ -519,3 +519,186 @@ describe('相对 OG 图片（§第三轮 4）', () => {
     expect(resolved.thumbnailUrl).toBe('https://blog.example.com/images/cover.jpg')
   })
 })
+
+describe('IPv6 特殊用途地址（§第四轮 一，IANA 登记段）', () => {
+  const BLOCKED = [
+    ['::', '未指定'],
+    ['::1', 'loopback'],
+    ['::ffff:7f00:1', 'IPv4-mapped loopback（十六进制）'],
+    ['::ffff:127.0.0.1', 'IPv4-mapped loopback（点分）'],
+    ['64:ff9b::1', '64:ff9b::/96 NAT64 WKP'],
+    ['64:ff9b:1::1', '64:ff9b:1::/48 本地 NAT64（RFC 8215）'],
+    ['64:ff9b:1:ffff::abcd', '本地 NAT64 段内'],
+    ['100::1', '100::/64 discard-only'],
+    ['100::ffff:ffff:ffff:ffff', 'discard-only 段末'],
+    ['2001::1', '2001::/23 Teredo 段'],
+    ['2001:0:ffff::1', '2001::/23 段内'],
+    ['2001:1ff:ffff::1', '2001::/23 段边界内'],
+    ['2001:2::1', '2001:2::/48 benchmarking'],
+    ['2001:10::1', 'ORCHID'],
+    ['2001:20::1', 'ORCHIDv2'],
+    ['2001:db8::1', '2001:db8::/32 文档'],
+    ['2002::1', '2002::/16 6to4'],
+    ['2002:7f00:1::1', '6to4 内嵌 127.0.0.1'],
+    ['3fff::1', '3fff::/20 文档'],
+    ['3fff:0fff:ffff::1', '3fff::/20 段边界内'],
+    ['fc00::1', 'ULA fc00::/7'],
+    ['fd12:3456:789a::1', 'ULA fd00::/8'],
+    ['fe80::1', 'link-local'],
+    ['fe80::1%en0', 'link-local + zone id'],
+    ['febf:ffff::1', 'link-local 段末'],
+    ['ff02::1', '组播'],
+    ['5f00::1', '5f00::/16 SRv6 SIDs'],
+    ['fec0::1', '废弃的 site-local fec0::/10']
+  ] as const
+
+  it('特殊用途/非全球单播地址全部拒绝', () => {
+    for (const [address, note] of BLOCKED) {
+      expect(isPublicAddress(address), `${address} (${note})`).toBe(false)
+      expect(isPublicIPv6(address), `${address} (${note})`).toBe(false)
+    }
+  })
+
+  it('正常公网 IPv6 放行（不误伤 2001:4860::、2606:4700:: 等）', () => {
+    const PUBLIC = [
+      '2606:4700:4700::1111',
+      '2001:4860:4860::8888',
+      '2a00:1450:4001:80b::200e',
+      '2400:cb00::1',
+      '2606:4700:4700:0000:0000:0000:0000:1111',
+      '2a03:2880:f10c:83:face:b00c:0:25de'
+    ]
+    for (const address of PUBLIC) expect(isPublicIPv6(address), address).toBe(true)
+  })
+
+  it('2001::/23 与 2001:db8::/32 的边界两侧判定正确', () => {
+    // 2001::/23 段内（第二组 ≤ 0x01ff）→ 拒绝
+    expect(isPublicIPv6('2001:0:0:0:0:0:0:1')).toBe(false)
+    expect(isPublicIPv6('2001:1ff:ffff:ffff:ffff:ffff:ffff:ffff')).toBe(false)
+    // 段外（第二组 ≥ 0x0200）→ 放行，且 2001:db8::/32 单独拒绝
+    expect(isPublicIPv6('2001:200::1')).toBe(true)
+    expect(isPublicIPv6('2001:db8::1')).toBe(false)
+    expect(isPublicIPv6('2001:dba::1')).toBe(true)
+    // 3fff::/20 文档段的边界（第二组 > 0x0fff 即段外）
+    expect(isPublicIPv6('3fff:0fff:ffff::1')).toBe(false)
+    expect(isPublicIPv6('3fff:1000::1')).toBe(true)
+    // 2000::/3 边界
+    expect(isPublicIPv6('2000:ffff::1')).toBe(true)
+    expect(isPublicIPv6('4000::1')).toBe(false)
+    expect(isPublicIPv6('1fff::1')).toBe(false)
+  })
+
+  it('URL 字面量预检：特殊用途 IPv6 直接拒绝', () => {
+    for (const url of [
+      'http://[::1]/',
+      'http://[::ffff:7f00:1]/',
+      'http://[64:ff9b:1::1]/x',
+      'http://[64:ff9b::a00:1]/x',
+      'http://[100::1]/',
+      'http://[2001:db8::1]/',
+      'http://[2002:7f00:1::]/',
+      'http://[fd00::1]/'
+    ]) {
+      expect(() => assertAllowedUrl(url), url).toThrow('private address blocked')
+    }
+    // 正常公网 IPv6 字面量仍可访问
+    expect(assertAllowedUrl('https://[2606:4700:4700::1111]/').hostname).toBe('[2606:4700:4700::1111]')
+  })
+
+  it('DNS 返回特殊用途 IPv6 → 连接被拒（与 URL 预检同一套规则）', async () => {
+    for (const address of ['64:ff9b:1::1', '2001:db8::1', '2002::1', '100::1']) {
+      const guarded = createGuardedLookup((_host, _opts, callback) =>
+        callback(null, [{ address, family: 6 }])
+      )
+      await expect(
+        new Promise((resolve, reject) => {
+          guarded('rebind.example', { all: true }, (error, result) =>
+            error ? reject(error) : resolve(result)
+          )
+        }),
+        address
+      ).rejects.toThrow('blocked private address')
+    }
+  })
+
+  it('重定向目标为特殊用途 IPv6 → 第二跳预检拒绝', async () => {
+    const fakeRequest: RequestOnce = async () => ({
+      status: 302,
+      headers: { location: 'http://[64:ff9b:1::1]/internal' },
+      body: Buffer.alloc(0)
+    })
+    await expect(
+      safeFetchText('https://example.com/start', { accept: 'text/html', maxBytes: 1024, allowedTypes: ['text/html'] }, fakeRequest)
+    ).rejects.toThrow('private address blocked')
+  })
+
+  it('IPv4-mapped 的十六进制/点分/完整写法统一按 IPv4 规则', () => {
+    expect(ipv4FromMappedIPv6('::ffff:7f00:1')).toBe('127.0.0.1')
+    expect(ipv4FromMappedIPv6('::ffff:127.0.0.1')).toBe('127.0.0.1')
+    expect(ipv4FromMappedIPv6('0:0:0:0:0:ffff:7f00:1')).toBe('127.0.0.1')
+    expect(ipv4FromMappedIPv6('::ffff:a9fe:a9fe')).toBe('169.254.169.254')
+    expect(isPublicIPv6('::ffff:a9fe:a9fe')).toBe(false)
+    expect(isPublicIPv6('::ffff:808:808')).toBe(true)
+    expect(ipv4FromMappedIPv6('2001:4860::1')).toBeNull()
+  })
+})
+
+describe('GitHub Gist 元数据（§第四轮 五）', () => {
+  const gistUrl = 'https://gist.github.com/banmu123/aa11bb22cc33dd44ee55ff6677889900'
+
+  it('解析出 gist 身份（不是 owner/repo），并走 Gist API', async () => {
+    const parsed = parseLink(gistUrl)
+    expect(parsed.provider).toBe('github')
+    expect(parsed.subresource).toBe('gist')
+    expect(parsed.contentId).toBe('aa11bb22cc33dd44ee55ff6677889900')
+    expect(parsed.repositoryOwner).toBeNull()
+
+    const fetcher = mockFetcher([
+      {
+        match: 'api.github.com/gists/',
+        body: JSON.stringify({
+          id: 'aa11bb22cc33dd44ee55ff6677889900',
+          description: '一个 SQL 片段',
+          files: { 'query.sql': {}, 'notes.md': {} },
+          owner: { login: 'banmu123' }
+        })
+      }
+    ])
+    const resolved = await resolveMetadata(parsed, fetcher)
+    expect(fetcher.calls[0]).toContain('api.github.com/gists/aa11bb22cc33dd44ee55ff6677889900')
+    expect(resolved.status).toBe('success')
+    expect(resolved.title).toBe('一个 SQL 片段')
+    expect(resolved.description).toBe('query.sql · notes.md')
+    expect(resolved.authorName).toBe('banmu123')
+    expect(resolved.sourceName).toBe('GitHub Gist')
+    // Gist 没有这些指标，也没有可靠封面 → 留空，绝不复用仓库字段
+    expect(resolved.repositoryStars).toBeNull()
+    expect(resolved.repositoryForks).toBeNull()
+    expect(resolved.repositoryLanguage).toBeNull()
+    expect(resolved.thumbnailUrl).toBeNull()
+  })
+
+  it('无描述 → 用文件名当标题（可用信息，不是编造）', async () => {
+    const fetcher = mockFetcher([
+      {
+        match: 'api.github.com/gists/',
+        body: JSON.stringify({ files: { 'brew.md': {} }, owner: { login: 'someone' } })
+      }
+    ])
+    const resolved = await resolveMetadata(parseLink(gistUrl), fetcher)
+    expect(resolved.status).toBe('success')
+    expect(resolved.title).toBe('brew.md')
+    expect(resolved.description).toBeNull()
+  })
+
+  it('Gist API 失败（限流/不存在）→ failed 但保留身份，不伪造数据', async () => {
+    const fetcher = (async () => {
+      throw new Error('unexpected status 403')
+    }) as unknown as TextFetcher
+    const resolved = await resolveMetadata(parseLink(gistUrl), fetcher)
+    expect(resolved.status).toBe('failed')
+    expect(resolved.contentId).toBe('aa11bb22cc33dd44ee55ff6677889900')
+    expect(resolved.errorMessage).toContain('403')
+    expect(resolved.thumbnailUrl).toBeNull()
+  })
+})

@@ -491,3 +491,207 @@ describe('元数据异步写入竞态（§第三轮 3 / 5）', () => {
     expect(updated.metadataStatus).toBe('failed')
   })
 })
+
+describe('metadataStatus 状态语义（§第四轮 三）', () => {
+  const URL = 'https://github.com/banmu123/BrewPhase'
+
+  function linkDraft(): RecordDraft {
+    return recordDraft({
+      carrier: 'link',
+      title: '',
+      note: '',
+      urlString: URL,
+      canonicalURL: URL,
+      platformContentID: 'banmu123/BrewPhase',
+      provider: 'github',
+      sourceName: '',
+      authorName: '',
+      summary: '',
+      mediaPath: null,
+      previewPath: null,
+      tagIds: []
+    })
+  }
+
+  function success() {
+    return {
+      provider: 'github' as const,
+      contentId: 'banmu123/BrewPhase',
+      canonicalUrl: URL,
+      title: 'banmu123/BrewPhase',
+      description: 'Coffee studio',
+      thumbnailUrl: 'https://opengraph.githubassets.com/1/banmu123/BrewPhase',
+      sourceName: 'GitHub',
+      authorName: 'banmu123',
+      repositoryLanguage: 'Swift',
+      repositoryStars: 12,
+      repositoryForks: 3,
+      repositoryLicense: 'MIT',
+      status: 'success' as const
+    }
+  }
+
+  function failure() {
+    return {
+      provider: 'github' as const,
+      contentId: null,
+      canonicalUrl: URL,
+      title: null,
+      description: null,
+      thumbnailUrl: null,
+      sourceName: null,
+      authorName: null,
+      repositoryLanguage: null,
+      repositoryStars: null,
+      repositoryForks: null,
+      repositoryLicense: null,
+      status: 'failed' as const,
+      errorMessage: 'unexpected status 403'
+    }
+  }
+
+  /** 把记录置成指定状态（模拟 iOS 同步过来的原值 / 桌面既有状态）。 */
+  function forceStatus(id: string, status: string): void {
+    handle.db.run(
+      `update records set metadata_status = '${status}' where id = '${id}'` as never
+    )
+  }
+
+  it('本次成功 → 一律记 ok（含 iOS 原值 resolved/partial 的记录）', () => {
+    for (const previous of ['idle', 'pending', 'failed', 'resolved', 'partial', 'ok']) {
+      const created = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft())
+      forceStatus(created.id, previous)
+      const applied = recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, URL, success())
+      expect(applied?.metadataStatus, previous).toBe('ok')
+    }
+  })
+
+  it('刷新失败：ok / resolved / partial 各自保留原状态，不升级也不降级', () => {
+    for (const previous of ['ok', 'resolved', 'partial']) {
+      const created = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft())
+      forceStatus(created.id, previous)
+      const applied = recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, URL, failure())
+      expect(applied?.metadataStatus, previous).toBe(previous)
+    }
+  })
+
+  it('从未成功过 + 本次失败 → failed', () => {
+    for (const previous of ['idle', 'pending', 'failed']) {
+      const created = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft())
+      forceStatus(created.id, previous)
+      const applied = recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, URL, failure())
+      expect(applied?.metadataStatus, previous).toBe('failed')
+    }
+  })
+
+  it('partial 刷新失败后仍是 partial，已有的部分数据不被清空', () => {
+    const created = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft())
+    // 先拿到「部分成功」的样子：只有缩略图，没有统计
+    recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, URL, {
+      ...success(),
+      repositoryStars: null,
+      repositoryForks: null,
+      repositoryLanguage: null
+    })
+    forceStatus(created.id, 'partial')
+    const applied = recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, URL, failure())
+    expect(applied?.metadataStatus).toBe('partial')
+    expect(applied?.thumbnailURLString).toBe('https://opengraph.githubassets.com/1/banmu123/BrewPhase')
+  })
+})
+
+describe('元数据写入的载体约束（§第四轮 四）', () => {
+  const URL = 'https://github.com/banmu123/BrewPhase'
+
+  function resolvedGithub() {
+    return {
+      provider: 'github' as const,
+      contentId: 'banmu123/BrewPhase',
+      canonicalUrl: URL,
+      title: 'banmu123/BrewPhase',
+      description: 'Coffee studio',
+      thumbnailUrl: 'https://opengraph.githubassets.com/1/banmu123/BrewPhase',
+      sourceName: 'GitHub',
+      authorName: 'banmu123',
+      repositoryLanguage: 'Swift',
+      repositoryStars: 12,
+      repositoryForks: 3,
+      repositoryLicense: 'MIT',
+      status: 'success' as const
+    }
+  }
+
+  it('请求开始是 link、写入前转成非 link → 旧元数据不得写入', () => {
+    const created = recordsRepo.createRecord(
+      handle.db,
+      handle.deviceId,
+      recordDraft({
+        carrier: 'link',
+        title: '',
+        note: '',
+        urlString: URL,
+        canonicalURL: URL,
+        platformContentID: 'banmu123/BrewPhase',
+        provider: 'github',
+        sourceName: '',
+        authorName: '',
+        summary: '',
+        mediaPath: null,
+        previewPath: null,
+        tagIds: []
+      })
+    )
+    const expectedUrl = created.urlString
+
+    // 用户在抓取期间把记录改成文字载体（URL 没动）
+    recordsRepo.updateRecord(handle.db, handle.deviceId, created.id, {
+      carrier: 'text',
+      title: '',
+      note: '变成了纯文字',
+      urlString: URL,
+      canonicalURL: URL,
+      platformContentID: 'banmu123/BrewPhase',
+      provider: 'github',
+      sourceName: '',
+      authorName: '',
+      summary: '',
+      mediaPath: null,
+      previewPath: null,
+      tagIds: []
+    })
+
+    const applied = recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, expectedUrl, resolvedGithub())
+    expect(applied).toBeNull()
+
+    const fresh = recordsRepo.getRecord(handle.db, created.id)
+    expect(fresh?.carrier).toBe('text')
+    expect(fresh?.thumbnailURLString).toBeNull()
+    expect(fresh?.repositoryStars).toBeNull()
+    expect(fresh?.title).toBe('')
+  })
+
+  it('carrier=link 且 URL 一致时正常写入（不误伤）', () => {
+    const created = recordsRepo.createRecord(
+      handle.db,
+      handle.deviceId,
+      recordDraft({
+        carrier: 'link',
+        title: '',
+        note: '',
+        urlString: URL,
+        canonicalURL: URL,
+        platformContentID: 'banmu123/BrewPhase',
+        provider: 'github',
+        sourceName: '',
+        authorName: '',
+        summary: '',
+        mediaPath: null,
+        previewPath: null,
+        tagIds: []
+      })
+    )
+    const applied = recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, URL, resolvedGithub())
+    expect(applied?.repositoryStars).toBe(12)
+    expect(applied?.metadataStatus).toBe('ok')
+  })
+})

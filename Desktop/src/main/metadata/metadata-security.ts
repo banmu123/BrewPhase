@@ -77,38 +77,137 @@ export function isPublicIPv4(address: string): boolean {
   return true
 }
 
-/** 公网 IPv6：排除 loopback/未指定/ULA/link-local/组播/IPv4 映射（按 IPv4 判）。 */
 /**
- * IPv4-mapped IPv6（`::ffff:a.b.c.d` 或十六进制 `::ffff:7f00:1`）还原成 IPv4。
+ * IPv6 解析成 8 个 16 位分组；非法返回 null。
+ *
+ * 支持 `::` 压缩、结尾内嵌 IPv4（`::ffff:192.168.0.1`、`64:ff9b::1.2.3.4`）、
+ * zone id（`fe80::1%en0`）。**地址判断一律基于分组做按位前缀匹配**，不用
+ * 字符串前缀——`startsWith('2001')` 既会误伤 `2001:4860::`（Google），
+ * 也挡不住 `2001:0db8::` 之类的等价写法。
+ */
+export function parseIPv6(raw: string): number[] | null {
+  let text = raw.trim().toLowerCase().replace(/^\[|\]$/g, '')
+  if (!text.includes(':')) return null
+  const zone = text.indexOf('%')
+  if (zone >= 0) text = text.slice(0, zone)
+
+  let embedded: [number, number] | null = null
+  const lastColon = text.lastIndexOf(':')
+  const tail = text.slice(lastColon + 1)
+  if (tail.includes('.')) {
+    const bytes = parseIPv4(tail)
+    if (!bytes) return null
+    embedded = [(bytes[0] << 8) | bytes[1], (bytes[2] << 8) | bytes[3]]
+    // 用 0:0 占位，解析完再把最后两组替换回内嵌 IPv4
+    text = `${text.slice(0, lastColon + 1)}0:0`
+  }
+
+  const halves = text.split('::')
+  if (halves.length > 2) return null
+  const parseSide = (side: string): number[] | null => {
+    if (!side) return []
+    const out: number[] = []
+    for (const part of side.split(':')) {
+      if (!/^[0-9a-f]{1,4}$/.test(part)) return null
+      out.push(Number.parseInt(part, 16))
+    }
+    return out
+  }
+  const head = parseSide(halves[0])
+  const rest = halves.length === 2 ? parseSide(halves[1]) : []
+  if (!head || !rest) return null
+
+  let groups: number[]
+  if (halves.length === 2) {
+    const missing = 8 - head.length - rest.length
+    if (missing < 1) return null
+    groups = [...head, ...new Array<number>(missing).fill(0), ...rest]
+  } else {
+    if (head.length !== 8) return null
+    groups = head
+  }
+  if (embedded) {
+    groups[6] = embedded[0]
+    groups[7] = embedded[1]
+  }
+  return groups
+}
+
+/** 按位前缀匹配（不是字符串前缀）。 */
+function inPrefix(groups: number[], prefix: number[], bits: number): boolean {
+  let remaining = bits
+  for (let index = 0; index < 8 && remaining > 0; index += 1) {
+    const take = Math.min(16, remaining)
+    const mask = (0xffff << (16 - take)) & 0xffff
+    if ((groups[index] & mask) !== ((prefix[index] ?? 0) & mask)) return false
+    remaining -= take
+  }
+  return true
+}
+
+/** 全球单播 2000::/3——唯一放行的地址空间。 */
+const GLOBAL_UNICAST_2000_3 = [0x2000, 0, 0, 0, 0, 0, 0, 0]
+
+/**
+ * 2000::/3 之内的特殊用途段（IANA IPv6 Special-Purpose Address Registry）。
+ * 落在 2000::/3 之外的段由「只放行全球单播」统一挡掉，见下方说明。
+ */
+const SPECIAL_WITHIN_GLOBAL_UNICAST: Array<{ prefix: number[]; bits: number; note: string }> = [
+  {
+    prefix: [0x2001, 0, 0, 0, 0, 0, 0, 0],
+    bits: 23,
+    note: '2001::/23 IETF 协议分配（Teredo 2001::/32、benchmarking 2001:2::/48、ORCHID 2001:10::/28、AMT、AS112…）'
+  },
+  { prefix: [0x2001, 0x0db8, 0, 0, 0, 0, 0, 0], bits: 32, note: '2001:db8::/32 文档' },
+  { prefix: [0x2002, 0, 0, 0, 0, 0, 0, 0], bits: 16, note: '2002::/16 6to4（内嵌 IPv4，可经中继触达私有网）' },
+  { prefix: [0x3fff, 0, 0, 0, 0, 0, 0, 0], bits: 20, note: '3fff::/20 文档（RFC 9637）' }
+]
+
+function ipv4FromGroups(groups: number[]): string {
+  const hi = groups[6]
+  const lo = groups[7]
+  return [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join('.')
+}
+
+function isMappedGroups(groups: number[]): boolean {
+  return (
+    groups[0] === 0 &&
+    groups[1] === 0 &&
+    groups[2] === 0 &&
+    groups[3] === 0 &&
+    groups[4] === 0 &&
+    groups[5] === 0xffff
+  )
+}
+
+/**
+ * IPv4-mapped IPv6（`::ffff:a.b.c.d` / `::ffff:7f00:1` / 完整 8 组写法）还原成 IPv4。
  * 十六进制形式是常见绕过手法（`::ffff:7f00:1` 就是 127.0.0.1），必须覆盖。
  */
 export function ipv4FromMappedIPv6(address: string): string | null {
-  const normalized = address.toLowerCase().replace(/^\[|\]$/g, '')
-  const mapped =
-    normalized.match(/^::ffff:(.+)$/) ?? normalized.match(/^(?:0{1,4}:){5}ffff:(.+)$/)
-  if (!mapped) return null
-  const tail = mapped[1]
-  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(tail)) return tail
-  // 十六进制两段：7f00:1 → 127.0.0.1
-  const parts = tail.split(':')
-  if (parts.length === 2 && parts.every((part) => /^[0-9a-f]{1,4}$/.test(part))) {
-    const hi = Number.parseInt(parts[0], 16)
-    const lo = Number.parseInt(parts[1], 16)
-    return [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join('.')
-  }
-  return null
+  const groups = parseIPv6(address)
+  if (!groups || !isMappedGroups(groups)) return null
+  return ipv4FromGroups(groups)
 }
 
+/**
+ * 公网 IPv6 判定（白名单 + 段内黑名单）：
+ *
+ * 1. IPv4-mapped 先还原成 IPv4，走统一的 IPv4 规则（点分/十六进制都覆盖）；
+ * 2. **只放行全球单播 2000::/3**。以下特殊用途段全部落在 2000::/3 之外，
+ *    因此一律拒绝：`::/128`、`::1/128`、`64:ff9b::/96`（NAT64 WKP）、
+ *    `64:ff9b:1::/48`（本地 NAT64，RFC 8215）、`100::/64`（discard-only）、
+ *    `5f00::/16`（SRv6 SIDs）、`fc00::/7`（ULA）、`fe80::/10`（link-local）、
+ *    `ff00::/8`（组播）。NAT64 前缀内嵌 IPv4、可经转换网关触达私有网，
+ *    元数据抓取没有使用它的理由 → 明确拒绝而不是当公网地址；
+ * 3. 2000::/3 之内再排除 IANA 登记的特殊用途段（Teredo/6to4/文档/benchmark）。
+ */
 export function isPublicIPv6(address: string): boolean {
-  const normalized = address.toLowerCase().replace(/^\[|\]$/g, '')
-  if (normalized === '::1' || normalized === '::') return false
-  // 映射地址先还原 IPv4，再走统一的公网规则（十六进制形式也覆盖）
-  const mapped = ipv4FromMappedIPv6(normalized)
-  if (mapped) return isPublicIPv4(mapped)
-  if (normalized.startsWith('fc') || normalized.startsWith('fd')) return false // ULA fc00::/7
-  if (/^fe[89ab]/.test(normalized)) return false // link-local fe80::/10
-  if (normalized.startsWith('ff')) return false // 组播
-  return true
+  const groups = parseIPv6(address)
+  if (!groups) return false
+  if (isMappedGroups(groups)) return isPublicIPv4(ipv4FromGroups(groups))
+  if (!inPrefix(groups, GLOBAL_UNICAST_2000_3, 3)) return false
+  return !SPECIAL_WITHIN_GLOBAL_UNICAST.some((entry) => inPrefix(groups, entry.prefix, entry.bits))
 }
 
 export function isPublicAddress(address: string): boolean {

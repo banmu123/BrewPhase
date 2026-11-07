@@ -7,6 +7,13 @@ import { parseLink, providerLabel } from '@shared/link-parser'
 import { RecordTilePreview } from './preview/RecordTilePreview'
 import { detectPlatform } from './preview/platform'
 import { formatCount } from './preview/preview-model'
+import {
+  createInspectorForm,
+  editField,
+  editTags,
+  mergeInspectorItem,
+  type InspectorForm
+} from './inspector-state'
 
 const CARRIERS: (RecordCarrier | null)[] = [null, 'link', 'image', 'video', 'text']
 
@@ -438,21 +445,24 @@ function RecordInspector(props: {
   onDeleted: () => void
 }) {
   const { item } = props
-  const [title, setTitle] = useState(item.title)
-  const [note, setNote] = useState(item.note)
-  const [urlString, setUrlString] = useState(item.urlString)
-  const [tagIds, setTagIds] = useState(item.tagIds)
+  // 编辑态带 dirty 标记：异步元数据补全后列表会重载，只有**用户没改过**的
+  // 字段才跟随 item 同步（见 inspector-state.ts）。
+  const [form, setForm] = useState<InspectorForm>(() => createInspectorForm(item))
   const [newTag, setNewTag] = useState('')
   const [busy, setBusy] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    setTitle(item.title)
-    setNote(item.note)
-    setUrlString(item.urlString)
-    setTagIds(item.tagIds)
-  }, [item.id])
+    setForm((current) => mergeInspectorItem(current, item))
+  }, [item])
+
+  const { title, note, urlString, tagIds } = form
+  const setTitle = (value: string) => setForm((current) => editField(current, 'title', value))
+  const setNote = (value: string) => setForm((current) => editField(current, 'note', value))
+  const setUrlString = (value: string) => setForm((current) => editField(current, 'urlString', value))
+  const setTagIds = (updater: string[] | ((current: string[]) => string[])) =>
+    setForm((current) => editTags(current, typeof updater === 'function' ? updater(current.tagIds) : updater))
 
   const urlChanged = urlString.trim() !== item.urlString.trim()
   const parsedUrl = useMemo(() => (urlChanged && urlString.trim() ? parseLink(urlString) : null), [urlChanged, urlString])

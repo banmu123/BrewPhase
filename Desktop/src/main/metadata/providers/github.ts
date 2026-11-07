@@ -29,7 +29,58 @@ type GitHubRepoResponse = {
   name?: string
 }
 
+type GitHubGistResponse = {
+  id?: string
+  description?: string | null
+  files?: Record<string, unknown> | null
+  owner?: { login?: string } | null
+}
+
+/**
+ * Gist：走公开 Gist API（`/gists/{id}`，无需登录）。
+ *
+ * - 标题取描述；没有描述就用文件名（这是「这条内容是什么」最可靠的事实）；
+ *   剩余文件名进 description，不编造摘要；
+ * - 作者取 owner.login；
+ * - **没有可靠的封面来源**（GitHub 的 og 图服务只覆盖仓库）→ 缩略图留空，
+ *   卡片回退 GitHub 仓库信息卡；
+ * - Gist 没有 stars/forks/language 指标，一律留空，绝不复用仓库字段。
+ */
+async function resolveGist(parsed: ParsedLink, fetchText: TextFetcher): Promise<ResolvedLinkMetadata> {
+  const gistId = parsed.contentId ?? ''
+  const metadata = emptyMetadata('github', parsed.canonicalUrl)
+  metadata.contentId = gistId || null
+  metadata.sourceName = 'GitHub Gist'
+  if (!gistId) {
+    metadata.errorMessage = '不是可识别的 Gist 地址'
+    return metadata
+  }
+  try {
+    const response = await fetchText(`https://api.github.com/gists/${encodeURIComponent(gistId)}`, JSON_OPTS)
+    const payload = JSON.parse(response.body) as GitHubGistResponse
+    const files = Object.keys(payload.files ?? {})
+    const description = payload.description?.trim() || null
+    if (description) {
+      metadata.title = description
+      metadata.description = files.length > 0 ? files.join(' · ') : null
+    } else {
+      metadata.title = files[0] ?? `Gist ${gistId.slice(0, 8)}`
+      metadata.description = files.length > 1 ? files.slice(1).join(' · ') : null
+    }
+    metadata.authorName = payload.owner?.login?.trim() || null
+    metadata.status = 'success'
+    return metadata
+  } catch (error) {
+    metadata.errorMessage = (error as Error).message
+    return metadata
+  }
+}
+
 export async function resolveGitHub(parsed: ParsedLink, fetchText: TextFetcher): Promise<ResolvedLinkMetadata> {
+  // Gist 与仓库是两套 API（自然标识也不同）：分流，避免「识别成功但永远抓不到」
+  if (parsed.subresource === 'gist' || parsed.contentId?.startsWith('gist:')) {
+    return resolveGist(parsed, fetchText)
+  }
   const owner = parsed.repositoryOwner
   const repo = parsed.repositoryName
   if (!owner || !repo) {

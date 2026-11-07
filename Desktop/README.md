@@ -6,7 +6,8 @@ BrewPhase iOS 的桌面协同版：Coffee / Records / Canvas 三个同级模块�
 > 本目录是 BrewPhase monorepo 的 `Desktop/` 子目录，与 iOS 端同仓库演进；
 > iOS 的数据模型与业务规则是这里的数据契约来源（见 `docs/DATA_MODEL_MAPPING.md`）。
 
-当前完成 **Phase 0 + Phase 1**（本地 MVP）。局域网同步只有协议结构，没有服务端。
+当前完成 **Phase 0 + Phase 1**（本地 MVP）+ **Phase 2**（局域网同步 + 链接元数据补全）。
+同步协议、配对与媒体传输已实现并有真实 HTTP 层集成测试；**真机双端联调仍需实机验证**。
 
 ## 技术栈
 
@@ -28,7 +29,10 @@ pnpm exec electron-builder install-app-deps
 
 pnpm start          # 预览构建产物
 pnpm dev            # 开发模式（HMR）
-pnpm e2e            # Playwright + Electron 冒烟
+pnpm e2e            # Playwright + Electron 冒烟 / Records 视觉验收
+
+# 真实网络 smoke（默认不跑；验证元数据抓取在真实网络上是否可用）
+METADATA_LIVE_SMOKE=1 pnpm test:live
 ```
 
 > **原生模块 ABI**：`better-sqlite3` 在 Node 与 Electron 下是两份二进制。
@@ -44,7 +48,8 @@ src/main/       主进程：数据库、迁移、repository、媒体、IPC
 src/preload/    contextBridge 白名单
 src/renderer/   React 界面（coffee / records / canvas / settings）
 src/shared/     契约（zod）、纯逻辑（库存 / 阶段 / 落位）
-tests/          unit（纯函数）/ integration（真 SQLite）/ e2e（真 Electron）
+tests/          unit（纯函数）/ integration（真 SQLite）/ e2e（真 Electron）/
+                live（真实网络 smoke，需显式开启）
 docs/           产品范围、架构、数据模型映射、同步协议、安全模型、画布规格、路线图
 ```
 
@@ -53,14 +58,23 @@ docs/           产品范围、架构、数据模型映射、同步协议、安�
 - **Coffee**：豆子 CRUD、详情、冲煮记录、品鉴、风味阶段（派生）、库存扣减/回补/盘点。
 - **Records**：四种载体、搜索 + 载体 + 标签筛选、详情、标签多对多、图片导入（本地持久化）。
 - **Canvas**：无限画布平移/缩放、节点显示/拖动/选中、从 Records 添加、世界坐标持久化。
+- **Records 平台卡片**：GitHub（仓库信息卡/og 图 + 统计叠加）、YouTube、Bilibili、
+  X 动态、通用网页、本地媒体各自的差异化呈现；缺数据就落平台 fallback，绝不伪造。
+- **链接元数据补全**：新建链接先本地识别平台（纯函数、不发请求），保存后由主进程
+  安全抓取（SSRF 防护 + DNS 连接级校验 + 逐跳重定向校验）补全标题/封面/作者/
+  仓库统计；用户写过的标题与备注永不被覆盖，URL 变更清空旧平台元数据。
 - **安全**：`contextIsolation` / `sandbox` / 无 Node 集成、IPC zod 校验 + sender 校验、
   自定义媒体协议、CSP。
 
 ## 未实现（明确）
 
-- 局域网同步服务、配对二维码、媒体传输（只有协议与类型）。
+- **真机端到端联调**：配对/同步/媒体链路的自动化覆盖是集成级（真 HTTP + 真 SQLite），
+  iPhone ↔ Mac 的实机验证仍在进行中（见 `docs/REAL_DEVICE_SYNC_GUIDE.md`）。
 - 画布手绘工具（表结构已建；iOS 端还没有对应模型，不能宣称两端可见）。
-- 视频播放器、链接元数据抓取、系统提醒调度。
+- 视频播放器、系统提醒调度。
+- 链接抓取的能力边界：GitHub 未认证限流（60 次/时）、X oEmbed 不提供媒体封面、
+  Bilibili 部分页面没有 `meta[author]`——这些情况都优雅降级，不编造数据。
+- Bonjour 自动发现、双向同步、TLS（当前同步是局域网 HTTP 明文）。
 - 代码签名 / 公证 / 自动更新。
 
 ## 文档

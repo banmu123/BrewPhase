@@ -138,6 +138,9 @@ export function updateRecord(db: Db, deviceId: string, id: string, draft: Record
  * - 封面/仓库统计/内容 ID 是平台事实，直接写；
  * - 刷新失败但本地已有成功结果：保留 `ok` 状态与旧数据，不清空。
  */
+/** 已有成功抓取结果的状态：ok（桌面）/ resolved、partial（iOS 同步原值）。 */
+const METADATA_HAS_CONTENT: readonly string[] = ['ok', 'resolved', 'partial']
+
 export function applyResolvedMetadata(
   db: Db,
   deviceId: string,
@@ -151,11 +154,15 @@ export function applyResolvedMetadata(
   // 抓取期间载体/URL 变了 → 旧结果作废：不能拿旧链接的封面盖新链接
   if (row.carrier !== 'link' || row.urlString !== expectedUrl) return null
   const at = Date.now()
-  const hadSuccess = ['ok', 'resolved', 'partial'].includes(row.metadataStatus)
-  const keepPreviousStatus = resolved.status === 'failed' && hadSuccess
-  // 归一模型用 success/failed；库里的自有状态固定为 ok/failed（与 iOS 的
-  // resolved/partial 并存，见 contracts 的 metadataStatus 枚举）。
-  const nextStatus = resolved.status === 'success' ? 'ok' : 'failed'
+  // 刷新失败时**保留上一次的真实状态**：ok/resolved/partial 都代表「库里已有
+  // 成功抓到的内容」，把 partial 悄悄升成 ok 等于对用户撒谎（§第四轮 三）。
+  // 从未成功过（idle/pending/failed）才落到 failed；本次成功一律记 ok。
+  const nextStatus =
+    resolved.status === 'success'
+      ? 'ok'
+      : METADATA_HAS_CONTENT.includes(row.metadataStatus)
+        ? row.metadataStatus
+        : 'failed'
 
   db.transaction((tx) => {
     const scoped = tx as unknown as Db
@@ -174,11 +181,12 @@ export function applyResolvedMetadata(
         repositoryStars: resolved.repositoryStars ?? row.repositoryStars,
         repositoryForks: resolved.repositoryForks ?? row.repositoryForks,
         repositoryLicense: resolved.repositoryLicense ?? row.repositoryLicense,
-        metadataStatus: keepPreviousStatus ? 'ok' : nextStatus,
+        metadataStatus: nextStatus,
         updatedAt: at
       })
-      // WHERE 里带上 URL 一致性：检查与写入之间没有竞态窗口
-      .where(and(eq(records.id, id), eq(records.urlString, expectedUrl)))
+      // WHERE 里同时带上 URL 与载体一致性：检查与写入之间没有竞态窗口，
+      // 写入那一刻记录必须仍是「链接载体 + 同一 URL」（§第四轮 四）。
+      .where(and(eq(records.id, id), eq(records.urlString, expectedUrl), eq(records.carrier, 'link')))
       .run()
     if (result.changes > 0) {
       recordChange(scoped, { deviceId, entityType: 'record', entityId: id, operation: 'update' })

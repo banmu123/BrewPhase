@@ -142,7 +142,9 @@ function parseX(url: URL): ParsedLink | null {
   const host = url.hostname.toLowerCase()
   if (!hostMatches(host, X_HOSTS)) return null
   const base = { originalUrl: url.toString(), canonicalUrl: canonicalize(url), provider: 'x' as const }
-  const match = url.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/status\/(\d{5,25})/)
+  // 动态 ID 是纯数字：早期推文的 ID 很短（`status/20` 就是第一条），
+  // 不能按「现代雪花 ID 长度」卡死——这里只要求 1–20 位数字。
+  const match = url.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/status\/(\d{1,20})(?=\/|$)/)
   const author = match?.[1] ?? null
   return {
     ...base,
