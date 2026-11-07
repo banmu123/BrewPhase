@@ -35,6 +35,7 @@ export const IPC = {
   recordUpdate: 'records:update',
   recordDelete: 'records:delete',
   recordImportImage: 'records:import-image',
+  recordResolveMetadata: 'records:resolve-metadata',
 
   syncStatus: 'sync:status',
   syncEnable: 'sync:enable',
@@ -78,6 +79,7 @@ export const ipcRequestSchemas = {
   [IPC.recordUpdate]: z.object({ id: z.string().uuid(), draft: recordDraftSchema }),
   [IPC.recordDelete]: z.object({ id: z.string().uuid() }),
   [IPC.recordImportImage]: z.void(),
+  [IPC.recordResolveMetadata]: z.object({ id: z.string().uuid(), force: z.boolean().default(false) }),
 
   // 设备同步（Phase 2）
   [IPC.syncStatus]: z.void(),

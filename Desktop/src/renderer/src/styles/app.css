@@ -1007,6 +1007,23 @@ textarea {
   display: inline-block;
 }
 
+/* 表单里的本地识别提示（新建链接 / 修改网址） */
+.field-hint {
+  display: block;
+  margin-top: 6px;
+  font-size: var(--fs-caption, 12px);
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+.field-hint__ok {
+  color: var(--ink);
+}
+
+.field-hint--error {
+  color: var(--priority);
+}
+
 /* og 图之上的仓库信息条：半透明底保证图上可读 */
 .preview-repo__bar {
   position: absolute;

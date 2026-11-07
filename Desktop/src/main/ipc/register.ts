@@ -28,6 +28,7 @@ import {
 } from '../database/repositories/records'
 import { addNode, createCanvas, deleteCanvas, listCanvases, listNodes, moveNode, removeNode } from '../database/repositories/canvas'
 import { importImageFromDialog } from '../media/store'
+import { resolveRecordMetadata } from '../metadata'
 import type { SyncService } from '../sync/sync-service'
 import { DEFAULT_PHASE_RULES } from '../../shared/domain/phase'
 import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from '../../shared/contracts/version'
@@ -122,6 +123,10 @@ export function registerIpc(params: {
     return null
   })
   handle(IPC.recordImportImage, () => importImageFromDialog())
+  handle(IPC.recordResolveMetadata, (input) => {
+    const value = input as { id: string; force: boolean }
+    return resolveRecordMetadata(db.db, db.deviceId, value.id, value.force)
+  })
   handle(IPC.tagsList, () => listTags(db.db))
   handle(IPC.tagCreate, (input) => createTag(db.db, db.deviceId, (input as { name: string }).name))
   handle(IPC.tagDelete, (input) => {

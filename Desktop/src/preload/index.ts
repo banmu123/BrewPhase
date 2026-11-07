@@ -38,6 +38,7 @@ const api: RendererApi = {
     createTag: (name) => invoke(IPC.tagCreate, { name }),
     deleteTag: (id) => invoke(IPC.tagDelete, { id }),
     importImage: () => invoke(IPC.recordImportImage),
+    resolveMetadata: (id, force = false) => invoke(IPC.recordResolveMetadata, { id, force }),
     mediaUrl: (fileName: string) => `bpmedia://media/${encodeURIComponent(fileName)}`
   },
   sync: {

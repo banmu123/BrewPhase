@@ -73,6 +73,8 @@ function recordDraft(overrides: Partial<RecordDraft> = {}): RecordDraft {
     title: '一条笔记',
     note: '正文',
     urlString: '',
+    canonicalURL: null,
+    platformContentID: null,
     provider: 'generic',
     sourceName: '',
     authorName: '',
@@ -262,5 +264,115 @@ describe('磁盘持久化', () => {
     expect(entries).toHaveLength(1)
     expect(entries[0].operation).toBe('create')
     expect(entries[0].revision).toBe(1)
+  })
+})
+
+describe('链接元数据持久化（§五 / §九）', () => {
+  function linkDraft(overrides: Partial<RecordDraft> = {}): RecordDraft {
+    return recordDraft({
+      carrier: 'link',
+      title: '',
+      note: '',
+      urlString: 'https://github.com/banmu123/BrewPhase',
+      canonicalURL: 'https://github.com/banmu123/BrewPhase',
+      platformContentID: 'banmu123/BrewPhase',
+      provider: 'github',
+      ...overrides
+    })
+  }
+
+  function resolved(overrides: Partial<import('../../src/main/metadata/metadata-normalizer').ResolvedLinkMetadata> = {}) {
+    return {
+      provider: 'github' as const,
+      contentId: 'banmu123/BrewPhase',
+      canonicalUrl: 'https://github.com/banmu123/BrewPhase',
+      title: 'banmu123/BrewPhase',
+      description: 'Coffee studio',
+      thumbnailUrl: 'https://opengraph.githubassets.com/1/banmu123/BrewPhase',
+      sourceName: 'GitHub',
+      authorName: 'banmu123',
+      repositoryLanguage: 'Swift',
+      repositoryStars: 12,
+      repositoryForks: 3,
+      repositoryLicense: 'MIT',
+      status: 'success' as const,
+      ...overrides
+    }
+  }
+
+  it('新建链接记录：pending 状态，draft 里的 canonicalURL/contentId 落库', () => {
+    const created = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft())
+    expect(created.metadataStatus).toBe('pending')
+    expect(created.canonicalURL).toBe('https://github.com/banmu123/BrewPhase')
+    expect(created.platformContentID).toBe('banmu123/BrewPhase')
+    expect(created.provider).toBe('github')
+  })
+
+  it('补全元数据：空字段被填，用户写过的标题/备注不被覆盖', () => {
+    const withTitle = recordsRepo.createRecord(
+      handle.db,
+      handle.deviceId,
+      linkDraft({ title: '我自己的标题', note: '我的备注' })
+    )
+    const updated = recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, withTitle.id, resolved())
+    expect(updated?.title).toBe('我自己的标题')
+    expect(updated?.note).toBe('我的备注')
+    expect(updated?.summary).toBe('Coffee studio')
+    expect(updated?.repositoryStars).toBe(12)
+    expect(updated?.metadataStatus).toBe('ok')
+
+    const emptyTitle = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft())
+    const filled = recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, emptyTitle.id, resolved())
+    expect(filled?.title).toBe('banmu123/BrewPhase')
+  })
+
+  it('刷新失败但已有成功结果：保留 ok 与旧数据', () => {
+    const created = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft())
+    recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, resolved())
+    const failed = recordsRepo.applyResolvedMetadata(
+      handle.db,
+      handle.deviceId,
+      created.id,
+      resolved({ status: 'failed', thumbnailUrl: null, repositoryStars: null, description: null })
+    )
+    expect(failed?.metadataStatus).toBe('ok')
+    expect(failed?.thumbnailURLString).toBe('https://opengraph.githubassets.com/1/banmu123/BrewPhase')
+    expect(failed?.repositoryStars).toBe(12)
+  })
+
+  it('URL 修改后旧平台元数据被清空；标题保留', () => {
+    const created = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft({ title: '旧标题' }))
+    recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, resolved())
+
+    const updated = recordsRepo.updateRecord(handle.db, handle.deviceId, created.id, {
+      ...linkDraft({ title: '旧标题' }),
+      urlString: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      canonicalURL: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      platformContentID: 'dQw4w9WgXcQ',
+      provider: 'youtube'
+    })
+    expect(updated.provider).toBe('youtube')
+    expect(updated.platformContentID).toBe('dQw4w9WgXcQ')
+    expect(updated.thumbnailURLString).toBeNull()
+    expect(updated.summary).toBe('')
+    expect(updated.authorName).toBe('')
+    expect(updated.repositoryStars).toBeNull()
+    expect(updated.metadataStatus).toBe('pending')
+    expect(updated.title).toBe('旧标题')
+  })
+
+  it('URL 未变时更新不清元数据', () => {
+    const created = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft())
+    recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, resolved())
+    const updated = recordsRepo.updateRecord(handle.db, handle.deviceId, created.id, {
+      ...linkDraft({ title: '改个标题' })
+    })
+    expect(updated.thumbnailURLString).toBe('https://opengraph.githubassets.com/1/banmu123/BrewPhase')
+    expect(updated.metadataStatus).toBe('ok')
+  })
+
+  it('非 link 载体：metadataStatus 为 idle，元数据写入不改变载体', () => {
+    const created = recordsRepo.createRecord(handle.db, handle.deviceId, recordDraft({ carrier: 'text' }))
+    expect(created.metadataStatus).toBe('idle')
   })
 })

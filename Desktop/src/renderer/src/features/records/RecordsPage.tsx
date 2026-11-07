@@ -3,6 +3,7 @@ import type { RecordCarrier, RecordDraft, RecordItem, RecordTag } from '@shared/
 import { carrierLabel } from '@shared/contracts'
 import { api, formatDate } from '../../shared/api'
 import { SearchIcon } from '../../shared/icons'
+import { parseLink, providerLabel } from '@shared/link-parser'
 import { RecordTilePreview } from './preview/RecordTilePreview'
 import { detectPlatform } from './preview/platform'
 import { formatCount } from './preview/preview-model'
@@ -82,6 +83,8 @@ export function RecordsPage() {
                   title: '导入的图片',
                   note: '',
                   urlString: '',
+                  canonicalURL: null,
+                  platformContentID: null,
                   provider: 'generic',
                   sourceName: '',
                   authorName: '',
@@ -143,6 +146,13 @@ export function RecordsPage() {
                   setCreating(null)
                   await load()
                   setSelectedId(created.id)
+                  // 元数据补全不阻塞保存：先让记录落到列表，再后台抓取并刷新。
+                  if (draft.carrier === 'link' && draft.urlString.trim()) {
+                    void api.records
+                      .resolveMetadata(created.id)
+                      .then(() => load())
+                      .catch(() => undefined)
+                  }
                 }}
               />
             )}
@@ -295,6 +305,26 @@ function LinkMetaLine(props: { item: RecordItem }) {
   return null
 }
 
+/** 表单里的本地识别状态行：已识别什么平台、内容 ID 是否取到。 */
+function ParsedLinkStatus(props: { parsed: ReturnType<typeof parseLink> | null }) {
+  const { parsed } = props
+  if (!parsed) return null
+  if (!parsed.valid) {
+    return <span className="field-hint field-hint--error">不是有效的网页地址（只支持 http/https）</span>
+  }
+  const detail = parsed.shortLink
+    ? '短链接，保存后解析最终地址'
+    : parsed.contentId
+      ? '已提取内容 ID，保存后获取预览'
+      : '保存后尝试获取预览'
+  return (
+    <span className="field-hint">
+      <span className="field-hint__ok">已识别 {providerLabel[parsed.provider]}</span>
+      <span> · {detail}</span>
+    </span>
+  )
+}
+
 function NewRecordForm(props: {
   carrier: 'text' | 'link'
   tags: RecordTag[]
@@ -307,6 +337,11 @@ function NewRecordForm(props: {
   const [tagIds, setTagIds] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 纯本地解析（不发网络请求）：输入过程中实时显示平台识别结果。
+  const parsed = useMemo(
+    () => (props.carrier === 'link' && url.trim() ? parseLink(url) : null),
+    [props.carrier, url]
+  )
 
   return (
     <form
@@ -322,7 +357,9 @@ function NewRecordForm(props: {
             title: title.trim(),
             note: props.carrier === 'text' ? body : '',
             urlString: url.trim(),
-            provider: 'generic',
+            canonicalURL: parsed?.canonicalUrl || null,
+            platformContentID: parsed?.contentId ?? null,
+            provider: parsed?.provider ?? 'generic',
             sourceName: '',
             authorName: '',
             summary: '',
@@ -347,6 +384,7 @@ function NewRecordForm(props: {
         <div className="field">
           <label>网址</label>
           <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://" />
+          <ParsedLinkStatus parsed={parsed} />
         </div>
       ) : (
         <div className="field">
@@ -393,22 +431,68 @@ function RecordInspector(props: {
   const { item } = props
   const [title, setTitle] = useState(item.title)
   const [note, setNote] = useState(item.note)
+  const [urlString, setUrlString] = useState(item.urlString)
   const [tagIds, setTagIds] = useState(item.tagIds)
   const [newTag, setNewTag] = useState('')
   const [busy, setBusy] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     setTitle(item.title)
     setNote(item.note)
+    setUrlString(item.urlString)
     setTagIds(item.tagIds)
   }, [item.id])
+
+  const urlChanged = urlString.trim() !== item.urlString.trim()
+  const parsedUrl = useMemo(() => (urlChanged && urlString.trim() ? parseLink(urlString) : null), [urlChanged, urlString])
+
+  async function refreshPreview(force: boolean): Promise<void> {
+    setRefreshing(true)
+    try {
+      await api.records.resolveMetadata(item.id, force)
+      await props.onChanged()
+    } catch (cause) {
+      setError((cause as Error).message)
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   return (
     <div className="stack">
       <span className="overline" style={{ margin: 0 }}>
         记录属性
       </span>
+      {item.carrier === 'link' && (
+        <div className="field">
+          <label>网址</label>
+          <input value={urlString} onChange={(event) => setUrlString(event.target.value)} placeholder="https://" />
+          {urlChanged && <ParsedLinkStatus parsed={parsedUrl} />}
+        </div>
+      )}
+      {item.carrier === 'link' && (
+        <div className="row row--between">
+          <span className="note" style={{ margin: 0 }}>
+            {item.metadataStatus === 'pending'
+              ? '正在获取预览…'
+              : item.metadataStatus === 'ok' || item.metadataStatus === 'resolved'
+                ? '预览信息已更新'
+                : item.metadataStatus === 'partial'
+                  ? '已获取部分预览信息'
+                  : '暂时无法获取预览'}
+          </span>
+          <button
+            className="button button--ghost"
+            type="button"
+            disabled={refreshing}
+            onClick={() => void refreshPreview(true)}
+          >
+            {refreshing ? '获取中…' : item.metadataStatus === 'failed' || item.metadataStatus === 'idle' ? '获取预览' : '刷新预览'}
+          </button>
+        </div>
+      )}
       <div className="field">
         <label>标题</label>
         <input value={title} onChange={(event) => setTitle(event.target.value)} />
@@ -464,12 +548,15 @@ function RecordInspector(props: {
             setBusy(true)
             setError(null)
             try {
+              const nextProvider = parsedUrl?.provider ?? item.provider
               await api.records.update(item.id, {
                 carrier: item.carrier,
                 title,
                 note,
-                urlString: item.urlString,
-                provider: item.provider,
+                urlString: urlString.trim(),
+                canonicalURL: urlChanged ? parsedUrl?.canonicalUrl ?? null : item.canonicalURL,
+                platformContentID: urlChanged ? parsedUrl?.contentId ?? null : item.platformContentID,
+                provider: nextProvider,
                 sourceName: item.sourceName,
                 authorName: item.authorName,
                 summary: item.summary,
@@ -478,6 +565,10 @@ function RecordInspector(props: {
                 tagIds
               })
               await props.onChanged()
+              // URL 变了：旧元数据已在保存时清空，后台重新识别并补全。
+              if (urlChanged && urlString.trim()) {
+                void api.records.resolveMetadata(item.id, true).then(() => props.onChanged()).catch(() => undefined)
+              }
             } catch (cause) {
               setError((cause as Error).message)
             } finally {

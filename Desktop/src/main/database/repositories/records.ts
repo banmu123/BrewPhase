@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, like, or, sql } from 'drizzle-orm'
 import type { RecordDraft, RecordItem, RecordQuery, RecordTag } from '../../../shared/contracts'
 import type { Db } from '../client'
+import type { ResolvedLinkMetadata } from '../../metadata/metadata-normalizer'
 import { records, recordTagLinks, recordTags } from '../schema'
 import { recordChange } from './sync-log'
 
@@ -66,12 +67,16 @@ export function createRecord(db: Db, deviceId: string, draft: RecordDraft): Reco
         title: draft.title,
         note: draft.note,
         urlString: draft.urlString,
+        canonicalUrl: draft.canonicalURL,
         provider: draft.provider,
+        platformContentId: draft.platformContentID,
         sourceName: draft.sourceName,
         authorName: draft.authorName,
         summary: draft.summary,
         mediaPath: draft.mediaPath,
         previewPath: draft.previewPath,
+        // 链接的元数据由保存后的异步解析补全；其余载体没有这回事。
+        metadataStatus: draft.carrier === 'link' && draft.urlString.trim() ? 'pending' : 'idle',
         createdAt: at,
         updatedAt: at
       })
@@ -85,6 +90,11 @@ export function createRecord(db: Db, deviceId: string, draft: RecordDraft): Reco
 
 export function updateRecord(db: Db, deviceId: string, id: string, draft: RecordDraft): RecordItem {
   const at = Date.now()
+  const previous = db.select().from(records).where(eq(records.id, id)).get()
+  // URL 变了：旧链接的自动元数据（封面/摘要/作者/仓库统计/内容 ID）一律失效，
+  // 否则新链接会顶着旧封面。标题是用户可编辑字段，不在这里清。
+  const urlChanged = Boolean(previous && previous.urlString !== draft.urlString)
+
   db.transaction((tx) => {
     const scoped = tx as unknown as Db
     scoped
@@ -95,9 +105,19 @@ export function updateRecord(db: Db, deviceId: string, id: string, draft: Record
         note: draft.note,
         urlString: draft.urlString,
         provider: draft.provider,
-        sourceName: draft.sourceName,
-        authorName: draft.authorName,
-        summary: draft.summary,
+        canonicalUrl: urlChanged ? draft.canonicalURL : (previous?.canonicalUrl ?? draft.canonicalURL),
+        platformContentId: urlChanged ? draft.platformContentID : (previous?.platformContentId ?? draft.platformContentID),
+        sourceName: urlChanged ? '' : draft.sourceName,
+        authorName: urlChanged ? '' : draft.authorName,
+        summary: urlChanged ? '' : draft.summary,
+        thumbnailUrlString: urlChanged ? null : previous?.thumbnailUrlString ?? null,
+        repositoryLanguage: urlChanged ? null : previous?.repositoryLanguage ?? null,
+        repositoryStars: urlChanged ? null : previous?.repositoryStars ?? null,
+        repositoryForks: urlChanged ? null : previous?.repositoryForks ?? null,
+        repositoryLicense: urlChanged ? null : previous?.repositoryLicense ?? null,
+        metadataStatus: urlChanged
+          ? (draft.carrier === 'link' && draft.urlString.trim() ? 'pending' : 'idle')
+          : (previous?.metadataStatus ?? 'idle'),
         mediaPath: draft.mediaPath,
         previewPath: draft.previewPath,
         updatedAt: at
@@ -109,6 +129,54 @@ export function updateRecord(db: Db, deviceId: string, id: string, draft: Record
   })
 
   return getRecord(db, id)!
+}
+
+/**
+ * 写入自动解析的元数据（§五：元数据只是展示信息）。
+ * - `title/summary/sourceName/authorName` **只在为空时补**——用户手写的内容永远优先；
+ * - 封面/仓库统计/内容 ID 是平台事实，直接写；
+ * - 刷新失败但本地已有成功结果：保留 `ok` 状态与旧数据，不清空。
+ */
+export function applyResolvedMetadata(
+  db: Db,
+  deviceId: string,
+  id: string,
+  resolved: ResolvedLinkMetadata
+): RecordItem | null {
+  const row = db.select().from(records).where(eq(records.id, id)).get()
+  if (!row) return null
+  const at = Date.now()
+  const hadSuccess = ['ok', 'resolved', 'partial'].includes(row.metadataStatus)
+  const keepPreviousStatus = resolved.status === 'failed' && hadSuccess
+  // 归一模型用 success/failed；库里的自有状态固定为 ok/failed（与 iOS 的
+  // resolved/partial 并存，见 contracts 的 metadataStatus 枚举）。
+  const nextStatus = resolved.status === 'success' ? 'ok' : 'failed'
+
+  db.transaction((tx) => {
+    const scoped = tx as unknown as Db
+    scoped
+      .update(records)
+      .set({
+        provider: resolved.provider,
+        platformContentId: resolved.contentId ?? row.platformContentId,
+        canonicalUrl: resolved.canonicalUrl || row.canonicalUrl,
+        thumbnailUrlString: resolved.thumbnailUrl ?? row.thumbnailUrlString,
+        title: row.title.trim() ? row.title : (resolved.title ?? row.title),
+        summary: row.summary.trim() ? row.summary : (resolved.description ?? row.summary),
+        sourceName: row.sourceName.trim() ? row.sourceName : (resolved.sourceName ?? row.sourceName),
+        authorName: row.authorName.trim() ? row.authorName : (resolved.authorName ?? row.authorName),
+        repositoryLanguage: resolved.repositoryLanguage ?? row.repositoryLanguage,
+        repositoryStars: resolved.repositoryStars ?? row.repositoryStars,
+        repositoryForks: resolved.repositoryForks ?? row.repositoryForks,
+        repositoryLicense: resolved.repositoryLicense ?? row.repositoryLicense,
+        metadataStatus: keepPreviousStatus ? 'ok' : nextStatus,
+        updatedAt: at
+      })
+      .where(eq(records.id, id))
+      .run()
+    recordChange(scoped, { deviceId, entityType: 'record', entityId: id, operation: 'update' })
+  })
+  return getRecord(db, id)
 }
 
 /** 删记录：外键 ON DELETE CASCADE 会带走标签关系与引用它的画布节点。 */

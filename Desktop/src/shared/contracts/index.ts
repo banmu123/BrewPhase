@@ -50,6 +50,11 @@ export interface RendererApi {
     createTag: (name: string) => Promise<RecordTag>
     deleteTag: (id: string) => Promise<void>
     importImage: () => Promise<ImportImageResult | null>
+    /**
+     * 抓取并写入链接元数据（main process 安全网络层）。
+     * `force = true` 跳过本地缓存（用户在详情侧栏主动刷新时用）。
+     */
+    resolveMetadata: (id: string, force?: boolean) => Promise<RecordItem | null>
     /** `bpmedia://media/<fileName>`；只接受主进程校验过的文件名。 */
     mediaUrl: (fileName: string) => string
   }

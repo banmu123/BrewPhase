@@ -47,7 +47,13 @@ export const recordSchema = z.object({
   mediaPath: z.string().max(300).nullable().default(null),
   previewPath: z.string().max(300).nullable().default(null),
   thumbnailURLString: z.string().max(2_000).nullable().default(null),
-  metadataStatus: z.enum(['idle', 'ok', 'failed']).default('idle'),
+  /**
+   * 链接元数据状态。`ok` 是桌面抓取成功的值；`resolved/partial` 是 iOS
+   * `LinkMetadataStatus` 的原值（同步过来的记录保持原样，不做映射）。
+   */
+  metadataStatus: z
+    .enum(['idle', 'pending', 'ok', 'resolved', 'partial', 'failed'])
+    .default('idle'),
   repositoryStars: z.number().int().nullable().default(null),
   repositoryForks: z.number().int().nullable().default(null),
   repositoryLanguage: z.string().max(60).nullable().default(null),
@@ -62,6 +68,9 @@ export const recordDraftSchema = z.object({
   title: z.string().max(500).default(''),
   note: z.string().max(20_000).default(''),
   urlString: z.string().max(2_000).default(''),
+  /** 本地解析出的规范化地址与平台内容 ID（保存时一并写入；元数据由后台补全）。 */
+  canonicalURL: z.string().max(2_000).nullable().default(null),
+  platformContentID: z.string().max(200).nullable().default(null),
   provider: linkProviderSchema.default('generic'),
   sourceName: z.string().max(200).default(''),
   authorName: z.string().max(200).default(''),
