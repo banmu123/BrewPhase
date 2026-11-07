@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { createServer as createNetServer } from 'node:net'
 import { promises as fs } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -8,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { migrate } from '../../src/main/database/migrations'
 import { NonceStore, sha256, verifyRequest, expectedSignature, randomToken } from '../../src/main/sync/auth'
+import { SyncServer } from '../../src/main/sync/server'
 import { PairingService } from '../../src/main/sync/pairing-service'
 import { applyBatch, canonical, fingerprint, type SyncBatch } from '../../src/main/sync/snapshot-importer'
 import { finalizeMedia, writeChunk, checkManifest, type MediaManifestEntry } from '../../src/main/sync/media-transfer'
@@ -374,5 +376,90 @@ describe('媒体分块传输', () => {
     ])
     expect(outcome.rejected).toHaveLength(1)
     expect(outcome.missing).toHaveLength(0)
+  })
+})
+
+describe('HTTP 路由 wire format（与 iOS 客户端逐字段对齐）', () => {
+  let db: Database.Database
+  let server: SyncServer
+  let baseUrl: string
+
+  beforeEach(() => {
+    db = openDb()
+    server = new SyncServer(db, 'bp_desk_test', 'BrewPhase · test', () => {})
+  })
+
+  afterEach(() => {
+    server.stop()
+    db.close()
+  })
+
+  async function startServer(): Promise<void> {
+    const port = await new Promise<number>((resolve, reject) => {
+      const probe = createNetServer()
+      probe.listen(0, '127.0.0.1', () => {
+        const address = probe.address()
+        const actual = typeof address === 'object' && address ? address.port : 0
+        probe.close(() => (actual > 0 ? resolve(actual) : reject(new Error('no free port'))))
+      })
+      probe.on('error', reject)
+    })
+    const state = await server.start(['127.0.0.1'], port)
+    baseUrl = `http://127.0.0.1:${state.port ?? port}`
+  }
+
+  function pairBody(body: Record<string, unknown>): RequestInit {
+    return {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body)
+    }
+  }
+
+  it('GET /api/status 可达且版本对齐', async () => {
+    await startServer()
+    const response = await fetch(`${baseUrl}/api/status`)
+    expect(response.status).toBe(200)
+    const payload = (await response.json()) as { service: string; protocolVersion: number }
+    expect(payload.service).toBe('brewphase-sync')
+    expect(payload.protocolVersion).toBe(1)
+  })
+
+  it('/api/pair 收 iOS 客户端形状的 body（pairingCode 字段）→ 200，响应字段与 PairResponse 对齐', async () => {
+    await startServer()
+    const { code } = server.pairingPayload()
+    // 与 SyncNetworkClient.pair 的 body 逐字段一致——这正是 2026-11-07
+    // 真机扫码 401（server 读 code、iOS 发 pairingCode）的回归防线。
+    const response = await fetch(`${baseUrl}/api/pair`, pairBody({ pairingCode: code, deviceName: 'iPhone' }))
+    expect(response.status).toBe(200)
+    const payload = (await response.json()) as {
+      token: string
+      deviceId: string
+      desktopDeviceId: string
+      desktopDeviceName: string
+      protocolVersion: number
+    }
+    expect(payload.token.length).toBeGreaterThan(0)
+    expect(payload.deviceId.startsWith('bp_ios_')).toBe(true)
+    expect(payload.desktopDeviceId).toBe('bp_desk_test')
+    expect(payload.desktopDeviceName.length).toBeGreaterThan(0)
+    expect(payload.protocolVersion).toBe(1)
+  })
+
+  it('同一配对码第二次兑换 → 401（一次性）', async () => {
+    await startServer()
+    const { code } = server.pairingPayload()
+    const body = pairBody({ pairingCode: code, deviceName: 'iPhone' })
+    const first = await fetch(`${baseUrl}/api/pair`, body)
+    expect(first.status).toBe(200)
+    const second = await fetch(`${baseUrl}/api/pair`, body)
+    expect(second.status).toBe(401)
+  })
+
+  it('旧字段名 code 仍可兑换（兼容兜底）', async () => {
+    await startServer()
+    const { code } = server.pairingPayload()
+    const response = await fetch(`${baseUrl}/api/pair`, pairBody({ code, deviceName: 'iPhone' }))
+    expect(response.status).toBe(200)
   })
 })

@@ -138,12 +138,15 @@ export class SyncServer {
       if (route === 'POST /api/pair') {
         const bodyResult = await this.readBody(request, MAX_JSON_BODY)
         if (!bodyResult.ok) return this.json(response, bodyResult.status, { error: bodyResult.error })
+        // 字段名与 iOS 客户端、QR 深链、contracts 的 pairRequestSchema 对齐：
+        // `pairingCode` 是主字段；`code` 仅作为旧客户端兜底。
         const payload = JSON.parse(bodyResult.body.toString('utf8') || '{}') as {
+          pairingCode?: string
           code?: string
           deviceName?: string
         }
         const outcome = this.pairing.exchange(
-          String(payload.code ?? ''),
+          String(payload.pairingCode ?? payload.code ?? ''),
           source,
           String(payload.deviceName ?? ''),
           this.sqlite
