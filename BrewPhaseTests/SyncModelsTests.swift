@@ -40,4 +40,17 @@ final class SyncModelsTests: XCTestCase {
         XCTAssertNil(SyncPairingLink.parse("brewping://pair?host=x&port=1"))
         XCTAssertNil(SyncPairingLink.parse("brewphase://pair?host=x"))
     }
+
+    func testPairingLinkHostsCandidates() {
+        // 多网卡：host 是首选，hosts 是全部候选（含 host 本身、去重去空）
+        let raw = "brewphase://pair?host=192.168.1.5&hosts=192.168.1.5,10.0.0.8,192.168.1.5,&port=47821&deviceId=d&deviceName=Mac&pairingCode=AbCdEf123456&protocolVersion=1&expiresAt=1782100000000"
+        let link = SyncPairingLink.parse(raw)
+        XCTAssertNotNil(link)
+        XCTAssertEqual(link?.candidateHosts, ["192.168.1.5", "10.0.0.8"])
+        // 没有 hosts 参数时退化为单 host
+        let single = SyncPairingLink.parse(
+            "brewphase://pair?host=192.168.1.9&port=47821&deviceId=d&deviceName=Mac&pairingCode=AbCdEf123456&protocolVersion=1&expiresAt=1782100000000"
+        )
+        XCTAssertEqual(single?.candidateHosts, ["192.168.1.9"])
+    }
 }

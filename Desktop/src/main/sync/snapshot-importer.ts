@@ -436,6 +436,17 @@ function applyUpsert(
     return
   }
 
+  // 用户已裁决「保留电脑版本」的远端指纹：重复推送直接 skipped（§7）。
+  // 不写桌面基线（桌面基线保持 = 本地指纹），iOS 端按 skipped 收敛自己的
+  // 基线；iOS 之后产生**新**指纹时正常重新参与合并。
+  const rejected = sqlite
+    .prepare('select 1 from sync_rejected where entity_type = ? and entity_id = ? and fingerprint = ?')
+    .get(entityType, targetId, upsert.fingerprint)
+  if (rejected) {
+    mark({ entityType, id: upsert.id, status: 'skipped', reason: 'kept desktop version by resolution' })
+    return
+  }
+
   const localFp = localFingerprint(entityType, existing)
   if (localFp === upsert.fingerprint) {
     setBaseline(sqlite, entityType, targetId, upsert.fingerprint)
@@ -497,6 +508,17 @@ function applyDeletion(
     clearBaseline(sqlite, entityType, deletion.id)
     logChange(sqlite, entityType, deletion.id, 'delete', sourceDeviceId)
     mark({ entityType, id: deletion.id, status: 'applied' })
+    return
+  }
+  // 用户已裁决「保留电脑版本」的删除：同基线的重复删除直接收敛（§7）。
+  const rejected = deletion.expectedFingerprint
+    ? sqlite
+        .prepare('select 1 from sync_rejected where entity_type = ? and entity_id = ? and fingerprint = ?')
+        .get(entityType, deletion.id, deletion.expectedFingerprint)
+    : undefined
+  if (rejected) {
+    clearBaseline(sqlite, entityType, deletion.id)
+    mark({ entityType, id: deletion.id, status: 'skipped', reason: 'kept desktop version by resolution' })
     return
   }
   // 桌面端改过 / iOS 没给基线：进删除冲突队列，桌面数据原样保留。

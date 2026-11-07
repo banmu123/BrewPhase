@@ -14,12 +14,12 @@ struct SyncNetworkClient {
 
     let session: URLSession
 
-    init(host: String, port: Int, token: String?) {
+    init(host: String, port: Int, token: String?, timeout: Double = 20) {
         self.host = host
         self.port = port
         self.token = token
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 20
+        configuration.timeoutIntervalForRequest = timeout
         configuration.timeoutIntervalForResource = 300
         self.session = URLSession(configuration: configuration)
     }
@@ -41,6 +41,16 @@ struct SyncNetworkClient {
     }
 
     // MARK: - 配对
+
+    struct ServiceStatus: Codable {
+        var service: String
+        var protocolVersion: Int
+    }
+
+    /// 健康检查（无鉴权）：多地址候选的连通性探测用。
+    func serviceStatus() async throws -> ServiceStatus {
+        try await get("api/status")
+    }
 
     func pair(pairingCode: String, deviceName: String) async throws -> PairResponse {
         let body: [String: String] = ["pairingCode": pairingCode, "deviceName": deviceName]
@@ -74,11 +84,18 @@ struct SyncNetworkClient {
     }
 
     func uploadChunk(name: String, offset: Int, data: Data) async throws {
-        var request = URLRequest(url: baseURL.appendingPathComponent("api/sync/media/chunk"))
+        guard let token else { throw ClientError.http(401, "未配对") }
+        guard let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "\(baseURL)/api/sync/media/chunk?name=\(encoded)&offset=\(offset)") else {
+            throw ClientError.invalidResponse
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/octet-stream", forHTTPHeaderField: "content-type")
+        // 身份头必须与签名头同在：桌面端先验 Bearer 再验 HMAC（2026-11-07 修复：
+        // 之前漏了 Bearer，媒体分块全部 401）。
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         sign(&request, body: data)
-        request.url = URL(string: "\(baseURL)/api/sync/media/chunk?name=\(name)&offset=\(offset)")
         request.httpBody = data
         let (_, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {

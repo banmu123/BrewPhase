@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createServer as createNetServer } from 'node:net'
 import { promises as fs } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -11,7 +11,7 @@ import { migrate } from '../../src/main/database/migrations'
 import { NonceStore, sha256, verifyRequest, expectedSignature, randomToken } from '../../src/main/sync/auth'
 import { SyncServer } from '../../src/main/sync/server'
 import { PairingService } from '../../src/main/sync/pairing-service'
-import { applyBatch, canonical, fingerprint, recordTagLinkId, type SyncBatch } from '../../src/main/sync/snapshot-importer'
+import { applyBatch, canonical, fingerprint, recordTagLinkId, type ApplyResult, type SyncBatch } from '../../src/main/sync/snapshot-importer'
 import { finalizeMedia, writeChunk, checkManifest, receivedBytes, type MediaManifestEntry } from '../../src/main/sync/media-transfer'
 
 function openDb(): Database.Database {
@@ -740,3 +740,255 @@ describe('端口与地址策略（统一端口）', () => {
     expect(server.stateFor().running).toBe(false)
   })
 })
+
+describe('HTTP 端到端（模拟 iOS 客户端：Bearer + Timestamp + Nonce + HMAC）', () => {
+  let db: Database.Database
+  let server: SyncServer
+  let baseUrl: string
+  let token: string
+  let tempDir: string
+
+  const recordId = 'aaaaaaaa-1111-4111-8111-000000000001'
+  const tagId = 'aaaaaaaa-2222-4222-8222-000000000002'
+  const imageFile = 'aaaaaaaa-3333-4333-8333-000000000003.jpg'
+  const videoFile = 'aaaaaaaa-4444-4444-8444-000000000004.mov'
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'bp-e2e-'))
+    process.env.BREWPHASE_USER_DATA_DIR = tempDir
+    db = openDb()
+    server = new SyncServer(db, 'bp_desk_e2e', 'BrewPhase · e2e', () => {})
+    const port = await new Promise<number>((resolve, reject) => {
+      const probe = createNetServer()
+      probe.listen(0, '127.0.0.1', () => {
+        const address = probe.address()
+        const actual = typeof address === 'object' && address ? address.port : 0
+        probe.close(() => (actual > 0 ? resolve(actual) : reject(new Error('no free port'))))
+      })
+      probe.on('error', reject)
+    })
+    const state = await server.start(['127.0.0.1'], port)
+    baseUrl = `http://127.0.0.1:${state.port ?? port}`
+  })
+
+  afterEach(async () => {
+    server.stop()
+    db.close()
+    await rm(tempDir, { recursive: true, force: true })
+    delete process.env.BREWPHASE_USER_DATA_DIR
+  })
+
+  /** 与 iOS SyncNetworkClient 相同的签名头组合。 */
+  function signedHeaders(body: Buffer, overrides: Partial<{ token: string; nonce: string; signature: string }> = {}): Record<string, string> {
+    const usedToken = overrides.token ?? token
+    const timestamp = String(Date.now())
+    const nonce = overrides.nonce ?? crypto.randomUUID()
+    return {
+      authorization: `Bearer ${usedToken}`,
+      'x-bp-timestamp': timestamp,
+      'x-bp-nonce': overrides.signature ? 'nonce-bad-sig' : nonce,
+      'x-bp-signature': overrides.signature ?? expectedSignature(usedToken, timestamp, nonce, sha256(body)),
+      'content-type': 'application/octet-stream'
+    }
+  }
+
+  async function pairAndGetToken(): Promise<void> {
+    const { code } = server.pairingPayload()
+    const pair = await fetch(`${baseUrl}/api/pair`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pairingCode: code, deviceName: 'iPhone' })
+    })
+    expect(pair.status).toBe(200)
+    ;({ token } = (await pair.json()) as { token: string })
+  }
+
+  it('配对 → 数据 → 媒体 → 幂等 → 撤销，全链路（§8）', async () => {
+    await pairAndGetToken()
+
+    // status / manifest
+    const status = await fetch(`${baseUrl}/api/status`)
+    expect(status.status).toBe(200)
+    const manifest = await fetch(`${baseUrl}/api/sync/manifest`, { headers: { authorization: `Bearer ${token}` } })
+    expect(manifest.status).toBe(200)
+
+    // 数据批：record + tag + 关系（record 带 mediaPath/previewPath；payload 补全
+    // 全部指纹字段，保证与桌面 localFingerprint 的默认列值一致）
+    const recordPayload = {
+      carrier: 'video', title: '手冲视频', note: '', urlString: '', canonicalURL: null,
+      provider: 'generic', contentKind: '', platformContentID: null, linkPage: 1,
+      sourceName: '', authorName: '', summary: '', thumbnailURLString: null,
+      metadataStatus: 'idle', repositoryStars: null, repositoryForks: null,
+      repositoryIssues: null, repositoryLanguage: null, repositoryLicense: null,
+      mediaPath: videoFile, previewPath: imageFile, isSample: false
+    }
+    const recordFp = fingerprint(canonical(Object.values(recordPayload)))
+    const batch: SyncBatch = {
+      operations: [
+        { entityType: 'recordTag', upserts: [{ id: tagId, fingerprint: fingerprint(canonical(['开发'])), payload: { name: '开发' } }], deletes: [] },
+        { entityType: 'record', upserts: [{ id: recordId, fingerprint: recordFp, payload: recordPayload }], deletes: [] },
+        {
+          entityType: 'recordTagLink',
+          upserts: [{ id: `${recordId}:${tagId}`, fingerprint: fingerprint(canonical([recordId, tagId])), payload: { recordId, tagId } }],
+          deletes: []
+        }
+      ]
+    }
+    const applyBody = Buffer.from(JSON.stringify(batch))
+    const apply = await fetch(`${baseUrl}/api/sync/apply`, {
+      method: 'POST',
+      headers: { ...signedHeaders(applyBody), 'content-type': 'application/json' },
+      body: applyBody
+    })
+    expect(apply.status).toBe(200)
+    const applyOutcome = (await apply.json()) as ApplyResult
+    expect(applyOutcome.appliedCount).toBe(3)
+
+    // 媒体清单
+    const content = Buffer.alloc(300_000, 9)
+    const mediaSha = createHash('sha256').update(content).digest('hex')
+    const manifestBody = Buffer.from(JSON.stringify({
+      media: [{ name: videoFile, sha256: mediaSha, byteSize: content.length, mediaType: 'video', mimeType: 'video/mp4' }]
+    }))
+    const mediaManifest = await fetch(`${baseUrl}/api/sync/media/manifest`, {
+      method: 'POST',
+      headers: { ...signedHeaders(manifestBody), 'content-type': 'application/json' },
+      body: manifestBody
+    })
+    expect(mediaManifest.status).toBe(200)
+    expect(((await mediaManifest.json()) as { missing: unknown[] }).missing).toHaveLength(1)
+
+    // chunk 鉴权矩阵：无 Bearer / 错 token / 坏签名 / nonce 重放 → 全部 401
+    // （用独立探针文件名，避免污染主文件的 .part 偏移）
+    const chunk1 = content.subarray(0, 256 * 1024)
+    const probeQuery = `name=aaaaaaaa-5555-4555-8555-000000000005.jpg&offset=0`
+    const noAuth = await fetch(`${baseUrl}/api/sync/media/chunk?${probeQuery}`, {
+      method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: chunk1
+    })
+    expect(noAuth.status).toBe(401)
+    const wrongToken = await fetch(`${baseUrl}/api/sync/media/chunk?${probeQuery}`, {
+      method: 'POST', headers: signedHeaders(chunk1, { token: 'wrong-token' }), body: chunk1
+    })
+    expect(wrongToken.status).toBe(401)
+    const badSignature = await fetch(`${baseUrl}/api/sync/media/chunk?${probeQuery}`, {
+      method: 'POST', headers: signedHeaders(chunk1, { signature: '0'.repeat(64) }), body: chunk1
+    })
+    expect(badSignature.status).toBe(401)
+    const replayBody = Buffer.from('replay-probe')
+    const replayHeaders = signedHeaders(replayBody)
+    await fetch(`${baseUrl}/api/sync/media/chunk?${probeQuery}`, {
+      method: 'POST', headers: replayHeaders, body: replayBody
+    })
+    const replay = await fetch(`${baseUrl}/api/sync/media/chunk?${probeQuery}`, {
+      method: 'POST', headers: replayHeaders, body: replayBody
+    })
+    expect(replay.status).toBe(401)
+
+    // 正常上传（两块）→ offset → finalize
+    const chunk2 = content.subarray(256 * 1024)
+    const upload1 = await fetch(`${baseUrl}/api/sync/media/chunk?name=${videoFile}&offset=0`, {
+      method: 'POST', headers: signedHeaders(chunk1), body: chunk1
+    })
+    expect(upload1.status).toBe(200)
+    const upload2 = await fetch(`${baseUrl}/api/sync/media/chunk?name=${videoFile}&offset=${chunk1.length}`, {
+      method: 'POST', headers: signedHeaders(chunk2), body: chunk2
+    })
+    expect(upload2.status).toBe(200)
+    const offset = await fetch(`${baseUrl}/api/sync/media/offset?name=${videoFile}`, {
+      headers: { authorization: `Bearer ${token}` }
+    })
+    expect(((await offset.json()) as { received: number }).received).toBe(content.length)
+    const finalizeBody = Buffer.from(JSON.stringify({ name: videoFile, sha256: mediaSha, byteSize: content.length }))
+    const finalize = await fetch(`${baseUrl}/api/sync/media/finalize`, {
+      method: 'POST',
+      headers: { ...signedHeaders(finalizeBody), 'content-type': 'application/json' },
+      body: finalizeBody
+    })
+    expect(finalize.status).toBe(200)
+
+    // 文件落位 + SHA-256 一致；数据库引用存在
+    const stored = await fs.readFile(join(tempMediaDir(), videoFile))
+    expect(createHash('sha256').update(stored).digest('hex')).toBe(mediaSha)
+    const recordRow = db.prepare('select media_path, preview_path from records where id = ?').get(recordId) as { media_path: string; preview_path: string }
+    expect(recordRow.media_path).toBe(videoFile)
+    expect(recordRow.preview_path).toBe(imageFile)
+    expect(db.prepare('select count(*) as n from record_tag_links').get() as { n: number }).toEqual({ n: 1 })
+
+    // 二次同步幂等：同 payload 全 skipped
+    const againBody = Buffer.from(JSON.stringify(batch))
+    const again = await fetch(`${baseUrl}/api/sync/apply`, {
+      method: 'POST',
+      headers: { ...signedHeaders(againBody), 'content-type': 'application/json' },
+      body: againBody
+    })
+    expect(((await again.json()) as ApplyResult).skippedCount).toBe(3)
+
+    // 撤销设备 → 旧 token 全部失效
+    db.prepare('update devices set revoked_at = ?').run(Date.now())
+    const revoked = await fetch(`${baseUrl}/api/sync/manifest`, { headers: { authorization: `Bearer ${token}` } })
+    expect(revoked.status).toBe(401)
+    const revokedChunk = await fetch(`${baseUrl}/api/sync/media/chunk?name=${videoFile}&offset=0`, {
+      method: 'POST', headers: signedHeaders(chunk1), body: chunk1
+    })
+    expect(revokedChunk.status).toBe(401)
+  })
+
+  it('保留电脑版本裁决持久化：相同远端内容不再冲突，真实变化才重新冲突（§7）', () => {
+    const payload1 = e2eBeanPayload(158)
+    const fp1 = e2eBeanFp(payload1)
+    applyBatch(db, { operations: [{ entityType: 'bean', upserts: [{ id: beanE2eId, fingerprint: fp1, payload: payload1 }], deletes: [] }] }, 'dev1')
+    // iOS 改内容（桌面未动，基线==本地）→ 接受
+    const payload2 = e2eBeanPayload(130)
+    const fp2 = e2eBeanFp(payload2)
+    applyBatch(db, { operations: [{ entityType: 'bean', upserts: [{ id: beanE2eId, fingerprint: fp2, payload: payload2 }], deletes: [] }] }, 'dev1')
+    // iOS 改回旧值（fp1）——桌面内容 fp2、基线 fp2 → baseline==localFp？否（localFp=fp2==baseline）→ 等等：
+    // 桌面接受了 fp2，基线=fp2=localFp → iOS 推 fp1：localFp≠fp1、baseline==localFp → 「桌面没改过」→ 会接受！
+    // 但用户会裁决……此场景其实不冲突。真实冲突场景是桌面在 iOS 推送前自己编辑：
+    db.prepare('update beans set remaining_g = 99 where id = ?').run(beanE2eId)
+    const pushBack = applyBatch(db, { operations: [{ entityType: 'bean', upserts: [{ id: beanE2eId, fingerprint: fp1, payload: payload1 }], deletes: [] }] }, 'dev1')
+    expect(pushBack.conflictCount).toBe(1)
+    // 用户裁决：保留电脑版本 → 只记 rejected，不改基线
+    const conflictRow = db
+      .prepare('select entity_type, entity_id, remote_fingerprint from sync_conflicts where entity_id = ?')
+      .get(beanE2eId) as { entity_type: string; entity_id: string; remote_fingerprint: string }
+    db.prepare(
+      `insert into sync_rejected (entity_type, entity_id, fingerprint, decided_at) values (?, ?, ?, ?)`
+    ).run(conflictRow.entity_type, conflictRow.entity_id, conflictRow.remote_fingerprint, Date.now())
+    db.prepare('delete from sync_conflicts where entity_id = ?').run(beanE2eId)
+    // 相同远端内容再推 → skipped，不冲突不覆盖
+    const repeat = applyBatch(db, { operations: [{ entityType: 'bean', upserts: [{ id: beanE2eId, fingerprint: fp1, payload: payload1 }], deletes: [] }] }, 'dev1')
+    expect(repeat.skippedCount).toBe(1)
+    expect(repeat.conflictCount).toBe(0)
+    expect((db.prepare('select remaining_g from beans where id = ?').get(beanE2eId) as { remaining_g: number }).remaining_g).toBe(99)
+    // 远端真实变化（iOS 又改了）→ 重新进入合并 → 冲突（桌面基线≠本地），绝不静默覆盖
+    const payload3 = e2eBeanPayload(100)
+    const fp3 = e2eBeanFp(payload3)
+    const changed = applyBatch(db, { operations: [{ entityType: 'bean', upserts: [{ id: beanE2eId, fingerprint: fp3, payload: payload3 }], deletes: [] }] }, 'dev1')
+    expect(changed.conflictCount).toBe(1)
+    expect((db.prepare('select remaining_g from beans where id = ?').get(beanE2eId) as { remaining_g: number }).remaining_g).toBe(99)
+  })
+})
+
+const beanE2eId = 'bbbbbbbb-1111-4111-8111-00000000000b'
+
+function e2eBeanPayload(remainingG: number): Record<string, unknown> {
+  return {
+    name: '耶加雪菲', roaster: '', origin: '', process: '', roastLevel: 'medium',
+    roastDate: null, purchaseDate: null, openDate: null, weightG: 0,
+    remainingG, price: 0, channel: '', imagePath: null, flavorTagsRaw: '',
+    notes: '', status: 'active', stockCountedAt: null, isSample: false
+  }
+}
+
+function e2eBeanFp(payload: Record<string, unknown>): string {
+  return fingerprint(canonical([
+    payload.name, payload.roaster, payload.origin, payload.process, payload.roastLevel,
+    payload.roastDate, payload.purchaseDate, payload.openDate, payload.weightG,
+    payload.remainingG, payload.price, payload.channel, payload.imagePath,
+    payload.flavorTagsRaw, payload.notes, payload.status, payload.stockCountedAt, payload.isSample
+  ]))
+}
+
+function tempMediaDir(): string {
+  return join(process.env.BREWPHASE_USER_DATA_DIR ?? '', 'media')
+}

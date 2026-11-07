@@ -20,11 +20,14 @@
 1. 桌面端「连接新手机」→ 生成 **128-bit 高熵码**（`randomBytes(16)`，base64url
    22 字符；仅存 SHA-256，服务端不留明文），**2 分钟有效、一次性**；
    二维码 = `brewphase://pair?host=&hosts=&port=&deviceId=&deviceName=&pairingCode=&protocolVersion=1&expiresAt=`。
-   明文只在生成时返回一次、由设置页界面状态持有；重新生成 = 旧码立即作废，
-   `PairingService` 不为「返回同一个码」缓存明文。
+   `hosts` 携带全部实际可达的局域网地址（多网卡；物理网卡 en* 优先，
+   VPN/容器虚拟网卡降权）。明文只在生成时返回一次、由设置页界面状态持有；
+   重新生成 = 旧码立即作废，`PairingService` 不为「返回同一个码」缓存明文。
 2. iOS 扫码（AVFoundation；解析只有 `SyncPairingLink.parse` 一处）→
-   `POST /api/pair {pairingCode, deviceName}`。字段名两端与协议文档一致
-   （`pairingCode`；`code` 仅旧客户端兼容兜底）。
+   **先逐一探测候选地址的 `GET /api/status`**（验证 service + protocolVersion，
+   每候选 2s 超时），对**验证可达的第一个地址**发一次
+   `POST /api/pair {pairingCode, deviceName}`——配对码一次性，绝不向多地址
+   并发兑换；响应丢失时由用户重新生成二维码。
 3. 校验（恒定时间比较 + 双维限速：单源 5 次/5 分钟、全局 30 次/5 分钟、冷却 60s、
    「无码可兑不计数」）→ 签发 32 字节 Token：桌面端存哈希进 `devices` 表，
    iOS 存 Keychain；**码立即作废**。
@@ -69,6 +72,11 @@
   设置页可裁决「保留电脑版本 / 接受手机版本」；未裁决不影响其他数据。
   **去重**：同一实体 + 相同远端指纹 + 相同操作的未裁决冲突只保留一条，
   反复同步不膨胀；远端内容再变（指纹不同）才新增。
+- **「保留电脑版本」裁决持久化**（`sync_rejected` 表，2026-11-07）：裁决时
+  记录被拒的远端指纹、**不改写基线**——相同远端内容再推直接 skipped
+  （iOS 端基线随之收敛，不重复冲突）；远端真实变化（新指纹）重新进入合并
+  （可能产生新冲突），绝不静默覆盖。裁决「接受手机版本」会清除该实体的
+  拒绝记录。
 - **删除必须带 `expectedFingerprint`**（iOS 上次成功同步的基线指纹）：
 
   | 桌面端状态 | 动作 |

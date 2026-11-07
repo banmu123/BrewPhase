@@ -256,10 +256,24 @@ CREATE INDEX IF NOT EXISTS sync_conflicts_dedup_idx
   ON sync_conflicts (entity_type, entity_id, remote_fingerprint, remote_operation);
 `
 
+const REJECTED_REMOTE_SQL = `
+-- 004：「保留电脑版本」裁决的持久化（§7）。记录被用户明确拒绝的远端指纹，
+-- 相同远端内容的重复推送直接 skipped（iOS 端基线随之收敛，不再重发、不再
+-- 重复产生冲突）；远端内容真实变化（新指纹）时正常重新参与合并。
+CREATE TABLE IF NOT EXISTS sync_rejected (
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  decided_at INTEGER NOT NULL,
+  PRIMARY KEY (entity_type, entity_id, fingerprint)
+);
+`
+
 export const migrations: Migration[] = [
   { version: 1, name: 'init', sql: INIT_SQL },
   { version: 2, name: 'sync-align-ios', sql: SYNC_ALIGN_SQL },
-  { version: 3, name: 'conflict-delete-operation', sql: CONFLICT_DELETE_OP_SQL }
+  { version: 3, name: 'conflict-delete-operation', sql: CONFLICT_DELETE_OP_SQL },
+  { version: 4, name: 'rejected-remote-fingerprints', sql: REJECTED_REMOTE_SQL }
 ]
 
 /**

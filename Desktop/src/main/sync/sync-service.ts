@@ -123,9 +123,12 @@ export class SyncService {
   async startPairing(): Promise<SyncStatus> {
     const server = this.requireServer()
     const state = server.stateFor()
-    // 二维码 host 只放真实局域网地址（§10）：没有 LAN 地址时宁可不出码，
-    // 也绝不给手机一个连不上的 127.0.0.1。
-    const addresses = lanAddresses()
+    // 二维码 host 只放**实际可达**的地址（§3）：绑定列表是具体 IP 时按它过滤；
+    // 绑定 0.0.0.0（启用时无 LAN）时用当前枚举的全部局域网地址。没有可达
+    // 地址时宁可不出码，也绝不给手机一个连不上的 127.0.0.1。
+    const bound = state.addresses
+    const boundAll = bound.includes('0.0.0.0')
+    const addresses = boundAll ? lanAddresses() : lanAddresses().filter((address) => bound.includes(address))
     if (addresses.length === 0) {
       throw new Error('未检测到局域网地址：请确认这台 Mac 已连接 Wi-Fi 或网线，然后重新点「连接新手机」。')
     }
@@ -213,17 +216,21 @@ export class SyncService {
         const payload = JSON.parse(String(row.remote_payload)) as Record<string, unknown>
         this.applySingle(entityType, entityId, payload)
       }
+      // 接受手机版本：撤销该实体旧的「保留电脑版本」拒绝记录。
+      this.sqlite
+        .prepare('delete from sync_rejected where entity_type = ? and entity_id = ?')
+        .run(entityType, entityId)
     } else {
-      const localFp = this.localFingerprintFor(entityType, entityId)
-      if (localFp) {
-        this.sqlite
-          .prepare(
-            `insert into sync_baseline (entity_type, entity_id, fingerprint, synced_at)
-             values (?, ?, ?, ?)
-             on conflict (entity_type, entity_id) do update set fingerprint = excluded.fingerprint, synced_at = excluded.synced_at`
-          )
-          .run(String(row.entity_type), String(row.entity_id), localFp, Date.now())
-      }
+      // 持久化「保留电脑版本」：记下被拒的远端指纹（§7），**不改写基线**——
+      // 基线保持原值，iOS 端相同内容再推被 rejected skipped（其基线自行收敛），
+      // 远端真实变化（新指纹）时重新进入合并（可能产生新冲突，绝不静默覆盖）。
+      this.sqlite
+        .prepare(
+          `insert into sync_rejected (entity_type, entity_id, fingerprint, decided_at)
+           values (?, ?, ?, ?)
+           on conflict (entity_type, entity_id, fingerprint) do update set decided_at = excluded.decided_at`
+        )
+        .run(String(row.entity_type), String(row.entity_id), String(row.remote_fingerprint), Date.now())
     }
     this.sqlite.prepare('delete from sync_conflicts where id = ?').run(id)
     this.onEvent({ type: 'state-changed' })

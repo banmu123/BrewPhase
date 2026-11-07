@@ -55,18 +55,29 @@ func epochMillis(_ date: Date?) -> Int64? {
 
 // MARK: - 配对深链
 
-/// `brewphase://pair?host=&port=&deviceId=&deviceName=&pairingCode=&protocolVersion=&expiresAt=`
+/// `brewphase://pair?host=&hosts=&port=&deviceId=&deviceName=&pairingCode=&protocolVersion=&expiresAt=`
 ///
 /// 解析**只有这一处**：扫码与手输共用（BrewPing 的教训——两条路各写一份
-/// 解析，字段就会漂移）。
+/// 解析，字段就会漂移）。`hosts` 是桌面端全部候选地址（多网卡），连接前
+/// 逐一探测，`host` 只是首选。
 struct SyncPairingLink: Equatable {
     var host: String
+    var hosts: [String]
     var port: Int
     var deviceId: String
     var deviceName: String
     var pairingCode: String
     var protocolVersion: Int
     var expiresAt: Date
+
+    /// 探测顺序：host 优先，其余按二维码给出的次序，去重去空。
+    var candidateHosts: [String] {
+        var seen = Set<String>()
+        return ([host] + hosts).filter { candidate in
+            guard !candidate.isEmpty, seen.insert(candidate).inserted else { return false }
+            return true
+        }
+    }
 
     static func parse(_ raw: String) -> SyncPairingLink? {
         guard let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -79,8 +90,13 @@ struct SyncPairingLink: Equatable {
               let code = dict["pairingCode"], !code.isEmpty else { return nil }
         let version = Int(dict["protocolVersion"] ?? "1") ?? 1
         let expiresAt = Date(timeIntervalSince1970: (Double(dict["expiresAt"] ?? "0") ?? 0) / 1000)
+        let hosts = (dict["hosts"] ?? "")
+            .split(separator: ",")
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
         return SyncPairingLink(
             host: host,
+            hosts: hosts,
             port: port,
             deviceId: dict["deviceId"] ?? "",
             deviceName: dict["deviceName"] ?? "BrewPhase Desktop",

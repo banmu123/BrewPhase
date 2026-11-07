@@ -22,6 +22,15 @@ final class SyncManager: ObservableObject {
 
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var lastSyncAt: Date?
+    /// 最近一次同步的媒体统计（结果汇总展示；以真实清单/上传结果为准）。
+    struct MediaStats: Equatable {
+        var images: Int
+        var videos: Int
+        var failed: Int
+    }
+    @Published private(set) var lastMediaStats: MediaStats?
+
+    static let protocolVersion = 1
 
     private let defaults: UserDefaults
     private static let baselineKey = "sync.baseline.v1"
@@ -32,6 +41,44 @@ final class SyncManager: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         lastSyncAt = defaults.object(forKey: Self.lastSyncKey) as? Date
+    }
+
+    // MARK: - 界面辅助
+
+    /// 本地待同步数据量（首次同步确认区展示，如实统计不虚构）。
+    struct LocalCounts: Equatable {
+        var beans: Int
+        var brews: Int
+        var tastings: Int
+        var records: Int
+        var canvases: Int
+
+        var summary: String {
+            "\(L("豆子")) \(beans) · \(L("冲煮")) \(brews) · \(L("品鉴")) \(tastings) · \(L("收藏")) \(records) · \(L("画布")) \(canvases)"
+        }
+    }
+
+    static func countLocalData(context: ModelContext) -> LocalCounts {
+        func count<T: PersistentModel>(_ type: T.Type) -> Int {
+            (try? context.fetchCount(FetchDescriptor<T>())) ?? 0
+        }
+        return LocalCounts(
+            beans: count(Bean.self), brews: count(Brew.self), tastings: count(Tasting.self),
+            records: count(Record.self), canvases: count(Canvas.self)
+        )
+    }
+
+    /// 数据批次序号 → 可读阶段名（批次顺序 = allBatches 的实体依赖顺序）。
+    static func stageLabel(for step: Int) -> String {
+        switch step {
+        case 1: return L("正在同步豆子")
+        case 2: return L("正在同步冲煮")
+        case 3: return L("正在同步品鉴")
+        case 4, 5: return L("正在同步阶段规则与提醒")
+        case 6, 7, 8: return L("正在同步收藏记录与标签")
+        case 9, 10: return L("正在同步画布")
+        default: return L("正在同步数据")
+        }
     }
 
     // MARK: - 基线
@@ -51,18 +98,59 @@ final class SyncManager: ObservableObject {
 
     // MARK: - 配对
 
-    /// 扫码后调用：验证配对码、保存凭据。
+    /// 扫码后调用：多地址探测 → 验证一次配对 → 校验协议版本 → 保存凭据。
+    ///
+    /// 配对码一次性：**只对验证可达的地址发一次 POST /api/pair**，绝不向
+    /// 多个地址并发兑换；响应丢失时由用户重新生成二维码，不盲目重试。
+    @discardableResult
     func pair(with link: SyncPairingLink, deviceName: String) async throws -> PairResponse {
         guard link.expiresAt > Date() else {
             throw SyncError.pairingCodeExpired
         }
-        let client = SyncNetworkClient(host: link.host, port: link.port, token: nil)
-        let response = try await client.pair(pairingCode: link.pairingCode, deviceName: deviceName)
-        SyncKeychain.set(response.token, forKey: "desktop.token")
-        SyncKeychain.set(link.host, forKey: "desktop.host")
-        SyncKeychain.set(String(link.port), forKey: "desktop.port")
-        SyncKeychain.set(response.deviceId, forKey: "desktop.deviceId")
-        SyncKeychain.set(link.deviceName, forKey: "desktop.deviceName")
+        // 连通性探测：逐一 GET /api/status，验证 service 与 protocolVersion。
+        var reachableHost: String?
+        var tried: [String] = []
+        for candidate in link.candidateHosts {
+            tried.append(candidate)
+            let probe = SyncNetworkClient(host: candidate, port: link.port, token: nil, timeout: 2.0)
+            if let status = try? await probe.serviceStatus(),
+               status.service == "brewphase-sync",
+               status.protocolVersion == Self.protocolVersion {
+                reachableHost = candidate
+                break
+            }
+        }
+        guard let host = reachableHost else {
+            throw SyncError.desktopUnreachable(tried)
+        }
+        var confirmed = link
+        confirmed.host = host
+        let client = SyncNetworkClient(host: host, port: link.port, token: nil)
+        let response = try await client.pair(pairingCode: confirmed.pairingCode, deviceName: deviceName)
+        guard response.protocolVersion == Self.protocolVersion else {
+            throw SyncError.protocolMismatch
+        }
+        // 凭据逐项落 Keychain；任一失败清理全部，绝不留「半配对」状态（§5）。
+        let credentials: [(key: String, value: String)] = [
+            ("desktop.token", response.token),
+            ("desktop.host", host),
+            ("desktop.port", String(link.port)),
+            ("desktop.deviceId", response.deviceId),
+            ("desktop.deviceName", confirmed.deviceName)
+        ]
+        var written: [String] = []
+        for credential in credentials {
+            guard SyncKeychain.set(credential.value, forKey: credential.key) else {
+                for key in credentials.map(\.key) { SyncKeychain.set(nil, forKey: key) }
+                throw SyncError.keychainWriteFailed
+            }
+            written.append(credential.key)
+        }
+        // 回读校验：写进去的必须读得回来（Keychain 可靠性验收口径）。
+        for credential in credentials where SyncKeychain.string(forKey: credential.key) != credential.value {
+            for key in written { SyncKeychain.set(nil, forKey: key) }
+            throw SyncError.keychainWriteFailed
+        }
         return response
     }
 
@@ -85,6 +173,7 @@ final class SyncManager: ObservableObject {
                 return
             }
             phase = .preparing
+            lastMediaStats = nil
             let client = SyncNetworkClient(host: device.host, port: device.port, token: device.token)
             _ = try await client.manifest()
 
@@ -123,6 +212,9 @@ final class SyncManager: ObservableObject {
             // 媒体：清单比对 → 只传缺失的 → 流式分块 + 增量哈希 + 整文件校验。
             // 本地引用读不到 → 显式计入 failed（§4.3），不静默跳过。
             let manifestResult = builder.mediaManifest()
+            let imageCount = manifestResult.entries.filter { $0.mediaType != "video" }.count
+            let videoCount = manifestResult.entries.filter { $0.mediaType == "video" }.count
+            var mediaFailed = manifestResult.errors.count
             failed += manifestResult.errors.count
             let missing = manifestResult.entries.isEmpty
                 ? []
@@ -130,9 +222,11 @@ final class SyncManager: ObservableObject {
             for (index, entry) in missing.enumerated() {
                 phase = .sendingMedia(index + 1, missing.count)
                 if try await uploadMedia(entry, builder: builder, client: client) == false {
+                    mediaFailed += 1
                     failed += 1
                 }
             }
+            lastMediaStats = MediaStats(images: imageCount, videos: videoCount, failed: mediaFailed)
 
             lastSyncAt = Date()
             defaults.set(lastSyncAt, forKey: Self.lastSyncKey)
@@ -223,10 +317,17 @@ final class SyncManager: ObservableObject {
 
 enum SyncError: LocalizedError {
     case pairingCodeExpired
+    case desktopUnreachable([String])
+    case protocolMismatch
+    case keychainWriteFailed
 
     var errorDescription: String? {
         switch self {
         case .pairingCodeExpired: return "配对码已过期，请在桌面端重新生成"
+        case .desktopUnreachable(let tried):
+            return "无法连接桌面端（已尝试 \(tried.joined(separator: "、"))）。请确认 iPhone 与 Mac 在同一 Wi-Fi，桌面端同步已启用，且 Mac 防火墙允许 BrewPhase。"
+        case .protocolMismatch: return "桌面端版本不兼容，请把两端都更新到最新版"
+        case .keychainWriteFailed: return "配对凭据保存失败，请重试；若反复出现请检查系统设置"
         }
     }
 }
