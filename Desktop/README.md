@@ -3,6 +3,9 @@
 BrewPhase iOS 的桌面协同版：Coffee / Records / Canvas 三个同级模块，本地优先，
 数据存在本机 SQLite 与 media 目录，不需要账号、不上传。
 
+> 本目录是 BrewPhase monorepo 的 `Desktop/` 子目录，与 iOS 端同仓库演进；
+> iOS 的数据模型与业务规则是这里的数据契约来源（见 `docs/DATA_MODEL_MAPPING.md`）。
+
 当前完成 **Phase 0 + Phase 1**（本地 MVP）。局域网同步只有协议结构，没有服务端。
 
 ## 技术栈
