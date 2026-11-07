@@ -11,13 +11,13 @@ import { BrowserWindow, shell } from 'electron'
  */
 export function createMainWindow(params: { devServerUrl: string | null }): BrowserWindow {
   const window = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 1080,
-    minHeight: 680,
+    width: 1200,
+    height: 760,
+    minWidth: 980,
+    minHeight: 640,
     show: false,
     title: 'BrewPhase',
-    backgroundColor: '#f6f1e7',
+    backgroundColor: '#faf9f6',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
