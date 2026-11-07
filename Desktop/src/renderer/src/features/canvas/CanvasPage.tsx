@@ -88,24 +88,32 @@ export function CanvasPage() {
   const addedRecordIds = useMemo(() => new Set(nodes.map((node) => node.recordID)), [nodes])
 
   return (
-    <div className="columns" data-inspector="on">
-      <section className="column">
-        <h1 className="page-title">画布</h1>
-        <p className="page-sub">{canvases.length} 块 · 记录只被引用，不被复制</p>
+    <div className="page">
+      <header className="page-header">
+        <div className="page-header__titles">
+          <h1 className="page-title">画布</h1>
+          <p className="page-sub">{canvases.length} 块 · 记录只被引用，不被复制</p>
+        </div>
+        <div className="page-header__actions">
+          <button
+            className="button button--primary"
+            onClick={async () => {
+              const name = window.prompt('这块画布叫什么？', '新的画布')
+              if (!name) return
+              const created = await api.canvas.create(name)
+              await loadCanvases()
+              setActiveId(created.id)
+            }}
+          >
+            新建画布
+          </button>
+        </div>
+      </header>
 
-        <button
-          className="button"
-          style={{ marginBottom: 12 }}
-          onClick={async () => {
-            const name = window.prompt('这块画布叫什么？', '新的画布')
-            if (!name) return
-            const created = await api.canvas.create(name)
-            await loadCanvases()
-            setActiveId(created.id)
-          }}
-        >
-          新建画布
-        </button>
+      <div className="page-body">
+      <div className="columns" data-inspector="on">
+      <section className="column">
+        <span className="overline">我的画布</span>
 
         {error && <div className="error">{error}</div>}
 
@@ -292,6 +300,8 @@ export function CanvasPage() {
           <div className="empty">建一块画布开始。</div>
         )}
       </section>
+      </div>
+      </div>
     </div>
   )
 }

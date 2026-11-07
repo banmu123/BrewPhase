@@ -73,19 +73,26 @@ export function CoffeePage() {
   }
 
   return (
-    <div className="columns">
-      <section className="column">
-        <h1 className="page-title">咖啡</h1>
-        <p className="page-sub">{beans.length} 包豆 · 本地库存</p>
-
-        <div className="row row--between" style={{ marginBottom: 10 }}>
-          <span className="overline" style={{ margin: 0 }}>
-            豆仓
-          </span>
-          <button className="button" onClick={() => setCreatingBean((value) => !value)}>
-            新增豆子
+    <div className="page">
+      <header className="page-header">
+        <div className="page-header__titles">
+          <h1 className="page-title">咖啡</h1>
+          <p className="page-sub">{beans.length} 包豆 · 本地库存</p>
+        </div>
+        <div className="page-header__actions">
+          <button
+            className={creatingBean ? 'button' : 'button button--primary'}
+            onClick={() => setCreatingBean((value) => !value)}
+          >
+            {creatingBean ? '收起表单' : '新增豆子'}
           </button>
         </div>
+      </header>
+
+      <div className="page-body">
+      <div className="columns">
+      <section className="column">
+        <span className="overline">豆仓</span>
 
         {error && <div className="error">{error}</div>}
 
@@ -295,6 +302,8 @@ export function CoffeePage() {
           <div className="empty">选中一包豆子后，这里显示档案与操作。</div>
         )}
       </section>
+      </div>
+      </div>
     </div>
   )
 }

@@ -64,3 +64,13 @@ export function SlidersIcon({ size = 20 }: IconProps) {
     </svg>
   )
 }
+
+/** 搜索：放大镜 */
+export function SearchIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <circle cx="9" cy="9" r="5.4" />
+      <path d="m13.2 13.2 3.4 3.4" />
+    </svg>
+  )
+}

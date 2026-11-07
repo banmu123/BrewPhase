@@ -2,14 +2,16 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { RecordCarrier, RecordDraft, RecordItem, RecordTag } from '@shared/contracts'
 import { carrierLabel } from '@shared/contracts'
 import { api, formatDate } from '../../shared/api'
+import { SearchIcon } from '../../shared/icons'
 
 const CARRIERS: (RecordCarrier | null)[] = [null, 'link', 'image', 'video', 'text']
 
 /**
  * Records：四种载体、标签多对多、搜索与载体筛选。
  *
- * 图片走 `bpmedia://` 协议显示，renderer 从头到尾拿不到真实路径；缩略图用主进程
- * 生成的那一份，不是把原图塞进 <img>。
+ * 视觉上是一间「个人资料图书馆」：内容以收藏网格呈现，图片/封面是主角，
+ * 文字以正文摘录为主角；选中后的详情与编辑收在右侧上下文栏。图片走
+ * `bpmedia://` 协议显示，renderer 从头到尾拿不到真实路径。
  */
 export function RecordsPage() {
   const [items, setItems] = useState<RecordItem[]>([])
@@ -45,41 +47,21 @@ export function RecordsPage() {
   const tagName = useMemo(() => new Map(tags.map((tag) => [tag.id, tag.name])), [tags])
 
   return (
-    <div className="columns">
-      <section className="column">
-        <h1 className="page-title">记录</h1>
-        <p className="page-sub">{items.length} 条 · 本地资料库</p>
-
-        <input
-          placeholder="搜索标题、备注、网址…"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          style={{ marginBottom: 10 }}
-        />
-
-        <div className="chips" style={{ marginBottom: 8 }}>
-          {CARRIERS.map((item) => (
-            <button
-              key={item ?? 'all'}
-              className="chip"
-              data-active={carrier === item}
-              onClick={() => setCarrier(item)}
-            >
-              {item ? carrierLabel[item] : '全部'}
-            </button>
-          ))}
+    <div className="page">
+      <header className="page-header">
+        <div className="page-header__titles">
+          <h1 className="page-title">记录</h1>
+          <p className="page-sub">{items.length} 条 · 本地资料库</p>
         </div>
-
-        <select value={tagId ?? ''} onChange={(event) => setTagId(event.target.value || null)} style={{ marginBottom: 10 }}>
-          <option value="">所有标签</option>
-          {tags.map((tag) => (
-            <option key={tag.id} value={tag.id}>
-              {tag.name}
-            </option>
-          ))}
-        </select>
-
-        <div className="row" style={{ marginBottom: 12 }}>
+        <div className="page-header__actions">
+          <div className="search">
+            <SearchIcon size={15} />
+            <input
+              placeholder="搜索标题、备注、网址…"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </div>
           <button className="button" onClick={() => setCreating('text')}>
             新文字
           </button>
@@ -115,112 +97,175 @@ export function RecordsPage() {
             导入图片
           </button>
         </div>
+      </header>
 
-        {error && <div className="error">{error}</div>}
-
-        {creating && (
-          <NewRecordForm
-            carrier={creating}
-            tags={tags}
-            onCancel={() => setCreating(null)}
-            onSubmit={async (draft) => {
-              const created = await api.records.create(draft)
-              setCreating(null)
-              await load()
-              setSelectedId(created.id)
-            }}
-          />
-        )}
-
-        <div className="list">
-          {items.map((item) => (
-            <button
-              key={item.id}
-              className="record-card"
-              data-active={item.id === selected?.id}
-              onClick={() => setSelectedId(item.id)}
-            >
-              <Thumb item={item} />
-              <span className="record-card__body">
-                <span className="record-card__title">{item.title || carrierLabel[item.carrier]}</span>
-                <span className="record-card__meta">
-                  <span>{carrierLabel[item.carrier]}</span>
-                  <span>{formatDate(item.createdAt)}</span>
-                  {item.tagIds.slice(0, 2).map((id) => (
-                    <span key={id} className="tag">
-                      {tagName.get(id) ?? '标签'}
-                    </span>
-                  ))}
-                </span>
-              </span>
-            </button>
-          ))}
-          {items.length === 0 && <div className="empty">还没有记录。先从一条链接或一张图开始。</div>}
-        </div>
-      </section>
-
-      <section className="column column--main">
-        {selected ? (
-          <div className="detail-body">
-            <span className="overline">{carrierLabel[selected.carrier]}</span>
-            <h2 className="detail-title">{selected.title || '未命名记录'}</h2>
-            <div className="row" style={{ gap: 10, fontSize: 11, color: 'var(--ink-faint)', marginBottom: 16 }}>
-              <span>{formatDate(selected.createdAt)}</span>
-              {selected.sourceName && <span>{selected.sourceName}</span>}
-              {selected.authorName && <span>{selected.authorName}</span>}
+      <div className="page-body">
+        <div className="record-layout">
+          <section className="record-grid-wrap">
+            <div className="record-toolbar">
+              <div className="chips">
+                {CARRIERS.map((item) => (
+                  <button
+                    key={item ?? 'all'}
+                    className="chip"
+                    data-active={carrier === item}
+                    onClick={() => setCarrier(item)}
+                  >
+                    {item ? carrierLabel[item] : '全部'}
+                  </button>
+                ))}
+              </div>
+              <select
+                value={tagId ?? ''}
+                onChange={(event) => setTagId(event.target.value || null)}
+                style={{ width: 160 }}
+              >
+                <option value="">所有标签</option>
+                {tags.map((tag) => (
+                  <option key={tag.id} value={tag.id}>
+                    {tag.name}
+                  </option>
+                ))}
+              </select>
+              {error && <span className="error">{error}</span>}
             </div>
 
-            {selected.carrier === 'image' && selected.mediaPath && (
-              <img
-                className="detail-image"
-                src={api.records.mediaUrl(selected.mediaPath)}
-                alt={selected.title}
-                style={{ marginBottom: 16 }}
+            {creating && (
+              <NewRecordForm
+                carrier={creating}
+                tags={tags}
+                onCancel={() => setCreating(null)}
+                onSubmit={async (draft) => {
+                  const created = await api.records.create(draft)
+                  setCreating(null)
+                  await load()
+                  setSelectedId(created.id)
+                }}
               />
             )}
 
-            {selected.carrier === 'link' && selected.urlString && (
-              <div className="note" style={{ marginBottom: 16 }}>
-                <a href={selected.urlString} target="_blank" rel="noreferrer">
-                  {selected.urlString}
-                </a>
-                <div style={{ marginTop: 6 }}>链接元数据（标题/封面）在桌面端暂不抓取，同步后由 iOS 补齐。</div>
+            {items.length === 0 ? (
+              <div className="empty">还没有记录。先从一条链接、一张图或一段文字开始。</div>
+            ) : (
+              <div className="record-grid">
+                {items.map((item) => (
+                  <RecordTile
+                    key={item.id}
+                    item={item}
+                    active={item.id === selected?.id}
+                    tagNames={item.tagIds
+                      .slice(0, 2)
+                      .map((id) => tagName.get(id))
+                      .filter((name): name is string => Boolean(name))}
+                    onClick={() => setSelectedId(item.id)}
+                  />
+                ))}
               </div>
             )}
+          </section>
 
-            {selected.summary && <p className="note" style={{ marginBottom: 14 }}>{selected.summary}</p>}
-            {selected.note && <div className="detail-note">{selected.note}</div>}
-          </div>
-        ) : (
-          <div className="empty">左边还没有记录。</div>
-        )}
-      </section>
+          <aside className="record-side">
+            {selected ? (
+              <>
+                <div className="record-side__detail">
+                  <span className="overline">{carrierLabel[selected.carrier]}</span>
+                  <h2 className="detail-title">{selected.title || '未命名记录'}</h2>
+                  <div className="detail-meta">
+                    <span>{formatDate(selected.createdAt)}</span>
+                    {selected.sourceName && <span>{selected.sourceName}</span>}
+                    {selected.authorName && <span>{selected.authorName}</span>}
+                  </div>
 
-      <section className="column column--inspector">
-        {selected ? (
-          <RecordInspector
-            item={selected}
-            tags={tags}
-            onChanged={load}
-            onDeleted={() => {
-              setSelectedId(null)
-              void load()
-            }}
-          />
-        ) : (
-          <div className="empty">选中一条记录后，这里可以编辑标题、备注与标签。</div>
-        )}
-      </section>
+                  {selected.carrier === 'image' && selected.mediaPath && (
+                    <img
+                      className="detail-image"
+                      src={api.records.mediaUrl(selected.mediaPath)}
+                      alt={selected.title}
+                    />
+                  )}
+
+                  {selected.carrier === 'link' && selected.urlString && (
+                    <p className="note" style={{ marginBottom: 14 }}>
+                      <a className="detail-link" href={selected.urlString} target="_blank" rel="noreferrer">
+                        {selected.urlString}
+                      </a>
+                      <span style={{ display: 'block', marginTop: 6 }}>
+                        链接元数据（标题/封面）在桌面端暂不抓取，同步后由 iOS 补齐。
+                      </span>
+                    </p>
+                  )}
+
+                  {selected.summary && <p className="note" style={{ marginBottom: 14 }}>{selected.summary}</p>}
+                  {selected.note && <div className="detail-note">{selected.note}</div>}
+                </div>
+
+                <div className="hairline" />
+                <RecordInspector
+                  item={selected}
+                  tags={tags}
+                  onChanged={load}
+                  onDeleted={() => {
+                    setSelectedId(null)
+                    void load()
+                  }}
+                />
+              </>
+            ) : (
+              <div className="empty">选中一条记录，这里会显示详情与编辑。</div>
+            )}
+          </aside>
+        </div>
+      </div>
     </div>
   )
 }
 
-function Thumb({ item }: { item: RecordItem }) {
-  if ((item.carrier === 'image' || item.carrier === 'link' || item.carrier === 'video') && item.previewPath) {
-    return <img className="thumb" src={api.records.mediaUrl(item.previewPath)} alt="" />
-  }
-  const glyph = item.carrier === 'image' ? '▣' : item.carrier === 'video' ? '▶' : item.carrier === 'link' ? '↗' : '¶'
-  return <span className="thumb">{glyph}</span>
+/**
+ * 收藏网格里的一块内容：图片/链接/视频以封面为主角，文字以正文摘录为主角。
+ * 每条记录都应该像「值得保存的一条内容」，而不是表格里的一行。
+ */
+function RecordTile(props: {
+  item: RecordItem
+  active: boolean
+  tagNames: string[]
+  onClick: () => void
+}) {
+  const { item } = props
+  const mediaFile = item.previewPath ?? item.mediaPath
+  const showImage =
+    (item.carrier === 'image' || item.carrier === 'link' || item.carrier === 'video') &&
+    Boolean(mediaFile)
+
+  return (
+    <button
+      className="record-tile"
+      data-active={props.active}
+      onClick={props.onClick}
+      aria-label={item.title || carrierLabel[item.carrier]}
+    >
+      <span className={`record-tile__media${item.carrier === 'text' ? ' record-tile__media--text' : ''}`}>
+        {showImage ? (
+          <img src={api.records.mediaUrl(mediaFile ?? '')} alt="" loading="lazy" />
+        ) : item.carrier === 'text' ? (
+          <span className="record-tile__excerpt">{item.note || item.title || '一段文字'}</span>
+        ) : (
+          <span className="record-tile__media-fallback">{carrierLabel[item.carrier]}</span>
+        )}
+      </span>
+      <span className="record-tile__body">
+        <span className="record-tile__title">{item.title || carrierLabel[item.carrier]}</span>
+        <span className="record-tile__meta">
+          <span>{carrierLabel[item.carrier]}</span>
+          <span>{formatDate(item.createdAt)}</span>
+          {props.tagNames.map((name) => (
+            <span key={name} className="tag">
+              {name}
+            </span>
+          ))}
+        </span>
+      </span>
+    </button>
+  )
 }
 
 function NewRecordForm(props: {
@@ -239,7 +284,7 @@ function NewRecordForm(props: {
   return (
     <form
       className="stack panel"
-      style={{ marginBottom: 14 }}
+      style={{ marginBottom: 16 }}
       onSubmit={async (event) => {
         event.preventDefault()
         setBusy(true)

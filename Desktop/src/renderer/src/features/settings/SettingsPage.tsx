@@ -9,11 +9,17 @@ import { SYNC_PROTOCOL_VERSION } from '@shared/contracts'
  */
 export function SettingsPage({ info }: { info: AppInfo | null }) {
   return (
-    <div className="columns" data-inspector="off">
-      <section className="column">
-        <h1 className="page-title">更多</h1>
-        <p className="page-sub">本地优先 · 不传云端</p>
+    <div className="page">
+      <header className="page-header">
+        <div className="page-header__titles">
+          <h1 className="page-title">更多</h1>
+          <p className="page-sub">本地优先 · 不传云端</p>
+        </div>
+      </header>
 
+      <div className="page-body">
+      <div className="columns" data-inspector="off">
+      <section className="column">
         <div className="section">
           <span className="overline">应用</span>
           <div className="note">
@@ -60,6 +66,8 @@ export function SettingsPage({ info }: { info: AppInfo | null }) {
           </ul>
         </div>
       </section>
+      </div>
+      </div>
     </div>
   )
 }

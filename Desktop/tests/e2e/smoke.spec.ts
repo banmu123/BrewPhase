@@ -25,7 +25,7 @@ test('应用启动、连上本地库、三个模块可切换', async () => {
   })
   const page = await app.firstWindow()
 
-  await expect(page.locator('.rail__brand')).toHaveText('BREWPHASE')
+  await expect(page.locator('.sidebar__brand')).toHaveText('BREWPHASE')
   await expect(page.getByRole('button', { name: '咖啡' })).toBeVisible()
   await expect(page.getByRole('button', { name: '记录' })).toBeVisible()
   await expect(page.getByRole('button', { name: '画布' })).toBeVisible()
