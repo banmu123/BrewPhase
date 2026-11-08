@@ -11,7 +11,7 @@ import type {
   RecordItem
 } from '@shared/contracts'
 import { screenToWorld, zoomAt, CANVAS_LIMITS } from '@shared/contracts'
-import { api } from '../../shared/api'
+import { api, formatDate } from '../../shared/api'
 import { refreshThemeColors, themeColors } from '../../shared/tokens'
 
 /**
@@ -43,8 +43,12 @@ export function CanvasPage() {
   const [size, setSize] = useState({ width: 800, height: 600 })
   const [tool, setTool] = useState<StudioTool>('select')
   const [penColor, setPenColor] = useState(PEN_COLORS[0])
-  const [panelOpen, setPanelOpen] = useState(false)
+  /** 右侧浮层同一时间只有一个：'add' 选记录，'inspector' 看选中内容。 */
+  const [sidePanel, setSidePanel] = useState<'add' | 'inspector' | null>(null)
+  const [switcherOpen, setSwitcherOpen] = useState(false)
+  const [dialog, setDialog] = useState<{ kind: 'create' | 'rename' | 'delete'; canvasId?: string; value: string } | null>(null)
   const [addSearch, setAddSearch] = useState('')
+  const [carrierFilter, setCarrierFilter] = useState<'all' | 'image' | 'video' | 'link' | 'text'>('all')
   const [focusMode, setFocusMode] = useState(false)
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
@@ -60,10 +64,15 @@ export function CanvasPage() {
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? null
   const selectedNote = notes.find((note) => note.id === selectedNoteId) ?? null
   const addedRecordIds = useMemo(() => new Set(nodes.map((node) => node.recordID)), [nodes])
-  const filteredRecords = useMemo(
-    () => records.filter((record) => (record.title || '').toLowerCase().includes(addSearch.trim().toLowerCase())),
-    [records, addSearch]
-  )
+  const filteredRecords = useMemo(() => {
+    const keyword = addSearch.trim().toLowerCase()
+    return records.filter((record) => {
+      if (carrierFilter !== 'all' && record.carrier !== carrierFilter) return false
+      if (!keyword) return true
+      return [record.title, record.summary, record.sourceName, record.authorName, record.carrier]
+        .some((field) => (field ?? '').toLowerCase().includes(keyword))
+    })
+  }, [records, addSearch, carrierFilter])
 
   const withSave = useCallback(async <T,>(task: () => Promise<T>): Promise<T> => {
     setSaveState('saving')
@@ -209,7 +218,9 @@ export function CanvasPage() {
         case '1': setViewport((current) => zoomAt(current, 1, { x: size.width / 2, y: size.height / 2 })); break
         case 'escape':
           if (editingNoteId) setEditingNoteId(null)
-          else if (panelOpen) setPanelOpen(false)
+          else if (dialog) setDialog(null)
+          else if (switcherOpen) setSwitcherOpen(false)
+          else if (sidePanel) setSidePanel(null)
           else { setSelectedNodeId(null); setSelectedNoteId(null); setTool('select') }
           break
       }
@@ -224,7 +235,7 @@ export function CanvasPage() {
       window.removeEventListener('keyup', onKeyUp)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fitAll, size, panelOpen, editingNoteId])
+  }, [fitAll, size, sidePanel, editingNoteId, dialog, switcherOpen, active?.id])
 
   // MARK: - 写操作（带保存状态）
 
@@ -339,52 +350,74 @@ export function CanvasPage() {
     <div className="page">
       <div className="canvas-shell">
         <div className="canvas-topbar">
-          {canvases.length > 0 && (
-            <select
-              value={active?.id ?? ''}
-              aria-label="切换画布"
-              onChange={(event) => setActiveId(event.target.value || null)}
-            >
-              {canvases.map((canvas) => (
-                <option key={canvas.id} value={canvas.id}>{canvas.name || '未命名画布'}</option>
-              ))}
-            </select>
+          {active && (
+            <div className="switcher-wrap">
+              <button
+                className="switcher-trigger"
+                data-open={switcherOpen}
+                onClick={() => setSwitcherOpen((value) => !value)}
+                aria-label="切换画布"
+              >
+                <span className="switcher-trigger__name">{active.name || '未命名画布'}</span>
+                <span className="switcher-trigger__arrow">▾</span>
+              </button>
+              {switcherOpen && (
+                <>
+                  <div className="pop-backdrop" onClick={() => setSwitcherOpen(false)} />
+                  <div className="switcher-pop" role="menu">
+                    <div className="row row--between" style={{ padding: '2px 4px 10px' }}>
+                      <span className="overline" style={{ margin: 0 }}>My Canvases</span>
+                      <button
+                        className="button button--ghost"
+                        onClick={() => setDialog({ kind: 'create', value: '新的画布' })}
+                      >
+                        新建
+                      </button>
+                    </div>
+                    <div className="switcher-list">
+                      {canvases.map((canvas) => (
+                        <div key={canvas.id} className="switcher-item" data-active={canvas.id === active.id}>
+                          <button
+                            className="switcher-item__main"
+                            onClick={() => {
+                              setActiveId(canvas.id)
+                              setSwitcherOpen(false)
+                            }}
+                          >
+                            <span className="switcher-item__name">{canvas.name || '未命名画布'}</span>
+                            <span className="switcher-item__meta">{formatDate(canvas.updatedAt)} 更新</span>
+                          </button>
+                          <button
+                            className="switcher-item__more"
+                            title="重命名"
+                            onClick={() => setDialog({ kind: 'rename', canvasId: canvas.id, value: canvas.name || '' })}
+                          >
+                            ✎
+                          </button>
+                          <button
+                            className="switcher-item__more"
+                            title="删除画布"
+                            onClick={() => setDialog({ kind: 'delete', canvasId: canvas.id, value: '' })}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                      {canvases.length === 0 && <div className="empty">还没有画布。</div>}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
           )}
-          <span className="page-sub">{canvases.length} 块</span>
           <SaveBadge state={saveState} />
           <span className="spacer" />
-          <button
-            className="button button--ghost"
-            title="重命名这块画布"
-            onClick={async () => {
-              if (!active) return
-              const name = window.prompt('画布名称', active.name || '未命名画布')
-              if (!name?.trim()) return
-              const updated = await withSave(() => api.canvas.rename(active.id, name.trim()))
-              setCanvases((current) => current.map((canvas) => (canvas.id === updated.id ? updated : canvas)))
-            }}
-          >
-            重命名
-          </button>
-          <button
-            className="button button--ghost"
-            title="新建画布"
-            onClick={async () => {
-              const name = window.prompt('这块画布叫什么？', '新的画布')
-              if (!name) return
-              const created = await api.canvas.create(name)
-              await loadCanvases()
-              setActiveId(created.id)
-            }}
-          >
-            新建
-          </button>
           <button className="button button--ghost" title="沉浸模式" onClick={() => setFocusMode(true)}>
             Focus
           </button>
         </div>
 
-        <div className="canvas-wrap" ref={containerRef}>
+        <div className={`canvas-wrap canvas-cursor--${tool}`} ref={containerRef}>
           {active ? (
             <Stage
               width={size.width}
@@ -415,8 +448,10 @@ export function CanvasPage() {
                 const pointer = stage.getPointerPosition()
                 if (!pointer) return
                 const onBlank = event.target === stage
-                const wantPan = spaceRef.current || tool === 'hand' || event.evt.button === 1 || (onBlank && tool === 'select')
-                if (wantPan) {
+                const wantPan =
+                  spaceRef.current || tool === 'hand' || event.evt.button === 1 || (onBlank && tool === 'select')
+                const handEverywhere = spaceRef.current || tool === 'hand' || event.evt.button === 1
+                if (wantPan || handEverywhere) {
                   if (onBlank) {
                     setSelectedNodeId(null)
                     setSelectedNoteId(null)
@@ -511,10 +546,10 @@ export function CanvasPage() {
                     key={node.id}
                     node={node}
                     selected={node.id === selectedNodeId}
-                    draggable={tool === 'select' || tool === 'hand' || tool === 'note'}
+                    draggable={tool === 'select'}
                     onSelect={() => {
                       setSelectedNodeId(node.id)
-                      setPanelOpen(true)
+                      setSidePanel('inspector')
                     }}
                     onMoved={async (positionX, positionY) => {
                       setNodes((current) =>
@@ -540,7 +575,7 @@ export function CanvasPage() {
                     draggable={tool === 'select'}
                     onSelect={() => {
                       setSelectedNoteId(note.id)
-                      setPanelOpen(true)
+                      setSidePanel('inspector')
                     }}
                     onDoubleClick={() => {
                       setSelectedNoteId(note.id)
@@ -562,7 +597,7 @@ export function CanvasPage() {
 
           {active && nodes.length === 0 && notes.length === 0 && strokes.length === 0 && (
             <CanvasEmptyState
-              onAddRecord={() => setPanelOpen(true)}
+              onAddRecord={() => setSidePanel('add')}
               onAddImage={() => void addImage()}
               onAddNote={() => void createNote()}
               onStartDraw={() => setTool('pen')}
@@ -574,12 +609,12 @@ export function CanvasPage() {
           <StudioToolbar
             tool={tool}
             penColor={penColor}
-            addActive={panelOpen}
+            addActive={sidePanel === 'add'}
             onTool={setTool}
             onPenColor={setPenColor}
             onNote={() => void createNote()}
             onAddImage={() => void addImage()}
-            onAddRecord={() => setPanelOpen((value) => !value)}
+            onAddRecord={() => setSidePanel((value) => (value === 'add' ? null : 'add'))}
           />
 
           <div className="canvas-hud">
@@ -613,11 +648,11 @@ export function CanvasPage() {
             </button>
           </div>
 
-          {panelOpen && active && (
+          {sidePanel === 'add' && active && (
             <aside className="canvas-panel" role="dialog" aria-label="画布操作">
               <div className="row row--between" style={{ marginBottom: 12 }}>
                 <span className="overline" style={{ margin: 0 }}>添加到画布</span>
-                <button className="button button--ghost" aria-label="关闭面板" onClick={() => setPanelOpen(false)}>
+                <button className="button button--ghost" aria-label="关闭面板" onClick={() => setSidePanel(null)}>
                   ✕
                 </button>
               </div>
@@ -701,7 +736,7 @@ export function CanvasPage() {
                   if (!window.confirm('删除这块画布？画布上的节点、便签和笔迹会一起消失，记录不受影响。')) return
                   await api.canvas.remove(active.id)
                   setActiveId(null)
-                  setPanelOpen(false)
+                  setSidePanel(null)
                   await loadCanvases()
                 }}
               >
@@ -1005,6 +1040,9 @@ function CanvasNodeShape(props: {
         void props.onMoved(event.target.x(), event.target.y())
       }}
     >
+      {/* 交互层：透明命中区域覆盖整卡。视觉元素全部 listening={false}，
+          若没有这一层，带封面的节点在图片加载后就再也点不到、拖不动。 */}
+      <Rect width={node.width} height={node.height} fill="rgba(255,255,255,0.001)" />
       {image && node.recordCarrier === 'image' && (
         <Group clipFunc={(ctx) => roundedRectPath(ctx, 0, 0, node.width, node.height, radius)}>
           <KonvaImage image={image} width={node.width} height={node.height} listening={false} />
