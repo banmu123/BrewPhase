@@ -1161,3 +1161,175 @@ describe('同步调度回调（Phase 3.2.1：生产 SyncServer 接线）', () =>
     ).toEqual(['r1'])
   })
 })
+
+/**
+ * `sync:changed` 的触发点（Records 页面自动刷新的唯一来源）。
+ *
+ * 页面侧只认这一条广播，所以「什么时候广播」必须在服务端锁死：
+ * - apply 事务提交后 → 新记录/修改/删除都要让页面重查；
+ * - 每个媒体文件 finalize 落盘后 → 图片才有东西可显示；
+ * - 单个 chunk 不广播 → 否则一张图要触发几十次查询；
+ * - 鉴权失败不广播 → 401 不该引起任何界面动作。
+ */
+describe('同步事件广播（sync:changed 的触发点）', () => {
+  const recordId = 'abababab-1111-4111-8111-000000000001'
+  const mediaName = 'abababab-3333-4333-8333-000000000003.jpg'
+
+  let tempDir: string
+  let db: Database.Database
+  let server: SyncServer
+  let baseUrl: string
+  let token = ''
+  let changes = 0
+
+  const recordPayload = () => ({
+    carrier: 'image', title: '手机拍的图', note: '', urlString: '', canonicalURL: null,
+    provider: 'generic', contentKind: '', platformContentID: null, linkPage: 1,
+    sourceName: '', authorName: '', summary: '', thumbnailURLString: null,
+    metadataStatus: 'idle', repositoryStars: null, repositoryForks: null,
+    repositoryIssues: null, repositoryLanguage: null, repositoryLicense: null,
+    mediaPath: mediaName, previewPath: null, isSample: false
+  })
+
+  function recordBatch(): SyncBatch {
+    const payload = recordPayload()
+    return {
+      operations: [
+        {
+          entityType: 'record',
+          upserts: [{ id: recordId, fingerprint: fingerprint(canonical(Object.values(payload))), payload }],
+          deletes: []
+        }
+      ]
+    }
+  }
+
+  function signed(body: Buffer): Record<string, string> {
+    const timestamp = String(Date.now())
+    const nonce = crypto.randomUUID()
+    return {
+      authorization: `Bearer ${token}`,
+      'x-bp-timestamp': timestamp,
+      'x-bp-nonce': nonce,
+      'x-bp-signature': expectedSignature(token, timestamp, nonce, sha256(body)),
+      'content-type': 'application/json'
+    }
+  }
+
+  async function applyRecord(): Promise<ApplyResult> {
+    const raw = Buffer.from(JSON.stringify(recordBatch()))
+    const response = await fetch(`${baseUrl}/api/sync/apply`, {
+      method: 'POST',
+      headers: signed(raw),
+      body: raw
+    })
+    expect(response.status).toBe(200)
+    return (await response.json()) as ApplyResult
+  }
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'bp-broadcast-'))
+    process.env.BREWPHASE_USER_DATA_DIR = tempDir
+    db = openDb()
+    changes = 0
+    server = new SyncServer(db, 'bp_desk_broadcast', 'BrewPhase · broadcast', () => {
+      changes += 1
+    })
+    const port = await new Promise<number>((resolve, reject) => {
+      const probe = createNetServer()
+      probe.listen(0, '127.0.0.1', () => {
+        const address = probe.address()
+        const actual = typeof address === 'object' && address ? address.port : 0
+        probe.close(() => (actual > 0 ? resolve(actual) : reject(new Error('no free port'))))
+      })
+      probe.on('error', reject)
+    })
+    const state = await server.start(['127.0.0.1'], port)
+    baseUrl = `http://127.0.0.1:${state.port ?? port}`
+
+    const { code } = server.pairingPayload()
+    const pair = await fetch(`${baseUrl}/api/pair`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pairingCode: code, deviceName: 'iPhone' })
+    })
+    expect(pair.status).toBe(200)
+    ;({ token } = (await pair.json()) as { token: string })
+    // 启动与配对本身也会广播（状态变化），从这里开始只数数据相关的事件
+    changes = 0
+  })
+
+  afterEach(async () => {
+    server.stop()
+    db.close()
+    await rm(tempDir, { recursive: true, force: true })
+    delete process.env.BREWPHASE_USER_DATA_DIR
+  })
+
+  it('apply 提交后广播一次；媒体 finalize 落盘后再广播一次', async () => {
+    await applyRecord()
+    expect(changes).toBe(1)
+    // 广播时数据已经可见（事务在 onChanged 之前结束）
+    expect(db.prepare('select count(*) as n from records').get()).toEqual({ n: 1 })
+
+    const content = Buffer.alloc(1024, 7)
+    const mediaSha = createHash('sha256').update(content).digest('hex')
+    const chunk = await fetch(`${baseUrl}/api/sync/media/chunk?name=${mediaName}&offset=0`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream', ...signed(content) },
+      body: content
+    })
+    expect(chunk.status).toBe(200)
+    // 单个 chunk 不广播：一张图几十块，每块都刷新会把页面刷成幻灯片
+    expect(changes).toBe(1)
+
+    const finalizeBody = Buffer.from(JSON.stringify({ name: mediaName, sha256: mediaSha, byteSize: content.length }))
+    const finalize = await fetch(`${baseUrl}/api/sync/media/finalize`, {
+      method: 'POST',
+      headers: signed(finalizeBody),
+      body: finalizeBody
+    })
+    expect(finalize.status).toBe(200)
+    expect(changes).toBe(2)
+    await expect(fs.stat(join(tempDir, 'media', mediaName))).resolves.toBeTruthy()
+  })
+
+  it('重复同步（skipped）仍广播：页面重查一次是幂等的，不会造出重复记录', async () => {
+    await applyRecord()
+    const again = await applyRecord()
+    expect(again.skippedCount).toBe(1)
+    expect(changes).toBe(2)
+    expect(db.prepare('select count(*) as n from records').get()).toEqual({ n: 1 })
+  })
+
+  it('鉴权失败不广播（401 不该引起任何界面动作）', async () => {
+    const raw = Buffer.from(JSON.stringify(recordBatch()))
+    const response = await fetch(`${baseUrl}/api/sync/apply`, {
+      method: 'POST',
+      // 用未配对的 token 签名：authorize 直接 401，进不到 applyBatch
+      headers: { ...signed(raw), authorization: 'Bearer not-paired' },
+      body: raw
+    })
+    expect(response.status).toBe(401)
+    expect(changes).toBe(0)
+  })
+
+  it('媒体 finalize 校验失败不广播（残缺文件不该让页面以为可以显示）', async () => {
+    const content = Buffer.alloc(512, 3)
+    await fetch(`${baseUrl}/api/sync/media/chunk?name=${mediaName}&offset=0`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream', ...signed(content) },
+      body: content
+    })
+    const badBody = Buffer.from(
+      JSON.stringify({ name: mediaName, sha256: '0'.repeat(64), byteSize: content.length })
+    )
+    const response = await fetch(`${baseUrl}/api/sync/media/finalize`, {
+      method: 'POST',
+      headers: signed(badBody),
+      body: badBody
+    })
+    expect(response.status).toBe(400)
+    expect(changes).toBe(0)
+  })
+})

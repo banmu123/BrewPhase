@@ -145,3 +145,35 @@
 
 全部 **epoch 毫秒**。iOS `Date` 转换带防御：秒值（< 1e11）自动 ×1000。
 业务 UUID 原样保留，禁止重新生成。
+
+## 9. 桌面端事件（UI 自动刷新）
+
+同步写库之后，桌面端需要主动告诉界面「数据变了」，否则用户得切页才看得到。
+通道沿用已有的 `sync:changed`：
+
+```
+SyncServer.onChanged → SyncService.onEvent({type:'state-changed'})
+  → 主进程遍历窗口 webContents.send('sync:changed')
+  → preload api.sync.onChanged(listener)
+```
+
+**广播点（服务端锁死，不要在渲染层猜）**：
+
+| 时间点 | 位置 | 广播 |
+| --- | --- | --- |
+| `applyBatch()` 事务提交后（含全部 skipped） | `server.ts` `POST /api/sync/apply` | 是 |
+| 单个媒体块写入 | `POST /api/sync/media/chunk` | **否**（一张图几十块，每块刷新会把页面刷成幻灯片） |
+| finalize 校验通过、文件原子落位 | `POST /api/sync/media/finalize` | 是 |
+| finalize 校验失败 | 同上 | 否（残缺文件不该让页面以为能显示） |
+| 鉴权失败 / 参数非法 | 各路由入口 | 否 |
+| 配对成功、服务启停、冲突裁决 | `server.ts` / `sync-service.ts` | 是（状态变化） |
+
+**渲染层怎么消费**：
+
+- `RecordsPage` 用 150ms 窗口合并（`src/shared/coalesce.ts`）：一次同步可能来
+  apply + 多个 finalize，只查一轮库；组件卸载时 `cancel()` + 解绑。
+- **媒体版本**：记录比文件先到，图片此时是破图。若 `bpmedia://` URL 不变，
+  浏览器会沿用上次失败的结果，finalize 后仍然不显示。所以每次同步事件把
+  版本号 +1，URL 带上 `?v=`，强制重新请求。
+- 元数据补全是**另一条通道** `records:metadata-updated`（`ResolveQueue.onSettled`），
+  与同步事件各订阅各的，不要合并成一个：两者的触发时机与失败语义都不同。

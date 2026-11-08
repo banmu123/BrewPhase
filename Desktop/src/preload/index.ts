@@ -39,7 +39,9 @@ const api: RendererApi = {
     deleteTag: (id) => invoke(IPC.tagDelete, { id }),
     importImage: () => invoke(IPC.recordImportImage),
     resolveMetadata: (id, force = false) => invoke(IPC.recordResolveMetadata, { id, force }),
-    mediaUrl: (fileName: string) => `bpmedia://media/${encodeURIComponent(fileName)}`,
+    // `version` 只进查询串：主进程按 pathname 取文件名，不解析 query。
+    mediaUrl: (fileName: string, version?: number) =>
+      `bpmedia://media/${encodeURIComponent(fileName)}${version ? `?v=${version}` : ''}`,
     onMetadataUpdated: (listener) => {
       const wrapped = () => listener()
       ipcRenderer.on('records:metadata-updated', wrapped)

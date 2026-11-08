@@ -55,8 +55,14 @@ export interface RendererApi {
      * `force = true` 跳过本地缓存（用户在详情侧栏主动刷新时用）。
      */
     resolveMetadata: (id: string, force?: boolean) => Promise<RecordItem | null>
-    /** `bpmedia://media/<fileName>`；只接受主进程校验过的文件名。 */
-    mediaUrl: (fileName: string) => string
+    /**
+     * `bpmedia://media/<fileName>`；只接受主进程校验过的文件名。
+     *
+     * `version` 只影响 URL（`?v=`），用来在**媒体文件晚于记录落盘**时让浏览器
+     * 重新请求：同步先写记录、再分块传文件，若 URL 不变，浏览器会沿用上一次
+     * 失败的结果，图片会一直是破图，直到切页或重启。
+     */
+    mediaUrl: (fileName: string, version?: number) => string
     /**
      * 后台元数据补全有了结果（成功或失败）时通知一次，用于自动刷新列表。
      * 主进程的 ResolveQueue 在每次任务结束后广播。

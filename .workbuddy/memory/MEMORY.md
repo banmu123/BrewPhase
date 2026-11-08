@@ -23,8 +23,7 @@
 
 ## 测试与模拟器
 
-* 真实验收口径是 `xcodebuild test` 全量 + 模拟器截图 + OSLog，三者对得上才算过。
-* **判断全量是否真的绿**：`grep "Fatal error"` 必须为空，且末行是
+* 真实验收口径是 `xcodebuild test` 全量 + 模拟器截图 + OSLog，三者对得上才算过。* **判断全量是否真的绿**：`grep "Fatal error"` 必须为空，且末行是
   `** TEST SUCCEEDED **`。测试进程崩了会被 runner 重启，「Executed N tests」
   会混入多次启动的分段统计——Phase 3 的「600 通过」就是这么误判的（真因是
   `DemoData` 标签表越界，Phase 3.1 已修）。当前基线 625 条。
@@ -36,6 +35,12 @@
 * `xcodebuild` 一律带 `CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO`，
   并显式指定模拟器 `platform=iOS Simulator,id=C7C7F583-310C-43CE-B6ED-D4915F465154`
   （iPhone 16 Pro；旧的 810C6408 已不在设备列表里，换机时先 `simctl list` 查）。
+* **跑桌面端 `pnpm e2e` 前先停 `pnpm dev`**：`smoke.spec.ts` 用的是真实 userData，
+  dev 实例占着单实例锁 → 新实例启动即 quit，表现为 `electron.launch` 超时或
+  「page has been closed」。带 `BREWPHASE_USER_DATA_DIR` 的 spec 不受影响。
+* 桌面端 dev 在本机受限环境要 `env -u ELECTRON_RUN_AS_NODE npx electron-vite dev
+  --noSandbox`：前者让 Electron 退化成纯 Node（`electron.protocol` undefined），
+  后者绕开不可用的 Chrome setuid sandbox。两个参数都不进项目配置。
 
 ## 数据一致性的既有规则（2026-11 起）
 

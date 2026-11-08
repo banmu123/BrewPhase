@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { RecordCarrier, RecordDraft, RecordItem, RecordTag } from '@shared/contracts'
 import { carrierLabel } from '@shared/contracts'
+import { coalesce } from '@shared/coalesce'
 import { api, formatDate } from '../../shared/api'
 import { SearchIcon } from '../../shared/icons'
 import { parseLink, providerLabel } from '@shared/link-parser'
@@ -39,23 +40,63 @@ export function RecordsPage() {
 
   const selected = items.find((item) => item.id === selectedId) ?? items[0] ?? null
 
+  /**
+   * 媒体版本：只用来给 `bpmedia://` 加 `?v=`。
+   *
+   * 同步的顺序是「先写记录、再分块传文件」，记录先出现在列表里时图片还是
+   * 破图；等 finalize 完，如果 URL 没变，浏览器会沿用上一次失败的结果，
+   * 图片就一直不显示，直到切页或重启。版本号 +1 强制重新请求。
+   */
+  const [mediaVersion, setMediaVersion] = useState(0)
+  const mediaUrl = useCallback(
+    (name: string) => api.records.mediaUrl(name, mediaVersion),
+    [mediaVersion]
+  )
+
+  /** 并发刷新保护：同步事件与元数据事件可能同时到，只认最后一次请求的结果。 */
+  const loadSeq = useRef(0)
+
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current
     try {
       const [nextItems, nextTags] = await Promise.all([
         api.records.list({ search, carrier, tagId, limit: 100, offset: 0 }),
         api.records.listTags()
       ])
+      if (seq !== loadSeq.current) return
       setItems(nextItems)
       setTags(nextTags)
+      // 选中的记录被手机删掉（或不再匹配当前筛选）时，退回列表第一条；
+      // 列表为空则清空选中，不让详情栏继续显示已经不存在的记录。
       setSelectedId((current) => (nextItems.some((item) => item.id === current) ? current : nextItems[0]?.id ?? null))
     } catch (cause) {
-      setError((cause as Error).message)
+      if (seq === loadSeq.current) setError((cause as Error).message)
     }
   }, [search, carrier, tagId])
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 180)
     return () => window.clearTimeout(timer)
+  }, [load])
+
+  /**
+   * 手机同步写库 → 当前页面自动刷新（不需要切页或手动点）。
+   *
+   * 触发点已经在服务端接好：`POST /api/sync/apply` 事务提交后、以及
+   * `POST /api/sync/media/finalize` 落盘后都会广播 `sync:changed`。
+   * 一次同步会来多条，用 `coalesce` 合并成一轮查询，媒体版本跟着走一格。
+   */
+  useEffect(() => {
+    const refresh = coalesce(() => {
+      setMediaVersion((current) => current + 1)
+      void load()
+    }, 150)
+    const off = api.sync.onChanged(refresh.run)
+    return () => {
+      // 先取消待执行的那一次，再解绑：卸载后不会再触发查询。
+      refresh.cancel()
+      off()
+    }
   }, [load])
 
   // 后台元数据补全完成（成功/失败）后自动刷新：不需要用户切页才看到结果
@@ -65,8 +106,8 @@ export function RecordsPage() {
 
   // 详情区与播放器共用同一份预览视图：列表看到的和详情看到的永远一致。
   const selectedPreview = useMemo(
-    () => (selected ? buildPreview(selected, api.records.mediaUrl) : null),
-    [selected]
+    () => (selected ? buildPreview(selected, mediaUrl) : null),
+    [selected, mediaUrl]
   )
 
   return (
@@ -184,6 +225,7 @@ export function RecordsPage() {
                   <RecordTile
                     key={item.id}
                     item={item}
+                    mediaUrl={mediaUrl}
                     active={item.id === selected?.id}
                     tagNames={item.tagIds
                       .slice(0, 2)
@@ -219,7 +261,7 @@ export function RecordsPage() {
                   {selected.carrier === 'image' && selected.mediaPath && (
                     <img
                       className="detail-image"
-                      src={api.records.mediaUrl(selected.mediaPath)}
+                      src={mediaUrl(selected.mediaPath)}
                       alt={selected.title}
                     />
                   )}
@@ -265,6 +307,7 @@ export function RecordsPage() {
  */
 function RecordTile(props: {
   item: RecordItem
+  mediaUrl: (name: string) => string
   active: boolean
   tagNames: string[]
   onClick: () => void
@@ -296,7 +339,7 @@ function RecordTile(props: {
       aria-label={previewTitle || carrierLabel[item.carrier]}
     >
       <span className={`record-tile__media${item.carrier === 'text' ? ' record-tile__media--text' : ' record-tile__media--platform'}`}>
-        <RecordTilePreview item={item} mediaUrl={(name) => api.records.mediaUrl(name)} />
+        <RecordTilePreview item={item} mediaUrl={props.mediaUrl} />
       </span>
       <span className="record-tile__body">
         <span className="record-tile__title">{previewTitle || carrierLabel[item.carrier]}</span>
