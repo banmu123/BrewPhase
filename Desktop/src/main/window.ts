@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { BrowserWindow, shell } from 'electron'
+import { isEmbedFrameURL } from '../shared/link-embed'
 
 /**
  * 一个窗口，能开的只允许是应用自己。
@@ -43,6 +44,14 @@ export function createMainWindow(params: { devServerUrl: string | null }): Brows
       event.preventDefault()
       if (url.startsWith('https://')) void shell.openExternal(url)
     }
+  })
+
+  // 子框架只允许待在自己那一家的播放器域名里（YouTube / B 站）。
+  // 被嵌页面想把我们当跳板去别处，或借 iframe 打开登录页，一律拒绝。
+  window.webContents.on('will-frame-navigate', (event) => {
+    if (event.isMainFrame) return
+    if (isEmbedFrameURL(event.url)) return
+    event.preventDefault()
   })
 
   if (params.devServerUrl) {

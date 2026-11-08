@@ -10,6 +10,7 @@ import { pendingMetadataJobs, prepareLocalMetadata } from './database/repositori
 import { recordIdsToResolve, resolveRecordMetadata } from './metadata'
 import { ResolveQueue } from './metadata/resolve-queue'
 import { activeMetadataFixture } from './metadata/metadata-fixture'
+import { EMBED_FRAME_ORIGINS } from '../shared/link-embed'
 
 /**
  * 主进程入口。
@@ -161,8 +162,12 @@ app.on('before-quit', () => {
 /**
  * CSP 由主进程下发，而不是只写在 HTML 里——meta 标签可以被注入的内容绕过，
  * 响应头不能。开发时放开 HMR 需要的 ws 与 eval，生产收紧到最小。
+ *
+ * `frame-src` 只放行官方播放器来源（YouTube / B 站），与 `@shared/link-embed`
+ * 共用同一份白名单；不写 `https:`，否则任意站点都能进 iframe。
  */
 function applyCsp(target: Electron.Session, dev: string | null): void {
+  const frameSrc = `frame-src ${EMBED_FRAME_ORIGINS.join(' ')}`
   // img-src 的 https: 是远程缩略图（og:image、i.ytimg.com）的加载通道；
   // 失败由组件落平台 fallback，不放宽 connect-src/script-src 等其他指令。
   const policy = dev
@@ -172,6 +177,7 @@ function applyCsp(target: Electron.Session, dev: string | null): void {
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' bpmedia: data: https: blob:",
         "font-src 'self' data:",
+        frameSrc,
         "connect-src 'self' ws: http://localhost:* http://127.0.0.1:*"
       ].join('; ')
     : [
@@ -180,10 +186,18 @@ function applyCsp(target: Electron.Session, dev: string | null): void {
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' bpmedia: data: https:",
         "font-src 'self' data:",
+        frameSrc,
         "connect-src 'self'"
       ].join('; ')
 
   target.webRequest.onHeadersReceived((details, callback) => {
+    // 只给**应用自己的顶层文档**下发 CSP。iframe 里加载的是平台的播放器页面，
+    // 给它塞一条 `default-src 'self'` 会把播放器自己的脚本全部拦死——
+    // 表现就是一块黑屏，而且看不出是 CSP 干的。
+    if (details.resourceType !== 'mainFrame') return callback({})
+    const own = dev ? details.url.startsWith(dev) : details.url.startsWith('file://')
+    if (!own) return callback({})
+
     callback({
       responseHeaders: {
         ...details.responseHeaders,

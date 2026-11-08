@@ -4,6 +4,7 @@ import { carrierLabel } from '@shared/contracts'
 import { api, formatDate } from '../../shared/api'
 import { SearchIcon } from '../../shared/icons'
 import { parseLink, providerLabel } from '@shared/link-parser'
+import { LinkPlayer } from './preview/LinkPlayer'
 import { RecordTilePreview } from './preview/RecordTilePreview'
 import { detectPlatform } from './preview/platform'
 import { buildPreview, formatCount, recordDisplayTitle, type RecordPreview } from './preview/preview-model'
@@ -61,6 +62,12 @@ export function RecordsPage() {
   useEffect(() => api.records.onMetadataUpdated(() => void load()), [load])
 
   const tagName = useMemo(() => new Map(tags.map((tag) => [tag.id, tag.name])), [tags])
+
+  // 详情区与播放器共用同一份预览视图：列表看到的和详情看到的永远一致。
+  const selectedPreview = useMemo(
+    () => (selected ? buildPreview(selected, api.records.mediaUrl) : null),
+    [selected]
+  )
 
   return (
     <div className="page">
@@ -204,6 +211,10 @@ export function RecordsPage() {
                       <span>{selected.authorName || selected.metadata?.authorName}</span>
                     )}
                   </div>
+
+                  {selected.carrier === 'link' && selectedPreview && (
+                    <LinkPlayer key={selected.id} preview={selectedPreview} />
+                  )}
 
                   {selected.carrier === 'image' && selected.mediaPath && (
                     <img

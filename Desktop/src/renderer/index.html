@@ -3,10 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- 开发期由主进程下发更宽的 CSP；这里的 meta 是打包后的兜底。 -->
+    <!--
+      开发期由主进程下发更宽的 CSP；这里的 meta 是打包后的兜底。
+      两处必须保持同一份 frame-src 白名单：响应头与 meta 同时存在时取交集，
+      少写一处就会把播放器拦死在「default-src 'self'」上。
+    -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' bpmedia: data: https:; font-src 'self' data:; connect-src 'self' ws: http://localhost:*"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' bpmedia: data: https:; font-src 'self' data:; frame-src https://www.youtube.com https://player.bilibili.com; connect-src 'self' ws: http://localhost:*"
     />
     <title>BrewPhase</title>
   </head>

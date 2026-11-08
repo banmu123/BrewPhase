@@ -79,6 +79,18 @@
   里 `AVPlayer(url:)`，任何重绘都会让播放从头开始。
 * `refreshMetadata` 有快照保护：地址变了丢弃响应；用户写过的标题不覆盖。
 
+## 链接播放器（Desktop，2026-11-08 起）
+
+* **播放地址只由内容 ID 拼**（`src/shared/link-embed.ts`）：YouTube 11 位
+  base64url、B 站 `BV`+10 位 / `av`+数字；**不读记录里的 urlString/canonicalURL**。
+  与 iOS `LinkEmbed` 同一条规矩，新增平台先过这里。
+* **CSP 的 `frame-src` 必须两处一致**：主进程 `applyCsp` 的响应头 + `src/renderer/index.html`
+  的 meta。两者同时存在取交集，少一处就回退 `default-src 'self'` 把 iframe 拦死。
+* **CSP 只发给主框架**（`resourceType === 'mainFrame'` 且是自己的文档）：给 iframe 里的
+  第三方页面也下发会拦掉播放器自己的脚本（黑屏）。
+* **iframe 导航由 `will-frame-navigate` 收口**，只放行播放器注册域；主框架走 `will-navigate`。
+* **默认不挂 iframe**：点封面才创建；放大是把同一节点 fixed 铺满（不重挂，视频不从头开始）。
+
 ## Canvas（Phase 1 起）
 
 * **CanvasNode 是摆放实例**：`canvasID` / `recordID` 两个 UUID + 世界坐标 + 逻辑

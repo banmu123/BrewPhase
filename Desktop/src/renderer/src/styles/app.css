@@ -1270,6 +1270,149 @@ textarea {
   margin: 4px 0 14px;
 }
 
+/* ---------- 详情里的平台播放器 ---------- */
+
+/* 默认只挂封面：切记录不发跨域请求，点播放才创建 iframe */
+.link-player {
+  margin: 4px 0 16px;
+}
+
+.link-player__stage {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius);
+  border: 1px solid var(--hairline);
+  background: var(--espresso);
+  overflow: hidden;
+}
+
+.link-player__cover {
+  position: absolute;
+  inset: 0;
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.link-player__cover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.link-player__fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-caption);
+  letter-spacing: 0.08em;
+  color: rgba(250, 249, 246, 0.72);
+}
+
+.link-player__play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  border-radius: 50%;
+  background: rgba(24, 19, 14, 0.58);
+  transition: transform 0.16s ease, background 0.16s ease;
+}
+
+/* 三角形用 border 画：这里只需要一个播放符号，不必再引一套图标 */
+.link-player__play::after {
+  content: '';
+  position: absolute;
+  left: 17px;
+  top: 14px;
+  border-left: 14px solid #fff;
+  border-top: 8px solid transparent;
+  border-bottom: 8px solid transparent;
+}
+
+.link-player__cover:hover .link-player__play {
+  transform: scale(1.06);
+  background: rgba(24, 19, 14, 0.72);
+}
+
+.link-player__frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.link-player__bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.link-player__note {
+  margin-right: auto;
+  font-size: var(--fs-micro);
+  color: var(--ink-faint);
+}
+
+.link-player__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.link-player__actions .button {
+  padding: 5px 10px;
+  font-size: var(--fs-micro);
+}
+
+/* 放大：同一个 DOM 节点铺满窗口，iframe 不重挂，视频不会从头开始 */
+.link-player--zoomed {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  margin: 0;
+  padding: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(24, 19, 14, 0.93);
+}
+
+.link-player--zoomed .link-player__stage {
+  width: min(1120px, 100%);
+  border-color: transparent;
+  outline: 1px solid rgba(250, 249, 246, 0.14);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
+.link-player__close {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(250, 249, 246, 0.32);
+  background: transparent;
+  color: var(--paper);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+
+.link-player__close:hover {
+  background: rgba(250, 249, 246, 0.14);
+}
+
 .detail-meta {
   display: flex;
   gap: 12px;

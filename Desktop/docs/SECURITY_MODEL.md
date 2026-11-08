@@ -9,7 +9,8 @@
 | `sandbox: true` | 同上（preload 只能用 `electron` 的 bridge API） |
 | 只暴露白名单 API | `src/preload/index.ts` 逐条列出，不透传 `ipcRenderer` |
 | 窗口内不允许外部导航 | `will-navigate` + `setWindowOpenHandler`，外链交给系统浏览器 |
-| CSP | 主进程下发响应头（开发放开 HMR，生产收紧） |
+| 子框架只能待在播放器域名里 | `will-frame-navigate` + `isEmbedFrameURL`（见 §6） |
+| CSP | 主进程下发响应头（开发放开 HMR，生产收紧）；只发给应用自己的顶层文档 |
 
 ## 2. IPC
 
@@ -42,7 +43,24 @@
 - 媒体逐块校验 SHA-256；
 - 冲突上报给用户，不静默覆盖。
 
-## 6. 这一版没有做的
+## 6. 内嵌播放器
+
+详情里的 YouTube / B 站播放器是**唯一**把第三方页面放进应用窗口的地方，
+约束比普通内容更硬：
+
+- 地址只由**内容 ID 拼出**（`src/shared/link-embed.ts`），绝不读记录里的
+  `urlString` / `canonicalURL`——粘一个「播放器地址」进来不会让它进 iframe；
+- 内容 ID 必须过平台格式校验（YouTube 11 位 base64url、B 站 `BV` + 10 位 /
+  `av` + 数字），不合格就不渲染播放器，只保留「浏览器打开」；
+- CSP 的 `frame-src` 只列这两个来源。响应头（`src/main/index.ts`）与
+  `src/renderer/index.html` 的 meta **必须是同一份白名单**：两者同时存在时
+  CSP 取交集，少写一处就会把播放器拦在 `default-src 'self'` 上；
+- CSP 只下发给**应用自己的顶层文档**。iframe 里是平台的页面，给它也塞一条
+  `default-src 'self'` 会把播放器自己的脚本全部拦死（黑屏，且看不出原因）；
+- iframe 内部导航由 `will-frame-navigate` 限制在播放器自己的域名，
+  被嵌页面不能拿应用当跳板。
+
+## 7. 这一版没有做的
 
 - 没有代码签名与公证流程（`electron-builder` 配置留了位置，未接证书）；
 - 没有自动更新；

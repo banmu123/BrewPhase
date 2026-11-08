@@ -26,19 +26,22 @@ test('应用启动、连上本地库、三个模块可切换', async () => {
   const page = await app.firstWindow()
 
   await expect(page.locator('.sidebar__brand')).toHaveText('BREWPHASE')
-  await expect(page.getByRole('button', { name: '咖啡' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '记录' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '画布' })).toBeVisible()
+  // `exact` 是必须的：这条用例跑在**真实库**上，豆名列里完全可能出现
+  // 「启程咖啡」这种名字，模糊匹配会把豆子按钮一起选中（strict mode 直接失败）。
+  const nav = (name: string) => page.getByRole('button', { name, exact: true })
+  await expect(nav('咖啡')).toBeVisible()
+  await expect(nav('记录')).toBeVisible()
+  await expect(nav('画布')).toBeVisible()
 
   // 通过 preload 桥拿一次应用信息：能拿到就说明 IPC + 数据库都通了。
   const info = await page.evaluate(async () => window.brewphase.app.info())
   expect(info.dbSchemaVersion).toBe(1)
   expect(info.syncProtocolVersion).toBe(1)
 
-  await page.getByRole('button', { name: '记录' }).click()
+  await nav('记录').click()
   await expect(page.getByRole('heading', { name: '记录' })).toBeVisible()
 
-  await page.getByRole('button', { name: '画布' }).click()
+  await nav('画布').click()
   await expect(page.getByRole('heading', { name: '画布' })).toBeVisible()
 
   await app.close()
