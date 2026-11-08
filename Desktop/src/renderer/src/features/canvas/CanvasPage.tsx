@@ -25,6 +25,9 @@ export function CanvasPage() {
   const [viewport, setViewport] = useState<CanvasViewport>({ scale: 1, offsetX: 0, offsetY: 0 })
   const [error, setError] = useState<string | null>(null)
   const [size, setSize] = useState({ width: 800, height: 600 })
+  /** 右侧操作浮层：添加记录 / 查看选中节点。 */
+  const [panelOpen, setPanelOpen] = useState(false)
+  const [addSearch, setAddSearch] = useState('')
 
   const active = canvases.find((canvas) => canvas.id === activeId) ?? canvases[0] ?? null
   const containerRef = useRef<HTMLDivElement>(null)
@@ -86,17 +89,35 @@ export function CanvasPage() {
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? null
   const addedRecordIds = useMemo(() => new Set(nodes.map((node) => node.recordID)), [nodes])
+  const filteredRecords = useMemo(
+    () =>
+      records.filter((record) =>
+        (record.title || '').toLowerCase().includes(addSearch.trim().toLowerCase())
+      ),
+    [records, addSearch]
+  )
 
   return (
     <div className="page">
-      <header className="page-header">
-        <div className="page-header__titles">
-          <h1 className="page-title">画布</h1>
-          <p className="page-sub">{canvases.length} 块 · 记录只被引用，不被复制</p>
-        </div>
-        <div className="page-header__actions">
+      <div className="canvas-shell">
+        <div className="canvas-topbar">
+          {canvases.length > 0 && (
+            <select
+              value={active?.id ?? ''}
+              aria-label="切换画布"
+              onChange={(event) => setActiveId(event.target.value || null)}
+            >
+              {canvases.map((canvas) => (
+                <option key={canvas.id} value={canvas.id}>
+                  {canvas.name || '未命名画布'}
+                </option>
+              ))}
+            </select>
+          )}
+          <span className="page-sub">{canvases.length} 块 · 记录只被引用，不被复制</span>
+          <span className="spacer" />
           <button
-            className="button button--primary"
+            className="button button--ghost"
             onClick={async () => {
               const name = window.prompt('这块画布叫什么？', '新的画布')
               if (!name) return
@@ -108,35 +129,10 @@ export function CanvasPage() {
             新建画布
           </button>
         </div>
-      </header>
 
-      <div className="page-body">
-      <div className="columns" data-inspector="on">
-      <section className="column">
-        <span className="overline">我的画布</span>
-
-        {error && <div className="error">{error}</div>}
-
-        <div className="list">
-          {canvases.map((canvas) => (
-            <button
-              key={canvas.id}
-              className="list-item"
-              data-active={canvas.id === active?.id}
-              onClick={() => setActiveId(canvas.id)}
-            >
-              <span className="list-item__title">{canvas.name || '未命名画布'}</span>
-              <span className="list-item__meta">{formatDate(canvas.updatedAt)} 更新</span>
-            </button>
-          ))}
-          {canvases.length === 0 && <div className="empty">还没有画布。建一块，把记录摆进去。</div>}
-        </div>
-      </section>
-
-      <section className="column column--main">
         <div className="canvas-wrap" ref={containerRef}>
           {active ? (
-            <Stage
+                        <Stage
               width={size.width}
               height={size.height}
               scaleX={viewport.scale}
@@ -191,7 +187,10 @@ export function CanvasPage() {
                     key={node.id}
                     node={node}
                     selected={node.id === selectedNodeId}
-                    onSelect={() => setSelectedNodeId(node.id)}
+                    onSelect={() => {
+                      setSelectedNodeId(node.id)
+                      setPanelOpen(true)
+                    }}
                     onMoved={async (positionX, positionY) => {
                       await api.canvas.moveNode(node.id, positionX, positionY)
                       await loadNodes(active.id)
@@ -201,106 +200,130 @@ export function CanvasPage() {
               </Layer>
             </Stage>
           ) : (
-            <div className="canvas-empty">还没有画布。</div>
+            <div className="canvas-empty">还没有画布。点右上角「新建画布」开始。</div>
           )}
 
-          {active && nodes.length === 0 && <div className="canvas-empty">空的。右边选几条记录放进来。</div>}
+          {active && nodes.length === 0 && <div className="canvas-empty">空画布。点右下角「添加记录」放几条进来。</div>}
 
           <div className="canvas-hud">
+            <button
+              className="button"
+              data-active={panelOpen}
+              aria-label="添加记录"
+              title="添加记录"
+              onClick={() => setPanelOpen((value) => !value)}
+            >
+              添加记录
+            </button>
             <span className="canvas-hud__zoom mono">{Math.round(viewport.scale * 100)}%</span>
             <button
               className="button"
+              aria-label="复位视图"
               onClick={() => setViewport({ scale: 1, offsetX: 0, offsetY: 0 })}
             >
               复位
             </button>
             <button
               className="button"
+              aria-label="放大"
               onClick={() => setViewport((current) => zoomAt(current, current.scale * 1.15, { x: size.width / 2, y: size.height / 2 }))}
             >
               ＋
             </button>
             <button
               className="button"
+              aria-label="缩小"
               onClick={() => setViewport((current) => zoomAt(current, current.scale / 1.15, { x: size.width / 2, y: size.height / 2 }))}
             >
               －
             </button>
           </div>
-        </div>
-      </section>
 
-      <section className="column column--inspector">
-        {active ? (
-          <>
-            <span className="overline">添加到画布</span>
-            <div className="list" style={{ maxHeight: 260, overflow: 'auto', marginBottom: 14 }}>
-              {records.map((record) => (
+          {panelOpen && active && (
+            <aside className="canvas-panel" role="dialog" aria-label="画布操作">
+              <div className="row row--between" style={{ marginBottom: 12 }}>
+                <span className="overline" style={{ margin: 0 }}>添加到画布</span>
                 <button
-                  key={record.id}
-                  className="list-item"
-                  disabled={addedRecordIds.has(record.id)}
-                  style={{ opacity: addedRecordIds.has(record.id) ? 0.45 : 1 }}
-                  onClick={async () => {
-                    await api.canvas.addNode(active.id, record.id)
-                    await loadNodes(active.id)
-                  }}
+                  className="button button--ghost"
+                  aria-label="关闭面板"
+                  onClick={() => setPanelOpen(false)}
                 >
-                  <span className="list-item__title">{record.title || '未命名记录'}</span>
-                  <span className="list-item__meta">
-                    {record.carrier}
-                    {addedRecordIds.has(record.id) && ' · 已在画布'}
-                  </span>
+                  ✕
                 </button>
-              ))}
-              {records.length === 0 && <div className="empty">记录库里还没有内容。</div>}
-            </div>
-
-            <div className="hairline" />
-            <span className="overline">节点</span>
-            {selectedNode ? (
-              <div className="stack">
-                <div className="note">
-                  {selectedNode.recordTitle || '未命名记录'}
-                  <br />
-                  世界坐标 <span className="mono">({selectedNode.positionX.toFixed(0)}, {selectedNode.positionY.toFixed(0)})</span>
-                  <br />
-                  尺寸 <span className="mono">{selectedNode.width}×{selectedNode.height}</span>
-                </div>
-                <button
-                  className="button button--danger"
-                  onClick={async () => {
-                    await api.canvas.removeNode(selectedNode.id)
-                    setSelectedNodeId(null)
-                    await loadNodes(active.id)
-                  }}
-                >
-                  从画布移除
-                </button>
-                <div className="note">只解除引用，原始记录还在记录库里。</div>
               </div>
-            ) : (
-              <div className="empty">点选一张卡片查看坐标，或直接拖动它。</div>
-            )}
 
-            <div className="hairline" />
-            <button
-              className="button button--danger"
-              onClick={async () => {
-                if (!window.confirm('删除这块画布？画布上的节点会一起消失，记录不受影响。')) return
-                await api.canvas.remove(active.id)
-                setActiveId(null)
-                await loadCanvases()
-              }}
-            >
-              删除这块画布
-            </button>
-          </>
-        ) : (
-          <div className="empty">建一块画布开始。</div>
-        )}
-      </section>
-      </div>
+              <input
+                placeholder="搜索记录…"
+                value={addSearch}
+                onChange={(event) => setAddSearch(event.target.value)}
+                style={{ marginBottom: 10 }}
+              />
+
+              <div className="list" style={{ maxHeight: 240, overflow: 'auto', marginBottom: 14 }}>
+                {filteredRecords.map((record) => (
+                  <button
+                    key={record.id}
+                    className="list-item"
+                    disabled={addedRecordIds.has(record.id)}
+                    style={{ opacity: addedRecordIds.has(record.id) ? 0.45 : 1 }}
+                    onClick={async () => {
+                      await api.canvas.addNode(active.id, record.id)
+                      await loadNodes(active.id)
+                    }}
+                  >
+                    <span className="list-item__title">{record.title || '未命名记录'}</span>
+                    <span className="list-item__meta">
+                      {record.carrier}
+                      {addedRecordIds.has(record.id) && ' · 已在画布'}
+                    </span>
+                  </button>
+                ))}
+                {filteredRecords.length === 0 && <div className="empty">没有匹配的记录。</div>}
+              </div>
+
+              <div className="hairline" />
+              <span className="overline">选中的节点</span>
+              {selectedNode ? (
+                <div className="stack">
+                  <div className="note">
+                    {selectedNode.recordTitle || '未命名记录'}
+                    <br />
+                    世界坐标 <span className="mono">({selectedNode.positionX.toFixed(0)}, {selectedNode.positionY.toFixed(0)})</span>
+                    <br />
+                    尺寸 <span className="mono">{selectedNode.width}×{selectedNode.height}</span>
+                  </div>
+                  <button
+                    className="button button--danger"
+                    onClick={async () => {
+                      await api.canvas.removeNode(selectedNode.id)
+                      setSelectedNodeId(null)
+                      await loadNodes(active.id)
+                    }}
+                  >
+                    从画布移除
+                  </button>
+                  <div className="note">只解除引用，原始记录还在记录库里。</div>
+                </div>
+              ) : (
+                <div className="empty">点选一张卡片查看坐标，或直接拖动它。</div>
+              )}
+
+              <div className="hairline" />
+              <button
+                className="button button--danger"
+                onClick={async () => {
+                  if (!window.confirm('删除这块画布？画布上的节点会一起消失，记录不受影响。')) return
+                  await api.canvas.remove(active.id)
+                  setActiveId(null)
+                  setPanelOpen(false)
+                  await loadCanvases()
+                }}
+              >
+                删除这块画布
+              </button>
+            </aside>
+          )}
+        </div>
       </div>
     </div>
   )

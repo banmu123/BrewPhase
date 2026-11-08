@@ -38,7 +38,9 @@ export function RecordsPage() {
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState<'text' | 'link' | null>(null)
 
-  const selected = items.find((item) => item.id === selectedId) ?? items[0] ?? null
+  /** 详情浮层按需出现：点卡片打开，✕ 关闭；不再常驻右侧挤压内容区。 */
+  const [panelOpen, setPanelOpen] = useState(false)
+  const selected = items.find((item) => item.id === selectedId) ?? null
 
   /**
    * 媒体版本：只用来给 `bpmedia://` 加 `?v=`。
@@ -68,7 +70,7 @@ export function RecordsPage() {
       setTags(nextTags)
       // 选中的记录被手机删掉（或不再匹配当前筛选）时，退回列表第一条；
       // 列表为空则清空选中，不让详情栏继续显示已经不存在的记录。
-      setSelectedId((current) => (nextItems.some((item) => item.id === current) ? current : nextItems[0]?.id ?? null))
+      setSelectedId((current) => (nextItems.some((item) => item.id === current) ? current : null))
     } catch (cause) {
       if (seq === loadSeq.current) setError((cause as Error).message)
     }
@@ -114,8 +116,8 @@ export function RecordsPage() {
     <div className="page">
       <header className="page-header">
         <div className="page-header__titles">
-          <h1 className="page-title">记录</h1>
-          <p className="page-sub">{items.length} 条 · 本地资料库</p>
+          <h1 className="page-title">Records</h1>
+          <p className="page-sub">A personal collection of things that matter · {items.length} 条</p>
         </div>
         <div className="page-header__actions">
           <div className="search">
@@ -126,14 +128,14 @@ export function RecordsPage() {
               onChange={(event) => setSearch(event.target.value)}
             />
           </div>
-          <button className="button" onClick={() => setCreating('text')}>
+          <button className="button button--ghost" onClick={() => setCreating('text')}>
             新文字
           </button>
-          <button className="button" onClick={() => setCreating('link')}>
+          <button className="button button--primary" onClick={() => setCreating('link')}>
             新链接
           </button>
           <button
-            className="button"
+            className="button button--ghost"
             onClick={async () => {
               try {
                 const imported = await api.records.importImage()
@@ -155,6 +157,7 @@ export function RecordsPage() {
                 })
                 await load()
                 setSelectedId(created.id)
+                setPanelOpen(true)
               } catch (cause) {
                 setError((cause as Error).message)
               }
@@ -206,6 +209,7 @@ export function RecordsPage() {
                   setCreating(null)
                   await load()
                   setSelectedId(created.id)
+                  setPanelOpen(true)
                   // 元数据补全不阻塞保存：先让记录落到列表，再后台抓取并刷新。
                   if (draft.carrier === 'link' && draft.urlString.trim()) {
                     void api.records
@@ -220,7 +224,7 @@ export function RecordsPage() {
             {items.length === 0 ? (
               <div className="empty">还没有记录。先从一条链接、一张图或一段文字开始。</div>
             ) : (
-              <div className="record-grid">
+              <div className="record-masonry">
                 {items.map((item) => (
                   <RecordTile
                     key={item.id}
@@ -231,18 +235,31 @@ export function RecordsPage() {
                       .slice(0, 2)
                       .map((id) => tagName.get(id))
                       .filter((name): name is string => Boolean(name))}
-                    onClick={() => setSelectedId(item.id)}
+                    data-carrier={item.carrier}
+                    onClick={() => {
+                      setSelectedId(item.id)
+                      setPanelOpen(true)
+                    }}
                   />
                 ))}
               </div>
             )}
           </section>
 
-          <aside className="record-side">
-            {selected ? (
+          {panelOpen && selected && (
+          <aside className="float-panel" role="dialog" aria-label="记录详情">
               <>
                 <div className="record-side__detail">
-                  <span className="overline">{carrierLabel[selected.carrier]}</span>
+                  <div className="row row--between">
+                    <span className="overline" style={{ margin: 0 }}>{carrierLabel[selected.carrier]}</span>
+                    <button
+                      className="button button--ghost"
+                      aria-label="关闭详情"
+                      onClick={() => setPanelOpen(false)}
+                    >
+                      ✕
+                    </button>
+                  </div>
                   <h2 className="detail-title">{recordDisplayTitle(selected) || '未命名记录'}</h2>
                   <div className="detail-meta">
                     <span>{formatDate(selected.createdAt)}</span>
@@ -291,10 +308,8 @@ export function RecordsPage() {
                   }}
                 />
               </>
-            ) : (
-              <div className="empty">选中一条记录，这里会显示详情与编辑。</div>
-            )}
           </aside>
+          )}
         </div>
       </div>
     </div>

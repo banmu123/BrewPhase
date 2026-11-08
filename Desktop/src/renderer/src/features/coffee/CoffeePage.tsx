@@ -20,14 +20,16 @@ export function CoffeePage() {
   const [creatingBean, setCreatingBean] = useState(false)
   const [loggingBrew, setLoggingBrew] = useState(false)
 
-  const selected = beans.find((bean) => bean.id === selectedId) ?? beans[0] ?? null
+  /** 详情浮层按需出现：点收藏架上的卡片打开，✕ 关闭。 */
+  const [panelOpen, setPanelOpen] = useState(false)
+  const selected = beans.find((bean) => bean.id === selectedId) ?? null
 
   const loadBeans = useCallback(async () => {
     try {
       const [nextBeans, nextRules] = await Promise.all([api.coffee.listBeans(), api.coffee.listPhaseRules()])
       setBeans(nextBeans)
       setRules(nextRules)
-      setSelectedId((current) => current ?? nextBeans[0]?.id ?? null)
+      setSelectedId((current) => (nextBeans.some((bean) => bean.id === current) ? current : null))
     } catch (cause) {
       setError((cause as Error).message)
     }
@@ -76,13 +78,16 @@ export function CoffeePage() {
     <div className="page">
       <header className="page-header">
         <div className="page-header__titles">
-          <h1 className="page-title">咖啡</h1>
-          <p className="page-sub">{beans.length} 包豆 · 本地库存</p>
+          <h1 className="page-title">Coffee</h1>
+          <p className="page-sub">Your personal coffee shelf · {beans.length} 包在架</p>
         </div>
         <div className="page-header__actions">
           <button
             className={creatingBean ? 'button' : 'button button--primary'}
-            onClick={() => setCreatingBean((value) => !value)}
+            onClick={() => {
+              setCreatingBean((value) => !value)
+              setPanelOpen(false)
+            }}
           >
             {creatingBean ? '收起表单' : '新增豆子'}
           </button>
@@ -90,220 +95,235 @@ export function CoffeePage() {
       </header>
 
       <div className="page-body">
-      <div className="columns">
-      <section className="column">
-        <span className="overline">豆仓</span>
+        <div className="coffee-flow">
+          {error && <div className="error">{error}</div>}
 
-        {error && <div className="error">{error}</div>}
+          <section className="coffee-section">
+            <span className="overline">Currently Brewing</span>
 
-        {beans.length === 0 ? (
-          <div className="empty">还没有豆子。先记一包，冲煮与品鉴会挂到它下面。</div>
-        ) : (
-          <div className="list">
-            {beans.map((bean) => {
-              const beanRule = rules.find((item) => item.roastLevel === bean.roastLevel) ?? defaultRuleFor(bean.roastLevel)
-              const beanPhase = phaseFor(dayAfterRoast(bean.roastDate), beanRule)
-              return (
-                <button
-                  key={bean.id}
-                  className="list-item"
-                  data-active={bean.id === selected?.id}
-                  onClick={() => setSelectedId(bean.id)}
-                >
-                  <span className="list-item__title">{bean.name || '未命名豆子'}</span>
-                  <span className="list-item__meta">
-                    {bean.roaster || '—'}
-                    <span className="mono">
-                      {bean.remainingG.toFixed(0)}/{bean.weightG.toFixed(0)}g
-                    </span>
-                    {beanPhase && (
-                      <span className={`badge badge--${beanPhase}`}>{PHASE_LABELS[beanPhase].title}</span>
-                    )}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
-        )}
-
-        {creatingBean && (
-          <div className="section" style={{ marginTop: 16 }}>
-            <BeanForm
-              title="新的一包豆"
-              onCancel={() => setCreatingBean(false)}
-              onSubmit={async (draft) => {
-                await api.coffee.createBean(draft)
-                setCreatingBean(false)
-                await loadBeans()
-              }}
-            />
-          </div>
-        )}
-      </section>
-
-      <section className="column column--main">
-        {selected ? (
-          <>
-            <div className="hero">
-              <h2 className="hero__name">{selected.name || '未命名豆子'}</h2>
-              <div className="hero__meta">
-                <span>{selected.roaster || '未填烘焙商'}</span>
-                <span>{roastLabel(selected.roastLevel)}</span>
-                <span>烘焙 {formatDate(selected.roastDate)}</span>
-                {day != null && <span>第 {day} 天</span>}
-                {phase && <span className={`badge badge--${phase}`}>{PHASE_LABELS[phase].title} · {PHASE_LABELS[phase].hint}</span>}
-              </div>
-
-              <div className="hero__stock">
-                <div className="row row--between">
-                  <span className="mono">
-                    {selected.remainingG.toFixed(1)}g / {selected.weightG.toFixed(0)}g
-                  </span>
-                  <span style={{ fontSize: 10, color: 'var(--ink-faint)' }}>
-                    {selected.status === 'finished' ? '已喝完' : '在喝'}
-                  </span>
-                </div>
-                <div className="stock-bar">
-                  <span
-                    style={{
-                      width: `${Math.min(100, Math.max(0, (selected.remainingG / Math.max(1, selected.weightG)) * 100))}%`
-                    }}
-                  />
-                </div>
-                {rule && phase && (
-                  <div className="phase-track">
-                    {(['resting', 'opening', 'peak', 'declining'] as const).map((item) => (
-                      <div key={item} data-on={item === phase} data-phase={item} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="scroll">
-              <div className="row row--between" style={{ marginBottom: 10 }}>
-                <span className="overline" style={{ margin: 0 }}>
-                  冲煮 · {brews.length}
-                </span>
-                <button className="button button--primary" onClick={() => setLoggingBrew((value) => !value)}>
-                  记一杯
-                </button>
-              </div>
-
-              {loggingBrew && (
-                <BrewForm
-                  beanId={selected.id}
-                  onCancel={() => setLoggingBrew(false)}
-                  onSubmit={async (draft) => {
-                    await api.coffee.createBrew(draft)
-                    setLoggingBrew(false)
-                    await refreshAll()
-                  }}
-                />
-              )}
-
-              {brews.length === 0 ? (
-                <div className="empty">还没有冲煮记录。记一杯，库存会按实际粉量扣。</div>
-              ) : (
-                brews.map((brew) => (
-                  <div key={brew.id} className="brew-row">
-                    <span className="brew-row__date">{formatDate(brew.date)}</span>
-                    <span className="mono">
-                      {brew.coffeeG}g → {brew.waterG}g
-                    </span>
-                    <span style={{ color: 'var(--ink-soft)' }}>
-                      {brew.method || '未填手法'} · {ratioText(brew.coffeeG, brew.waterG)}
-                    </span>
-                    <span className="mono" style={{ color: 'var(--ink-faint)' }}>
-                      {formatSeconds(brew.timeSeconds)}
-                    </span>
+            {beans.length === 0 ? (
+              <div className="empty">还没有豆子。先记一包，冲煮与品鉴会挂到它下面。</div>
+            ) : (
+              <div className="shelf">
+                {beans.map((bean) => {
+                  const beanRule =
+                    rules.find((item) => item.roastLevel === bean.roastLevel) ?? defaultRuleFor(bean.roastLevel)
+                  const beanPhase = phaseFor(dayAfterRoast(bean.roastDate), beanRule)
+                  return (
                     <button
-                      className="button button--ghost"
-                      title="删除这次冲煮，库存按实扣量退回"
-                      onClick={async () => {
-                        await api.coffee.deleteBrew(brew.id)
-                        await refreshAll()
+                      key={bean.id}
+                      className="shelf-card"
+                      data-active={panelOpen && bean.id === selected?.id}
+                      onClick={() => {
+                        setSelectedId(bean.id)
+                        setPanelOpen(true)
+                        setCreatingBean(false)
                       }}
                     >
-                      ✕
+                      <span className="shelf-card__name">{bean.name || '未命名豆子'}</span>
+                      <span className="shelf-card__meta">{bean.roaster || '未填烘焙商'}</span>
+                      <span className="shelf-card__stock mono">
+                        {bean.remainingG.toFixed(0)} / {bean.weightG.toFixed(0)}g
+                      </span>
+                      <div className="stock-bar">
+                        <span
+                          style={{
+                            width: `${Math.min(100, Math.max(0, (bean.remainingG / Math.max(1, bean.weightG)) * 100))}%`
+                          }}
+                        />
+                      </div>
+                      {beanPhase && (
+                        <span className={`badge badge--${beanPhase}`}>{PHASE_LABELS[beanPhase].title}</span>
+                      )}
                     </button>
-                  </div>
-                ))
-              )}
+                  )
+                })}
+              </div>
+            )}
 
-              <div className="hairline" />
-              <span className="overline">品鉴 · {tastings.length}</span>
-              {tastings.length === 0 ? (
-                <div className="empty">还没有品鉴。记一杯之后会自动留下一条。</div>
-              ) : (
-                tastings.map((tasting) => (
-                  <div key={tasting.id} className="brew-row" style={{ gridTemplateColumns: '76px 1fr 1fr 60px' }}>
-                    <span className="brew-row__date">{formatDate(tasting.date)}</span>
-                    <span>第 {tasting.dayAfterRoast} 天</span>
-                    <span style={{ color: 'var(--ink-soft)' }}>
-                      {tasting.flavorTags.join(' · ') || '未记风味'}
-                    </span>
-                    <span className="mono">{tasting.score || '—'}</span>
-                  </div>
-                ))
+            {creatingBean && (
+              <div className="panel" style={{ marginTop: 18, maxWidth: 460 }}>
+                <BeanForm
+                  title="新的一包豆"
+                  onCancel={() => setCreatingBean(false)}
+                  onSubmit={async (draft) => {
+                    await api.coffee.createBean(draft)
+                    setCreatingBean(false)
+                    await loadBeans()
+                  }}
+                />
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
+
+      {panelOpen && selected && (
+        <aside className="float-panel" role="dialog" aria-label="豆子详情">
+          <div className="row row--between" style={{ marginBottom: 14 }}>
+            <span className="overline" style={{ margin: 0 }}>豆子档案</span>
+            <button
+              className="button button--ghost"
+              aria-label="关闭详情"
+              onClick={() => setPanelOpen(false)}
+            >
+              ✕
+            </button>
+          </div>
+
+          <div className="hero">
+            <h2 className="hero__name">{selected.name || '未命名豆子'}</h2>
+            <div className="hero__meta">
+              <span>{selected.roaster || '未填烘焙商'}</span>
+              <span>{roastLabel(selected.roastLevel)}</span>
+              <span>烘焙 {formatDate(selected.roastDate)}</span>
+              {day != null && <span>第 {day} 天</span>}
+              {phase && (
+                <span className={`badge badge--${phase}`}>
+                  {PHASE_LABELS[phase].title} · {PHASE_LABELS[phase].hint}
+                </span>
               )}
             </div>
-          </>
-        ) : (
-          <div className="empty">左边还没有豆子。先新增一包。</div>
-        )}
-      </section>
 
-      <section className="column column--inspector">
-        {selected ? (
-          <>
-            <span className="overline">豆子档案</span>
-            <BeanForm
-              title="编辑"
-              bean={selected}
-              onCancel={() => undefined}
-              cancelLabel=""
-              onSubmit={async (draft) => {
-                await api.coffee.updateBean(selected.id, draft)
-                await loadBeans()
-              }}
-            />
+            <div className="hero__stock">
+              <div className="row row--between">
+                <span className="mono">
+                  {selected.remainingG.toFixed(1)}g / {selected.weightG.toFixed(0)}g
+                </span>
+                <span style={{ fontSize: 10, color: 'var(--ink-faint)' }}>
+                  {selected.status === 'finished' ? '已喝完' : '在喝'}
+                </span>
+              </div>
+              <div className="stock-bar">
+                <span
+                  style={{
+                    width: `${Math.min(100, Math.max(0, (selected.remainingG / Math.max(1, selected.weightG)) * 100))}%`
+                  }}
+                />
+              </div>
+              {rule && phase && (
+                <div className="phase-track">
+                  {(['resting', 'opening', 'peak', 'declining'] as const).map((item) => (
+                    <div key={item} data-on={item === phase} data-phase={item} />
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
 
-            <div className="hairline" />
-            <span className="overline">风味窗口</span>
-            {rule ? (
-              <>
-                <div className="note">
-                  养豆 {rule.restMinDays}–{rule.restMaxDays} 天 · 黄金 {rule.peakStartDay}–{rule.peakEndDay} 天 ·
-                  第 {rule.declineStartDay} 天起衰减
-                </div>
-                <div className="note" style={{ marginTop: 8 }}>
-                  基于默认窗口估算，不是保质期结论。
-                </div>
-              </>
+          <div className="float-panel__section">
+            <div className="row row--between" style={{ marginBottom: 10 }}>
+              <span className="overline" style={{ margin: 0 }}>
+                冲煮 · {brews.length}
+              </span>
+              <button className="button button--primary" onClick={() => setLoggingBrew((value) => !value)}>
+                记一杯
+              </button>
+            </div>
+
+            {loggingBrew && (
+              <BrewForm
+                beanId={selected.id}
+                onCancel={() => setLoggingBrew(false)}
+                onSubmit={async (draft) => {
+                  await api.coffee.createBrew(draft)
+                  setLoggingBrew(false)
+                  await refreshAll()
+                }}
+              />
+            )}
+
+            {brews.length === 0 ? (
+              <div className="empty">还没有冲煮记录。记一杯，库存会按实际粉量扣。</div>
             ) : (
-              <div className="empty">没有可用规则。</div>
+              brews.map((brew) => (
+                <div key={brew.id} className="brew-row">
+                  <span className="brew-row__date">{formatDate(brew.date)}</span>
+                  <span className="mono">
+                    {brew.coffeeG}g → {brew.waterG}g
+                  </span>
+                  <span style={{ color: 'var(--ink-soft)' }}>
+                    {brew.method || '未填手法'} · {ratioText(brew.coffeeG, brew.waterG)}
+                  </span>
+                  <span className="mono" style={{ color: 'var(--ink-faint)' }}>
+                    {formatSeconds(brew.timeSeconds)}
+                  </span>
+                  <button
+                    className="button button--ghost"
+                    title="删除这次冲煮，库存按实扣量退回"
+                    onClick={async () => {
+                      await api.coffee.deleteBrew(brew.id)
+                      await refreshAll()
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))
             )}
 
             <div className="hairline" />
-            <button
-              className="button button--danger"
-              onClick={async () => {
-                if (!window.confirm(`删除「${selected.name}」？它的冲煮与品鉴会一并删除。`)) return
-                await api.coffee.deleteBean(selected.id)
-                setSelectedId(null)
-                await loadBeans()
-              }}
-            >
-              删除这包豆子
-            </button>
-          </>
-        ) : (
-          <div className="empty">选中一包豆子后，这里显示档案与操作。</div>
-        )}
-      </section>
-      </div>
-      </div>
+            <span className="overline">品鉴 · {tastings.length}</span>
+            {tastings.length === 0 ? (
+              <div className="empty">还没有品鉴。记一杯之后会自动留下一条。</div>
+            ) : (
+              tastings.map((tasting) => (
+                <div key={tasting.id} className="brew-row" style={{ gridTemplateColumns: '76px 1fr 1fr 60px' }}>
+                  <span className="brew-row__date">{formatDate(tasting.date)}</span>
+                  <span>第 {tasting.dayAfterRoast} 天</span>
+                  <span style={{ color: 'var(--ink-soft)' }}>
+                    {tasting.flavorTags.join(' · ') || '未记风味'}
+                  </span>
+                  <span className="mono">{tasting.score || '—'}</span>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="hairline" />
+          <span className="overline">编辑档案</span>
+          <BeanForm
+            title="编辑"
+            bean={selected}
+            onCancel={() => undefined}
+            cancelLabel=""
+            onSubmit={async (draft) => {
+              await api.coffee.updateBean(selected.id, draft)
+              await loadBeans()
+            }}
+          />
+
+          <div className="hairline" />
+          <span className="overline">风味窗口</span>
+          {rule ? (
+            <>
+              <div className="note">
+                养豆 {rule.restMinDays}–{rule.restMaxDays} 天 · 黄金 {rule.peakStartDay}–{rule.peakEndDay} 天 ·
+                第 {rule.declineStartDay} 天起衰减
+              </div>
+              <div className="note" style={{ marginTop: 8 }}>
+                基于默认窗口估算，不是保质期结论。
+              </div>
+            </>
+          ) : (
+            <div className="empty">没有可用规则。</div>
+          )}
+
+          <div className="hairline" />
+          <button
+            className="button button--danger"
+            onClick={async () => {
+              if (!window.confirm(`删除「${selected.name}」？它的冲煮与品鉴会一并删除。`)) return
+              await api.coffee.deleteBean(selected.id)
+              setPanelOpen(false)
+              setSelectedId(null)
+              await loadBeans()
+            }}
+          >
+            删除这包豆子
+          </button>
+        </aside>
+      )}
     </div>
   )
 }

@@ -1,54 +1,58 @@
 :root {
   /* ============================================================
-     BrewPhase Café Workspace — Design Tokens
-     参照 Sublime Library 的空间秩序 + iOS Theme.swift 的品牌色。
-     CSS 变量是渲染层颜色的唯一来源（Konva 走 shared/tokens.ts）。
+     BrewPhase Light Studio — Design Tokens
+     A space to collect, explore and create.
+     明亮、轻盈、克制：所有颜色只有这一份来源（Konva 走 shared/tokens.ts），
+     变量名沿用 Café 时代的语义，值映射到 Light Studio 的色板。
      ============================================================ */
 
-  /* Ground：暖白纸面，像下午的咖啡馆桌面；不再是奶油黄，也不冷灰 */
-  --paper: #faf9f6;
-  --paper-deep: #f4f2ed;
-  --card: #ffffff;
-  --well: #f3f1ec;
-  --well-deep: #e9e6df;
-  --hairline: #e8e4dc;
+  /* Background */
+  --paper: #f7f8f6; /* studio-white：页面主背景 */
+  --paper-deep: #eff1ed; /* studio-mist：辅助区域 */
+  --card: #ffffff; /* studio-surface：内容卡片 */
+  --well: #f0f2ee; /* studio-hover */
+  --well-deep: #e3e9df; /* studio-active：柔和的浅灰绿 */
+  --hairline: #e8ebe5; /* studio-border */
+  --hairline-strong: #dde1d9; /* studio-border-strong */
 
-  /* Ink */
-  --ink: #2a211a;
-  --ink-soft: #6f6862;
-  --ink-faint: #a29b92;
+  /* Text */
+  --ink: #30372f;
+  --ink-soft: #747a71;
+  --ink-faint: #9a9f97;
 
-  /* Coffee accents：espresso 只给关键动作，roast 给链接与次级强调 */
-  --espresso: #3b2a1e;
-  --espresso-hover: #4a3628;
-  --roast: #8a5a34;
-  --latte: #c9a27a;
-  --cream: #f2ecdf;
-  --sage: #6e8a5f;
+  /* Brand：roast 与 sage 只做点缀，不做大面积填充 */
+  --espresso: #30372f; /* 关键动作（主按钮）用深墨绿，不用重咖啡棕 */
+  --espresso-hover: #465044;
+  --roast: #97765a;
+  --latte: #b99f86;
+  --cream: #e3e9df;
+  --sage: #849779;
+  --focus: #9baa91;
 
-  /* Phase colours：只做点、细条、文字 */
-  --phase-resting: #9a8e80;
-  --phase-opening: #c08a45;
-  --phase-peak: #6e8a5f;
-  --phase-declining: #b4705a;
+  /* Phase colours：只在表达阶段信息时出现 */
+  --phase-resting: #a6a9a0;
+  --phase-opening: #c6a16e;
+  --phase-peak: #8b9a82;
+  --phase-declining: #b88c83;
   --priority: #a8503f;
 
-  /* Elevation：默认无阴影；悬浮与hover 才允许 */
-  --shadow-hover: 0 6px 16px rgba(42, 33, 26, 0.07);
-  --shadow-lifted: 0 8px 18px rgba(42, 33, 26, 0.08);
+  /* Elevation：普通卡片不投影；浮层才允许柔和阴影 */
+  --shadow-hover: 0 4px 14px rgba(48, 55, 47, 0.06);
+  --shadow-lifted: 0 8px 24px rgba(48, 55, 47, 0.1);
+  --shadow-panel: 0 16px 48px rgba(48, 55, 47, 0.16);
 
-  /* Radius 三级 */
-  --radius-small: 10px;
-  --radius: 16px;
+  /* Radius：按钮 8-10 / 卡片 10-14 / 浮层 16-22 */
+  --radius-small: 9px;
+  --radius: 12px;
   --radius-large: 20px;
 
   /* Type */
   --font:
-    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Segoe UI',
-    sans-serif;
+    -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'PingFang SC',
+    'Segoe UI', sans-serif;
   --mono: 'SF Mono', ui-monospace, Menlo, monospace;
   --serif: 'New York', 'Songti SC', Georgia, serif;
-  --fs-display: 26px;
+  --fs-display: 30px;
   --fs-bean-name: 24px;
   --fs-card-title: 19px;
   --fs-title: 17px;
@@ -56,9 +60,18 @@
   --fs-callout: 13px;
   --fs-caption: 12px;
   --fs-micro: 11px;
-  --fs-section: 11.5px;
+  --fs-section: 11px;
 
   color-scheme: light;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 * {
@@ -157,7 +170,7 @@ textarea {
   line-height: 1.7;
 }
 
-/* ---------- 应用外壳：侧边栏 + 工作区 ---------- */
+/* ---------- 应用外壳：76px 窄侧边栏 + 自适应工作区 ---------- */
 
 .app {
   display: flex;
@@ -166,51 +179,56 @@ textarea {
 }
 
 .sidebar {
-  width: 208px;
-  flex: 0 0 208px;
+  width: 76px;
+  flex: 0 0 76px;
   display: flex;
   flex-direction: column;
-  padding: 20px 12px 14px;
+  align-items: center;
+  padding: 34px 8px 12px;
   border-right: 1px solid var(--hairline);
   background: var(--paper-deep);
   -webkit-app-region: drag;
+  gap: 4px;
 }
 
+/* Phase Orbit：品牌图形（一个轨道环 + 一颗在轨的豆） */
 .sidebar__brand {
-  font-family: var(--serif);
-  font-size: 14px;
-  font-weight: 500;
-  letter-spacing: 0.18em;
-  color: var(--espresso);
-  padding: 2px 12px 0;
-  margin-bottom: 26px;
+  -webkit-app-region: no-drag;
+  margin-bottom: 18px;
+  color: var(--roast);
+  display: flex;
 }
 
-.sidebar__group {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  color: var(--ink-faint);
-  padding: 0 12px;
-  margin: 18px 0 6px;
+.sidebar__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  align-items: center;
 }
 
 .sidebar__item {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 8px 12px;
+  gap: 4px;
+  width: 60px;
+  padding: 9px 0 7px;
   border: 0;
   border-radius: var(--radius-small);
   background: transparent;
-  color: var(--ink-soft);
-  font-size: var(--fs-body);
-  text-align: left;
+  color: var(--ink-faint);
   -webkit-app-region: no-drag;
   transition:
-    background 0.15s ease,
-    color 0.15s ease;
+    background 0.16s ease,
+    color 0.16s ease;
+}
+
+.sidebar__item span {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1;
 }
 
 .sidebar__item:hover {
@@ -219,9 +237,8 @@ textarea {
 }
 
 .sidebar__item[data-active='true'] {
-  background: var(--cream);
-  color: var(--espresso);
-  font-weight: 500;
+  background: var(--well-deep);
+  color: var(--ink);
 }
 
 .sidebar__item:focus-visible {
@@ -233,11 +250,12 @@ textarea {
 }
 
 .sidebar__meta {
-  font-size: 10px;
+  font-size: 9px;
   color: var(--ink-faint);
-  padding: 0 12px;
-  line-height: 1.6;
+  text-align: center;
+  line-height: 1.5;
   -webkit-app-region: no-drag;
+  opacity: 0.8;
 }
 
 .workspace {
@@ -348,25 +366,6 @@ textarea {
 }
 
 @media (max-width: 1150px) {
-  .sidebar {
-    width: 64px;
-    flex: 0 0 64px;
-    padding: 20px 8px 12px;
-    align-items: center;
-  }
-  .sidebar__brand,
-  .sidebar__group,
-  .sidebar__meta {
-    display: none;
-  }
-  .sidebar__item {
-    width: 44px;
-    justify-content: center;
-    padding: 10px 0;
-  }
-  .sidebar__item span {
-    display: none;
-  }
   .columns,
   .columns[data-inspector='off'] {
     grid-template-columns: 232px minmax(0, 1fr);
@@ -771,20 +770,22 @@ textarea {
   background: var(--phase-declining);
 }
 
-/* ---------- 记录页：内容优先的收藏网格 ---------- */
+/* ---------- 记录页：编辑式 Masonry 内容流 + 按需浮动的详情面板 ---------- */
 
 .record-layout {
   flex: 1;
   min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
   overflow: hidden;
 }
 
 .record-grid-wrap {
+  flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 20px 28px 44px;
+  padding: 20px 36px 48px;
 }
 
 .record-toolbar {
@@ -792,13 +793,20 @@ textarea {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
-  margin-bottom: 18px;
+  margin-bottom: 22px;
 }
 
-.record-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(216px, 1fr));
-  gap: 18px;
+/* 编辑式 Masonry：列数由理想列宽决定，窄窗口自然降到 1–2 列 */
+.record-masonry {
+  columns: 4 216px;
+  column-gap: 18px;
+}
+
+.record-masonry .record-tile {
+  display: inline-flex;
+  width: 100%;
+  margin: 0 0 18px;
+  break-inside: avoid;
 }
 
 .record-tile {
@@ -827,20 +835,32 @@ textarea {
 }
 
 .record-tile[data-active='true'] {
-  border-color: var(--espresso);
+  border-color: var(--focus);
   box-shadow:
-    inset 0 0 0 1px var(--espresso),
+    inset 0 0 0 1px var(--focus),
     var(--shadow-hover);
 }
 
+/* 载体决定媒体区的形状：图片 4:3、链接与视频 16:9、文字随内容自然生长 */
 .record-tile__media {
-  height: 132px;
+  height: auto;
+  aspect-ratio: 4 / 3;
   background: var(--well);
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
   position: relative;
+}
+
+.record-tile[data-carrier='link'] .record-tile__media,
+.record-tile[data-carrier='video'] .record-tile__media {
+  aspect-ratio: 16 / 9;
+}
+
+.record-tile[data-carrier='text'] .record-tile__media {
+  aspect-ratio: auto;
+  min-height: 0;
 }
 
 /* ===== 平台差异化预览（Records）：同一卡片系统，平台各自的内容结构 ===== */
@@ -1216,9 +1236,11 @@ textarea {
   font-size: var(--fs-body);
   font-weight: 500;
   color: var(--ink);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .record-tile__meta {
@@ -1230,13 +1252,43 @@ textarea {
   overflow: hidden;
 }
 
-/* 记录侧栏：详情 + 编辑上下文 */
-.record-side {
-  min-height: 0;
+/* 详情浮层：按需从右侧浮现，不挤压主内容区（Records 与 Coffee 共用） */
+.float-panel {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  bottom: 14px;
+  width: min(480px, calc(100vw - 76px - 28px));
+  z-index: 60;
   overflow: auto;
-  border-left: 1px solid var(--hairline);
-  background: var(--paper);
-  padding: 22px 22px 36px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-large);
+  background: var(--card);
+  box-shadow: var(--shadow-panel);
+  padding: 16px 22px 28px;
+  animation: float-panel-in 0.18s ease;
+}
+
+@keyframes float-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 窄窗口：面板近全屏，主内容被临时覆盖而不是被挤压 */
+@media (max-width: 1150px) {
+  .float-panel {
+    left: 86px;
+    right: 10px;
+    top: 10px;
+    bottom: 10px;
+    width: auto;
+  }
 }
 
 .record-side__detail {
@@ -1511,4 +1563,179 @@ textarea {
 .search input {
   padding-left: 30px;
   background: var(--card);
+}
+
+/* 无障碍隐藏文本（品牌名的文字形式，供读屏与测试断言） */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ---------- Coffee：个人收藏架 ---------- */
+
+.coffee-flow {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 36px 48px;
+}
+
+.coffee-section {
+  margin-bottom: 28px;
+}
+
+.shelf {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+  gap: 16px;
+}
+
+.shelf-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  text-align: left;
+  padding: 16px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--card);
+  transition:
+    box-shadow 0.18s ease,
+    transform 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.shelf-card:hover {
+  box-shadow: var(--shadow-hover);
+  transform: translateY(-1px);
+}
+
+.shelf-card[data-active='true'] {
+  border-color: var(--focus);
+  box-shadow:
+    inset 0 0 0 1px var(--focus),
+    var(--shadow-hover);
+}
+
+.shelf-card__name {
+  font-size: var(--fs-card-title);
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shelf-card__meta {
+  font-size: var(--fs-caption);
+  color: var(--ink-soft);
+}
+
+.shelf-card__stock {
+  font-size: var(--fs-callout);
+  color: var(--ink-soft);
+}
+
+.shelf-card .stock-bar {
+  margin-top: 2px;
+}
+
+.shelf-card .badge {
+  align-self: flex-start;
+}
+
+.float-panel .hero {
+  padding: 16px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--paper);
+  margin-bottom: 20px;
+}
+
+.float-panel__section {
+  margin-bottom: 4px;
+}
+
+/* ---------- Canvas：全工作区 + 悬浮工具栏 ---------- */
+
+.canvas-shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.canvas-topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 52px;
+  flex: none;
+  padding: 0 14px 0 88px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--paper-deep);
+  -webkit-app-region: drag;
+}
+
+.canvas-topbar select {
+  width: 200px;
+  -webkit-app-region: no-drag;
+}
+
+.canvas-topbar .spacer {
+  flex: 1;
+}
+
+.canvas-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--paper);
+}
+
+.canvas-panel {
+  position: fixed;
+  top: 64px;
+  right: 14px;
+  bottom: 14px;
+  width: 320px;
+  z-index: 55;
+  overflow: auto;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-large);
+  box-shadow: var(--shadow-panel);
+  padding: 16px;
+  animation: float-panel-in 0.18s ease;
+}
+
+/* ---------- Settings：分组列表 ---------- */
+
+.settings-flow {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 36px 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 760px;
+}
+
+.settings-group {
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 18px 20px 20px;
+}
+
+.settings-group .overline {
+  margin-top: 0;
 }

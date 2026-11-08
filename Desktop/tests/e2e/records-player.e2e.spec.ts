@@ -100,10 +100,11 @@ test('详情里的播放器：按内容 ID 播放、放大、非法 ID 不出现
   )
 
   await page.waitForLoadState('domcontentloaded')
-  await page.getByRole('button', { name: '记录', exact: true }).click()
+  await page.getByRole('button', { name: 'Records', exact: true }).click()
   await expect(page.locator('.record-tile')).toHaveCount(3)
 
-  // 1) 默认只显示封面：没有 iframe，点一下才创建
+  // 1) 点卡片打开详情浮层；默认只显示封面：没有 iframe，点一下才创建
+  await page.locator('.record-tile', { hasText: 'Coffee Brewing Basics' }).click()
   await expect(page.locator('.detail-title')).toHaveText('Coffee Brewing Basics')
   await expect(page.locator('.link-player')).toBeVisible()
   await expect(page.locator('.link-player__frame')).toHaveCount(0)

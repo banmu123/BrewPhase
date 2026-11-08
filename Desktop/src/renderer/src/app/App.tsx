@@ -9,9 +9,9 @@ import { SettingsPage } from '../features/settings/SettingsPage'
 import { useAppStore, type ModuleKey } from './store'
 
 const SPACES: { key: ModuleKey; label: string; hint: string; icon: typeof BeanIcon }[] = [
-  { key: 'coffee', label: '咖啡', hint: '豆子与冲煮', icon: BeanIcon },
-  { key: 'records', label: '记录', hint: '收藏的资料', icon: RecordsIcon },
-  { key: 'canvas', label: '画布', hint: '整理与创作', icon: CanvasIcon }
+  { key: 'records', label: 'Records', hint: 'Collect & Explore', icon: RecordsIcon },
+  { key: 'coffee', label: 'Coffee', hint: 'Observe & Experiment', icon: BeanIcon },
+  { key: 'canvas', label: 'Canvas', hint: 'Connect & Create', icon: CanvasIcon }
 ]
 
 const SYSTEM: { key: ModuleKey; label: string; hint: string; icon: typeof BeanIcon }[] = [
@@ -19,11 +19,11 @@ const SYSTEM: { key: ModuleKey; label: string; hint: string; icon: typeof BeanIc
 ]
 
 /**
- * 外壳：Café Workspace。
+ * Light Studio 外壳：76px 窄侧边栏 + 自适应主工作区。
  *
- * 左边是「自己的工作室导航」——品牌、空间、系统三段，暖纸底；右边是当前
- * 空间。三个业务模块同级，谁也不寄生在谁里面。侧边栏上部留给 macOS 红绿灯
- * （`-webkit-app-region: drag`），条目本身 no-drag。
+ * 侧栏只是空间切换工具，不是视觉中心——Phase Orbit 品牌图形在顶，
+ * 三个空间用图标 + 小字，设置沉底。左侧栏整体是 macOS 的拖动区，
+ * 红绿灯落在它的上沿；条目本身 no-drag。
  */
 export function App() {
   const { module, setModule } = useAppStore()
@@ -48,7 +48,7 @@ export function App() {
         aria-label={item.label}
         title={item.hint}
       >
-        <Icon size={18} />
+        <Icon size={20} />
         <span>{item.label}</span>
       </button>
     )
@@ -57,20 +57,16 @@ export function App() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="sidebar__brand">BREWPHASE</div>
+        <div className="sidebar__brand">
+          <PhaseOrbit />
+          <span className="sr-only">BREWPHASE</span>
+        </div>
 
-        <div className="sidebar__group">空间</div>
-        {SPACES.map(renderItem)}
-
-        <div className="sidebar__group">系统</div>
-        {SYSTEM.map(renderItem)}
+        <nav className="sidebar__nav">{SPACES.map(renderItem)}</nav>
 
         <div className="sidebar__spacer" />
-        <div className="sidebar__meta">
-          {info ? `v${info.appVersion}` : '—'}
-          <br />
-          {info ? info.platform : ''}
-        </div>
+        {SYSTEM.map(renderItem)}
+        <div className="sidebar__meta">{info ? `v${info.appVersion}` : '—'}</div>
       </aside>
 
       <main className="workspace">
@@ -90,5 +86,25 @@ export function App() {
         )}
       </main>
     </div>
+  )
+}
+
+/** Phase Orbit：轨道环 + 一颗在轨的豆——品牌图形，只出现在这里。 */
+function PhaseOrbit() {
+  return (
+    <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden="true">
+      <ellipse
+        cx="14"
+        cy="14"
+        rx="11.5"
+        ry="7.5"
+        transform="rotate(-24 14 14)"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        opacity="0.5"
+      />
+      <circle cx="14" cy="14" r="3.6" fill="currentColor" />
+      <circle cx="22.6" cy="8.2" r="1.9" fill="currentColor" opacity="0.85" />
+    </svg>
   )
 }

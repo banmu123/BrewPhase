@@ -29,20 +29,20 @@ test('应用启动、连上本地库、三个模块可切换', async () => {
   // `exact` 是必须的：这条用例跑在**真实库**上，豆名列里完全可能出现
   // 「启程咖啡」这种名字，模糊匹配会把豆子按钮一起选中（strict mode 直接失败）。
   const nav = (name: string) => page.getByRole('button', { name, exact: true })
-  await expect(nav('咖啡')).toBeVisible()
-  await expect(nav('记录')).toBeVisible()
-  await expect(nav('画布')).toBeVisible()
+  await expect(nav('Coffee')).toBeVisible()
+  await expect(nav('Records')).toBeVisible()
+  await expect(nav('Canvas')).toBeVisible()
 
   // 通过 preload 桥拿一次应用信息：能拿到就说明 IPC + 数据库都通了。
   const info = await page.evaluate(async () => window.brewphase.app.info())
   expect(info.dbSchemaVersion).toBe(1)
   expect(info.syncProtocolVersion).toBe(1)
 
-  await nav('记录').click()
-  await expect(page.getByRole('heading', { name: '记录' })).toBeVisible()
+  await nav('Records').click()
+  await expect(page.getByRole('heading', { name: 'Records' })).toBeVisible()
 
-  await nav('画布').click()
-  await expect(page.getByRole('heading', { name: '画布' })).toBeVisible()
+  await nav('Canvas').click()
+  await expect(page.locator('.canvas-topbar')).toBeVisible()
 
   await app.close()
 })

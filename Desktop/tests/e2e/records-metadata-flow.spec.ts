@@ -64,9 +64,7 @@ test('同步链接的元数据补全：卡片/详情/搜索/编辑优先级', as
   })
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
-  await page.locator('.sidebar__link', { hasText: '记' }).click().catch(async () => {
-    await page.getByText('记录', { exact: true }).first().click()
-  })
+  await page.getByRole('button', { name: 'Records', exact: true }).click()
 
   // 1) 启动恢复 → 抓取 → 卡片标题从 pending 变成自动标题（不需要重启/切页）
   await expect(page.locator('.record-tile__title')).toHaveText('banmu123/BrewPhase', { timeout: 20_000 })
@@ -83,7 +81,7 @@ test('同步链接的元数据补全：卡片/详情/搜索/编辑优先级', as
   await expect(info).toContainText('⑂ 7')
   await expect(info).toContainText('Fixture coffee studio')
   // 状态行显示「已更新」
-  await expect(page.locator('.record-side')).toContainText('预览信息已更新')
+  await expect(page.locator('.float-panel')).toContainText('预览信息已更新')
 
   // 3) 搜索能命中本地派生元数据（标题/描述都不是 records 里的字段）
   await page.locator('.search input').fill('Fixture coffee studio')
@@ -94,7 +92,7 @@ test('同步链接的元数据补全：卡片/详情/搜索/编辑优先级', as
 
   // 4) 用户写标题：成为记录标题，自动标题不再覆盖它
   await page.locator('.record-tile').first().click()
-  const titleInput = page.locator('.record-side .field', { hasText: '标题' }).locator('input')
+  const titleInput = page.locator('.float-panel .field', { hasText: '标题' }).locator('input')
   await titleInput.fill('我的标题')
   await page.getByRole('button', { name: '保存修改' }).click()
   await expect(page.locator('.record-tile__title')).toHaveText('我的标题')
@@ -105,7 +103,7 @@ test('同步链接的元数据补全：卡片/详情/搜索/编辑优先级', as
 
   // 5) 手动刷新：跳过缓存重抓，状态与数据保持
   await page.getByRole('button', { name: '刷新预览' }).click()
-  await expect(page.locator('.record-side')).toContainText('预览信息已更新', { timeout: 20_000 })
+  await expect(page.locator('.float-panel')).toContainText('预览信息已更新', { timeout: 20_000 })
   await expect(page.locator('.record-tile__title')).toHaveText('我的标题')
 
   await page.screenshot({ path: '/tmp/records-metadata-flow.png' })

@@ -86,7 +86,7 @@ test('手机同步写库后，Records 一直开着也能自动更新', async () 
   })
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
-  await page.getByRole('button', { name: '记录', exact: true }).click()
+  await page.getByRole('button', { name: 'Records', exact: true }).click()
   await expect(page.locator('.record-tile')).toHaveCount(3)
 
   // 先选中第一条：后面的写入不能把用户正在看的详情顶掉
@@ -148,8 +148,8 @@ test('手机同步写库后，Records 一直开着也能自动更新', async () 
   await broadcast(app)
   await expect(page.locator('.record-tile')).toHaveCount(4)
   await expect(page.locator('.record-tile', { hasText: '手机拍的图' })).toHaveCount(0)
-  // 选中被清理：详情退到列表第一条，而不是继续显示已删除的记录
-  await expect(page.locator('.detail-title')).not.toHaveText('手机拍的图')
+  // 选中的记录没了：详情浮层随之关闭，不再显示已删除的记录
+  await expect(page.locator('.float-panel')).toHaveCount(0)
 
   // ── 连续事件：一次同步的多条广播不造成重复内容 ────────────────────
   for (let index = 0; index < 5; index += 1) await broadcast(app)
@@ -158,9 +158,9 @@ test('手机同步写库后，Records 一直开着也能自动更新', async () 
   expect(new Set(titles).size).toBe(titles.length)
 
   // ── 离开页面后广播不再触发查询：切回来数据仍然正确 ────────────────
-  await page.getByRole('button', { name: '咖啡', exact: true }).click()
+  await page.getByRole('button', { name: 'Coffee', exact: true }).click()
   await broadcast(app)
-  await page.getByRole('button', { name: '记录', exact: true }).click()
+  await page.getByRole('button', { name: 'Records', exact: true }).click()
   await expect(page.locator('.record-tile')).toHaveCount(4)
 
   await page.screenshot({ path: '/tmp/records-sync-refresh.png' })

@@ -21,8 +21,8 @@ export function SettingsPage({ info }: { info: AppInfo | null }) {
       </header>
 
       <div className="page-body">
-        <div className="columns" data-inspector="off">
-          <section className="column">
+        <div className="settings-flow">
+          <section className="settings-group">
             <div className="section">
               <span className="overline">应用</span>
               <div className="note">
@@ -58,7 +58,7 @@ export function SettingsPage({ info }: { info: AppInfo | null }) {
             </ul>
           </section>
 
-          <section className="column column--main">
+          <section className="settings-group">
             <div className="detail-body">
               <SyncSection />
             </div>

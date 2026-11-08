@@ -32,9 +32,7 @@ test('新建链接：本地识别 + 保存不被阻塞', async () => {
   })
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
-  await page.locator('.sidebar__link', { hasText: '记' }).click().catch(async () => {
-    await page.getByText('记录', { exact: true }).first().click()
-  })
+  await page.getByRole('button', { name: 'Records', exact: true }).click()
 
   // 打开「新链接」表单
   await page.getByRole('button', { name: '新链接' }).click()
