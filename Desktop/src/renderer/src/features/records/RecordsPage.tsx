@@ -6,7 +6,7 @@ import { SearchIcon } from '../../shared/icons'
 import { parseLink, providerLabel } from '@shared/link-parser'
 import { RecordTilePreview } from './preview/RecordTilePreview'
 import { detectPlatform } from './preview/platform'
-import { formatCount } from './preview/preview-model'
+import { buildPreview, formatCount, recordDisplayTitle, type RecordPreview } from './preview/preview-model'
 import {
   createInspectorForm,
   editField,
@@ -56,6 +56,9 @@ export function RecordsPage() {
     const timer = window.setTimeout(() => void load(), 180)
     return () => window.clearTimeout(timer)
   }, [load])
+
+  // 后台元数据补全完成（成功/失败）后自动刷新：不需要用户切页才看到结果
+  useEffect(() => api.records.onMetadataUpdated(() => void load()), [load])
 
   const tagName = useMemo(() => new Map(tags.map((tag) => [tag.id, tag.name])), [tags])
 
@@ -191,11 +194,15 @@ export function RecordsPage() {
               <>
                 <div className="record-side__detail">
                   <span className="overline">{carrierLabel[selected.carrier]}</span>
-                  <h2 className="detail-title">{selected.title || '未命名记录'}</h2>
+                  <h2 className="detail-title">{recordDisplayTitle(selected) || '未命名记录'}</h2>
                   <div className="detail-meta">
                     <span>{formatDate(selected.createdAt)}</span>
-                    {selected.sourceName && <span>{selected.sourceName}</span>}
-                    {selected.authorName && <span>{selected.authorName}</span>}
+                    {(selected.sourceName || selected.metadata?.sourceName) && (
+                      <span>{selected.sourceName || selected.metadata?.sourceName}</span>
+                    )}
+                    {(selected.authorName || selected.metadata?.authorName) && (
+                      <span>{selected.authorName || selected.metadata?.authorName}</span>
+                    )}
                   </div>
 
                   {selected.carrier === 'image' && selected.mediaPath && (
@@ -211,11 +218,12 @@ export function RecordsPage() {
                       <a className="detail-link" href={selected.urlString} target="_blank" rel="noreferrer">
                         {selected.urlString}
                       </a>
-                      <LinkMetaLine item={selected} />
                     </p>
                   )}
 
-                  {selected.summary && <p className="note" style={{ marginBottom: 14 }}>{selected.summary}</p>}
+                  {selected.carrier !== 'link' && selected.summary && (
+                    <p className="note" style={{ marginBottom: 14 }}>{selected.summary}</p>
+                  )}
                   {selected.note && <div className="detail-note">{selected.note}</div>}
                 </div>
 
@@ -255,13 +263,12 @@ function RecordTile(props: {
   // 平台标签：链接用平台识别，本地媒体与文字用载体名——本地内容不该显示「网页」。
   const metaLabel = item.carrier === 'link' ? platform.label : carrierLabel[item.carrier]
   const previewTitle = useMemo(() => {
-    const local = item.metadata
-    const identity = item.platformContentID ?? local?.contentId ?? null
+    // 用户标题 → 本地派生标题 → GitHub 仓库身份 → 摘要首行 → 载体名
+    const composed = recordDisplayTitle(item)
+    if (composed) return composed
+    const identity = item.platformContentID ?? item.metadata?.contentId ?? null
     if (platform.platform === 'github' && identity) return identity
-    const title = item.title.trim() || (local?.title ?? '').trim()
-    if (title) return title
-    const summary = item.summary.trim() || (local?.description ?? '').trim()
-    return summary.split('\n')[0] || carrierLabel[item.carrier]
+    return carrierLabel[item.carrier]
   }, [platform, item])
   // 视频平台把频道/UP 主带进元信息行（§顺手检查 2）。
   const metaAuthor =
@@ -298,26 +305,6 @@ function RecordTile(props: {
 }
 
 /** 详情侧栏的平台元信息行：仓库统计 / 视频来源 / 网页域名，如实展示。 */
-function LinkMetaLine(props: { item: RecordItem }) {
-  const { item } = props
-  const platform = detectPlatform(item)
-  const stats: string[] = []
-  if (item.repositoryLanguage) stats.push(item.repositoryLanguage)
-  if (item.repositoryStars !== null && item.repositoryStars > 0) stats.push(`★ ${formatCount(item.repositoryStars)}`)
-  if (item.repositoryForks !== null && item.repositoryForks > 0) stats.push(`Fork ${formatCount(item.repositoryForks)}`)
-
-  if (platform.platform === 'github' && stats.length > 0) {
-    return <span style={{ display: 'block', marginTop: 6 }}>仓库 · {stats.join(' · ')}</span>
-  }
-  if (platform.platform === 'youtube' || platform.platform === 'bilibili') {
-    return <span style={{ display: 'block', marginTop: 6 }}>视频 · {platform.label}{item.authorName ? ` · ${item.authorName}` : ''}</span>
-  }
-  if (item.sourceName || item.authorName) {
-    return <span style={{ display: 'block', marginTop: 6 }}>{[item.sourceName, item.authorName].filter(Boolean).join(' · ')}</span>
-  }
-  return null
-}
-
 /** 表单里的本地识别状态行：已识别什么平台、内容 ID 是否取到。 */
 function ParsedLinkStatus(props: { parsed: ReturnType<typeof parseLink> | null }) {
   const { parsed } = props
@@ -444,6 +431,49 @@ function NewRecordForm(props: {
   )
 }
 
+/** 详情侧栏的「预览信息」：与卡片共用 buildPreview 的结果，不另造一套取值。 */
+function PreviewInfo(props: { preview: RecordPreview }) {
+  const { preview } = props
+  const stats: string[] = []
+  if (preview.language) stats.push(preview.language)
+  if (preview.stars != null) stats.push(`★ ${formatCount(preview.stars)}`)
+  if (preview.forks != null) stats.push(`⑂ ${formatCount(preview.forks)}`)
+  const identity =
+    preview.platform.platform === 'github' ? preview.repositoryName : preview.videoId
+  const hasContent = Boolean(
+    identity || stats.length > 0 || preview.description || preview.remoteImage
+  )
+  if (!hasContent) return null
+
+  return (
+    <div className="preview-info">
+      <div className="row row--between">
+        <span className="overline" style={{ margin: 0 }}>
+          预览信息
+        </span>
+        <span className="preview-info__chip" data-platform={preview.platform.platform}>
+          {preview.platform.label}
+        </span>
+      </div>
+      {identity && <InfoRow label={preview.platform.platform === 'github' ? '仓库' : '内容'} value={identity} mono />}
+      {stats.length > 0 && <InfoRow label="数据" value={stats.join(' · ')} />}
+      {preview.description && <p className="preview-info__desc">{preview.description}</p>}
+      {preview.remoteImage && (
+        <img className="preview-info__thumb" src={preview.remoteImage} alt="" loading="lazy" referrerPolicy="no-referrer" />
+      )}
+    </div>
+  )
+}
+
+function InfoRow(props: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="preview-info__row">
+      <span className="preview-info__label">{props.label}</span>
+      <span className={props.mono ? 'preview-info__value mono' : 'preview-info__value'}>{props.value}</span>
+    </div>
+  )
+}
+
 function RecordInspector(props: {
   item: RecordItem
   tags: RecordTag[]
@@ -472,6 +502,8 @@ function RecordInspector(props: {
 
   const urlChanged = urlString.trim() !== item.urlString.trim()
   const parsedUrl = useMemo(() => (urlChanged && urlString.trim() ? parseLink(urlString) : null), [urlChanged, urlString])
+  // 与卡片用同一个组装结果，保证「列表看到的」和「详情看到的」永远一致
+  const preview = useMemo(() => buildPreview(item, api.records.mediaUrl), [item])
 
   async function refreshPreview(force: boolean): Promise<void> {
     setRefreshing(true)
@@ -518,6 +550,7 @@ function RecordInspector(props: {
           </button>
         </div>
       )}
+      {item.carrier === 'link' && <PreviewInfo preview={preview} />}
       <div className="field">
         <label>标题</label>
         <input

@@ -39,7 +39,12 @@ const api: RendererApi = {
     deleteTag: (id) => invoke(IPC.tagDelete, { id }),
     importImage: () => invoke(IPC.recordImportImage),
     resolveMetadata: (id, force = false) => invoke(IPC.recordResolveMetadata, { id, force }),
-    mediaUrl: (fileName: string) => `bpmedia://media/${encodeURIComponent(fileName)}`
+    mediaUrl: (fileName: string) => `bpmedia://media/${encodeURIComponent(fileName)}`,
+    onMetadataUpdated: (listener) => {
+      const wrapped = () => listener()
+      ipcRenderer.on('records:metadata-updated', wrapped)
+      return () => ipcRenderer.removeListener('records:metadata-updated', wrapped)
+    }
   },
   sync: {
     status: () => invoke(IPC.syncStatus),

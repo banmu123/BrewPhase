@@ -57,6 +57,11 @@ export interface RendererApi {
     resolveMetadata: (id: string, force?: boolean) => Promise<RecordItem | null>
     /** `bpmedia://media/<fileName>`；只接受主进程校验过的文件名。 */
     mediaUrl: (fileName: string) => string
+    /**
+     * 后台元数据补全有了结果（成功或失败）时通知一次，用于自动刷新列表。
+     * 主进程的 ResolveQueue 在每次任务结束后广播。
+     */
+    onMetadataUpdated: (listener: () => void) => () => void
   }
   sync: {
     status: () => Promise<SyncStatus>

@@ -66,6 +66,11 @@ docs/           产品范围、架构、数据模型映射、同步协议、安�
 - **元数据所有权分离**：Desktop 抓到的标题/摘要/封面/仓库统计只存
   `record_metadata`（独立表，**不进同步指纹**），`records` 的同步列只由 iOS
   同步或桌面用户编辑写入——自动补全不会制造假冲突，用户编辑与删除仍受冲突保护。
+- **同步后自动补全**：iOS 同步进来的链接（新建或 URL 变更）会在事务提交后进入
+  本地抓取队列（并发 2、按 recordId+URL 去重、失败不自动重试）；应用重启会恢复
+  未完成的 pending 任务；结果只写本地派生表，抓完自动刷新界面。
+- **搜索覆盖本地派生信息**：Records 搜索同时命中 `records` 与同 URL 的
+  `record_metadata`（EXISTS 子查询，不产生重复行、不影响指纹）。
 - **安全**：`contextIsolation` / `sandbox` / 无 Node 集成、IPC zod 校验 + sender 校验、
   自定义媒体协议、CSP。
 

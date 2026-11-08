@@ -999,6 +999,70 @@ textarea {
   gap: 5px;
 }
 
+/* 详情侧栏的本地派生元数据（Phase 3.2）：与卡片同源，只是更细 */
+.preview-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+.preview-info__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  background: var(--card);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+
+.preview-info__row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.preview-info__label {
+  color: var(--ink-faint);
+  min-width: 34px;
+  flex: none;
+}
+
+.preview-info__value {
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-info__desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.preview-info__thumb {
+  width: 100%;
+  max-height: 120px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--hairline);
+}
+
 .preview-repo__lang-dot {
   width: 8px;
   height: 8px;

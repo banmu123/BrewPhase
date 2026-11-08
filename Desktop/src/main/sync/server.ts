@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { Database } from 'better-sqlite3'
 import { NonceStore, sha256, verifyRequest } from './auth'
 import { PairingService } from './pairing-service'
-import { applyBatch, type SyncBatch } from './snapshot-importer'
+import { applyBatch, type ApplyResult, type SyncBatch } from './snapshot-importer'
 import { isSafeMediaName } from '../media/store'
 import {
   checkManifest,
@@ -58,7 +58,12 @@ export class SyncServer {
     private readonly sqlite: Database,
     private readonly desktopDeviceId: string,
     private readonly desktopDeviceName: string,
-    private readonly onChanged: () => void
+    private readonly onChanged: () => void,
+    /**
+     * `applyBatch()` 已经提交（事务结束）之后回调，用于安排本地元数据补全。
+     * **绝不能**在事务里发起网络请求——这里只是同步入队。
+     */
+    private readonly onApplied?: (outcome: ApplyResult) => void
   ) {}
 
   pairingPayload(): { code: string; expiresAt: number } {
@@ -231,6 +236,12 @@ export class SyncServer {
         }
         this.touchDevice(device.id, true)
         this.onChanged()
+        // 事务已提交：把新建 / URL 变更的链接交给后台队列（不阻塞本次响应）
+        try {
+          this.onApplied?.(outcome)
+        } catch (error) {
+          console.error('[sync] metadata scheduling failed', error)
+        }
         return this.json(response, 200, outcome)
       }
 

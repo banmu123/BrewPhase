@@ -95,3 +95,82 @@ Inspector 里自动标题只作为输入框的 placeholder 出现；用户不输
 - 单向同步不变：Desktop 本地派生元数据**不回传** iOS。
 - 桌面改 URL 时会清空 `records` 里的 iOS 元数据列（旧 URL 的信息对新链接无效），
   这属于用户主动修改，按规则进入冲突是预期行为。
+
+## 7. 同步后自动补全（Phase 3.2）
+
+### 何时触发
+
+```
+POST /api/sync/apply
+   ↓ applyBatch()（一个事务，不碰网络）
+   ↓ 事务提交、HTTP 响应已经发出
+   ↓ 只取 results[] 里 entityType=record 且 status=applied 的 id
+   ↓ prepareLocalMetadata(id)：读记录 + 派生行，决定是否需要抓
+   ↓ ResolveQueue.enqueue({ recordId, urlString })
+```
+
+- **网络请求永远在事务之外**：入队发生在 `applyBatch` 返回之后，队列执行体自己开短事务；
+- 抓取失败**不会**让同步失败（同步结果早已返回 200）；
+- 不阻塞 iPhone 等待响应（入队是同步内存操作，耗时微秒级）。
+
+### 哪些情况抓，哪些不抓
+
+| 记录状态 | 派生行 | 处理 |
+|---|---|---|
+| 新的 link | 无 | 建 `pending` → 抓 |
+| URL 变了 | 有（旧 URL） | 删旧行 + 建 `pending` → 抓 |
+| 同一 URL，`pending` | 有 | 抓（上次没跑完，例如应用被关掉） |
+| 同一 URL，`ok` / `failed` | 有 | **不抓**（失败后由用户手动刷新，避免无限重试） |
+| 不是 link / 没有 URL | 有 | 直接删行 |
+| 同步结果 `skipped` / `conflict` / `failed` | — | 不入队 |
+
+### 队列
+
+`src/main/metadata/resolve-queue.ts`：
+
+- 并发上限 **2**（首轮导入几十条链接时不会同时打外部平台）；
+- 幂等键 `recordId + urlString`：排队中/执行中的同一任务不重复入队；
+- 只有「真到执行时 URL 仍是入队时那个」才会写入（`expectedUrl` + `applyResolvedMetadata`
+  的读写同事务校验双重保护）；
+- 失败不重试，状态落 `failed`；`onSettled` 广播 `records:metadata-updated`。
+
+### 应用重启恢复
+
+启动时扫描 `record_metadata.status = 'pending'` 且 `url_string` 与记录当前 URL 一致、
+记录仍是 `link` 的行，逐条入队。**不会**恢复 `failed`（那是用户手动刷新的职责）。
+
+### 界面刷新
+
+主进程每次任务结束（成功或失败）都 `webContents.send('records:metadata-updated')`；
+Records 页面订阅后重新拉取列表 → 卡片与详情自动更新，不需要切页或重启。
+
+### 搜索
+
+`listRecords()` 的搜索用 **EXISTS 子查询**接入 `record_metadata`：
+
+```sql
+exists (
+  select 1 from record_metadata
+   where record_metadata.record_id = records.id
+     and record_metadata.url_string = records.url_string   -- URL 必须一致
+     and (title like ? or description like ? or source_name like ? or author_name like ?)
+)
+```
+
+- 不用 JOIN：关系不唯一时 JOIN 会让同一条记录出现多行，分页跟着错；
+- URL 不一致的旧派生行**不参与搜索**；
+- 搜索只读，不写 `change_log`、不影响指纹。
+
+### 展示优先级（详情与卡片共用同一份组装结果）
+
+| 展示项 | 顺序 |
+|---|---|
+| 标题 | `records.title` → `record_metadata.title` → 摘要首行 → 载体名 |
+| 作者 / 来源 | `records.*` → `record_metadata.*`（同一项只显示一次） |
+| 语言 / ★ / Fork | `records.*` → `record_metadata.*` |
+| 摘要 | `records.summary` → `record_metadata.description` |
+| 封面 | `records.thumbnail_url_string` → `record_metadata.thumbnail_url` |
+| 抓取状态 | `record_metadata.status` → `records.metadata_status`（iOS 原值） |
+
+自动标题在 Inspector 里只作输入框的 **placeholder**；用户不输入，保存时回传
+`records.title` 的原值，不会被「顺手保存」升级成用户数据。

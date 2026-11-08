@@ -36,7 +36,20 @@ export type RecordPreview = {
   body: string | null
   /** 元信息行（域名等） */
   meta: string | null
+  /** 摘要：记录 summary 优先，本地派生 description 补空 */
+  description: string | null
+  /** 来源站点名：记录 sourceName 优先，本地派生补空 */
+  sourceName: string | null
   detailUrl: string | null
+}
+
+/**
+ * 记录在详情页顶部显示的标题：用户标题 → 本地派生标题 → 摘要首行。
+ * 空字符串表示两条来源都没有（调用方自己给 fallback）。
+ */
+export function recordDisplayTitle(item: RecordItem): string {
+  const local = item.metadata
+  return pick(item.title, local?.title) || pick(item.summary, local?.description).split('\n')[0] || ''
 }
 
 /** 只接受 https 的远程图片地址；其余（data:/file:/http:）一律拒绝。 */
@@ -118,6 +131,8 @@ export function buildPreview(item: RecordItem, mediaUrl: (name: string) => strin
       author,
       body: null,
       meta: pick(item.sourceName, local?.sourceName) || null,
+      description: summary || null,
+      sourceName: pick(item.sourceName, local?.sourceName) || null,
       detailUrl: null
     }
   }
@@ -137,6 +152,8 @@ export function buildPreview(item: RecordItem, mediaUrl: (name: string) => strin
       author,
       body: item.note || null,
       meta: null,
+      description: null,
+      sourceName: null,
       detailUrl: null
     }
   }
@@ -157,6 +174,8 @@ export function buildPreview(item: RecordItem, mediaUrl: (name: string) => strin
     author,
     body: null,
     meta: platform.label,
+    description: summary || null,
+    sourceName: pick(item.sourceName, local?.sourceName) || null,
     detailUrl,
     kind: 'platform-card'
   }

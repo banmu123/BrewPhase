@@ -23,6 +23,9 @@ export function listRecords(db: Db, query: RecordQuery): RecordItem[] {
   if (query.carrier) conditions.push(eq(records.carrier, query.carrier))
   if (query.search.trim()) {
     const pattern = `%${query.search.trim()}%`
+    // 本地派生元数据也参与搜索，但**只有当它的 url_string 与记录当前 URL 一致**
+    // 时才算数（URL 变了旧封面/旧标题不能被搜到）。用 EXISTS 而不是 JOIN：
+    // 后者在关系不唯一时会让同一条记录出现多行，分页也跟着错。
     conditions.push(
       or(
         like(records.title, pattern),
@@ -30,7 +33,18 @@ export function listRecords(db: Db, query: RecordQuery): RecordItem[] {
         like(records.sourceName, pattern),
         like(records.authorName, pattern),
         like(records.summary, pattern),
-        like(records.urlString, pattern)
+        like(records.urlString, pattern),
+        sql`exists (
+          select 1 from ${recordMetadata}
+          where ${recordMetadata.recordId} = ${records.id}
+            and ${recordMetadata.urlString} = ${records.urlString}
+            and (
+              ${recordMetadata.title} like ${pattern}
+              or ${recordMetadata.description} like ${pattern}
+              or ${recordMetadata.sourceName} like ${pattern}
+              or ${recordMetadata.authorName} like ${pattern}
+            )
+        )`
       )
     )
   }
@@ -220,6 +234,64 @@ export function applyResolvedMetadata(
   })
 
   return written ? getRecord(db, id) : null
+}
+
+/**
+ * 同步落库之后（或启动恢复）调用：保证 link 记录有对应的本地派生元数据行，
+ * 并告诉调用方**这次是否需要真的去抓**。
+ *
+ * - 非 link / 没有 URL → 删掉派生行，返回 null；
+ * - 没有行、或行的 url_string 与记录不一致（URL 变了）→ 重建为 pending，需要抓；
+ * - 同一 URL 且 `pending` → 需要抓（上次没跑完，比如应用被关掉）；
+ * - 同一 URL 且 `ok` / `failed` → 不自动重抓（失败后由用户手动刷新）。
+ */
+export function prepareLocalMetadata(
+  db: Db,
+  id: string
+): { urlString: string; needsFetch: boolean } | null {
+  const row = db.select().from(records).where(eq(records.id, id)).get()
+  if (!row) return null
+  if (row.carrier !== 'link' || !row.urlString.trim()) {
+    db.delete(recordMetadata).where(eq(recordMetadata.recordId, id)).run()
+    return null
+  }
+  const urlString = row.urlString.trim()
+  const existing = db.select().from(recordMetadata).where(eq(recordMetadata.recordId, id)).get()
+  if (existing && existing.urlString === urlString) {
+    return { urlString, needsFetch: existing.status === 'pending' }
+  }
+
+  const status = parseLink(urlString).valid ? 'pending' : 'failed'
+  const values = {
+    recordId: id,
+    urlString,
+    provider: row.provider,
+    status,
+    errorMessage: status === 'failed' ? '不是有效的网页地址' : null,
+    fetchedAt: 0
+  }
+  const { recordId: _recordId, ...update } = values
+  db.insert(recordMetadata)
+    .values(values)
+    .onConflictDoUpdate({ target: recordMetadata.recordId, set: update })
+    .run()
+  return { urlString, needsFetch: status === 'pending' }
+}
+
+/** 应用启动时要恢复的 pending 任务：URL 仍与记录一致，且仍是 link。 */
+export function pendingMetadataJobs(db: Db): Array<{ recordId: string; urlString: string }> {
+  return db
+    .select({ recordId: recordMetadata.recordId, urlString: recordMetadata.urlString })
+    .from(recordMetadata)
+    .innerJoin(records, eq(records.id, recordMetadata.recordId))
+    .where(
+      and(
+        eq(recordMetadata.status, 'pending'),
+        eq(records.carrier, 'link'),
+        eq(records.urlString, recordMetadata.urlString)
+      )
+    )
+    .all()
 }
 
 /**

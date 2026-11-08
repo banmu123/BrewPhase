@@ -51,7 +51,9 @@ export class SyncService {
 
   constructor(
     private readonly sqlite: Database,
-    private readonly onEvent: (event: { type: string }) => void
+    private readonly onEvent: (event: { type: string }) => void,
+    /** 同步落库之后的本地元数据调度（见 index.ts 的 ResolveQueue） */
+    private readonly onApplied?: (outcome: import('./snapshot-importer').ApplyResult) => void
   ) {
     this.desktopDeviceId = this.loadOrCreateDesktopDeviceId()
     this.desktopDeviceName = `BrewPhase · ${hostname()}`
@@ -91,8 +93,12 @@ export class SyncService {
     if (!enabled) return this.disable()
     this.setEnabled(true)
     if (!this.server) {
-      this.server = new SyncServer(this.sqlite, this.desktopDeviceId, this.desktopDeviceName, () =>
-        this.onEvent({ type: 'state-changed' })
+      this.server = new SyncServer(
+        this.sqlite,
+        this.desktopDeviceId,
+        this.desktopDeviceName,
+        () => this.onEvent({ type: 'state-changed' }),
+        this.onApplied
       )
     }
     const addresses = lanAddresses()
