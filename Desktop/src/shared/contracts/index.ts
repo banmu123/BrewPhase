@@ -90,6 +90,7 @@ export interface RendererApi {
     nodes: (canvasId: string) => Promise<CanvasNodeWithRecord[]>
     addNode: (canvasId: string, recordId: string) => Promise<CanvasNode>
     moveNode: (id: string, positionX: number, positionY: number) => Promise<void>
+    resizeNode: (id: string, width: number, height: number) => Promise<void>
     removeNode: (id: string) => Promise<void>
     rename: (id: string, name: string) => Promise<Canvas>
     notes: (canvasId: string) => Promise<CanvasNote[]>

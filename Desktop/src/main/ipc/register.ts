@@ -28,6 +28,7 @@ import {
 } from '../database/repositories/records'
 import {
   addNode,
+  resizeNode,
   createCanvas,
   createNote,
   deleteCanvas,
@@ -165,6 +166,10 @@ export function registerIpc(params: {
   handle(IPC.canvasNodeAdd, (input) => {
     const value = input as { canvasId: string; recordId: string }
     return addNode(db.db, db.deviceId, value.canvasId, value.recordId)
+  })
+  handle(IPC.canvasNodeResize, (input) => {
+    const value = input as { id: string; width: number; height: number }
+    return resizeNode(db.db, db.deviceId, value.id, value.width, value.height)
   })
   handle(IPC.canvasNodeMove, (input) => {
     const value = input as { id: string; positionX: number; positionY: number }

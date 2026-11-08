@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { beanDraftSchema, brewDraftSchema, tastingDraftSchema } from '../entities/coffee'
 import { recordDraftSchema, recordQuerySchema } from '../entities/records'
-import { canvasNodeMoveSchema, canvasNoteSchema, canvasStrokeSchema } from '../entities/canvas'
+import { canvasNodeMoveSchema, canvasNodeResizeSchema, canvasNoteSchema, canvasStrokeSchema } from '../entities/canvas'
 
 /**
  * IPC 的**唯一**契约清单：通道名 + 请求体校验 + 响应形状。
@@ -54,6 +54,7 @@ export const IPC = {
   canvasNodes: 'canvas:nodes',
   canvasNodeAdd: 'canvas:node:add',
   canvasNodeMove: 'canvas:node:move',
+  canvasNodeResize: 'canvas:node:resize',
   canvasNodeRemove: 'canvas:node:remove',
   canvasRename: 'canvas:rename',
   canvasNotes: 'canvas:notes',
@@ -108,6 +109,7 @@ export const ipcRequestSchemas = {
   [IPC.canvasNodes]: z.object({ canvasId: z.string().uuid() }),
   [IPC.canvasNodeAdd]: z.object({ canvasId: z.string().uuid(), recordId: z.string().uuid() }),
   [IPC.canvasNodeMove]: canvasNodeMoveSchema,
+  [IPC.canvasNodeResize]: canvasNodeResizeSchema,
   [IPC.canvasNodeRemove]: z.object({ id: z.string().uuid() }),
   [IPC.canvasRename]: z.object({ id: z.string().uuid(), name: z.string().min(1).max(120) }),
   [IPC.canvasNotes]: z.object({ canvasId: z.string().uuid() }),

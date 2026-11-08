@@ -69,6 +69,7 @@ const api: RendererApi = {
     nodes: (canvasId) => invoke(IPC.canvasNodes, { canvasId }),
     addNode: (canvasId, recordId) => invoke(IPC.canvasNodeAdd, { canvasId, recordId }),
     moveNode: (id, positionX, positionY) => invoke(IPC.canvasNodeMove, { id, positionX, positionY }),
+    resizeNode: (id, width, height) => invoke(IPC.canvasNodeResize, { id, width, height }),
     removeNode: (id) => invoke(IPC.canvasNodeRemove, { id }),
     rename: (id, name) => invoke(IPC.canvasRename, { id, name }),
     notes: (canvasId) => invoke(IPC.canvasNotes, { canvasId }),

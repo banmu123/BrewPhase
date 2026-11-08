@@ -135,6 +135,17 @@ export function moveNode(db: Db, deviceId: string, id: string, positionX: number
 }
 
 /** 从画布移除节点：只删引用，源记录原样保留。 */
+export function resizeNode(db: Db, deviceId: string, id: string, width: number, height: number): void {
+  const at = Date.now()
+  const row = db.select().from(canvasNodes).where(eq(canvasNodes.id, id)).get()
+  if (!row) return
+  db.transaction((tx) => {
+    tx.update(canvasNodes).set({ width, height, updatedAt: at }).where(eq(canvasNodes.id, id)).run()
+    recordChange(tx, { deviceId, entityType: 'canvasNode', entityId: id, operation: 'update' })
+    touchCanvas(tx, row.canvasId, at)
+  })
+}
+
 export function removeNode(db: Db, deviceId: string, id: string): void {
   const node = db.select().from(canvasNodes).where(eq(canvasNodes.id, id)).get()
   if (!node) return

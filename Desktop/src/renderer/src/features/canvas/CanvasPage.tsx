@@ -49,6 +49,7 @@ export function CanvasPage() {
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
   const [draft, setDraft] = useState<CanvasStroke | null>(null)
+  const [playingVideo, setPlayingVideo] = useState<CanvasNodeWithRecord | null>(null)
 
   const active = canvases.find((canvas) => canvas.id === activeId) ?? canvases[0] ?? null
   const containerRef = useRef<HTMLDivElement>(null)
@@ -510,7 +511,7 @@ export function CanvasPage() {
                     key={node.id}
                     node={node}
                     selected={node.id === selectedNodeId}
-                    draggable={tool === 'select'}
+                    draggable={tool === 'select' || tool === 'hand' || tool === 'note'}
                     onSelect={() => {
                       setSelectedNodeId(node.id)
                       setPanelOpen(true)
@@ -520,6 +521,14 @@ export function CanvasPage() {
                         current.map((item) => (item.id === node.id ? { ...item, positionX, positionY } : item))
                       )
                       await withSave(() => api.canvas.moveNode(node.id, positionX, positionY))
+                    }}
+                    onLiveResize={(width, height) => {
+                      setNodes((current) =>
+                        current.map((item) => (item.id === node.id ? { ...item, width, height } : item))
+                      )
+                    }}
+                    onResized={async (width, height) => {
+                      await withSave(() => api.canvas.resizeNode(node.id, width, height))
                     }}
                   />
                 ))}
@@ -621,30 +630,52 @@ export function CanvasPage() {
               />
 
               <div className="list" style={{ maxHeight: 240, overflow: 'auto', marginBottom: 14 }}>
-                {filteredRecords.map((record) => (
-                  <button
-                    key={record.id}
-                    className="list-item"
-                    disabled={addedRecordIds.has(record.id)}
-                    style={{ opacity: addedRecordIds.has(record.id) ? 0.45 : 1 }}
-                    onClick={async () => {
-                      await withSave(() => api.canvas.addNode(active.id, record.id))
-                      await loadContent(active.id)
-                    }}
-                  >
-                    <span className="list-item__title">{record.title || '未命名记录'}</span>
-                    <span className="list-item__meta">
-                      {record.carrier}
-                      {addedRecordIds.has(record.id) && ' · 已在画布'}
-                    </span>
-                  </button>
-                ))}
+                {filteredRecords.map((record) => {
+                  const thumb = record.previewPath ?? record.mediaPath
+                  return (
+                    <button
+                      key={record.id}
+                      className="add-card"
+                      disabled={addedRecordIds.has(record.id)}
+                      style={{ opacity: addedRecordIds.has(record.id) ? 0.45 : 1 }}
+                      onClick={async () => {
+                        await withSave(() => api.canvas.addNode(active.id, record.id))
+                        await loadContent(active.id)
+                      }}
+                    >
+                      {thumb ? (
+                        <img className="add-card__thumb" src={api.records.mediaUrl(thumb)} alt="" loading="lazy" />
+                      ) : (
+                        <span className="add-card__thumb add-card__thumb--text">
+                          {(record.title || record.summary || record.note || record.carrier).slice(0, 2)}
+                        </span>
+                      )}
+                      <span className="add-card__body">
+                        <span className="add-card__title">{record.title || '未命名记录'}</span>
+                        <span className="add-card__meta">
+                          {record.carrier}
+                          {addedRecordIds.has(record.id) && ' · 已在画布'}
+                        </span>
+                      </span>
+                    </button>
+                  )
+                })}
                 {filteredRecords.length === 0 && <div className="empty">没有匹配的记录。</div>}
               </div>
 
               <div className="hairline" />
               <span className="overline">选中的内容</span>
-              {selectedNode ? (
+              {selectedNode && selectedNode.recordCarrier === 'video' ? (
+                <div className="stack">
+                  <div className="note">{selectedNode.recordTitle || '未命名视频'}</div>
+                  <button className="button button--primary" onClick={() => setPlayingVideo(selectedNode)}>
+                    ▶ 在浮层中播放
+                  </button>
+                  <button className="button button--danger" onClick={() => void removeSelectedNode()}>
+                    从画布移除
+                  </button>
+                </div>
+              ) : selectedNode ? (
                 <div className="stack">
                   <div className="note">{selectedNode.recordTitle || '未命名记录'}</div>
                   {selectedNode.annotation && <div className="note">备注：{selectedNode.annotation}</div>}
@@ -677,6 +708,20 @@ export function CanvasPage() {
                 删除这块画布
               </button>
             </aside>
+          )}
+
+          {playingVideo && (
+            <div className="video-overlay" onClick={() => setPlayingVideo(null)}>
+              <video
+                src={api.records.mediaUrl(playingVideo.recordMediaPath ?? '')}
+                controls
+                autoPlay
+                onClick={(event) => event.stopPropagation()}
+              />
+              <button className="button" aria-label="关闭播放" onClick={() => setPlayingVideo(null)}>
+                关闭
+              </button>
+            </div>
           )}
 
           {editingNoteId && selectedNote && (
@@ -933,6 +978,8 @@ function CanvasNodeShape(props: {
   draggable: boolean
   onSelect: () => void
   onMoved: (x: number, y: number) => void | Promise<void>
+  onLiveResize?: (width: number, height: number) => void
+  onResized?: (width: number, height: number) => void | Promise<void>
 }) {
   const { node } = props
   const image = useLocalImage(

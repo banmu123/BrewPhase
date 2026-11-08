@@ -36,6 +36,12 @@ export const canvasNodeMoveSchema = z.object({
   positionY: z.number().finite()
 })
 
+export const canvasNodeResizeSchema = z.object({
+  id: z.string().uuid(),
+  width: z.number().min(48).max(4_000),
+  height: z.number().min(48).max(4_000)
+})
+
 /**
  * 手绘笔迹。点集是 `[x0, y0, x1, y1, …]` 的**世界坐标**，落库前不做屏幕换算。
  * Phase 1 只建结构与表，编辑工具在 Phase 4（见 docs/CANVAS_SPEC.md）。
