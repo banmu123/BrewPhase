@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { migrate } from '../../src/main/database/migrations'
 import { NonceStore, sha256, verifyRequest, expectedSignature, randomToken } from '../../src/main/sync/auth'
+import { recordIdsToResolve } from '../../src/main/metadata'
 import { SyncServer } from '../../src/main/sync/server'
 import { PairingService } from '../../src/main/sync/pairing-service'
 import { applyBatch, canonical, fingerprint, recordTagLinkId, type ApplyResult, type SyncBatch } from '../../src/main/sync/snapshot-importer'
@@ -1004,3 +1005,159 @@ function e2eBeanFp(payload: Record<string, unknown>): string {
 function tempMediaDir(): string {
   return join(process.env.BREWPHASE_USER_DATA_DIR ?? '', 'media')
 }
+
+describe('同步调度回调（Phase 3.2.1：生产 SyncServer 接线）', () => {
+  let db: Database.Database
+  let server: SyncServer
+  let baseUrl: string
+  let token: string
+  let tempDir: string
+  let appliedIds: string[][]
+  let appliedAt: number[]
+  let applyLatencyMs: number
+  let applyHook: ((outcome: { results: Array<{ entityType: string; id: string; status: string }> }) => void) | null
+
+  const recordId = 'bbbbbbbb-2222-4222-8222-00000000000c'
+  const RECORD_URL = 'https://github.com/banmu123/BrewPhase'
+
+  const payload = {
+    carrier: 'link', title: '', note: '', urlString: RECORD_URL, canonicalURL: RECORD_URL, provider: 'github',
+    contentKind: '', platformContentID: 'banmu123/BrewPhase', linkPage: 1, sourceName: '', authorName: '',
+    summary: '', thumbnailURLString: null, metadataStatus: 'resolved', repositoryStars: null,
+    repositoryForks: null, repositoryIssues: null, repositoryLanguage: null, repositoryLicense: null,
+    mediaPath: null, previewPath: null, isSample: false, createdAt: 1_700_000_000_000
+  }
+
+  function recordBatch(note = ''): SyncBatch {
+    const row = { ...payload, note }
+    const fp = fingerprint(canonical([
+      row.carrier, row.title, row.note, row.urlString, row.canonicalURL, row.provider, row.contentKind,
+      row.platformContentID, row.linkPage, row.sourceName, row.authorName, row.summary,
+      row.thumbnailURLString, row.metadataStatus, row.repositoryStars, row.repositoryForks,
+      row.repositoryIssues, row.repositoryLanguage, row.repositoryLicense, row.mediaPath,
+      row.previewPath, row.isSample
+    ]))
+    return { operations: [{ entityType: 'record', upserts: [{ id: recordId, fingerprint: fp, payload: row as never }], deletes: [] }] }
+  }
+
+  function signedHeaders(body: Buffer): Record<string, string> {
+    const timestamp = String(Date.now())
+    const nonce = crypto.randomUUID()
+    return {
+      authorization: `Bearer ${token}`,
+      'x-bp-timestamp': timestamp,
+      'x-bp-nonce': nonce,
+      'x-bp-signature': expectedSignature(token, timestamp, nonce, sha256(body)),
+      'content-type': 'application/json'
+    }
+  }
+
+  async function apply(body: SyncBatch): Promise<Response> {
+    const raw = Buffer.from(JSON.stringify(body), 'utf8')
+    const started = Date.now()
+    const response = await fetch(`${baseUrl}/api/sync/apply`, { method: 'POST', headers: signedHeaders(raw), body: raw })
+    applyLatencyMs = Date.now() - started
+    return response
+  }
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'bp-dispatch-'))
+    process.env.BREWPHASE_USER_DATA_DIR = tempDir
+    db = openDb()
+    appliedIds = []
+    appliedAt = []
+    applyLatencyMs = 0
+    // 生产接线：SyncServer 在 applyBatch() 之后回调节度（这里是同步入队的等价物）
+    applyHook = null
+    server = new SyncServer(db, 'bp_desk_dispatch', 'BrewPhase · dispatch', () => {}, (outcome) => {
+      appliedIds.push(recordIdsToResolve(outcome))
+      appliedAt.push(Date.now())
+      // 生产里这里只是 `queue.enqueue()`（同步、不 await）；测试可注入慢动作
+      applyHook?.(outcome)
+    })
+    const port = await new Promise<number>((resolve, reject) => {
+      const probe = createNetServer()
+      probe.listen(0, '127.0.0.1', () => {
+        const address = probe.address()
+        const actual = typeof address === 'object' && address ? address.port : 0
+        probe.close(() => (actual > 0 ? resolve(actual) : reject(new Error('no free port'))))
+      })
+      probe.on('error', reject)
+    })
+    const state = await server.start(['127.0.0.1'], port)
+    baseUrl = `http://127.0.0.1:${state.port ?? port}`
+
+    const { code } = server.pairingPayload()
+    const pair = await fetch(`${baseUrl}/api/pair`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pairingCode: code, deviceName: 'iPhone' })
+    })
+    expect(pair.status).toBe(200)
+    ;({ token } = (await pair.json()) as { token: string })
+  })
+
+  afterEach(async () => {
+    server.stop()
+    db.close()
+    await rm(tempDir, { recursive: true, force: true })
+    delete process.env.BREWPHASE_USER_DATA_DIR
+  })
+
+  it('新建记录：回调收到该 id，且回调时事务已经提交', async () => {
+    const response = await apply(recordBatch())
+    expect(response.status).toBe(200)
+
+    expect(appliedIds).toHaveLength(1)
+    expect(appliedIds[0]).toEqual([recordId])
+    // 回调里能读到数据、且是已提交的（回调在主进程同步执行，事务早已结束）
+    const row = db.prepare('select url_string from records where id = ?').get(recordId) as { url_string: string }
+    expect(row.url_string).toBe(RECORD_URL)
+  })
+
+  it('内容相同再次同步（skipped）：不重复调度', async () => {
+    await apply(recordBatch())
+    expect(appliedIds[0]).toEqual([recordId])
+
+    const again = await apply(recordBatch())
+    expect(again.status).toBe(200)
+    expect(appliedIds).toHaveLength(2)
+    // 第二次是 skipped → 过滤后为空，不会重复抓
+    expect(appliedIds[1]).toEqual([])
+  })
+
+  it('冲突（桌面改过）：不进入调度', async () => {
+    await apply(recordBatch())
+    db.prepare("update records set title = '桌面改的标题' where id = ?").run(recordId)
+
+    await apply(recordBatch())
+    expect(appliedIds.at(-1)).toEqual([])
+  })
+
+  it('apply 响应不等待 Resolver 网络：慢抓取也在 1s 内返回', async () => {
+    // 回调只做同步入队；即便 Resolver 永远卡在网络上，HTTP 也不该等它
+    const hang = new Promise<void>(() => undefined)
+    applyHook = (outcome) => {
+      expect(recordIdsToResolve(outcome)).toEqual([recordId])
+      void hang
+    }
+
+    const response = await apply(recordBatch('带新备注'))
+    expect(response.status).toBe(200)
+    expect(applyLatencyMs).toBeLessThan(1000)
+  })
+
+  it('recordIdsToResolve：只认 record + applied', () => {
+    expect(
+      recordIdsToResolve({
+        results: [
+          { entityType: 'record', id: 'r1', status: 'applied' },
+          { entityType: 'record', id: 'r2', status: 'skipped' },
+          { entityType: 'record', id: 'r3', status: 'conflict' },
+          { entityType: 'record', id: 'r4', status: 'failed' },
+          { entityType: 'bean', id: 'b1', status: 'applied' }
+        ]
+      })
+    ).toEqual(['r1'])
+  })
+})

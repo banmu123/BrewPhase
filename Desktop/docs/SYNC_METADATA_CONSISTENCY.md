@@ -102,16 +102,25 @@ Inspector 里自动标题只作为输入框的 placeholder 出现；用户不输
 
 ```
 POST /api/sync/apply
-   ↓ applyBatch()（一个事务，不碰网络）
-   ↓ 事务提交、HTTP 响应已经发出
-   ↓ 只取 results[] 里 entityType=record 且 status=applied 的 id
-   ↓ prepareLocalMetadata(id)：读记录 + 派生行，决定是否需要抓
-   ↓ ResolveQueue.enqueue({ recordId, urlString })
+   ↓ applyBatch()                一个事务，不碰网络
+   ↓ 事务提交（此时数据已经落库、可读）
+   ↓ onApplied(outcome)          同步回调：只挑 applied 的 record 入队
+   ↓ ResolveQueue.enqueue(...)   内存操作，不 await、不发起网络
+   ↓ 写出 HTTP 200（带着 outcome）
+   ┈┈┈（此后异步）┈┈┈
+   ↓ 队列按并发 2 抓取（网络在事务之外）
 ```
 
-- **网络请求永远在事务之外**：入队发生在 `applyBatch` 返回之后，队列执行体自己开短事务；
-- 抓取失败**不会**让同步失败（同步结果早已返回 200）；
-- 不阻塞 iPhone 等待响应（入队是同步内存操作，耗时微秒级）。
+**准确时序**：`applyBatch()` 的事务提交 → `onApplied()` 同步入队 → 才写出 HTTP 200
+响应。也就是「响应**不是**在入队之后才发」这么简单——而是**先提交、再同步入队、
+最后应答**；入队本身不发起任何网络请求，所以响应延迟与 Resolver 无关。
+
+- **网络请求永远在事务之外**：抓取发生在 `applyBatch` 返回之后，执行体自己开短事务；
+- 调度回调不等待任何外部请求（生产实现里只有 `queue.enqueue()`，同步返回）；
+- 抓取失败**不会**改变已经完成的同步结果（HTTP 早已返回 200，队列只写本地派生表）；
+- HTTP 同步接口**不等待**元数据补全完成（有测试断言：Resolver 卡在网络上时
+  apply 仍在 1s 内返回）；
+- 抓取结束后由 `records:metadata-updated` 通知 Renderer 刷新。
 
 ### 哪些情况抓，哪些不抓
 

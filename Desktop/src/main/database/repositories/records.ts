@@ -251,11 +251,14 @@ export function prepareLocalMetadata(
 ): { urlString: string; needsFetch: boolean } | null {
   const row = db.select().from(records).where(eq(records.id, id)).get()
   if (!row) return null
+  // `trim()` 只用于判空：**存储与比较一律用 records 的原始值**——iOS 同步过来的
+  // url_string 不能被改写，否则 record_metadata / 队列任务 / expectedUrl /
+  // pendingMetadataJobs 之间会各自持有不同的字符串，元数据永远对不上。
   if (row.carrier !== 'link' || !row.urlString.trim()) {
     db.delete(recordMetadata).where(eq(recordMetadata.recordId, id)).run()
     return null
   }
-  const urlString = row.urlString.trim()
+  const urlString = row.urlString
   const existing = db.select().from(recordMetadata).where(eq(recordMetadata.recordId, id)).get()
   if (existing && existing.urlString === urlString) {
     return { urlString, needsFetch: existing.status === 'pending' }
@@ -310,7 +313,7 @@ function seedLocalMetadata(
   db.insert(recordMetadata)
     .values({
       recordId,
-      urlString: urlString.trim(),
+      urlString,
       provider,
       status,
       errorMessage: status === 'failed' ? '不是有效的网页地址' : null,
@@ -318,7 +321,7 @@ function seedLocalMetadata(
     })
     .onConflictDoUpdate({
       target: recordMetadata.recordId,
-      set: { urlString: urlString.trim(), provider, status, errorMessage: status === 'failed' ? '不是有效的网页地址' : null }
+      set: { urlString, provider, status, errorMessage: status === 'failed' ? '不是有效的网页地址' : null }
     })
     .run()
 }

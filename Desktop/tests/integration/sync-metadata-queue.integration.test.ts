@@ -8,6 +8,7 @@ import { applyBatch, canonical, fingerprint, type SyncBatch } from '../../src/ma
 import {
   applyResolvedMetadata,
   getRecord,
+  listRecords,
   pendingMetadataJobs,
   prepareLocalMetadata
 } from '../../src/main/database/repositories/records'
@@ -320,5 +321,64 @@ describe('同步结果不影响其它实体', () => {
     const logsAfter = (handle.sqlite.prepare('select count(*) n from change_log').get() as { n: number }).n
     expect(after.fingerprint).toBe(before.fingerprint)
     expect(logsAfter).toBe(logsBefore)
+  })
+})
+
+describe('URL 原始值一致性（Phase 3.2.1）', () => {
+  const SPACED_URL = '  https://github.com/banmu123/BrewPhase  '
+
+  function rawUrl(): string {
+    const row = handle.sqlite.prepare('select url_string from records where id = ?').get(RECORD_ID) as {
+      url_string: string
+    }
+    return row.url_string
+  }
+
+  it('iOS 同步带首尾空格的 URL：records 保持原值，派生行与它逐字一致', () => {
+    applyBatch(handle.sqlite, batch(recordPayload({ urlString: SPACED_URL, canonicalURL: null })), 'dev1')
+
+    const prepared = prepareLocalMetadata(handle.db, RECORD_ID)
+    expect(prepared).toEqual({ urlString: SPACED_URL, needsFetch: true })
+    expect(rawUrl()).toBe(SPACED_URL)
+    expect(metaRow()?.url_string).toBe(SPACED_URL)
+    // 展示层的 URL 也还是原值（不改写同步数据）
+    expect(getRecord(handle.db, RECORD_ID)?.urlString).toBe(SPACED_URL)
+  })
+
+  it('带空格的 URL 能正常抓取并收敛到 ok，不会永久 pending', async () => {
+    applyBatch(handle.sqlite, batch(recordPayload({ urlString: SPACED_URL, canonicalURL: null })), 'dev1')
+    schedule(RECORD_ID)
+    await queue.drain()
+
+    const item = getRecord(handle.db, RECORD_ID)!
+    expect(item.metadata?.status).toBe('ok')
+    expect(item.metadata?.repositoryStars).toBe(12)
+    expect(metaRow()?.status).toBe('ok')
+    expect(metaRow()?.url_string).toBe(SPACED_URL)
+  })
+
+  it('重启恢复：带空格的 pending 任务也能被 pendingMetadataJobs 找到', () => {
+    applyBatch(handle.sqlite, batch(recordPayload({ urlString: SPACED_URL, canonicalURL: null })), 'dev1')
+    prepareLocalMetadata(handle.db, RECORD_ID)
+
+    expect(pendingMetadataJobs(handle.db)).toEqual([{ recordId: RECORD_ID, urlString: SPACED_URL }])
+  })
+
+  it('搜索与详情都能看到派生元数据（URL 字符串一致）', async () => {
+    applyBatch(handle.sqlite, batch(recordPayload({ urlString: SPACED_URL, canonicalURL: null })), 'dev1')
+    schedule(RECORD_ID)
+    await queue.drain()
+
+    const hits = listRecords(handle.db, {
+      search: 'Personal coffee studio',
+      carrier: null,
+      tagId: null,
+      limit: 50,
+      offset: 0
+    })
+    expect(hits.map((item) => item.id)).toEqual([RECORD_ID])
+    expect(hits[0].metadata?.title).toBe('banmu123/BrewPhase')
+    // 记录自身的 URL 依旧是原值
+    expect(hits[0].urlString).toBe(SPACED_URL)
   })
 })

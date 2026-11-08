@@ -6,6 +6,19 @@ import { applyResolvedMetadata, getRecord } from '../database/repositories/recor
 import { resolveMetadataDeduped } from './metadata-resolver'
 
 /**
+ * 从一次同步的结果里挑出「需要排本地元数据补全」的记录：
+ * 只有真正 `applied` 的 record。skipped（内容一致）/ conflict / failed 一律不排，
+ * 避免重复抓取和冲突期间的无效请求。
+ */
+export function recordIdsToResolve(outcome: {
+  results: Array<{ entityType: string; id: string; status: string }>
+}): string[] {
+  return outcome.results
+    .filter((item) => item.entityType === 'record' && item.status === 'applied')
+    .map((item) => item.id)
+}
+
+/**
  * 记录级元数据补全（IPC / 后台队列共用入口）。
  *
  * - 只处理 `link` 载体且有 URL 的记录；其余载体原样返回；

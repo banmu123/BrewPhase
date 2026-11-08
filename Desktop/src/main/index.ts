@@ -7,7 +7,7 @@ import { MEDIA_HOST, MEDIA_SCHEME, mediaFilePath } from './media/store'
 import { createMainWindow } from './window'
 import { SyncService } from './sync/sync-service'
 import { pendingMetadataJobs, prepareLocalMetadata } from './database/repositories/records'
-import { resolveRecordMetadata } from './metadata'
+import { recordIdsToResolve, resolveRecordMetadata } from './metadata'
 import { ResolveQueue } from './metadata/resolve-queue'
 import { activeMetadataFixture } from './metadata/metadata-fixture'
 
@@ -119,10 +119,7 @@ function bootstrap(): void {
     (outcome) => {
       // 只处理真正落库的 record（跳过 skipped / conflict / failed）；
       // URL 是否变化由 prepareLocalMetadata 自己比对
-      const applied = outcome.results
-        .filter((item) => item.entityType === 'record' && item.status === 'applied')
-        .map((item) => item.id)
-      scheduleMetadataFor(applied)
+      scheduleMetadataFor(recordIdsToResolve(outcome))
     }
   )
   void syncService.restore().catch((error) => {
