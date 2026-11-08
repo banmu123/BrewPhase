@@ -1,9 +1,15 @@
 import { and, desc, eq, inArray, like, or, sql } from 'drizzle-orm'
-import type { RecordDraft, RecordItem, RecordQuery, RecordTag } from '../../../shared/contracts'
+import type {
+  LocalRecordMetadata,
+  RecordDraft,
+  RecordItem,
+  RecordQuery,
+  RecordTag
+} from '../../../shared/contracts'
 import type { Db } from '../client'
 import type { ResolvedLinkMetadata } from '../../metadata/metadata-normalizer'
 import { parseLink } from '../../../shared/link-parser'
-import { records, recordTagLinks, recordTags } from '../schema'
+import { recordMetadata, records, recordTagLinks, recordTags } from '../schema'
 import { recordChange } from './sync-log'
 
 /**
@@ -44,14 +50,15 @@ export function listRecords(db: Db, query: RecordQuery): RecordItem[] {
     .offset(query.offset)
     .all()
   const tagsByRecord = tagsForRecords(db, rows.map((row) => row.id))
-  return rows.map((row) => toRecordItem(row, tagsByRecord.get(row.id) ?? []))
+  const metaByRecord = metadataForRecords(db, rows.map((row) => row.id))
+  return rows.map((row) => toRecordItem(row, tagsByRecord.get(row.id) ?? [], metaByRecord.get(row.id) ?? null))
 }
 
 export function getRecord(db: Db, id: string): RecordItem | null {
   const row = db.select().from(records).where(eq(records.id, id)).get()
   if (!row) return null
   const tags = tagsForRecords(db, [id]).get(id) ?? []
-  return toRecordItem(row, tags)
+  return toRecordItem(row, tags, metadataForRecords(db, [id]).get(id) ?? null)
 }
 
 export function createRecord(db: Db, deviceId: string, draft: RecordDraft): RecordItem {
@@ -76,12 +83,12 @@ export function createRecord(db: Db, deviceId: string, draft: RecordDraft): Reco
         summary: draft.summary,
         mediaPath: draft.mediaPath,
         previewPath: draft.previewPath,
-        // 链接的元数据由保存后的异步解析补全；非法 URL 直接 failed。
-        metadataStatus: initialLinkStatus(draft.carrier, draft.urlString),
         createdAt: at,
         updatedAt: at
       })
       .run()
+    // 抓取状态属于 Desktop 单方派生数据，写独立表（不进同步指纹）
+    seedLocalMetadata(scoped, id, draft.carrier, draft.urlString, draft.provider)
     replaceTags(scoped, id, draft.tagIds)
     recordChange(scoped, { deviceId, entityType: 'record', entityId: id, operation: 'create' })
   })
@@ -116,15 +123,23 @@ export function updateRecord(db: Db, deviceId: string, id: string, draft: Record
         repositoryStars: urlChanged ? null : previous?.repositoryStars ?? null,
         repositoryForks: urlChanged ? null : previous?.repositoryForks ?? null,
         repositoryLicense: urlChanged ? null : previous?.repositoryLicense ?? null,
-        metadataStatus: urlChanged
-          ? initialLinkStatus(draft.carrier, draft.urlString)
-          : (previous?.metadataStatus ?? 'idle'),
+        // 状态归 record_metadata 管；records 的这一列只保留 iOS 同步值，
+        // URL 变了它就没有意义了（旧 URL 的状态不能挂在新链接上）。
+        metadataStatus: urlChanged ? 'idle' : (previous?.metadataStatus ?? 'idle'),
         mediaPath: draft.mediaPath,
         previewPath: draft.previewPath,
         updatedAt: at
       })
       .where(eq(records.id, id))
       .run()
+    if (draft.carrier !== 'link') {
+      // 不再是链接 → 本地派生元数据整体失效
+      scoped.delete(recordMetadata).where(eq(recordMetadata.recordId, id)).run()
+    } else if (urlChanged) {
+      // 旧 URL 的封面/摘要/作者/统计一律作废（§URL 变更生命周期）
+      scoped.delete(recordMetadata).where(eq(recordMetadata.recordId, id)).run()
+      seedLocalMetadata(scoped, id, draft.carrier, draft.urlString, draft.provider)
+    }
     replaceTags(scoped, id, draft.tagIds)
     recordChange(scoped, { deviceId, entityType: 'record', entityId: id, operation: 'update' })
   })
@@ -133,12 +148,18 @@ export function updateRecord(db: Db, deviceId: string, id: string, draft: Record
 }
 
 /**
- * 写入自动解析的元数据（§五：元数据只是展示信息）。
- * - `title/summary/sourceName/authorName` **只在为空时补**——用户手写的内容永远优先；
- * - 封面/仓库统计/内容 ID 是平台事实，直接写；
- * - 刷新失败但本地已有成功结果：保留 `ok` 状态与旧数据，不清空。
+ * 写入 Desktop 自动解析的元数据（Phase 3.1）。
+ *
+ * **只写 `record_metadata`，绝不碰 records 的同步列**。records 里的
+ * source_name / author_name / summary / thumbnail_url_string / metadata_status /
+ * repository_* / canonical_url / platform_content_id 参与 iOS ↔ Desktop 的
+ * record 指纹；Resolver 一旦改它们，下一次相同内容的 iOS 推送就会被误判成
+ * 「桌面端自己改过」→ 假冲突，iOS 删除也会变成假删除冲突。
+ *
+ * 抓取结果做「非空合并」：刷新失败（resolved 全是 null）时保留上一次的成功数据，
+ * 状态按 `METADATA_HAS_CONTENT` 语义保留，不把 partial 升级成 ok。
  */
-/** 已有成功抓取结果的状态：ok（桌面）/ resolved、partial（iOS 同步原值）。 */
+/** 已有成功抓取结果的状态：ok / resolved、partial（iOS 原值经归一后也可能是这几个）。 */
 const METADATA_HAS_CONTENT: readonly string[] = ['ok', 'resolved', 'partial']
 
 export function applyResolvedMetadata(
@@ -148,60 +169,86 @@ export function applyResolvedMetadata(
   expectedUrl: string,
   resolved: ResolvedLinkMetadata
 ): RecordItem | null {
-  const row = db.select().from(records).where(eq(records.id, id)).get()
-  // 记录已删除 → 丢弃结果，不留孤儿数据（§第三轮 3）
-  if (!row) return null
-  // 抓取期间载体/URL 变了 → 旧结果作废：不能拿旧链接的封面盖新链接
-  if (row.carrier !== 'link' || row.urlString !== expectedUrl) return null
   const at = Date.now()
-  // 刷新失败时**保留上一次的真实状态**：ok/resolved/partial 都代表「库里已有
-  // 成功抓到的内容」，把 partial 悄悄升成 ok 等于对用户撒谎（§第四轮 三）。
-  // 从未成功过（idle/pending/failed）才落到 failed；本次成功一律记 ok。
-  const nextStatus =
-    resolved.status === 'success'
-      ? 'ok'
-      : METADATA_HAS_CONTENT.includes(row.metadataStatus)
-        ? row.metadataStatus
-        : 'failed'
+  let written = false
 
   db.transaction((tx) => {
     const scoped = tx as unknown as Db
-    const result = scoped
-      .update(records)
-      .set({
-        provider: resolved.provider,
-        platformContentId: resolved.contentId ?? row.platformContentId,
-        canonicalUrl: resolved.canonicalUrl || row.canonicalUrl,
-        thumbnailUrlString: resolved.thumbnailUrl ?? row.thumbnailUrlString,
-        title: row.title.trim() ? row.title : (resolved.title ?? row.title),
-        summary: row.summary.trim() ? row.summary : (resolved.description ?? row.summary),
-        sourceName: row.sourceName.trim() ? row.sourceName : (resolved.sourceName ?? row.sourceName),
-        authorName: row.authorName.trim() ? row.authorName : (resolved.authorName ?? row.authorName),
-        repositoryLanguage: resolved.repositoryLanguage ?? row.repositoryLanguage,
-        repositoryStars: resolved.repositoryStars ?? row.repositoryStars,
-        repositoryForks: resolved.repositoryForks ?? row.repositoryForks,
-        repositoryLicense: resolved.repositoryLicense ?? row.repositoryLicense,
-        metadataStatus: nextStatus,
-        updatedAt: at
-      })
-      // WHERE 里同时带上 URL 与载体一致性：检查与写入之间没有竞态窗口，
-      // 写入那一刻记录必须仍是「链接载体 + 同一 URL」（§第四轮 四）。
-      .where(and(eq(records.id, id), eq(records.urlString, expectedUrl), eq(records.carrier, 'link')))
-      .run()
-    if (result.changes > 0) {
-      recordChange(scoped, { deviceId, entityType: 'record', entityId: id, operation: 'update' })
+    // 记录已删除 / 载体变了 / URL 变了 → 旧结果作废（读与写在同一个事务里，
+    // better-sqlite3 同步执行，中间没有任何可插入的窗口）。
+    const row = scoped.select().from(records).where(eq(records.id, id)).get()
+    if (!row || row.carrier !== 'link' || row.urlString !== expectedUrl) return
+
+    const previous = scoped.select().from(recordMetadata).where(eq(recordMetadata.recordId, id)).get()
+    const keep = previous && previous.urlString === expectedUrl ? previous : null
+    const previousStatus = keep?.status ?? 'idle'
+    const status =
+      resolved.status === 'success'
+        ? 'ok'
+        : METADATA_HAS_CONTENT.includes(previousStatus)
+          ? previousStatus
+          : 'failed'
+
+    const values = {
+      recordId: id,
+      urlString: expectedUrl,
+      provider: resolved.provider || keep?.provider || 'generic',
+      contentId: resolved.contentId ?? keep?.contentId ?? null,
+      canonicalUrl: resolved.canonicalUrl || keep?.canonicalUrl || null,
+      title: resolved.title ?? keep?.title ?? null,
+      description: resolved.description ?? keep?.description ?? null,
+      thumbnailUrl: resolved.thumbnailUrl ?? keep?.thumbnailUrl ?? null,
+      sourceName: resolved.sourceName ?? keep?.sourceName ?? null,
+      authorName: resolved.authorName ?? keep?.authorName ?? null,
+      repositoryLanguage: resolved.repositoryLanguage ?? keep?.repositoryLanguage ?? null,
+      repositoryStars: resolved.repositoryStars ?? keep?.repositoryStars ?? null,
+      repositoryForks: resolved.repositoryForks ?? keep?.repositoryForks ?? null,
+      repositoryLicense: resolved.repositoryLicense ?? keep?.repositoryLicense ?? null,
+      status,
+      errorMessage: resolved.errorMessage ?? null,
+      fetchedAt: at
     }
+    const { recordId: _recordId, ...update } = values
+    scoped
+      .insert(recordMetadata)
+      .values(values)
+      .onConflictDoUpdate({ target: recordMetadata.recordId, set: update })
+      .run()
+    written = true
+    // 注意：这里**不写 change_log**——records 行没有变化，同步指纹也不该变。
+    void deviceId
   })
-  return getRecord(db, id)
+
+  return written ? getRecord(db, id) : null
 }
 
 /**
- * 链接记录的初始元数据状态：非链接载体 idle；链接且 URL 合法 pending；
- * **URL 非法直接 failed**——没人会去解析它，pending 会永远挂着（§第三轮 5）。
+ * 新链接的初始抓取状态落 record_metadata：非链接载体没有这回事；
+ * URL 非法直接 failed（没人会去解析它，pending 会永远挂着）。
  */
-function initialLinkStatus(carrier: string, urlString: string): 'idle' | 'pending' | 'failed' {
-  if (carrier !== 'link' || !urlString.trim()) return 'idle'
-  return parseLink(urlString).valid ? 'pending' : 'failed'
+function seedLocalMetadata(
+  db: Db,
+  recordId: string,
+  carrier: string,
+  urlString: string,
+  provider: string
+): void {
+  if (carrier !== 'link' || !urlString.trim()) return
+  const status = parseLink(urlString).valid ? 'pending' : 'failed'
+  db.insert(recordMetadata)
+    .values({
+      recordId,
+      urlString: urlString.trim(),
+      provider,
+      status,
+      errorMessage: status === 'failed' ? '不是有效的网页地址' : null,
+      fetchedAt: 0
+    })
+    .onConflictDoUpdate({
+      target: recordMetadata.recordId,
+      set: { urlString: urlString.trim(), provider, status, errorMessage: status === 'failed' ? '不是有效的网页地址' : null }
+    })
+    .run()
 }
 
 /** 删记录：外键 ON DELETE CASCADE 会带走标签关系与引用它的画布节点。 */
@@ -271,8 +318,50 @@ function tagsForRecords(db: Db, recordIds: string[]): Map<string, string[]> {
 }
 
 type RecordRow = typeof records.$inferSelect
+type MetadataRow = typeof recordMetadata.$inferSelect
 
-function toRecordItem(row: RecordRow, tagIds: string[]): RecordItem {
+function metadataForRecords(db: Db, recordIds: string[]): Map<string, LocalRecordMetadata> {
+  if (recordIds.length === 0) return new Map()
+  const rows = db
+    .select()
+    .from(recordMetadata)
+    .where(inArray(recordMetadata.recordId, recordIds))
+    .all()
+  return new Map(rows.map((row) => [row.recordId, toLocalMetadata(row)]))
+}
+
+function toLocalMetadata(row: MetadataRow): LocalRecordMetadata {
+  return {
+    recordId: row.recordId,
+    urlString: row.urlString,
+    provider: row.provider as LocalRecordMetadata['provider'],
+    contentId: row.contentId ?? null,
+    canonicalUrl: row.canonicalUrl ?? null,
+    title: row.title ?? null,
+    description: row.description ?? null,
+    thumbnailUrl: row.thumbnailUrl ?? null,
+    sourceName: row.sourceName ?? null,
+    authorName: row.authorName ?? null,
+    repositoryLanguage: row.repositoryLanguage ?? null,
+    repositoryStars: row.repositoryStars ?? null,
+    repositoryForks: row.repositoryForks ?? null,
+    repositoryLicense: row.repositoryLicense ?? null,
+    status: row.status as LocalRecordMetadata['status'],
+    errorMessage: row.errorMessage ?? null,
+    fetchedAt: row.fetchedAt
+  }
+}
+
+/**
+ * 行 → 契约。
+ *
+ * **展示语义**：`metadataStatus` 取「本地抓取状态优先，否则 iOS 同步来的值」；
+ * 其余字段保持 records 的原始值不变，由渲染层按「记录优先、本地派生补空」组装
+ * ——这样 iOS 同步来的值永远不会被本地抓取结果覆盖，指纹也不受影响。
+ */
+function toRecordItem(row: RecordRow, tagIds: string[], metadata: LocalRecordMetadata | null): RecordItem {
+  const effectiveStatus =
+    metadata && metadata.urlString === row.urlString ? metadata.status : null
   return {
     id: row.id,
     carrier: row.carrier as RecordItem['carrier'],
@@ -288,7 +377,8 @@ function toRecordItem(row: RecordRow, tagIds: string[]): RecordItem {
     mediaPath: row.mediaPath,
     previewPath: row.previewPath,
     thumbnailURLString: row.thumbnailUrlString,
-    metadataStatus: row.metadataStatus as RecordItem['metadataStatus'],
+    metadataStatus: (effectiveStatus ?? row.metadataStatus) as RecordItem['metadataStatus'],
+    metadata: metadata && metadata.urlString === row.urlString ? metadata : null,
     repositoryStars: row.repositoryStars,
     repositoryForks: row.repositoryForks,
     repositoryLanguage: row.repositoryLanguage,

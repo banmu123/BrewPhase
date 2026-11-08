@@ -255,9 +255,13 @@ function RecordTile(props: {
   // 平台标签：链接用平台识别，本地媒体与文字用载体名——本地内容不该显示「网页」。
   const metaLabel = item.carrier === 'link' ? platform.label : carrierLabel[item.carrier]
   const previewTitle = useMemo(() => {
-    if (platform.platform === 'github' && item.platformContentID) return item.platformContentID
-    if (item.title.trim()) return item.title
-    return item.summary.trim().split('\n')[0] || carrierLabel[item.carrier]
+    const local = item.metadata
+    const identity = item.platformContentID ?? local?.contentId ?? null
+    if (platform.platform === 'github' && identity) return identity
+    const title = item.title.trim() || (local?.title ?? '').trim()
+    if (title) return title
+    const summary = item.summary.trim() || (local?.description ?? '').trim()
+    return summary.split('\n')[0] || carrierLabel[item.carrier]
   }, [platform, item])
   // 视频平台把频道/UP 主带进元信息行（§顺手检查 2）。
   const metaAuthor =
@@ -516,7 +520,14 @@ function RecordInspector(props: {
       )}
       <div className="field">
         <label>标题</label>
-        <input value={title} onChange={(event) => setTitle(event.target.value)} />
+        <input
+          value={title}
+          placeholder={item.metadata?.title ?? ''}
+          onChange={(event) => setTitle(event.target.value)}
+        />
+        {!title.trim() && item.metadata?.title && (
+          <span className="field-hint">灰字是本机抓到的标题，输入后才会成为你的标题</span>
+        )}
       </div>
       <div className="field">
         <label>备注</label>
@@ -575,9 +586,12 @@ function RecordInspector(props: {
               const submitted = snapshotInspector(form)
               await api.records.update(item.id, {
                 carrier: item.carrier,
-                title,
-                note,
-                urlString: urlString.trim(),
+                // 没改过的字段回传记录原值：自动抓到的标题/摘要绝不能被
+                // 「随手保存一下」升级成用户数据，否则同步指纹会被污染
+                // （Phase 3.1）。
+                title: form.titleDirty ? title.trim() : item.title,
+                note: form.noteDirty ? note : item.note,
+                urlString: urlChanged ? urlString.trim() : item.urlString,
                 canonicalURL: urlChanged ? parsedUrl?.canonicalUrl ?? null : item.canonicalURL,
                 platformContentID: urlChanged ? parsedUrl?.contentId ?? null : item.platformContentID,
                 provider: nextProvider,

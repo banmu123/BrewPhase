@@ -148,6 +148,38 @@ export const records = sqliteTable(
   (table) => [index('records_created_idx').on(table.createdAt), index('records_carrier_idx').on(table.carrier)]
 )
 
+
+/**
+ * Desktop 本地派生元数据（Phase 3.1）——**不进同步指纹**。
+ *
+ * records 表里同名的那些列属于 iOS 同步数据（iOS 自己的抓取结果）或桌面用户
+ * 编辑，参与 iOS ↔ Desktop 的 fingerprint；这里存的是 Desktop 单方抓取、
+ * 只用于展示的信息。两者在 `toRecordItem()` 里按「iOS/用户优先，本地派生补空」
+ * 组装。
+ */
+export const recordMetadata = sqliteTable('record_metadata', {
+  recordId: text('record_id')
+    .primaryKey()
+    .references(() => records.id, { onDelete: 'cascade' }),
+  /** 抓取时的 URL：与 records.url_string 不一致即整行作废 */
+  urlString: text('url_string').notNull().default(''),
+  provider: text('provider').notNull().default('generic'),
+  contentId: text('content_id'),
+  canonicalUrl: text('canonical_url'),
+  title: text('title'),
+  description: text('description'),
+  thumbnailUrl: text('thumbnail_url'),
+  sourceName: text('source_name'),
+  authorName: text('author_name'),
+  repositoryLanguage: text('repository_language'),
+  repositoryStars: integer('repository_stars'),
+  repositoryForks: integer('repository_forks'),
+  repositoryLicense: text('repository_license'),
+  status: text('status').notNull().default('idle'),
+  errorMessage: text('error_message'),
+  fetchedAt: integer('fetched_at').notNull().default(0)
+})
+
 export const recordTags = sqliteTable(
   'record_tags',
   {
@@ -309,6 +341,7 @@ export const schema = {
   phaseRules,
   phaseReminders,
   records,
+  recordMetadata,
   recordTags,
   recordTagLinks,
   canvases,

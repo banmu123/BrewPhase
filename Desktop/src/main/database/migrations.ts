@@ -269,11 +269,50 @@ CREATE TABLE IF NOT EXISTS sync_rejected (
 );
 `
 
+const RESOLVER_METADATA_SQL = `
+-- 005：Desktop 本地派生元数据独立成表（Phase 3.1）。
+--
+-- 为什么必须分表：records 表的 source_name / author_name / summary /
+-- thumbnail_url_string / metadata_status / repository_* / canonical_url /
+-- platform_content_id 都参与 iOS ↔ Desktop 的 record 指纹（两端逐字段镜像）。
+-- Desktop 的 Resolver 一旦写这些列，本地指纹就会偏离 iOS 的指纹，下一次
+-- 相同内容的推送被误判成「桌面端自己改过」→ 假冲突；iOS 删除时也会被
+-- 误判成删除冲突。
+--
+-- 分表后所有权清晰：records 表 = iOS 同步数据 + 桌面用户编辑（进指纹）；
+-- record_metadata = Desktop 单方抓取的展示信息（不进指纹）。
+--
+-- url_string 记录「这条元数据是为哪个 URL 抓的」：URL 变了整行作废，
+-- 旧封面不可能挂到新链接上。record_id 是主键 + 级联删除，记录没了它也没了。
+CREATE TABLE IF NOT EXISTS record_metadata (
+  record_id TEXT PRIMARY KEY REFERENCES records(id) ON DELETE CASCADE,
+  url_string TEXT NOT NULL DEFAULT '',
+  provider TEXT NOT NULL DEFAULT 'generic',
+  content_id TEXT,
+  canonical_url TEXT,
+  title TEXT,
+  description TEXT,
+  thumbnail_url TEXT,
+  source_name TEXT,
+  author_name TEXT,
+  repository_language TEXT,
+  repository_stars INTEGER,
+  repository_forks INTEGER,
+  repository_license TEXT,
+  status TEXT NOT NULL DEFAULT 'idle',
+  error_message TEXT,
+  fetched_at INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS record_metadata_url_idx ON record_metadata(url_string);
+`
+
 export const migrations: Migration[] = [
   { version: 1, name: 'init', sql: INIT_SQL },
   { version: 2, name: 'sync-align-ios', sql: SYNC_ALIGN_SQL },
   { version: 3, name: 'conflict-delete-operation', sql: CONFLICT_DELETE_OP_SQL },
-  { version: 4, name: 'rejected-remote-fingerprints', sql: REJECTED_REMOTE_SQL }
+  { version: 4, name: 'rejected-remote-fingerprints', sql: REJECTED_REMOTE_SQL },
+  { version: 5, name: 'resolver-metadata-separation', sql: RESOLVER_METADATA_SQL }
 ]
 
 /**

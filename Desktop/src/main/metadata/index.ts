@@ -11,7 +11,8 @@ import { resolveMetadataDeduped } from './metadata-resolver'
  * - 只处理 `link` 载体且有 URL 的记录；其余载体原样返回；
  * - 非 `force` 且本记录已 `ok` → 直接用库内缓存（§八：不每次打开都抓）；
  * - 同 URL 的并发请求在 resolver 里合并；
- * - 抓取失败只把 `metadata_status` 记为 failed，**记录本身不受影响**；
+ * - 抓取结果只写 `record_metadata`（Desktop 单方派生数据，**不进同步指纹**），
+ *   抓取失败只把该表的状态记为 failed，**记录本身与同步基线都不受影响**；
  * - 记录在抓取期间被删除 → 写入返回 null，不产生孤儿数据。
  */
 export async function resolveRecordMetadata(

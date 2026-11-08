@@ -82,6 +82,23 @@ Canvas 1─n CanvasStroke (cascade)
 
 单测逐条覆盖这些边界（`tests/unit/inventory.test.ts`）。
 
+## 3.5 元数据所有权（Phase 3.1）
+
+Record 的元数据字段有**两个家**，不能混：
+
+| 位置 | 内容 | 进同步指纹 |
+| --- | --- | --- |
+| `records.*` | iOS 同步来的抓取结果 + 桌面用户手写的标题/备注/URL | ✅ |
+| `record_metadata.*` | Desktop 自己抓的标题/摘要/封面/作者/仓库统计/抓取状态 | ❌ |
+
+- 同一个字段名（如 title/summary/thumbnail）两边都有，**展示时记录字段优先**，
+  本地派生只补空；写入时永不交叉。
+- 用户手写的标题 → `records.title`；自动抓到的标题 → `record_metadata.title`，
+  在 Inspector 里只作 placeholder，用户不输入就不会被保存成用户数据。
+- URL 变化 → `record_metadata` 整行作废并按新 URL 重建；记录不再需要该行时
+  随外键级联删除。
+- 详细规则与回归场景：[SYNC_METADATA_CONSISTENCY.md](SYNC_METADATA_CONSISTENCY.md)。
+
 ## 4. 同步元数据（预留）
 
 `sync_meta` 与 `change_log` 不改变业务表，只记录「谁在什么时候改了哪条、改到第几版」。

@@ -24,6 +24,7 @@ function record(overrides: Partial<RecordItem> = {}): RecordItem {
     repositoryStars: null,
     repositoryForks: null,
     repositoryLanguage: null,
+    metadata: null,
     createdAt: 1_782_000_000_000,
     updatedAt: 1_782_000_000_000,
     tagIds: [],

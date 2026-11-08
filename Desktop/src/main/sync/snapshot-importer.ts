@@ -251,6 +251,23 @@ function insertRow(sqlite: Database, table: string, id: string, columns: Record<
     .run(id, ...Object.values(filled))
 }
 
+/**
+ * iOS 更新记录后，本地派生元数据只对「同一 URL + 仍是链接」有效。
+ * URL 或载体变了 → 整行删除，旧封面绝不能挂到新链接上（Phase 3.1）。
+ */
+function reconcileRecordMetadata(sqlite: Database, recordId: string): void {
+  sqlite
+    .prepare(
+      `delete from record_metadata
+        where record_id = ?
+          and (
+            url_string <> (select url_string from records where id = ?)
+            or (select carrier from records where id = ?) <> 'link'
+          )`
+    )
+    .run(recordId, recordId, recordId)
+}
+
 function updateRow(sqlite: Database, table: string, id: string, columns: Record<string, unknown>): void {
   const assignments = Object.keys(columns)
     .map((name) => `${name} = ?`)
@@ -470,6 +487,7 @@ function applyUpsert(
     } else {
       updateRow(sqlite, table, targetId, toColumns(upsert.payload))
     }
+    if (entityType === 'record') reconcileRecordMetadata(sqlite, targetId)
     setBaseline(sqlite, entityType, targetId, upsert.fingerprint)
     logChange(sqlite, entityType, targetId, 'upsert', sourceDeviceId)
     mark({ entityType, id: upsert.id, status: 'applied' })

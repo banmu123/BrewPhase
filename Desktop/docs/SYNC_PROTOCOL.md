@@ -109,6 +109,16 @@
 `snapshot-importer.ts localFingerprint` 与 `SyncSnapshotBuilder.swift`，两处互为镜像，
 改一处必须改另一处并同步测试。
 
+> **Record 指纹覆盖的都是「iOS 同步数据 + 桌面用户编辑」**：`carrier/title/note/
+> url_string/canonical_url/provider/content_kind/platform_content_id/link_page/
+> source_name/author_name/summary/thumbnail_url_string/metadata_status/
+> repository_*/media_path/preview_path/is_sample`。
+> Desktop 的 Link Resolver **不写这些列**——它抓到的标题/摘要/封面/统计/状态
+> 全部落在 `record_metadata`（Desktop 单方派生数据，**不进指纹**），展示时按
+> 「记录优先、本地派生补空」组装。否则自动补全会让本地指纹偏离 iOS 指纹，
+> 下次同步变成假冲突。所有权与回归场景见
+> [SYNC_METADATA_CONSISTENCY.md](SYNC_METADATA_CONSISTENCY.md)。
+
 ## 6. 媒体
 
 - 清单项：`{name, sha256, byteSize, mediaType, mimeType}`；mimeType 按扩展名 +

@@ -53,8 +53,8 @@ export function isSafeRemoteImage(raw: string | null | undefined): string | null
 }
 
 /** GitHub og:title 通常是 "owner/repo: description"；platformContentID 是 "owner/repo"。 */
-function splitRepository(item: RecordItem): { name: string; description: string } {
-  const identity = (item.platformContentID ?? '').trim()
+function splitRepository(item: RecordItem, identityOverride: string): { name: string; description: string } {
+  const identity = identityOverride.trim()
   if (identity.includes('/')) {
     const description = item.title.startsWith(identity)
       ? item.title.slice(identity.length).replace(/^[:：\s-]+/, '')
@@ -65,6 +65,20 @@ function splitRepository(item: RecordItem): { name: string; description: string 
   const match = title.match(/^([\w.-]+\/[\w.-]+)[:：\s]\s*(.+)$/u)
   if (match) return { name: match[1], description: match[2] }
   return { name: title, description: item.summary }
+}
+
+/** 记录字段优先，本地派生元数据补空（Phase 3.1 的所有权规则）。 */
+function pick(...values: Array<string | null | undefined>): string {
+  for (const value of values) {
+    const text = (value ?? '').trim()
+    if (text) return text
+  }
+  return ''
+}
+
+function pickNumber(...values: Array<number | null | undefined>): number | null {
+  for (const value of values) if (typeof value === 'number') return value
+  return null
 }
 
 /** 数字格式化：1_234 → 1.2k；与 iOS Fmt.starCount 同量级，不伪造精度。 */
@@ -78,9 +92,13 @@ export function formatCount(value: number): string {
 /** 记录 → 平台预览视图。mediaUrl 由调用方注入（bpmedia:// 文件名转换）。 */
 export function buildPreview(item: RecordItem, mediaUrl: (name: string) => string): RecordPreview {
   const platform = detectPlatform(item)
-  const title = item.title.trim() || item.summary.trim().split('\n')[0] || platform.label
-  const author = item.authorName.trim() || null
-  const detailUrl = item.canonicalURL || item.urlString || null
+  // 记录字段 = iOS 同步数据 / 桌面用户编辑；metadata = Desktop 单方抓取。
+  // 一律「记录优先、本地派生补空」，两边都不伪造。
+  const local = item.metadata
+  const summary = pick(item.summary, local?.description)
+  const title = pick(item.title, local?.title) || summary.split('\n')[0] || platform.label
+  const author = pick(item.authorName, local?.authorName) || null
+  const detailUrl = pick(item.canonicalURL, local?.canonicalUrl, item.urlString) || null
 
   // 本地媒体与文字：不需要平台识别。
   if (item.carrier === 'image' || item.carrier === 'video') {
@@ -99,7 +117,7 @@ export function buildPreview(item: RecordItem, mediaUrl: (name: string) => strin
       videoId: null,
       author,
       body: null,
-      meta: item.sourceName || null,
+      meta: pick(item.sourceName, local?.sourceName) || null,
       detailUrl: null
     }
   }
@@ -124,7 +142,7 @@ export function buildPreview(item: RecordItem, mediaUrl: (name: string) => strin
   }
 
   // 链接：按平台归一。
-  const remoteImage = isSafeRemoteImage(item.thumbnailURLString)
+  const remoteImage = isSafeRemoteImage(pick(item.thumbnailURLString, local?.thumbnailUrl))
   const base: RecordPreview = {
     platform,
     title,
@@ -142,24 +160,25 @@ export function buildPreview(item: RecordItem, mediaUrl: (name: string) => strin
     detailUrl,
     kind: 'platform-card'
   }
+  const contentId = pick(item.platformContentID, local?.contentId)
 
   switch (platform.platform) {
     case 'github': {
-      const repo = splitRepository(item)
+      const repo = splitRepository(item, contentId)
       return {
         ...base,
         kind: remoteImage ? 'remote-image' : 'repo-card',
         repositoryName: repo.name || null,
-        language: item.repositoryLanguage,
-        stars: item.repositoryStars,
-        forks: item.repositoryForks,
+        language: pick(item.repositoryLanguage, local?.repositoryLanguage) || null,
+        stars: pickNumber(item.repositoryStars, local?.repositoryStars),
+        forks: pickNumber(item.repositoryForks, local?.repositoryForks),
         videoId: null,
-        title: repo.description || item.summary || repo.name,
+        title: pick(repo.description, summary) || repo.name,
         body: null
       }
     }
     case 'youtube': {
-      const videoId = (item.platformContentID ?? '').trim() || null
+      const videoId = contentId || null
       const thumbnail = remoteImage ?? (videoId ? `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/hqdefault.jpg` : null)
       return {
         ...base,
@@ -173,7 +192,7 @@ export function buildPreview(item: RecordItem, mediaUrl: (name: string) => strin
       return {
         ...base,
         kind: remoteImage ? 'remote-image' : 'platform-card',
-        videoId: (item.platformContentID ?? '').trim() || null,
+        videoId: contentId || null,
         playable: true
       }
     }
@@ -182,8 +201,8 @@ export function buildPreview(item: RecordItem, mediaUrl: (name: string) => strin
         ...base,
         kind: remoteImage ? 'remote-image' : 'text',
         videoId: null,
-        body: item.summary.trim() || item.note.trim() || null,
-        title: item.title.trim() || (item.summary.trim() ? '' : '社交动态'),
+        body: pick(item.summary, local?.description, item.note) || null,
+        title: item.title.trim() || (summary ? '' : '社交动态'),
         meta: author ? `X · ${author}` : 'X'
       }
     }
@@ -194,7 +213,7 @@ export function buildPreview(item: RecordItem, mediaUrl: (name: string) => strin
         kind: remoteImage ? 'remote-image' : 'platform-card',
         videoId: null,
         meta: host ?? platform.label,
-        author: item.sourceName || author
+        author: pick(item.sourceName, local?.sourceName, author) || null
       }
     }
   }

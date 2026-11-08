@@ -29,6 +29,39 @@ export const recordTagSchema = z.object({
 export type RecordTag = z.infer<typeof recordTagSchema>
 
 /**
+ * Desktop 本地派生元数据（`record_metadata` 表）。
+ *
+ * **不属于 iOS 同步数据，也不进同步指纹**：它是 Desktop 按 URL 抓取、只用于
+ * 展示的信息。`records` 表里同名的列（source_name / author_name / summary /
+ * thumbnail_url_string / metadata_status / repository_*）属于 iOS 同步数据或
+ * 桌面用户编辑，参与两端 fingerprint——两类数据分开存，才不会让自动抓取被
+ * 当成「桌面端改了记录」。
+ *
+ * 展示时按「记录字段优先，本地派生补空」组装（见 `toRecordItem()`）。
+ */
+export const localRecordMetadataSchema = z.object({
+  recordId: z.string().uuid(),
+  /** 抓取时的 URL；与记录当前 URL 不一致即视为失效 */
+  urlString: z.string().max(2_000).default(''),
+  provider: linkProviderSchema.default('generic'),
+  contentId: z.string().max(200).nullable().default(null),
+  canonicalUrl: z.string().max(2_000).nullable().default(null),
+  title: z.string().max(500).nullable().default(null),
+  description: z.string().max(4_000).nullable().default(null),
+  thumbnailUrl: z.string().max(2_000).nullable().default(null),
+  sourceName: z.string().max(200).nullable().default(null),
+  authorName: z.string().max(200).nullable().default(null),
+  repositoryLanguage: z.string().max(60).nullable().default(null),
+  repositoryStars: z.number().int().nullable().default(null),
+  repositoryForks: z.number().int().nullable().default(null),
+  repositoryLicense: z.string().max(60).nullable().default(null),
+  status: z.enum(['idle', 'pending', 'ok', 'failed']).default('idle'),
+  errorMessage: z.string().max(500).nullable().default(null),
+  fetchedAt: z.number().int().default(0)
+})
+export type LocalRecordMetadata = z.infer<typeof localRecordMetadataSchema>
+
+/**
  * `mediaPath` / `previewPath` 是**文件名**，不是绝对路径——媒体目录由主进程管理，
  * 换机器、换用户目录都不会把记录指向一个不存在的绝对路径。
  */
@@ -57,6 +90,8 @@ export const recordSchema = z.object({
   repositoryStars: z.number().int().nullable().default(null),
   repositoryForks: z.number().int().nullable().default(null),
   repositoryLanguage: z.string().max(60).nullable().default(null),
+  /** Desktop 本地派生元数据（不进同步指纹）；记录字段为空时用于展示 */
+  metadata: localRecordMetadataSchema.nullable().default(null),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
   tagIds: z.array(z.string().uuid()).default([])

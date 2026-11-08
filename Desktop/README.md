@@ -63,6 +63,9 @@ docs/           产品范围、架构、数据模型映射、同步协议、安�
 - **链接元数据补全**：新建链接先本地识别平台（纯函数、不发请求），保存后由主进程
   安全抓取（SSRF 防护 + DNS 连接级校验 + 逐跳重定向校验）补全标题/封面/作者/
   仓库统计；用户写过的标题与备注永不被覆盖，URL 变更清空旧平台元数据。
+- **元数据所有权分离**：Desktop 抓到的标题/摘要/封面/仓库统计只存
+  `record_metadata`（独立表，**不进同步指纹**），`records` 的同步列只由 iOS
+  同步或桌面用户编辑写入——自动补全不会制造假冲突，用户编辑与删除仍受冲突保护。
 - **安全**：`contextIsolation` / `sandbox` / 无 Node 集成、IPC zod 校验 + sender 校验、
   自定义媒体协议、CSP。
 
@@ -85,6 +88,7 @@ docs/           产品范围、架构、数据模型映射、同步协议、安�
 | `docs/ARCHITECTURE.md` | 进程边界、数据流、迁移策略 |
 | `docs/DATA_MODEL_MAPPING.md` | iOS ↔ Desktop 字段与关系对照、库存规则 |
 | `docs/SYNC_PROTOCOL.md` | v1 配对、认证、增量、冲突 |
+| `docs/SYNC_METADATA_CONSISTENCY.md` | Resolver × Sync 的字段所有权、指纹边界、回归场景 |
 | `docs/SECURITY_MODEL.md` | Electron 安全边界与 IPC 校验 |
 | `docs/CANVAS_SPEC.md` | 坐标、交互、节点渲染、手绘规划 |
 | `docs/ROADMAP.md` | Phase 2–5 |
