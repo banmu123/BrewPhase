@@ -3,6 +3,7 @@ import type { RecordCarrier, RecordDraft, RecordItem, RecordTag } from '@shared/
 import { carrierLabel } from '@shared/contracts'
 import { coalesce } from '@shared/coalesce'
 import { api, formatDate } from '../../shared/api'
+import { useAppStore } from '../../app/store'
 import { SearchIcon } from '../../shared/icons'
 import { parseLink, providerLabel } from '@shared/link-parser'
 import { LinkPlayer } from './preview/LinkPlayer'
@@ -41,6 +42,20 @@ export function RecordsPage() {
   /** 详情浮层按需出现：点卡片打开，✕ 关闭；不再常驻右侧挤压内容区。 */
   const [panelOpen, setPanelOpen] = useState(false)
   const selected = items.find((item) => item.id === selectedId) ?? null
+
+  // 画布双击节点跳转过来：等列表加载完成后选中并打开详情，然后清掉待办。
+  const openRecordId = useAppStore((state) => state.openRecordId)
+  const consumeOpenRecord = useAppStore((state) => state.consumeOpenRecord)
+  useEffect(() => {
+    if (!openRecordId || items.length === 0) return
+    if (!items.some((item) => item.id === openRecordId)) {
+      consumeOpenRecord()
+      return
+    }
+    setSelectedId(openRecordId)
+    setPanelOpen(true)
+    consumeOpenRecord()
+  }, [openRecordId, items, consumeOpenRecord])
 
   /**
    * 媒体版本：只用来给 `bpmedia://` 加 `?v=`。

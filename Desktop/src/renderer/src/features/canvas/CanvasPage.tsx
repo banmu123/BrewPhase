@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Group, Image as KonvaImage, Layer, Line, Rect, Shape, Stage, Text } from 'react-konva'
+import type { KonvaEventObject } from 'konva/lib/Node'
 import type { Context } from 'konva/lib/Context'
 import type {
   Canvas,
@@ -11,31 +12,57 @@ import type {
   RecordItem
 } from '@shared/contracts'
 import { screenToWorld, zoomAt, CANVAS_LIMITS } from '@shared/contracts'
+import { embedURL } from '@shared/link-embed'
+import { nextNodeOrigin } from '@shared/domain/placement'
 import { api, formatDate } from '../../shared/api'
+import { useAppStore } from '../../app/store'
 import { refreshThemeColors, themeColors } from '../../shared/tokens'
+import { CanvasThumbnail } from './CanvasThumbnail'
 
 /**
- * Quiet Infinite Studio——一块安静的无限画布。
+ * Canvas 空间的两级结构（对标 iOS CanvasListView → CanvasWorkspaceView）：
  *
- * 坐标系不变：节点 / 便签 / 笔迹全部用**世界坐标**，Stage 只承担缩放平移。
- * 笔迹点集落库前不做屏幕换算；宽度按绘制时的视口比例折算（width / scale），
- * 屏幕观感稳定。橡皮按笔画擦除，绝不动 Record 节点。
- * 快捷键在输入框聚焦时全部让路；Undo/Redo 本版未做（见交付报告）。
+ * - **Gallery**：画布集合页。真实空间缩略图（`CanvasThumbnail`，复刻 iOS
+ *   CanvasThumbnailPreview 的选点与包围盒算法）、新建、重命名、删除。
+ * - **Workspace**：一块画布的工作区。节点 / 便签 / 笔迹全部**世界坐标**，
+ *   Stage 只承担缩放平移；笔迹宽度按绘制时的视口比例折算，屏幕观感稳定。
+ *
+ * 播放对标 iOS CanvasNodeCard：`playingNodeId` 全局唯一，同一时刻只有一个
+ * 节点在播；本地视频走 `<video>`，无本地文件但 Embed 合法（YouTube/B 站，
+ * `embedURL` 只由内容 ID 拼）走 iframe；切画布 / 返回 Gallery / 卸载都停。
+ * 双击打开原记录（跨页导航走 store）；画布备注只写 `CanvasNode.annotation`，
+ * 与 Record.note 是两个字段。
  */
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
 type StudioTool = CanvasTool | 'select' | 'hand' | 'note'
+type LoadState = 'loading' | 'ready' | 'error'
 
 const PEN_COLORS = ['#30372f', '#849779', '#97765a', '#9a9f97', '#a8503f']
 const NOTE_COLORS = ['#f6f2df', '#e3e9df', '#e8ebe5', '#f7e8df']
+const PICKER_PAGE = 60
+
+/** 某个节点能否播放、走哪条路径（对标 iOS CanvasNodeCard.canPlay）。 */
+function playbackOf(node: CanvasNodeWithRecord): 'local' | 'embed' | null {
+  if (node.recordCarrier === 'video' && node.recordMediaPath) return 'local'
+  const embed = embedURL(node.recordProvider, node.recordPlatformContentID)
+  if ((node.recordCarrier === 'video' || node.recordCarrier === 'link') && embed) return 'embed'
+  return null
+}
 
 export function CanvasPage() {
+  // ===== 视图层级 =====
+  const [view, setView] = useState<'gallery' | 'workspace'>('gallery')
   const [canvases, setCanvases] = useState<Canvas[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
+
+  // ===== Gallery =====
+  const [galleryLoading, setGalleryLoading] = useState(true)
+
+  // ===== Workspace =====
   const [nodes, setNodes] = useState<CanvasNodeWithRecord[]>([])
   const [notes, setNotes] = useState<CanvasNote[]>([])
   const [strokes, setStrokes] = useState<CanvasStroke[]>([])
-  const [records, setRecords] = useState<RecordItem[]>([])
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null)
   const [viewport, setViewport] = useState<CanvasViewport>({ scale: 1, offsetX: 0, offsetY: 0 })
@@ -43,36 +70,61 @@ export function CanvasPage() {
   const [size, setSize] = useState({ width: 800, height: 600 })
   const [tool, setTool] = useState<StudioTool>('select')
   const [penColor, setPenColor] = useState(PEN_COLORS[0])
-  /** 右侧浮层同一时间只有一个：'add' 选记录，'inspector' 看选中内容。 */
-  const [sidePanel, setSidePanel] = useState<'add' | 'inspector' | null>(null)
+  /** 右侧浮层同一时间只有一个：'picker' 选记录，'inspector' 看选中内容。 */
+  const [sidePanel, setSidePanel] = useState<'picker' | 'inspector' | null>(null)
   const [switcherOpen, setSwitcherOpen] = useState(false)
-  const [dialog, setDialog] = useState<{ kind: 'create' | 'rename' | 'delete'; canvasId?: string; value: string } | null>(null)
-  const [addSearch, setAddSearch] = useState('')
-  const [carrierFilter, setCarrierFilter] = useState<'all' | 'image' | 'video' | 'link' | 'text'>('all')
+  const [dialog, setDialog] = useState<{
+    kind: 'create' | 'rename' | 'delete'
+    canvasId?: string
+    value: string
+  } | null>(null)
   const [focusMode, setFocusMode] = useState(false)
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
   const [draft, setDraft] = useState<CanvasStroke | null>(null)
-  const [playingVideo, setPlayingVideo] = useState<CanvasNodeWithRecord | null>(null)
+  /** 播放状态全局唯一：对标 iOS playingNodeID。 */
+  const [playingNodeId, setPlayingNodeId] = useState<string | null>(null)
+  /** 右键菜单（DOM，fixed 定位）。 */
+  const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null)
+  /** 画布备注编辑态（node-panel 内）。 */
+  const [annotationDraft, setAnnotationDraft] = useState<{ id: string; value: string } | null>(null)
+  /** 内容加载状态：失败不是空画布——保留上一份内容 + 横幅重试。 */
+  const [loadState, setLoadState] = useState<LoadState>('loading')
 
-  const active = canvases.find((canvas) => canvas.id === activeId) ?? canvases[0] ?? null
-  const containerRef = useRef<HTMLDivElement>(null)
+  // ===== Picker（分页 + 多选）=====
+  const [pickerRecords, setPickerRecords] = useState<RecordItem[]>([])
+  const [pickerHasMore, setPickerHasMore] = useState(false)
+  const [pickerLoading, setPickerLoading] = useState(false)
+  const [pickerSearch, setPickerSearch] = useState('')
+  const [pickerCarrier, setPickerCarrier] = useState<'all' | 'image' | 'video' | 'link' | 'text'>('all')
+  /** 多选跨筛选保留：iOS 同款（picked: [Record]，换载体不清）。 */
+  const [pickedItems, setPickedItems] = useState<Map<string, RecordItem>>(new Map())
+  const [pickerError, setPickerError] = useState<string | null>(null)
+
+  const active = canvases.find((canvas) => canvas.id === activeId) ?? null
+  /**
+   * 画布容器元素用**回调 ref** 存进 state：Gallery / Workspace 两级视图下，
+   * wrap 元素在首次渲染（Gallery 分支）时还不存在——普通 ref + `[]` 依赖的
+   * effect 会在那时拿到 null 然后永远不再执行，ResizeObserver 就挂空了
+   * （size 停在默认 800×600，装窗全错）。元素真正挂载时这里触发重渲染。
+   */
+  const [wrapElement, setWrapElement] = useState<HTMLDivElement | null>(null)
   const panRef = useRef<{ pointerX: number; pointerY: number; offsetX: number; offsetY: number } | null>(null)
   const spaceRef = useRef(false)
   const saveTimer = useRef(0)
+  const pickerSeq = useRef(0)
+  const pickerQueryRef = useRef<{ search: string; carrier: 'all' | 'image' | 'video' | 'link' | 'text'; offset: number }>({
+    search: '',
+    carrier: 'all',
+    offset: 0
+  })
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? null
   const selectedNote = notes.find((note) => note.id === selectedNoteId) ?? null
   const addedRecordIds = useMemo(() => new Set(nodes.map((node) => node.recordID)), [nodes])
-  const filteredRecords = useMemo(() => {
-    const keyword = addSearch.trim().toLowerCase()
-    return records.filter((record) => {
-      if (carrierFilter !== 'all' && record.carrier !== carrierFilter) return false
-      if (!keyword) return true
-      return [record.title, record.summary, record.sourceName, record.authorName, record.carrier]
-        .some((field) => (field ?? '').toLowerCase().includes(keyword))
-    })
-  }, [records, addSearch, carrierFilter])
+
+  const openRecord = useAppStore((state) => state.openRecord)
+  const openRecordId = useAppStore((state) => state.openRecordId)
 
   const withSave = useCallback(async <T,>(task: () => Promise<T>): Promise<T> => {
     setSaveState('saving')
@@ -93,13 +145,16 @@ export function CanvasPage() {
     try {
       const next = await api.canvas.list()
       setCanvases(next)
-      setActiveId((current) => current ?? next[0]?.id ?? null)
     } catch (cause) {
       setError((cause as Error).message)
+    } finally {
+      setGalleryLoading(false)
     }
   }, [])
 
-  const loadContent = useCallback(async (canvasId: string) => {
+  /** 内容加载：失败保留上一份（不把「读不到」画成空画布），状态可重试。 */
+  const loadContent = useCallback(async (canvasId: string, silent = false) => {
+    if (!silent) setLoadState((current) => (current === 'ready' ? 'ready' : 'loading'))
     try {
       const [nextNodes, nextNotes, nextStrokes] = await Promise.all([
         api.canvas.nodes(canvasId),
@@ -109,42 +164,45 @@ export function CanvasPage() {
       setNodes(nextNodes)
       setNotes(nextNotes)
       setStrokes(nextStrokes)
+      setLoadState('ready')
     } catch (cause) {
       setError((cause as Error).message)
+      setLoadState('error')
     }
   }, [])
 
   useEffect(() => {
     void loadCanvases()
-    api.records
-      .list({ search: '', carrier: null, tagId: null, limit: 60, offset: 0 })
-      .then(setRecords)
-      .catch((cause: Error) => setError(cause.message))
     refreshThemeColors()
   }, [loadCanvases])
 
+  // 进入工作区：读内容、清选中、停播放。
   useEffect(() => {
-    if (!active) {
+    setPlayingNodeId(null)
+    setSelectedNodeId(null)
+    setSelectedNoteId(null)
+    setSidePanel(null)
+    setContextMenu(null)
+    if (!activeId) {
       setNodes([])
       setNotes([])
       setStrokes([])
       return
     }
-    void loadContent(active.id)
-    setSelectedNodeId(null)
-    setSelectedNoteId(null)
-  }, [active?.id, loadContent])
+    setLoadState('loading')
+    void loadContent(activeId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId])
 
   useEffect(() => {
-    const element = containerRef.current
-    if (!element) return
+    if (!wrapElement) return
     const observer = new ResizeObserver(([entry]) => {
       if (!entry) return
       setSize({ width: entry.contentRect.width, height: entry.contentRect.height })
     })
-    observer.observe(element)
+    observer.observe(wrapElement)
     return () => observer.disconnect()
-  }, [])
+  }, [wrapElement])
 
   useEffect(() => {
     document.body.classList.toggle('canvas-focus', focusMode)
@@ -153,7 +211,67 @@ export function CanvasPage() {
     }
   }, [focusMode])
 
+  // MARK: - Picker 数据（分页 + 搜索去抖，复用 records.list 的数据库谓词）
+
+  const loadPickerPage = useCallback(async (page: 'first' | 'more') => {
+    const query = pickerQueryRef.current
+    const seq = ++pickerSeq.current
+    if (page === 'first') setPickerLoading(true)
+    try {
+      const rows = await api.records.list({
+        search: query.search,
+        carrier: query.carrier === 'all' ? null : query.carrier,
+        tagId: null,
+        limit: PICKER_PAGE,
+        offset: page === 'first' ? 0 : query.offset
+      })
+      if (seq !== pickerSeq.current) return
+      setPickerRecords((current) => {
+        const merged = page === 'first' ? rows : [...current, ...rows]
+        const seen = new Set<string>()
+        return merged.filter((item) => (seen.has(item.id) ? false : (seen.add(item.id), true)))
+      })
+      setPickerHasMore(rows.length === PICKER_PAGE)
+      query.offset = page === 'first' ? rows.length : query.offset + rows.length
+      setPickerError(null)
+    } catch (cause) {
+      if (seq === pickerSeq.current) setPickerError((cause as Error).message)
+    } finally {
+      if (seq === pickerSeq.current) setPickerLoading(false)
+    }
+  }, [])
+
+  // 搜索 / 筛选变化：200ms 去抖后重读第一页（iOS CanvasRecordPicker 同款节奏）。
+  useEffect(() => {
+    if (sidePanel !== 'picker') return
+    const timer = window.setTimeout(() => {
+      pickerQueryRef.current = { search: pickerSearch.trim(), carrier: pickerCarrier, offset: 0 }
+      void loadPickerPage('first')
+    }, 200)
+    return () => window.clearTimeout(timer)
+  }, [pickerSearch, pickerCarrier, sidePanel, loadPickerPage])
+
+  // 面板打开时载入第一页。
+  useEffect(() => {
+    if (sidePanel !== 'picker') return
+    if (pickerRecords.length === 0 && !pickerHasMore) {
+      pickerQueryRef.current = { search: pickerSearch.trim(), carrier: pickerCarrier, offset: 0 }
+      void loadPickerPage('first')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sidePanel])
+
   // MARK: - Fit All / 100%
+
+  /**
+   * 装窗元数据（对标 iOS CanvasWorkspaceView.fitIfNeeded）：
+   * 只在「第一次看到非空内容」或「尺寸变了且用户还没动过视角」时装窗；
+   * 用户一旦平移/缩放过，自动装窗不再覆盖他的视角。
+   */
+  const fitMeta = useRef({ didFit: false, width: 0, height: 0, userAdjusted: false })
+  const markUserAdjusted = useCallback(() => {
+    fitMeta.current.userAdjusted = true
+  }, [])
 
   const fitAll = useCallback(() => {
     const xs: number[] = []
@@ -190,12 +308,63 @@ export function CanvasPage() {
       offsetX: -minX * scale + (size.width - width * scale) / 2,
       offsetY: -minY * scale + (size.height - height * scale) / 2
     })
+    fitMeta.current = {
+      didFit: true,
+      width: size.width,
+      height: size.height,
+      userAdjusted: true
+    }
   }, [nodes, notes, strokes, size])
 
+  // 首次拿到非空内容、或（用户没动过时）尺寸变化：自动装窗。
+  // 第一次布局时 ResizeObserver 可能还没报出真实尺寸，按占位值装窗会把
+  // 整块内容推出屏幕——这是 iOS 在 fittedSize != canvasSize 时重装窗的原因。
   useEffect(() => {
-    if (active && size.width > 0) fitAll()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active?.id])
+    if (view !== 'workspace' || !activeId || size.width <= 0) return
+    const meta = fitMeta.current
+    const empty = nodes.length === 0 && notes.length === 0 && strokes.length === 0
+    if (empty) {
+      if (meta.didFit) {
+        fitMeta.current = { didFit: false, width: 0, height: 0, userAdjusted: false }
+        setViewport({ scale: 1, offsetX: 0, offsetY: 0 })
+      }
+      return
+    }
+    const sizeChanged = meta.width !== size.width || meta.height !== size.height
+    if (!meta.didFit || (!meta.userAdjusted && sizeChanged)) {
+      const pad = 80
+      const xs: number[] = []
+      const ys: number[] = []
+      for (const node of nodes) {
+        xs.push(node.positionX, node.positionX + node.width)
+        ys.push(node.positionY, node.positionY + node.height)
+      }
+      for (const note of notes) {
+        xs.push(note.positionX, note.positionX + note.width)
+        ys.push(note.positionY, note.positionY + note.height)
+      }
+      for (const stroke of strokes) {
+        for (let i = 0; i < stroke.points.length; i += 2) {
+          xs.push(stroke.points[i])
+          ys.push(stroke.points[i + 1])
+        }
+      }
+      const minX = Math.min(...xs) - pad
+      const minY = Math.min(...ys) - pad
+      const contentWidth = Math.max(1, Math.max(...xs) + pad - minX)
+      const contentHeight = Math.max(1, Math.max(...ys) + pad - minY)
+      const scale = Math.min(
+        CANVAS_LIMITS.maxScale,
+        Math.max(CANVAS_LIMITS.minScale, Math.min(size.width / contentWidth, size.height / contentHeight))
+      )
+      setViewport({
+        scale,
+        offsetX: -minX * scale + (size.width - contentWidth * scale) / 2,
+        offsetY: -minY * scale + (size.height - contentHeight * scale) / 2
+      })
+      fitMeta.current = { didFit: true, width: size.width, height: size.height, userAdjusted: meta.userAdjusted }
+    }
+  }, [view, activeId, size, nodes, notes, strokes])
 
   // MARK: - 快捷键（输入框聚焦时让路）
 
@@ -215,9 +384,11 @@ export function CanvasPage() {
         case 'e': setTool('eraser'); break
         case 'n': setTool('note'); break
         case '0': fitAll(); break
-        case '1': setViewport((current) => zoomAt(current, 1, { x: size.width / 2, y: size.height / 2 })); break
+        case '1': markUserAdjusted(); setViewport((current) => zoomAt(current, 1, { x: size.width / 2, y: size.height / 2 })); break
         case 'escape':
-          if (editingNoteId) setEditingNoteId(null)
+          if (contextMenu) setContextMenu(null)
+          else if (playingNodeId) setPlayingNodeId(null)
+          else if (editingNoteId) setEditingNoteId(null)
           else if (dialog) setDialog(null)
           else if (switcherOpen) setSwitcherOpen(false)
           else if (sidePanel) setSidePanel(null)
@@ -235,9 +406,9 @@ export function CanvasPage() {
       window.removeEventListener('keyup', onKeyUp)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fitAll, size, sidePanel, editingNoteId, dialog, switcherOpen, active?.id])
+  }, [fitAll, size, sidePanel, editingNoteId, dialog, switcherOpen, contextMenu, playingNodeId])
 
-  // MARK: - 写操作（带保存状态）
+  // MARK: - 写操作
 
   const createNote = useCallback(async (): Promise<void> => {
     if (!active) return
@@ -266,12 +437,23 @@ export function CanvasPage() {
     [withSave]
   )
 
-  const removeSelectedNode = useCallback(async (): Promise<void> => {
-    if (!active || !selectedNodeId) return
-    setNodes((current) => current.filter((node) => node.id !== selectedNodeId))
-    setSelectedNodeId(null)
-    await withSave(() => api.canvas.removeNode(selectedNodeId))
-  }, [active, selectedNodeId, withSave])
+  const removeNodeById = useCallback(
+    async (nodeId: string): Promise<void> => {
+      setNodes((current) => current.filter((node) => node.id !== nodeId))
+      if (selectedNodeId === nodeId) setSelectedNodeId(null)
+      if (playingNodeId === nodeId) setPlayingNodeId(null)
+      await withSave(() => api.canvas.removeNode(nodeId))
+    },
+    [selectedNodeId, playingNodeId, withSave]
+  )
+
+  const saveAnnotation = useCallback(async (): Promise<void> => {
+    if (!annotationDraft) return
+    const { id, value } = annotationDraft
+    setNodes((current) => current.map((node) => (node.id === id ? { ...node, annotation: value.trim() } : node)))
+    setAnnotationDraft(null)
+    await withSave(() => api.canvas.annotateNode(id, value))
+  }, [annotationDraft, withSave])
 
   const addImage = useCallback(async (): Promise<void> => {
     if (!active) return
@@ -295,8 +477,48 @@ export function CanvasPage() {
     const center = screenToWorld({ x: size.width / 2, y: size.height / 2 }, viewport)
     const node = await withSave(() => api.canvas.addNode(active.id, created.id))
     await api.canvas.moveNode(node.id, center.x - node.width / 2, center.y - node.height / 2)
-    await loadContent(active.id)
+    await loadContent(active.id, true)
   }, [active, size, viewport, withSave, loadContent])
+
+  /** 批量加入：后端 origin 天然不重叠（每次 addNode 的 occupied 含新节点）；
+   *  视口外的再由前端扫描搬进当前视野。 */
+  const addPicked = useCallback(async (): Promise<void> => {
+    if (!active || pickedItems.size === 0) return
+    const batch: Array<{ x: number; y: number; width: number; height: number }> = nodes.map((node) => ({
+      x: node.positionX,
+      y: node.positionY,
+      width: node.width,
+      height: node.height
+    }))
+    const viewLeft = -viewport.offsetX / viewport.scale
+    const viewTop = -viewport.offsetY / viewport.scale
+    try {
+      for (const record of pickedItems.values()) {
+        const node = await withSave(() => api.canvas.addNode(active.id, record.id))
+        const inside =
+          node.positionX + node.width > viewLeft &&
+          node.positionX < viewLeft + size.width / viewport.scale &&
+          node.positionY + node.height > viewTop &&
+          node.positionY < viewTop + size.height / viewport.scale
+        if (!inside) {
+          const origin = nextNodeOrigin({
+            occupied: batch,
+            width: node.width,
+            height: node.height,
+            startX: Math.round(viewLeft),
+            startY: Math.round(viewTop)
+          })
+          await api.canvas.moveNode(node.id, origin.x, origin.y)
+        }
+        batch.push({ x: node.positionX, y: node.positionY, width: node.width, height: node.height })
+      }
+      setPickedItems(new Map())
+      await loadContent(active.id, true)
+    } catch (cause) {
+      setPickerError((cause as Error).message)
+      await loadContent(active.id, true)
+    }
+  }, [active, pickedItems, nodes, viewport, size, withSave, loadContent])
 
   // MARK: - 笔迹
 
@@ -344,12 +566,128 @@ export function CanvasPage() {
     [withSave]
   )
 
-  // MARK: - Stage
+  // MARK: - Dialog 确认执行
+
+  const confirmDialog = useCallback(async (): Promise<void> => {
+    if (!dialog) return
+    if (dialog.kind === 'create') {
+      const created = await api.canvas.create(dialog.value.trim() || '未命名画布')
+      await loadCanvases()
+      setActiveId(created.id)
+      setView('workspace')
+      setDialog(null)
+      return
+    }
+    if (dialog.kind === 'rename' && dialog.canvasId) {
+      await withSave(() => api.canvas.rename(dialog.canvasId!, dialog.value.trim() || '未命名画布'))
+      await loadCanvases()
+      setDialog(null)
+      return
+    }
+    if (dialog.kind === 'delete' && dialog.canvasId) {
+      await api.canvas.remove(dialog.canvasId)
+      if (activeId === dialog.canvasId) {
+        setActiveId(null)
+        setView('gallery')
+      }
+      await loadCanvases()
+      setDialog(null)
+    }
+  }, [dialog, activeId, loadCanvases, withSave])
+
+  // MARK: - Gallery
+
+  if (view === 'gallery') {
+    return (
+      <div className="page">
+        <header className="page-header">
+          <div className="page-header__titles">
+            <h1 className="page-title">Canvas</h1>
+            <p className="page-sub">Your creative spaces · {canvases.length} 块</p>
+          </div>
+          <div className="page-header__actions">
+            <button className="button button--primary" onClick={() => setDialog({ kind: 'create', value: '新的画布' })}>
+              新建画布
+            </button>
+          </div>
+        </header>
+
+        <div className="page-body">
+          {error && <div className="error">{error}</div>}
+          {galleryLoading ? (
+            <div className="empty">正在读取画布…</div>
+          ) : canvases.length === 0 ? (
+            <div className="empty" style={{ padding: '60px 0' }}>
+              <strong>还没有画布。</strong>
+              <div style={{ marginTop: 8, color: 'var(--ink-faint)' }}>
+                画布是一个自己命名的空间，把记录里的东西放在一起连接与创造。
+              </div>
+            </div>
+          ) : (
+            <div className="gallery-grid">
+              {canvases.map((canvas) => (
+                <div key={canvas.id} className="gallery-card">
+                  <button className="gallery-card__open" onClick={() => { setActiveId(canvas.id); setView('workspace') }}>
+                    <CanvasThumbnail canvas={canvas} />
+                    <span className="gallery-card__body">
+                      <span className="gallery-card__name">{canvas.name || '未命名画布'}</span>
+                      {canvas.note && <span className="gallery-card__note">{canvas.note}</span>}
+                      <span className="gallery-card__meta">{formatDate(canvas.updatedAt)} 更新</span>
+                    </span>
+                  </button>
+                  <span className="gallery-card__actions">
+                    <button
+                      className="button button--ghost"
+                      title="重命名"
+                      aria-label={`重命名 ${canvas.name || '未命名画布'}`}
+                      onClick={() => setDialog({ kind: 'rename', canvasId: canvas.id, value: canvas.name || '' })}
+                    >
+                      ✎
+                    </button>
+                    <button
+                      className="button button--ghost"
+                      title="删除画布"
+                      aria-label={`删除 ${canvas.name || '未命名画布'}`}
+                      onClick={() => setDialog({ kind: 'delete', canvasId: canvas.id, value: '' })}
+                    >
+                      ✕
+                    </button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {dialog && (
+          <CanvasDialog
+            dialog={dialog}
+            onChange={(value) => setDialog((current) => (current ? { ...current, value } : current))}
+            onCancel={() => setDialog(null)}
+            onConfirm={() => void confirmDialog()}
+          />
+        )}
+      </div>
+    )
+  }
+
+  // MARK: - Workspace
 
   return (
     <div className="page">
       <div className="canvas-shell">
         <div className="canvas-topbar">
+          <button
+            className="button button--ghost canvas-back"
+            aria-label="返回画布集合"
+            title="返回画布集合"
+            onClick={() => {
+              setPlayingNodeId(null)
+              setView('gallery')
+            }}
+          >
+            ‹
+          </button>
           {active && (
             <div className="switcher-wrap">
               <button
@@ -417,7 +755,12 @@ export function CanvasPage() {
           </button>
         </div>
 
-        <div className={`canvas-wrap canvas-cursor--${tool}`} ref={containerRef}>
+        {/* 视口可观测性：E2E 与调试用（世界坐标 → 屏幕换算的唯一事实来源） */}
+        <div
+          className={`canvas-wrap canvas-cursor--${tool}`}
+          ref={setWrapElement}
+          data-viewport={`${viewport.scale},${viewport.offsetX},${viewport.offsetY}`}
+        >
           {active ? (
             <Stage
               width={size.width}
@@ -428,6 +771,7 @@ export function CanvasPage() {
               y={viewport.offsetY}
               onWheel={(event) => {
                 event.evt.preventDefault()
+                markUserAdjusted()
                 const stage = event.target.getStage()
                 const pointer = stage?.getPointerPosition()
                 if (!pointer) return
@@ -450,12 +794,12 @@ export function CanvasPage() {
                 const onBlank = event.target === stage
                 const wantPan =
                   spaceRef.current || tool === 'hand' || event.evt.button === 1 || (onBlank && tool === 'select')
-                const handEverywhere = spaceRef.current || tool === 'hand' || event.evt.button === 1
-                if (wantPan || handEverywhere) {
+                if (wantPan) {
                   if (onBlank) {
                     setSelectedNodeId(null)
                     setSelectedNoteId(null)
                   }
+                  markUserAdjusted()
                   panRef.current = {
                     pointerX: pointer.x,
                     pointerY: pointer.y,
@@ -547,9 +891,29 @@ export function CanvasPage() {
                     node={node}
                     selected={node.id === selectedNodeId}
                     draggable={tool === 'select'}
+                    isPlaying={playingNodeId === node.id}
                     onSelect={() => {
                       setSelectedNodeId(node.id)
                       setSidePanel('inspector')
+                      setAnnotationDraft(null)
+                    }}
+                    onOpenRecord={() => {
+                      if (playingNodeId === node.id) return // 播放中点击让给播放器
+                      openRecord(node.recordID)
+                    }}
+                    onTogglePlay={() => {
+                      // 播放面（video/iframe）与播放按钮同心。若在 pointerdown 的
+                      // 处理里立即渲染，真实 pointerup 会落进新 DOM 而不冒泡回
+                      // Konva——capture 永不释放，之后画布上所有点击都失效
+                      // （Konva 的 canClick 要求 down/up 的 target 一致）。
+                      // 推迟到宏任务：up 先回到画布，再出现播放面。
+                      window.setTimeout(() => {
+                        setPlayingNodeId((current) => (current === node.id ? null : node.id))
+                      }, 0)
+                    }}
+                    onContextMenu={(x, y) => {
+                      setSelectedNodeId(node.id)
+                      setContextMenu({ nodeId: node.id, x, y })
                     }}
                     onMoved={async (positionX, positionY) => {
                       setNodes((current) =>
@@ -576,6 +940,7 @@ export function CanvasPage() {
                     onSelect={() => {
                       setSelectedNoteId(note.id)
                       setSidePanel('inspector')
+                      setAnnotationDraft(null)
                     }}
                     onDoubleClick={() => {
                       setSelectedNoteId(note.id)
@@ -592,12 +957,21 @@ export function CanvasPage() {
               </Layer>
             </Stage>
           ) : (
-            <div className="canvas-empty">还没有画布。点右上角「新建」开始。</div>
+            <div className="canvas-empty">还没有画布。返回集合新建一块开始。</div>
           )}
 
-          {active && nodes.length === 0 && notes.length === 0 && strokes.length === 0 && (
+          {active && loadState === 'error' && (
+            <div className="canvas-failure">
+              <span>画布内容没能读出来。</span>
+              <button className="button" onClick={() => active && void loadContent(active.id)}>
+                重新加载
+              </button>
+            </div>
+          )}
+
+          {active && loadState === 'ready' && nodes.length === 0 && notes.length === 0 && strokes.length === 0 && (
             <CanvasEmptyState
-              onAddRecord={() => setSidePanel('add')}
+              onAddRecord={() => setSidePanel('picker')}
               onAddImage={() => void addImage()}
               onAddNote={() => void createNote()}
               onStartDraw={() => setTool('pen')}
@@ -609,12 +983,12 @@ export function CanvasPage() {
           <StudioToolbar
             tool={tool}
             penColor={penColor}
-            addActive={sidePanel === 'add'}
+            pickerActive={sidePanel === 'picker'}
             onTool={setTool}
             onPenColor={setPenColor}
             onNote={() => void createNote()}
             onAddImage={() => void addImage()}
-            onAddRecord={() => setSidePanel((value) => (value === 'add' ? null : 'add'))}
+            onAddRecord={() => setSidePanel((value) => (value === 'picker' ? null : 'picker'))}
           />
 
           <div className="canvas-hud">
@@ -623,7 +997,7 @@ export function CanvasPage() {
               className="button"
               aria-label="缩小"
               title="缩小"
-              onClick={() => setViewport((current) => zoomAt(current, current.scale / 1.15, { x: size.width / 2, y: size.height / 2 }))}
+              onClick={() => { markUserAdjusted(); setViewport((current) => zoomAt(current, current.scale / 1.15, { x: size.width / 2, y: size.height / 2 })) }}
             >
               －
             </button>
@@ -631,7 +1005,7 @@ export function CanvasPage() {
               className="button"
               aria-label="放大"
               title="放大"
-              onClick={() => setViewport((current) => zoomAt(current, current.scale * 1.15, { x: size.width / 2, y: size.height / 2 }))}
+              onClick={() => { markUserAdjusted(); setViewport((current) => zoomAt(current, current.scale * 1.15, { x: size.width / 2, y: size.height / 2 })) }}
             >
               ＋
             </button>
@@ -642,40 +1016,73 @@ export function CanvasPage() {
               className="button"
               aria-label="回到 100%"
               title="100% (1)"
-              onClick={() => setViewport((current) => zoomAt(current, 1, { x: size.width / 2, y: size.height / 2 }))}
+              onClick={() => { markUserAdjusted(); setViewport((current) => zoomAt(current, 1, { x: size.width / 2, y: size.height / 2 })) }}
             >
               1:1
             </button>
           </div>
 
-          {sidePanel === 'add' && active && (
-            <aside className="canvas-panel" role="dialog" aria-label="画布操作">
-              <div className="row row--between" style={{ marginBottom: 12 }}>
-                <span className="overline" style={{ margin: 0 }}>添加到画布</span>
+          {/* 添加记录：独立 Picker（搜索走 records.list 数据库谓词 + 分页 + 多选） */}
+          {sidePanel === 'picker' && active && (
+            <aside className="picker-panel" role="dialog" aria-label="添加记录">
+              <div className="row row--between" style={{ marginBottom: 4 }}>
+                <span className="overline" style={{ margin: 0 }}>添加记录</span>
                 <button className="button button--ghost" aria-label="关闭面板" onClick={() => setSidePanel(null)}>
                   ✕
                 </button>
               </div>
+              <p className="page-sub" style={{ margin: '0 0 10px' }}>从你的收藏中挑选内容</p>
 
               <input
-                placeholder="搜索记录…"
-                value={addSearch}
-                onChange={(event) => setAddSearch(event.target.value)}
+                placeholder="搜索标题、备注、来源、作者…"
+                value={pickerSearch}
+                onChange={(event) => setPickerSearch(event.target.value)}
                 style={{ marginBottom: 10 }}
               />
 
-              <div className="list" style={{ maxHeight: 240, overflow: 'auto', marginBottom: 14 }}>
-                {filteredRecords.map((record) => {
+              <div className="chips" style={{ marginBottom: 12 }}>
+                {([['all', '全部'], ['image', '图片'], ['video', '视频'], ['link', '链接'], ['text', '文字']] as const).map(
+                  ([key, label]) => (
+                    <button
+                      key={key}
+                      className="chip"
+                      data-active={pickerCarrier === key}
+                      onClick={() => setPickerCarrier(key)}
+                    >
+                      {label}
+                    </button>
+                  )
+                )}
+              </div>
+
+              <div
+                className="picker-list"
+                onScroll={(event) => {
+                  const element = event.currentTarget
+                  if (!pickerHasMore || pickerLoading) return
+                  if (element.scrollHeight - element.scrollTop - element.clientHeight < 80) {
+                    void loadPickerPage('more')
+                  }
+                }}
+              >
+                {pickerRecords.map((record) => {
+                  const already = addedRecordIds.has(record.id)
+                  const isOn = pickedItems.has(record.id)
                   const thumb = record.previewPath ?? record.mediaPath
                   return (
                     <button
                       key={record.id}
                       className="add-card"
-                      disabled={addedRecordIds.has(record.id)}
-                      style={{ opacity: addedRecordIds.has(record.id) ? 0.45 : 1 }}
-                      onClick={async () => {
-                        await withSave(() => api.canvas.addNode(active.id, record.id))
-                        await loadContent(active.id)
+                      disabled={already}
+                      style={{ opacity: already ? 0.5 : 1 }}
+                      onClick={() => {
+                        if (already) return
+                        setPickedItems((current) => {
+                          const next = new Map(current)
+                          if (next.has(record.id)) next.delete(record.id)
+                          else next.set(record.id, record)
+                          return next
+                        })
                       }}
                     >
                       {thumb ? (
@@ -689,32 +1096,101 @@ export function CanvasPage() {
                         <span className="add-card__title">{record.title || '未命名记录'}</span>
                         <span className="add-card__meta">
                           {record.carrier}
-                          {addedRecordIds.has(record.id) && ' · 已在画布'}
+                          {already && ' · 已在画布'}
+                          {isOn && ' · 已选择'}
                         </span>
+                      </span>
+                      <span className={`add-card__check${isOn ? ' add-card__check--on' : ''}`} aria-hidden>
+                        {isOn ? '✓' : ''}
                       </span>
                     </button>
                   )
                 })}
-                {filteredRecords.length === 0 && <div className="empty">没有匹配的记录。</div>}
+                {pickerLoading && <div className="empty">正在读取…</div>}
+                {!pickerLoading && pickerRecords.length === 0 && (
+                  <div className="empty">
+                    没有匹配的记录。
+                    {pickerSearch.trim() && (
+                      <button className="button" style={{ marginTop: 8 }} onClick={() => setPickerSearch('')}>
+                        清除搜索
+                      </button>
+                    )}
+                  </div>
+                )}
+                {pickerError && <div className="error">{pickerError}</div>}
               </div>
 
-              <div className="hairline" />
-              <span className="overline">选中的内容</span>
-              {selectedNode && selectedNode.recordCarrier === 'video' ? (
-                <div className="stack">
-                  <div className="note">{selectedNode.recordTitle || '未命名视频'}</div>
-                  <button className="button button--primary" onClick={() => setPlayingVideo(selectedNode)}>
-                    ▶ 在浮层中播放
-                  </button>
-                  <button className="button button--danger" onClick={() => void removeSelectedNode()}>
-                    从画布移除
-                  </button>
-                </div>
-              ) : selectedNode ? (
+              {pickedItems.size > 0 && (
+                <button className="button button--primary picker-join" onClick={() => void addPicked()}>
+                  加入 {pickedItems.size} 项
+                </button>
+              )}
+            </aside>
+          )}
+
+          {/* 选中内容：节点 / 便签 inspector（备注编辑只写 CanvasNode.annotation） */}
+          {sidePanel === 'inspector' && active && (selectedNode || selectedNote) && (
+            <aside className="node-panel" role="dialog" aria-label="选中内容">
+              <div className="row row--between" style={{ marginBottom: 12 }}>
+                <span className="overline" style={{ margin: 0 }}>Selected</span>
+                <button className="button button--ghost" aria-label="关闭面板" onClick={() => setSidePanel(null)}>
+                  ✕
+                </button>
+              </div>
+
+              {selectedNode ? (
                 <div className="stack">
                   <div className="note">{selectedNode.recordTitle || '未命名记录'}</div>
-                  {selectedNode.annotation && <div className="note">备注：{selectedNode.annotation}</div>}
-                  <button className="button button--danger" onClick={() => void removeSelectedNode()}>
+                  <div className="note mono">
+                    {selectedNode.width}×{selectedNode.height} · ({selectedNode.positionX.toFixed(0)},{' '}
+                    {selectedNode.positionY.toFixed(0)})
+                  </div>
+                  {playbackOf(selectedNode) && (
+                    <button
+                      className="button button--primary"
+                      onClick={() => setPlayingNodeId(selectedNode.id)}
+                    >
+                      ▶ 播放
+                    </button>
+                  )}
+
+                  {annotationDraft && annotationDraft.id === selectedNode.id ? (
+                    <>
+                      <span className="overline">画布备注</span>
+                      <textarea
+                        value={annotationDraft.value}
+                        placeholder="只属于这块画布，不会改动记录本身。"
+                        autoFocus
+                        onChange={(event) =>
+                          setAnnotationDraft({ id: selectedNode.id, value: event.target.value })
+                        }
+                      />
+                      <div className="row">
+                        <button className="button button--primary" onClick={() => void saveAnnotation()}>
+                          保存
+                        </button>
+                        <button className="button" onClick={() => setAnnotationDraft(null)}>
+                          取消
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {selectedNode.annotation && (
+                        <div className="note" style={{ fontStyle: 'italic', color: 'var(--ink-soft)' }}>
+                          「{selectedNode.annotation}」
+                        </div>
+                      )}
+                      <button
+                        className="button"
+                        onClick={() => setAnnotationDraft({ id: selectedNode.id, value: selectedNode.annotation })}
+                      >
+                        编辑画布备注
+                      </button>
+                    </>
+                  )}
+
+                  <button className="button button--danger" onClick={() => void removeNodeById(selectedNode.id)}>
                     从画布移除
                   </button>
                   <div className="note">只解除引用，原始记录还在记录库里。</div>
@@ -725,39 +1201,75 @@ export function CanvasPage() {
                   onChange={(next) => void updateNote(next)}
                   onRemove={() => void removeNote(selectedNote.id)}
                 />
-              ) : (
-                <div className="empty">点选一张卡片或便签查看与编辑。</div>
-              )}
-
-              <div className="hairline" />
-              <button
-                className="button button--danger"
-                onClick={async () => {
-                  if (!window.confirm('删除这块画布？画布上的节点、便签和笔迹会一起消失，记录不受影响。')) return
-                  await api.canvas.remove(active.id)
-                  setActiveId(null)
-                  setSidePanel(null)
-                  await loadCanvases()
-                }}
-              >
-                删除这块画布
-              </button>
+              ) : null}
             </aside>
           )}
 
-          {playingVideo && (
-            <div className="video-overlay" onClick={() => setPlayingVideo(null)}>
-              <video
-                src={api.records.mediaUrl(playingVideo.recordMediaPath ?? '')}
-                controls
-                autoPlay
-                onClick={(event) => event.stopPropagation()}
-              />
-              <button className="button" aria-label="关闭播放" onClick={() => setPlayingVideo(null)}>
-                关闭
-              </button>
-            </div>
+          {/* 右键菜单：打开原记录 / 原始来源 / 备注 / 移除 */}
+          {contextMenu && (
+            <>
+              <div className="pop-backdrop" onClick={() => setContextMenu(null)} onContextMenu={(event) => { event.preventDefault(); setContextMenu(null) }} />
+              <div className="node-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
+                {(() => {
+                  const node = nodes.find((item) => item.id === contextMenu.nodeId)
+                  if (!node) return null
+                  return (
+                    <>
+                      <button role="menuitem" onClick={() => { openRecord(node.recordID); setContextMenu(null) }}>
+                        打开原记录
+                      </button>
+                      {node.recordURLString && (
+                        <button
+                          role="menuitem"
+                          onClick={() => {
+                            window.open(node.recordURLString, '_blank')
+                            setContextMenu(null)
+                          }}
+                        >
+                          打开原始来源
+                        </button>
+                      )}
+                      <button
+                        role="menuitem"
+                        onClick={() => {
+                          setSelectedNodeId(node.id)
+                          setAnnotationDraft({ id: node.id, value: node.annotation })
+                          setSidePanel('inspector')
+                          setContextMenu(null)
+                        }}
+                      >
+                        编辑画布备注
+                      </button>
+                      <button
+                        role="menuitem"
+                        className="node-context-menu__danger"
+                        onClick={() => {
+                          void removeNodeById(node.id)
+                          setContextMenu(null)
+                        }}
+                      >
+                        从画布移除
+                      </button>
+                    </>
+                  )
+                })()}
+              </div>
+            </>
           )}
+
+          {/* 播放面（DOM overlay，跟随视口）：本地视频 <video>；Embed 走 embedURL 白名单 */}
+          {playingNodeId &&
+            (() => {
+              const node = nodes.find((item) => item.id === playingNodeId)
+              if (!node) return null
+              return (
+                <NodePlaySurface
+                  node={node}
+                  viewport={viewport}
+                  onStop={() => setPlayingNodeId(null)}
+                />
+              )
+            })()}
 
           {editingNoteId && selectedNote && (
             <NoteEditorOverlay
@@ -766,6 +1278,114 @@ export function CanvasPage() {
               onChange={(next) => void updateNote(next)}
               onClose={() => setEditingNoteId(null)}
             />
+          )}
+
+          {dialog && (
+            <CanvasDialog
+              dialog={dialog}
+              onChange={(value) => setDialog((current) => (current ? { ...current, value } : current))}
+              onCancel={() => setDialog(null)}
+              onConfirm={() => void confirmDialog()}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// MARK: - 播放面
+
+/** 节点内播放：fixed 定位在节点的屏幕矩形上，视口变化时跟随（React 状态驱动）。 */
+function NodePlaySurface(props: {
+  node: CanvasNodeWithRecord
+  viewport: CanvasViewport
+  onStop: () => void
+}) {
+  const { node, viewport } = props
+  const left = node.positionX * viewport.scale + viewport.offsetX
+  const top = node.positionY * viewport.scale + viewport.offsetY
+  const width = Math.max(240, node.width * viewport.scale)
+  const height = Math.max(160, node.height * viewport.scale)
+  const embed = embedURL(node.recordProvider, node.recordPlatformContentID)
+  const useLocal = node.recordCarrier === 'video' && !!node.recordMediaPath
+
+  return (
+    <div
+      className="node-play-surface"
+      style={{ left, top, width, height }}
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
+    >
+      {useLocal ? (
+        <video src={api.records.mediaUrl(node.recordMediaPath!)} controls autoPlay />
+      ) : embed ? (
+        <iframe
+          src={embed}
+          title="视频播放"
+          allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+          allowFullScreen
+        />
+      ) : (
+        <div className="node-play-surface__error">
+          视频加载失败。
+          {node.recordURLString && (
+            <button className="button" onClick={() => window.open(node.recordURLString, '_blank')}>
+              在浏览器打开
+            </button>
+          )}
+        </div>
+      )}
+      <button className="node-play-surface__stop" aria-label="停止播放" title="停止播放 (Esc)" onClick={props.onStop}>
+        ⏸
+      </button>
+    </div>
+  )
+}
+
+// MARK: - Gallery 对话框
+
+function CanvasDialog(props: {
+  dialog: { kind: 'create' | 'rename' | 'delete'; canvasId?: string; value: string }
+  onChange: (value: string) => void
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const { dialog } = props
+  const isDelete = dialog.kind === 'delete'
+  const title = dialog.kind === 'create' ? '新建画布' : dialog.kind === 'rename' ? '重命名画布' : '删除这块画布？'
+  return (
+    <div className="dialog-backdrop" onClick={props.onCancel}>
+      <div className="dialog" role="dialog" aria-label={title} onClick={(event) => event.stopPropagation()}>
+        <strong>{title}</strong>
+        {isDelete ? (
+          <p className="page-sub" style={{ margin: 0 }}>
+            画布上的节点、便签和笔迹会一起消失；原始记录不受影响，删除后不可恢复。
+          </p>
+        ) : (
+          <input
+            value={dialog.value}
+            autoFocus
+            placeholder="画布叫什么"
+            onChange={(event) => props.onChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') props.onConfirm()
+            }}
+          />
+        )}
+        <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <button className="button" onClick={props.onCancel}>
+            取消
+          </button>
+          {isDelete ? (
+            <button className="button button--danger" onClick={props.onConfirm}>
+              确认删除
+            </button>
+          ) : (
+            <button className="button button--primary" onClick={props.onConfirm}>
+              确认
+            </button>
           )}
         </div>
       </div>
@@ -778,7 +1398,7 @@ export function CanvasPage() {
 function StudioToolbar(props: {
   tool: StudioTool
   penColor: string
-  addActive: boolean
+  pickerActive: boolean
   onTool: (tool: StudioTool) => void
   onPenColor: (color: string) => void
   onNote: () => void
@@ -833,7 +1453,7 @@ function StudioToolbar(props: {
       </button>
       <button
         className="studio-toolbar__tool studio-toolbar__tool--wide"
-        data-active={props.addActive}
+        data-active={props.pickerActive}
         title="添加记录"
         onClick={props.onAddRecord}
       >
@@ -1005,29 +1625,36 @@ function NoteEditorOverlay(props: {
   )
 }
 
-// MARK: - 节点分层渲染（image 原图 / video·link 封面+标题条 / text 文字卡）
+// MARK: - 节点（对标 iOS CanvasNodeCard 的四类内容 + 独立播放按钮）
 
 function CanvasNodeShape(props: {
   node: CanvasNodeWithRecord
   selected: boolean
   draggable: boolean
+  isPlaying: boolean
   onSelect: () => void
+  onOpenRecord: () => void
+  onTogglePlay: () => void
+  onContextMenu: (screenX: number, screenY: number) => void
   onMoved: (x: number, y: number) => void | Promise<void>
   onLiveResize?: (width: number, height: number) => void
   onResized?: (width: number, height: number) => void | Promise<void>
 }) {
-  const { node } = props
+  const { node, isPlaying } = props
+  const playback = playbackOf(node)
+  // 图片节点用缩略图（previewPath 优先）；播放中封面不需要再加载。
   const image = useLocalImage(
-    node.recordCarrier === 'image'
-      ? node.recordMediaPath
-      : node.recordCarrier === 'link' || node.recordCarrier === 'video'
-        ? node.recordPreviewPath
-        : null
+    isPlaying && playback
+      ? null
+      : node.recordCarrier === 'image'
+        ? node.recordPreviewPath ?? node.recordMediaPath
+        : node.recordCarrier === 'link' || node.recordCarrier === 'video'
+          ? node.recordPreviewPath
+          : null
   )
   const colors = themeColors()
   const radius = 14
   const stroke = props.selected ? colors.sage : colors.hairline
-  const coverHeight = node.height - 44
 
   return (
     <Group
@@ -1036,98 +1663,451 @@ function CanvasNodeShape(props: {
       draggable={props.draggable}
       onClick={props.onSelect}
       onTap={props.onSelect}
+      onDblClick={() => {
+        if (!isPlaying) props.onOpenRecord()
+      }}
+      onDblTap={() => {
+        if (!isPlaying) props.onOpenRecord()
+      }}
+      onContextMenu={(event: KonvaEventObject<PointerEvent>) => {
+        event.cancelBubble = true
+        props.onContextMenu(event.evt.clientX, event.evt.clientY)
+      }}
       onDragEnd={(event) => {
         void props.onMoved(event.target.x(), event.target.y())
       }}
     >
-      {/* 交互层：透明命中区域覆盖整卡。视觉元素全部 listening={false}，
-          若没有这一层，带封面的节点在图片加载后就再也点不到、拖不动。 */}
+      {/* 交互层：透明命中区域覆盖整卡（视觉元素全部 listening={false}）。 */}
       <Rect width={node.width} height={node.height} fill="rgba(255,255,255,0.001)" />
-      {image && node.recordCarrier === 'image' && (
-        <Group clipFunc={(ctx) => roundedRectPath(ctx, 0, 0, node.width, node.height, radius)}>
-          <KonvaImage image={image} width={node.width} height={node.height} listening={false} />
-        </Group>
+
+      {node.recordCarrier === 'image' && (
+        <ImageCardBody node={node} image={image} colors={colors} radius={radius} stroke={stroke} selected={props.selected} />
       )}
-      {image && (node.recordCarrier === 'link' || node.recordCarrier === 'video') && (
-        <>
-          <Group clipFunc={(ctx) => roundedRectPath(ctx, 0, 0, node.width, coverHeight, radius)}>
-            <KonvaImage image={image} width={node.width} height={coverHeight} listening={false} />
-          </Group>
-          {node.recordCarrier === 'video' && (
-            <Text
-              x={14}
-              y={coverHeight / 2 - 14}
-              text="▶"
-              fontSize={26}
-              fontFamily={KONVA_FONT}
-              fill="#ffffff"
-              shadowColor="#000000"
-              shadowOpacity={0.5}
-              shadowBlur={6}
-              listening={false}
-            />
-          )}
-          <Rect
-            y={coverHeight}
-            width={node.width}
-            height={44}
-            fill={colors.card}
-            cornerRadius={[0, 0, radius, radius]}
-            stroke={stroke}
-            strokeWidth={1}
-            listening={false}
-          />
-          <Text
-            x={12}
-            y={coverHeight + 11}
-            width={node.width - 24}
-            text={node.recordTitle || '未命名记录'}
-            fontSize={12}
-            fontStyle="600"
-            fontFamily={KONVA_FONT}
-            fill={colors.ink}
-            wrap="word"
-            ellipsis
-            height={22}
-            listening={false}
-          />
-        </>
+      {node.recordCarrier === 'video' && (
+        <VideoCardBody
+          node={node}
+          image={image}
+          isPlaying={isPlaying}
+          canPlay={playback !== null}
+          colors={colors}
+          radius={radius}
+          stroke={stroke}
+          selected={props.selected}
+          onTogglePlay={props.onTogglePlay}
+        />
       )}
-      {!image && (
+      {node.recordCarrier === 'link' && (
+        <LinkCardBody
+          node={node}
+          image={image}
+          isPlaying={isPlaying}
+          canPlay={playback === 'embed'}
+          colors={colors}
+          radius={radius}
+          stroke={stroke}
+          selected={props.selected}
+          onTogglePlay={props.onTogglePlay}
+          onOpenSource={() => window.open(node.recordURLString, '_blank')}
+        />
+      )}
+      {node.recordCarrier === 'text' && (
+        <TextCardBody node={node} colors={colors} radius={radius} stroke={stroke} selected={props.selected} />
+      )}
+
+      {props.selected && (
         <>
           <Rect
             width={node.width}
             height={node.height}
-            fill={colors.card}
             cornerRadius={radius}
-            stroke={stroke}
-            strokeWidth={props.selected ? 1.5 : 1}
-          />
-          <Text
-            x={16}
-            y={16}
-            width={node.width - 32}
-            text={node.recordTitle || '未命名记录'}
-            fontSize={13}
-            fontStyle="600"
-            fontFamily={KONVA_FONT}
-            fill={colors.ink}
-            lineHeight={1.4}
-            wrap="word"
-            ellipsis
-            height={node.height - 46}
-          />
-          <Text
-            x={16}
-            y={node.height - 26}
-            text={carrierLabelOf(node.recordCarrier)}
-            fontSize={10.5}
-            fontFamily={KONVA_FONT}
-            fill={colors.inkFaint}
+            stroke={colors.sage}
+            strokeWidth={1.5}
             listening={false}
+          />
+          <Rect
+            x={node.width - 7}
+            y={node.height - 7}
+            width={14}
+            height={14}
+            fill={colors.sage}
+            cornerRadius={4}
+            draggable
+            onDragMove={(event) => {
+              const nextW = Math.max(120, event.target.x() + 7)
+              const nextH = Math.max(90, event.target.y() + 7)
+              event.target.position({ x: nextW - 7, y: nextH - 7 })
+              props.onLiveResize?.(nextW, nextH)
+            }}
+            onDragEnd={(event) => {
+              void props.onResized?.(event.target.x() + 7, event.target.y() + 7)
+            }}
           />
         </>
       )}
+    </Group>
+  )
+}
+
+/** 图片卡：整卡封面 + 底部渐变标题（对标 iOS imageCard + mediaCaption）。 */
+function ImageCardBody(props: {
+  node: CanvasNodeWithRecord
+  image: HTMLImageElement | null
+  colors: ReturnType<typeof themeColors>
+  radius: number
+  stroke: string
+  selected: boolean
+}) {
+  const { node, image, colors } = props
+  return (
+    <>
+      {image ? (
+        <Group clipFunc={(ctx) => roundedRectPath(ctx, 0, 0, node.width, node.height, props.radius)}>
+          <KonvaImage image={image} width={node.width} height={node.height} listening={false} />
+          {/* 渐变标题区：透明 → 墨色，白字（iOS LinearGradient 同语义） */}
+          <Rect
+            y={node.height - 56}
+            width={node.width}
+            height={56}
+            fillLinearGradientStartPoint={{ x: 0, y: 0 }}
+            fillLinearGradientEndPoint={{ x: 0, y: 56 }}
+            fillLinearGradientColorStops={[0, 'rgba(20,24,18,0)', 1, 'rgba(20,24,18,0.72)']}
+            listening={false}
+          />
+          <Text
+            x={12}
+            y={node.height - 46}
+            width={node.width - 24}
+            text={node.recordTitle || '未命名记录'}
+            fontSize={12.5}
+            fontStyle="600"
+            fontFamily={KONVA_FONT}
+            fill="#ffffff"
+            wrap="word"
+            ellipsis
+            height={34}
+            listening={false}
+          />
+        </Group>
+      ) : (
+        <MissingMediaBody node={node} symbol="▣" colors={colors} radius={props.radius} stroke={props.stroke} selected={props.selected} />
+      )}
+    </>
+  )
+}
+
+/** 视频卡：poster + 中央独立播放按钮；播放中交给 NodePlaySurface（iOS videoCard）。 */
+function VideoCardBody(props: {
+  node: CanvasNodeWithRecord
+  image: HTMLImageElement | null
+  isPlaying: boolean
+  canPlay: boolean
+  colors: ReturnType<typeof themeColors>
+  radius: number
+  stroke: string
+  selected: boolean
+  onTogglePlay: () => void
+}) {
+  const { node, image, colors } = props
+  return (
+    <>
+      {image ? (
+        <Group clipFunc={(ctx) => roundedRectPath(ctx, 0, 0, node.width, node.height, props.radius)}>
+          <KonvaImage image={image} width={node.width} height={node.height} listening={false} />
+          <Rect
+            y={node.height - 56}
+            width={node.width}
+            height={56}
+            fillLinearGradientStartPoint={{ x: 0, y: 0 }}
+            fillLinearGradientEndPoint={{ x: 0, y: 56 }}
+            fillLinearGradientColorStops={[0, 'rgba(20,24,18,0)', 1, 'rgba(20,24,18,0.72)']}
+            listening={false}
+          />
+          <Text
+            x={12}
+            y={node.height - 46}
+            width={node.width - 24}
+            text={node.recordTitle || '未命名视频'}
+            fontSize={12.5}
+            fontStyle="600"
+            fontFamily={KONVA_FONT}
+            fill="#ffffff"
+            wrap="word"
+            ellipsis
+            height={34}
+            listening={false}
+          />
+        </Group>
+      ) : (
+        <MissingMediaBody node={node} symbol="▶" colors={colors} radius={props.radius} stroke={props.stroke} selected={props.selected} />
+      )}
+      {props.canPlay && !props.isPlaying && <PlayBadge onTogglePlay={props.onTogglePlay} node={node} />}
+    </>
+  )
+}
+
+/** 链接卡：封面 / 来源 / 标题 / 摘要 / 打开来源 / 播放（iOS linkCard）。 */
+function LinkCardBody(props: {
+  node: CanvasNodeWithRecord
+  image: HTMLImageElement | null
+  isPlaying: boolean
+  canPlay: boolean
+  colors: ReturnType<typeof themeColors>
+  radius: number
+  stroke: string
+  selected: boolean
+  onTogglePlay: () => void
+  onOpenSource: () => void
+}) {
+  const { node, image, colors } = props
+  const coverHeight = Math.max(60, Math.min(160, node.height * 0.5))
+  const bodyTop = coverHeight
+  const bodyHeight = node.height - coverHeight
+  return (
+    <>
+      <Group clipFunc={(ctx) => roundedRectPath(ctx, 0, 0, node.width, node.height, props.radius)}>
+        <Rect width={node.width} height={node.height} fill={colors.card} listening={false} />
+        {image ? (
+          <KonvaImage image={image} width={node.width} height={coverHeight} listening={false} />
+        ) : (
+          <Rect width={node.width} height={coverHeight} fill={colors.well} listening={false} />
+        )}
+        <Rect y={bodyTop} width={node.width} height={bodyHeight} fill={colors.card} listening={false} />
+        <Text
+          x={12}
+          y={bodyTop + 10}
+          width={node.width - 24}
+          text={node.recordTitle || '未命名链接'}
+          fontSize={12.5}
+          fontStyle="600"
+          fontFamily={KONVA_FONT}
+          fill={colors.ink}
+          wrap="word"
+          ellipsis
+          height={32}
+          listening={false}
+        />
+        <Text
+          x={12}
+          y={bodyTop + 44}
+          width={node.width - 24}
+          text={node.recordSourceName || providerHostOf(node)}
+          fontSize={10.5}
+          fontFamily={KONVA_FONT}
+          fill={colors.inkFaint}
+          wrap="word"
+          ellipsis
+          height={16}
+          listening={false}
+        />
+        {node.recordSummary && bodyHeight > 78 && (
+          <Text
+            x={12}
+            y={bodyTop + 62}
+            width={node.width - 24}
+            height={bodyHeight - 74}
+            text={node.recordSummary}
+            fontSize={10.5}
+            fontFamily={KONVA_FONT}
+            fill={colors.inkSoft}
+            lineHeight={1.4}
+            wrap="word"
+            ellipsis
+            listening={false}
+          />
+        )}
+        {node.annotation && (
+          <Text
+            x={12}
+            y={node.height - 24}
+            width={node.width - 24}
+            text={`❝ ${node.annotation}`}
+            fontSize={10}
+            fontStyle="italic"
+            fontFamily={KONVA_FONT}
+            fill={colors.inkFaint}
+            wrap="word"
+            ellipsis
+            height={20}
+            listening={false}
+          />
+        )}
+      </Group>
+      {/* 打开来源：独立按钮（iOS arrow.up.right badge） */}
+      {node.recordURLString && (
+        <Group x={node.width - 30} y={bodyTop + 8} onClick={(event) => { event.cancelBubble = true; props.onOpenSource() }}>
+          <Rect width={22} height={22} cornerRadius={6} fill="rgba(255,255,255,0.001)" />
+          <Text text="↗" fontSize={13} fontFamily={KONVA_FONT} fill={colors.inkFaint} width={22} height={22} align="center" verticalAlign="middle" />
+        </Group>
+      )}
+      {props.canPlay && !props.isPlaying && (
+        <PlayBadge onTogglePlay={props.onTogglePlay} node={node} small centerY={coverHeight / 2} />
+      )}
+    </>
+  )
+}
+
+/** 文字卡：标题 + 正文预览 + 备注行（iOS textCard）。 */
+function TextCardBody(props: {
+  node: CanvasNodeWithRecord
+  colors: ReturnType<typeof themeColors>
+  radius: number
+  stroke: string
+  selected: boolean
+}) {
+  const { node, colors } = props
+  const hasTitle = !!node.recordTitle.trim()
+  return (
+    <>
+      <Rect
+        width={node.width}
+        height={node.height}
+        fill={colors.card}
+        cornerRadius={props.radius}
+        stroke={props.selected ? colors.sage : colors.hairline}
+        strokeWidth={props.selected ? 1.5 : 1}
+        shadowColor="#30372f"
+        shadowOpacity={0.06}
+        shadowBlur={8}
+        shadowOffsetY={2}
+      />
+      {hasTitle && (
+        <Text
+          x={14}
+          y={14}
+          width={node.width - 28}
+          text={node.recordTitle}
+          fontSize={13}
+          fontStyle="600"
+          fontFamily={KONVA_FONT}
+          fill={colors.ink}
+          lineHeight={1.4}
+          wrap="word"
+          ellipsis
+          height={38}
+          listening={false}
+        />
+      )}
+      <Text
+        x={14}
+        y={hasTitle ? 56 : 14}
+        width={node.width - 28}
+        height={node.height - (hasTitle ? 92 : 48)}
+        text={node.recordNote || '（没有正文）'}
+        fontSize={12}
+        fontFamily={KONVA_FONT}
+        fill={colors.inkSoft}
+        lineHeight={1.55}
+        wrap="word"
+        ellipsis
+        listening={false}
+      />
+      {node.annotation && (
+        <Text
+          x={14}
+          y={node.height - 30}
+          width={node.width - 28}
+          text={`❝ ${node.annotation}`}
+          fontSize={10}
+          fontStyle="italic"
+          fontFamily={KONVA_FONT}
+          fill={colors.inkFaint}
+          wrap="word"
+          ellipsis
+          height={22}
+          listening={false}
+        />
+      )}
+    </>
+  )
+}
+
+/** 媒体缺失占位（iOS missingMedia）：中性底 + 类型符号。 */
+function MissingMediaBody(props: {
+  node: CanvasNodeWithRecord
+  symbol: string
+  colors: ReturnType<typeof themeColors>
+  radius: number
+  stroke: string
+  selected: boolean
+}) {
+  const { node, colors } = props
+  return (
+    <>
+      <Rect
+        width={node.width}
+        height={node.height}
+        fill={colors.well}
+        cornerRadius={props.radius}
+        stroke={colors.hairline}
+        strokeWidth={1}
+      />
+      <Text
+        text={props.symbol}
+        fontSize={24}
+        fontFamily={KONVA_FONT}
+        fill={colors.inkFaint}
+        width={node.width}
+        height={node.height}
+        align="center"
+        verticalAlign="middle"
+        listening={false}
+      />
+      <Text
+        x={12}
+        y={node.height - 26}
+        width={node.width - 24}
+        text={node.recordTitle || carrierLabelOf(node.recordCarrier)}
+        fontSize={11}
+        fontStyle="600"
+        fontFamily={KONVA_FONT}
+        fill={colors.inkSoft}
+        wrap="word"
+        ellipsis
+        height={22}
+        listening={false}
+      />
+    </>
+  )
+}
+
+/**
+ * 播放按钮是**独立按钮**：点它只播放，cancelBubble 隔离选中 / 拖动 /
+ * 双击打开（iOS playBadge 同语义）。
+ */
+function PlayBadge(props: {
+  onTogglePlay: () => void
+  node: CanvasNodeWithRecord
+  small?: boolean
+  /** 覆盖默认的整卡中心：链接卡放封面区中心，避免压住标题行。 */
+  centerY?: number
+}) {
+  const size = props.small ? 34 : 44
+  return (
+    <Group
+      x={props.node.width / 2 - size / 2}
+      y={(props.centerY ?? props.node.height / 2) - size / 2}
+      onClick={(event) => {
+        event.cancelBubble = true
+        props.onTogglePlay()
+      }}
+      onTap={(event) => {
+        event.cancelBubble = true
+        props.onTogglePlay()
+      }}
+    >
+      <Rect width={size} height={size} cornerRadius={size / 2} fill="rgba(255,255,255,0.001)" />
+      <Rect width={size} height={size} cornerRadius={size / 2} fill="#ffffff" opacity={0.92} listening={false} />
+      <Text
+        text="▶"
+        fontSize={size * 0.32}
+        fontFamily={KONVA_FONT}
+        fill="#30372f"
+        width={size}
+        height={size}
+        align="center"
+        verticalAlign="middle"
+        listening={false}
+      />
     </Group>
   )
 }
@@ -1155,6 +2135,14 @@ const KONVA_FONT = "-apple-system, 'PingFang SC', 'Segoe UI', sans-serif"
 
 function carrierLabelOf(carrier: string): string {
   return carrier === 'text' ? '文字' : carrier === 'link' ? '链接' : carrier === 'video' ? '视频' : '图片'
+}
+
+function providerHostOf(node: CanvasNodeWithRecord): string {
+  try {
+    return node.recordURLString ? new URL(node.recordURLString).hostname : ''
+  } catch {
+    return ''
+  }
 }
 
 function roundedRectPath(ctx: Context, x: number, y: number, width: number, height: number, radius: number): void {

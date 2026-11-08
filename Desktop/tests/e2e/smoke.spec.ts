@@ -42,7 +42,7 @@ test('应用启动、连上本地库、三个模块可切换', async () => {
   await expect(page.getByRole('heading', { name: 'Records' })).toBeVisible()
 
   await nav('Canvas').click()
-  await expect(page.locator('.canvas-topbar')).toBeVisible()
+  await expect(page.locator('.gallery-grid')).toBeVisible() // Canvas 现在先进集合页（Gallery）
 
   await app.close()
 })

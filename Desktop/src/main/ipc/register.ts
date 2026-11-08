@@ -29,6 +29,7 @@ import {
 import {
   addNode,
   resizeNode,
+  setAnnotation,
   createCanvas,
   createNote,
   deleteCanvas,
@@ -166,6 +167,10 @@ export function registerIpc(params: {
   handle(IPC.canvasNodeAdd, (input) => {
     const value = input as { canvasId: string; recordId: string }
     return addNode(db.db, db.deviceId, value.canvasId, value.recordId)
+  })
+  handle(IPC.canvasNodeAnnotate, (input) => {
+    const value = input as { id: string; annotation: string }
+    return setAnnotation(db.db, db.deviceId, value.id, value.annotation)
   })
   handle(IPC.canvasNodeResize, (input) => {
     const value = input as { id: string; width: number; height: number }

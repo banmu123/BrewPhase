@@ -44,7 +44,19 @@ export function deleteCanvas(db: Db, deviceId: string, id: string): void {
 
 export function listNodes(db: Db, canvasId: string): CanvasNodeWithRecord[] {
   const rows = db
-    .select({ node: canvasNodes, title: records.title, carrier: records.carrier, mediaPath: records.mediaPath, previewPath: records.previewPath })
+    .select({
+      node: canvasNodes,
+      title: records.title,
+      carrier: records.carrier,
+      mediaPath: records.mediaPath,
+      previewPath: records.previewPath,
+      note: records.note,
+      sourceName: records.sourceName,
+      summary: records.summary,
+      provider: records.provider,
+      platformContentID: records.platformContentId,
+      urlString: records.urlString
+    })
     .from(canvasNodes)
     .innerJoin(records, eq(records.id, canvasNodes.recordId))
     .where(eq(canvasNodes.canvasId, canvasId))
@@ -56,7 +68,13 @@ export function listNodes(db: Db, canvasId: string): CanvasNodeWithRecord[] {
     recordTitle: row.title,
     recordCarrier: row.carrier,
     recordMediaPath: row.mediaPath,
-    recordPreviewPath: row.previewPath
+    recordPreviewPath: row.previewPath,
+    recordNote: row.note,
+    recordSourceName: row.sourceName,
+    recordSummary: row.summary,
+    recordProvider: row.provider,
+    recordPlatformContentID: row.platformContentID,
+    recordURLString: row.urlString
   }))
 }
 
@@ -141,6 +159,20 @@ export function resizeNode(db: Db, deviceId: string, id: string, width: number, 
   if (!row) return
   db.transaction((tx) => {
     tx.update(canvasNodes).set({ width, height, updatedAt: at }).where(eq(canvasNodes.id, id)).run()
+    recordChange(tx, { deviceId, entityType: 'canvasNode', entityId: id, operation: 'update' })
+    touchCanvas(tx, row.canvasId, at)
+  })
+}
+
+export function setAnnotation(db: Db, deviceId: string, id: string, annotation: string): void {
+  const at = Date.now()
+  const row = db.select().from(canvasNodes).where(eq(canvasNodes.id, id)).get()
+  if (!row) return
+  db.transaction((tx) => {
+    tx.update(canvasNodes)
+      .set({ annotation: annotation.trim().slice(0, 2000), updatedAt: at })
+      .where(eq(canvasNodes.id, id))
+      .run()
     recordChange(tx, { deviceId, entityType: 'canvasNode', entityId: id, operation: 'update' })
     touchCanvas(tx, row.canvasId, at)
   })

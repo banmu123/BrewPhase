@@ -1496,6 +1496,7 @@ textarea {
 
 .canvas-hud {
   position: absolute;
+  z-index: 6;
   right: 20px;
   bottom: 20px;
   display: flex;
@@ -1852,14 +1853,19 @@ body.canvas-focus .canvas-topbar {
   pointer-events: none;
 }
 
-/* 空状态引导：必须浮在 Konva canvas 之上，按钮才点得到 */
+/* 空状态引导：浮在 Konva canvas 之上；容器自身不拦指针，
+   只有按钮可点——右下角 HUD 与底部工具栏不能被它挡住。 */
 .canvas-empty--guide {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 14px;
-  pointer-events: auto;
+  pointer-events: none;
   z-index: 5;
+}
+
+.canvas-empty--guide button {
+  pointer-events: auto;
 }
 
 .note-editor-overlay {
@@ -2381,4 +2387,359 @@ body.canvas-focus .canvas-topbar {
   max-height: 78vh;
   border-radius: var(--radius-large);
   background: #000;
+}
+
+/* ---------- Canvas Gallery（对标 iOS CanvasListView + CanvasThumbnailPreview） ---------- */
+
+.gallery-grid {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  align-content: start;
+  gap: 18px;
+  padding: 4px 0 40px;
+}
+
+.gallery-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-large);
+  background: var(--card);
+  overflow: hidden;
+  transition: box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.gallery-card:hover {
+  box-shadow: var(--shadow-hover);
+  transform: translateY(-1px);
+}
+
+.gallery-card__open {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.gallery-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 16px 14px;
+}
+
+.gallery-card__name {
+  font-size: var(--fs-card-title);
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gallery-card__note {
+  font-size: var(--fs-caption);
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gallery-card__meta {
+  font-size: var(--fs-micro);
+  color: var(--ink-faint);
+}
+
+.gallery-card__actions {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.gallery-card:hover .gallery-card__actions {
+  opacity: 1;
+}
+
+.gallery-card__actions .button {
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-hover);
+}
+
+/* 缩略图：真实空间构成（等比缩放的节点 + +N 溢出 + 空画布品牌封面） */
+.canvas-thumb {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  background: var(--well);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.canvas-thumb__node {
+  position: absolute;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--card);
+  box-shadow: 0 1px 3px rgba(42, 33, 26, 0.14);
+}
+
+.canvas-thumb__node img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.canvas-thumb__node--text {
+  background: var(--card);
+}
+
+.canvas-thumb__lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px;
+}
+
+.canvas-thumb__lines i {
+  height: 1.6px;
+  border-radius: 1px;
+  background: var(--ink-soft);
+  opacity: 0.55;
+}
+
+.canvas-thumb__symbol {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  color: var(--ink-faint);
+}
+
+.canvas-thumb__more {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--ink-faint);
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+}
+
+.canvas-thumb--empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: linear-gradient(150deg, var(--well) 0%, var(--card) 100%);
+}
+
+.canvas-thumb__brand {
+  font-size: 22px;
+  color: var(--ink-faint);
+  opacity: 0.7;
+}
+
+.canvas-thumb__brand-name {
+  font-size: var(--fs-caption);
+  color: var(--ink-faint);
+}
+
+/* ---------- Picker：独立面板 + 多选 ---------- */
+
+.picker-panel {
+  position: fixed;
+  top: 64px;
+  right: 14px;
+  bottom: 14px;
+  width: 380px;
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-large);
+  box-shadow: var(--shadow-panel);
+  padding: 16px 16px 14px;
+  animation: float-panel-in 0.18s ease;
+}
+
+.picker-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.add-card__check {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  border-radius: 50%;
+  border: 1.5px solid var(--hairline-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--card);
+}
+
+.add-card__check--on {
+  background: var(--focus);
+  border-color: var(--focus);
+}
+
+.picker-join {
+  margin-top: 12px;
+  flex: none;
+}
+
+.chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chip {
+  padding: 4px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink-soft);
+  font-size: var(--fs-caption);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.chip:hover {
+  background: var(--well);
+  color: var(--ink);
+}
+
+.chip[data-active='true'] {
+  background: var(--well-deep);
+  color: var(--ink);
+  border-color: var(--hairline-strong);
+  font-weight: 500;
+}
+
+/* ---------- 右键菜单 / 播放面 / 失败横幅 ---------- */
+
+.node-context-menu {
+  position: fixed;
+  z-index: 90;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-panel);
+}
+
+.node-context-menu button {
+  text-align: left;
+  padding: 7px 10px;
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-small);
+  color: var(--ink);
+  font-size: var(--fs-callout);
+}
+
+.node-context-menu button:hover {
+  background: var(--well);
+}
+
+.node-context-menu__danger {
+  color: var(--priority);
+}
+
+.node-play-surface {
+  position: fixed;
+  z-index: 85;
+  background: #000;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-panel);
+  overflow: hidden;
+}
+
+.node-play-surface video,
+.node-play-surface iframe {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border: 0;
+  background: #000;
+}
+
+.node-play-surface__stop {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 13px;
+}
+
+.node-play-surface__error {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: #f7f8f6;
+  font-size: var(--fs-callout);
+}
+
+.canvas-failure {
+  position: absolute;
+  left: 50%;
+  top: 14px;
+  transform: translateX(-50%);
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  box-shadow: var(--shadow-lifted);
+  font-size: var(--fs-caption);
+  color: var(--ink-soft);
+}
+
+.canvas-back {
+  font-size: 16px;
+  width: 30px;
+  padding: 0;
+  justify-content: center;
+  display: inline-flex;
+  align-items: center;
+  -webkit-app-region: no-drag;
 }

@@ -70,6 +70,14 @@ export type CanvasNodeWithRecord = CanvasNode & {
   /** 渲染图片节点用；只是文件名，实际路径由主进程的媒体协议解析。 */
   recordMediaPath: string | null
   recordPreviewPath: string | null
+  /** 节点内容与 iOS CanvasNodeCard 对齐所需的记录字段（只读，join 而来）。 */
+  recordNote: string
+  recordSourceName: string
+  recordSummary: string
+  recordProvider: string
+  recordPlatformContentID: string | null
+  /** 「打开原始来源」用它；空串表示没有来源链接。 */
+  recordURLString: string
 }
 
 /**
