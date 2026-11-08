@@ -702,3 +702,41 @@ describe('GitHub Gist 元数据（§第四轮 五）', () => {
     expect(resolved.thumbnailUrl).toBeNull()
   })
 })
+
+describe('IPv4 特殊用途：192.88.99.0/24（§第五轮 二）', () => {
+  const BLOCKED = ['192.88.99.1', '192.88.99.2', '192.88.99.254', '192.88.99.0', '192.88.99.255']
+
+  it('整段拒绝（含段首段末），isPublicIPv4 / isPublicAddress 都是 false', () => {
+    for (const address of BLOCKED) {
+      expect(isPublicIPv4(address), address).toBe(false)
+      expect(isPublicAddress(address), address).toBe(false)
+    }
+  })
+
+  it('IPv4 字面量 URL 预检拒绝', () => {
+    for (const url of [
+      'http://192.88.99.1/',
+      'http://192.88.99.2/x',
+      'https://192.88.99.254/relay'
+    ]) {
+      expect(() => assertAllowedUrl(url), url).toThrow('private address blocked')
+    }
+  })
+
+  it('DNS 返回该地址 → 连接被拒', async () => {
+    const guarded = createGuardedLookup((_host, _opts, callback) =>
+      callback(null, [{ address: '192.88.99.1', family: 4 }])
+    )
+    await expect(
+      new Promise((resolve, reject) => {
+        guarded('relay.example', { all: true }, (error, result) => (error ? reject(error) : resolve(result)))
+      })
+    ).rejects.toThrow('blocked private address')
+  })
+
+  it('相邻网段与正常公网 IPv4 仍放行（不误伤）', () => {
+    for (const address of ['192.88.98.1', '192.88.100.1', '192.0.1.1', '8.8.8.8', '93.184.216.34']) {
+      expect(isPublicIPv4(address), address).toBe(true)
+    }
+  })
+})

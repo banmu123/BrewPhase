@@ -10,6 +10,9 @@
  * - 记录切换（`item.id` 变化）→ 全部字段重置、dirty 清零；
  * - 同一条记录 → **未被用户改过的字段**跟随 `item` 同步；改过的字段一律保留
  *   用户当前输入（异步结果不得覆盖）；
+ * - 保存成功 → 只清除「本次提交的那个值仍然没变」的字段 dirty（见
+ *   `markInspectorFieldsSaved`）：既让后续外部更新能进来，又不会把保存期间
+ *   用户刚敲进去的新内容当成已保存；
  * - 内容没变化时返回原对象引用，避免每次列表刷新都触发一次重渲染。
  */
 
@@ -81,4 +84,47 @@ export function editField<K extends 'title' | 'note' | 'urlString'>(
 
 export function editTags(form: InspectorForm, tagIds: string[]): InspectorForm {
   return { ...form, tagIds, tagsDirty: true }
+}
+
+/** 保存请求发出时的字段快照：用来判断「请求期间用户有没有又改过」。 */
+export type InspectorSnapshot = InspectorSource
+
+export function snapshotInspector(form: InspectorForm): InspectorSnapshot {
+  return {
+    id: form.id,
+    title: form.title,
+    note: form.note,
+    urlString: form.urlString,
+    tagIds: [...form.tagIds]
+  }
+}
+
+/**
+ * 保存**成功**后调用：清除本次提交且之后没再被改动的字段 dirty 标记。
+ *
+ * - 只清 `dirty = true` 且「当前值 == 提交时的值」的字段：请求期间用户又敲了
+ *   新内容（当前值 != 快照）时，那个字段必须继续保持 dirty，否则随后的
+ *   `mergeInspectorItem` 会用库里的旧值把它冲掉；
+ * - 记录已经切换（id 不同）→ 原样返回，别去动另一条记录的编辑态；
+ * - 保存失败**不要调用**本函数：dirty 与用户输入原样保留，重试仍然成立。
+ */
+export function markInspectorFieldsSaved(
+  form: InspectorForm,
+  submitted: InspectorSnapshot
+): InspectorForm {
+  if (form.id !== submitted.id) return form
+
+  const next: InspectorForm = {
+    ...form,
+    titleDirty: form.title === submitted.title ? false : form.titleDirty,
+    noteDirty: form.note === submitted.note ? false : form.noteDirty,
+    urlDirty: form.urlString === submitted.urlString ? false : form.urlDirty,
+    tagsDirty: sameIds(form.tagIds, submitted.tagIds) ? false : form.tagsDirty
+  }
+  const unchanged =
+    next.titleDirty === form.titleDirty &&
+    next.noteDirty === form.noteDirty &&
+    next.urlDirty === form.urlDirty &&
+    next.tagsDirty === form.tagsDirty
+  return unchanged ? form : next
 }

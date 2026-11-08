@@ -70,6 +70,9 @@ export function isPublicIPv4(address: string): boolean {
   if (a === 192 && b === 168) return false // 192.168/16
   if (a === 192 && b === 0 && bytes[2] === 0) return false // 192.0.0/24
   if (a === 192 && b === 0 && bytes[2] === 2) return false // TEST-NET-1
+  // 192.88.99.0/24：已废弃的 6to4 Relay Anycast（IANA 标记 Globally Reachable: N/A）
+  // 整段拒绝，不是只挡某一个地址——它是 IPv6 到 IPv4 的中继入口，没有正常用途
+  if (a === 192 && b === 88 && bytes[2] === 99) return false
   if (a === 198 && (b === 18 || b === 19)) return false // 198.18/15 benchmark
   if (a === 198 && b === 51 && bytes[2] === 100) return false // TEST-NET-2
   if (a === 203 && b === 0 && bytes[2] === 113) return false // TEST-NET-3

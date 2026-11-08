@@ -11,7 +11,9 @@ import {
   createInspectorForm,
   editField,
   editTags,
+  markInspectorFieldsSaved,
   mergeInspectorItem,
+  snapshotInspector,
   type InspectorForm
 } from './inspector-state'
 
@@ -568,6 +570,9 @@ function RecordInspector(props: {
             setError(null)
             try {
               const nextProvider = parsedUrl?.provider ?? item.provider
+              // 提交快照：保存成功后只清除「这次提交且之后没再改」的字段 dirty，
+              // 请求期间用户又敲进去的内容不会被当成已保存（第五轮 §一）。
+              const submitted = snapshotInspector(form)
               await api.records.update(item.id, {
                 carrier: item.carrier,
                 title,
@@ -583,6 +588,7 @@ function RecordInspector(props: {
                 previewPath: item.previewPath,
                 tagIds
               })
+              setForm((current) => markInspectorFieldsSaved(current, submitted))
               await props.onChanged()
               // URL 变了：旧元数据已在保存时清空，后台重新识别并补全。
               if (urlChanged && urlString.trim()) {
