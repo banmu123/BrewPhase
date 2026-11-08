@@ -84,6 +84,28 @@
   里 `AVPlayer(url:)`，任何重绘都会让播放从头开始。
 * `refreshMetadata` 有快照保护：地址变了丢弃响应；用户写过的标题不覆盖。
 
+## 同步：清空与自动推送（2026-11-08 起）
+
+* **清空只清同步实体**（`Desktop/src/main/sync/wipe.ts`）：记录 / 标签 / 画布 /
+  笔迹 / 这些记录引用的媒体 / 同步状态。**豆子、冲煮、品鉴、阶段规则保留**——
+  这是产品边界，不做「恢复出厂」。
+* **`POST /api/sync/wipe` 三件套**：已配对 token + HMAC + body 里的
+  `{"confirm":"DELETE_SYNCED_CONTENT"}`。少一个就 400，空 body 不能删数据。
+* **iOS 解除配对的顺序**：先清远端、再清 Keychain。反了 token 就没了、请求发不出去；
+  远端失败时本地照清，文案区分「已断开」与「没清成」。
+* **重新配对必须清基线**（`SyncManager.pair` 末尾）：否则首次同步只发增量，
+  桌面缺的那部分永远补不回来。
+* **任何数据变更自动推送**：`SyncAutoPush.install(container:)`（App bootstrap 注册）
+  监听 Core Data 的 `NSManagedObjectContextDidSave` → `scheduleAutoSync` 2 秒合并，
+  未配对直接返回，`isRunning` 与手动同步互斥。**不要逐视图埋点**——新视图会漏，
+  通知一处收口覆盖咖啡+记录+画布+标签。
+* 这条依赖由 `SyncAutoPushTests.testSwiftDataSaveFiresDidSaveNotification` 守护：
+  SwiftData 换持久层时测试先红，而不是自动同步悄悄失效。
+* 媒体 SHA-256 必须走 `fileSHA256` 的 `(路径,大小,mtime)` 缓存，否则每编辑一条
+  记录就把所有视频重读一遍。
+* **删除类 E2E 不能只断言列表数量**：切页后组件刚挂载、items 是空数组，
+  `toHaveCount(0)` 会假阳性。直接开库查 `count(*)` 才作数。
+
 ## 链接播放器（Desktop，2026-11-08 起）
 
 * **播放地址只由内容 ID 拼**（`src/shared/link-embed.ts`）：YouTube 11 位

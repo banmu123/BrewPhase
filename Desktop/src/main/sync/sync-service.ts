@@ -5,6 +5,8 @@ import QRCode from 'qrcode'
 import type { Database } from 'better-sqlite3'
 import { SyncServer } from './server'
 import { lanAddresses } from './network-address'
+import { wipeSyncedData } from './wipe'
+import type { WipeResult } from '../../shared/contracts'
 
 /**
  * 同步服务门面：Electron Main 进程持有，renderer 只能通过白名单 IPC 触达。
@@ -163,6 +165,18 @@ export class SyncService {
     this.sqlite.prepare('update devices set revoked_at = ? where id = ?').run(Date.now(), id)
     this.onEvent({ type: 'state-changed' })
     return this.status()
+  }
+
+  /**
+   * 清空同步实体（记录 / 标签 / 画布 / 媒体）。
+   *
+   * 撤销配对时按用户选择调用：豆子、冲煮、品鉴、阶段规则都保留——那些只属于
+   * 这台 Mac。清完广播一次状态变化，打开的 Records 页面会自己刷新成空列表。
+   */
+  async wipeSyncedContent(): Promise<WipeResult> {
+    const result = await wipeSyncedData(this.sqlite)
+    this.onEvent({ type: 'state-changed' })
+    return result
   }
 
   /** 冲突列表（含摘要与操作类型），供设置页展示。 */

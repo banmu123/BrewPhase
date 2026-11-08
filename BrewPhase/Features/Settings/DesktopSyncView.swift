@@ -4,13 +4,18 @@ import AVFoundation
 /// 桌面同步：扫码配对 + 首次同步确认 + 同步状态。保持 iOS 既有视觉语言，不做改版。
 struct DesktopSyncView: View {
     @Environment(\.modelContext) private var context
-    @StateObject private var manager = SyncManager()
+    /// 与「记录增删后的自动推送」共用同一个实例：否则自动同步成功了，
+    /// 这一页还显示着旧的上次同步时间。
+    @ObservedObject private var manager = SyncManager.shared
     @State private var showsScanner = false
     @State private var pairingError: String?
     @State private var pairingInFlight = false
     /// 刚配对成功、还没做首次同步：展示确认区。
     @State private var awaitingFirstSync = false
     @State private var localCounts: SyncManager.LocalCounts?
+    /// 解除配对要选后果：只断开，还是连 Mac 上的同步内容一起清掉。
+    @State private var showsUnpairOptions = false
+    @State private var unpairNote: String?
 
     var body: some View {
         List {
@@ -41,9 +46,11 @@ struct DesktopSyncView: View {
                     .disabled(isSyncing)
 
                     Button("解除配对", role: .destructive) {
-                        manager.unpair()
-                        awaitingFirstSync = false
-                        localCounts = nil
+                        unpairNote = nil
+                        showsUnpairOptions = true
+                    }
+                    if let unpairNote {
+                        Text(unpairNote).font(TypeScale.caption).foregroundStyle(Palette.inkFaint)
                     }
                 } header: {
                     Text("已配对桌面端")
@@ -80,6 +87,31 @@ struct DesktopSyncView: View {
             .ignoresSafeArea()
         }
         .onAppear(perform: refreshCounts)
+        .confirmationDialog("解除配对", isPresented: $showsUnpairOptions, titleVisibility: .visible) {
+            Button("解除并清空 Mac 上的同步内容", role: .destructive) {
+                Task { await performUnpair(wipe: true) }
+            }
+            Button("只解除配对", role: .destructive) {
+                Task { await performUnpair(wipe: false) }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("清空会删掉 Mac 上从这台手机同步过去的记录、标签、画布与媒体文件；豆子、冲煮、品鉴会保留。清空不可恢复。")
+        }
+    }
+
+    /// 先让桌面端处置数据，再清本地凭据（顺序见 `SyncManager.unpair`）。
+    private func performUnpair(wipe: Bool) async {
+        let outcome = await manager.unpair(wipeRemote: wipe)
+        awaitingFirstSync = false
+        localCounts = nil
+        switch outcome {
+        case .wiped:
+            unpairNote = wipe ? "已解除配对，Mac 上的同步内容已清空。" : "已解除配对。"
+        case .localOnly(let reason):
+            // 说清「断开成功、清空失败」：这两件事的结果不一样，不能合并成一句。
+            unpairNote = "已解除配对，但 Mac 上的内容没能清空：\(reason)"
+        }
     }
 
     /// 首次同步确认（§4）：明确告诉用户会发生什么，需要一次主动确认。

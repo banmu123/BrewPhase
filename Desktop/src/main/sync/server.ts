@@ -3,6 +3,7 @@ import type { Database } from 'better-sqlite3'
 import { NonceStore, sha256, verifyRequest } from './auth'
 import { PairingService } from './pairing-service'
 import { applyBatch, type ApplyResult, type SyncBatch } from './snapshot-importer'
+import { wipeSyncedData } from './wipe'
 import { isSafeMediaName } from '../media/store'
 import {
   checkManifest,
@@ -242,6 +243,21 @@ export class SyncServer {
         } catch (error) {
           console.error('[sync] metadata scheduling failed', error)
         }
+        return this.json(response, 200, outcome)
+      }
+
+      if (route === 'POST /api/sync/wipe') {
+        const bodyResult = await this.readBody(request, 64 * 1024)
+        if (!bodyResult.ok) return this.json(response, bodyResult.status, { error: bodyResult.error })
+        const auth = this.verifyWrite(request, device.token ?? '', bodyResult.body)
+        if (!auth.ok) return this.json(response, auth.status, { error: auth.error })
+        // 显式确认串：清空不可逆，空 body 或手滑的请求绝不能删数据。
+        const payload = JSON.parse(bodyResult.body.toString('utf8') || '{}') as { confirm?: string }
+        if (payload.confirm !== 'DELETE_SYNCED_CONTENT') {
+          return this.json(response, 400, { error: 'confirm required' })
+        }
+        const outcome = await wipeSyncedData(this.sqlite)
+        this.onChanged()
         return this.json(response, 200, outcome)
       }
 

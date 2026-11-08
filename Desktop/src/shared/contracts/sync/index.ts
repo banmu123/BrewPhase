@@ -143,3 +143,14 @@ export type SyncConflictItem = {
   createdAt: number
   remoteSummary: string
 }
+
+/**
+ * 清空同步实体的结果。计数只用于给用户一句「清掉了什么」，
+ * 不是对账依据——真正的权威是清空之后重新读库。
+ */
+export type WipeResult = {
+  records: number
+  tags: number
+  canvases: number
+  mediaFiles: number
+}

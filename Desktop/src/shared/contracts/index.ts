@@ -1,7 +1,7 @@
 import type { Bean, BeanDraft, Brew, BrewDraft, PhaseRule, Tasting, TastingDraft } from './entities/coffee'
 import type { Canvas, CanvasNode, CanvasNodeWithRecord } from './entities/canvas'
 import type { ImportImageResult, RecordDraft, RecordItem, RecordQuery, RecordTag } from './entities/records'
-import type { SyncStatus, SyncConflictItem } from './sync'
+import type { SyncStatus, SyncConflictItem, WipeResult } from './sync'
 import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from './version'
 
 export * from './version'
@@ -74,6 +74,11 @@ export interface RendererApi {
     enable: (enabled: boolean) => Promise<SyncStatus>
     startPairing: () => Promise<SyncStatus>
     revokeDevice: (id: string) => Promise<SyncStatus>
+    /**
+     * 清空「同步实体」：记录 / 标签 / 画布 / 这些记录引用的媒体文件。
+     * **不动豆子、冲煮、品鉴、阶段规则**——它们只属于这台 Mac。
+     */
+    wipeData: () => Promise<WipeResult>
     conflicts: () => Promise<SyncConflictItem[]>
     resolveConflict: (id: string, resolution: 'local' | 'remote') => Promise<SyncStatus>
     onChanged: (listener: () => void) => () => void

@@ -53,6 +53,7 @@ const api: RendererApi = {
     enable: (enabled) => invoke(IPC.syncEnable, enabled),
     startPairing: () => invoke(IPC.syncStartPairing),
     revokeDevice: (id) => invoke(IPC.syncRevokeDevice, { id }),
+    wipeData: () => invoke(IPC.syncWipeData),
     conflicts: () => invoke(IPC.syncConflicts),
     resolveConflict: (id, resolution) => invoke(IPC.syncResolveConflict, { id, resolution }),
     onChanged: (listener) => {

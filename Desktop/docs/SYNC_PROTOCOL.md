@@ -55,6 +55,7 @@
 | `POST /api/sync/media/manifest` | 清单比对 → `{missing[], have[], rejected[]}` |
 | `POST /api/sync/media/chunk?name=&offset=` | 256KB 分块追加；offset 必须等于已收字节数（断点续传查询 `GET /api/sync/media/offset`）；同名分块互斥 |
 | `POST /api/sync/media/finalize` | 整文件大小 + SHA-256（流式）校验 → 原子落位；失败清理临时文件 |
+| `POST /api/sync/wipe` | **清空同步实体**（撤销配对时用）。body 必须带 `{"confirm":"DELETE_SYNCED_CONTENT"}`，否则 400；返回 `{records,tags,canvases,mediaFiles}` |
 
 ## 4. 合并语义（非破坏性）
 
@@ -177,3 +178,36 @@ SyncServer.onChanged → SyncService.onEvent({type:'state-changed'})
   版本号 +1，URL 带上 `?v=`，强制重新请求。
 - 元数据补全是**另一条通道** `records:metadata-updated`（`ResolveQueue.onSettled`），
   与同步事件各订阅各的，不要合并成一个：两者的触发时机与失败语义都不同。
+
+## 10. 清空（撤销配对）
+
+`POST /api/sync/wipe` 只清**同步实体**：
+
+| 清掉 | 保留 |
+| --- | --- |
+| records / record_tags / record_tag_links / record_metadata | beans / brews / tastings |
+| canvases / canvas_nodes / canvas_strokes | phase_rules / phase_reminders |
+| 这些记录引用的媒体文件（连同 `_thumb` 变体） | devices / local_state |
+| sync_baseline（仅同步实体）、sync_conflicts、sync_rejected、change_log（仅同步实体） | 咖啡相关的基线与流水 |
+
+理由：豆子、冲煮、品鉴是这台 Mac 自己的数据，手机配不配对都不该动它们。
+这是产品边界，不是实现细节——所以不做「恢复出厂」。
+
+两端都能触发：iPhone「解除配对」选「解除并清空」，或 Mac 设置页「撤销授权」选
+「撤销并清空内容」。iOS 侧顺序是**先清远端、再清本地 Keychain**，反过来的话
+token 已失效、请求发不出去；远端清空失败时本地凭据仍然清掉，并把失败原因
+如实告诉用户（断开成功 ≠ 清空成功，两件事不能合并成一句话）。
+
+## 11. 自动推送（任何数据变更后）
+
+iOS 在 `SyncAutoPush.install`（App 拿到容器时注册）监听 Core Data 的
+`NSManagedObjectContextDidSave`：**咖啡、记录、画布、标签的任何落库**都会
+触发 `SyncManager.scheduleAutoSync`——2 秒窗口合并，未配对直接返回，
+`isRunning` 保证与手动「立即同步」互斥（第二轮直接放弃，因为快照是当前状态，
+排队跑过期快照没有意义），失败只更新 `phase`，不弹窗。
+
+这条链路依赖「SwiftData 的 save 会发 Core Data didSave 通知」，由
+`SyncAutoPushTests` 守护：通知断了，测试先红，而不是自动同步悄悄失效。
+
+媒体清单的 SHA-256 按 `(路径, 大小, mtime)` 缓存（`SyncSnapshotBuilder.fileSHA256`）：
+否则每编辑一条记录都要把所有视频从头读一遍，自动推送会变成卡顿源。

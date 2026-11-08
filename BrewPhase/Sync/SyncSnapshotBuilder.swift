@@ -333,8 +333,29 @@ struct SyncSnapshotBuilder {
         return try? FileHandle(forReadingFrom: url)
     }
 
+    /// 文件哈希缓存：键是路径，比对大小与修改时间。
+    ///
+    /// 记录增删后会触发自动同步，而每次同步都要重建媒体清单。若每次都把
+    /// 整个视频从头读一遍，编辑一条记录就要等几十秒——文件没变就没有理由重算。
+    private struct DigestStamp: Equatable {
+        var size: Int64
+        var modified: Date
+    }
+
+    private static var digestCache: [String: (stamp: DigestStamp, digest: (sha256: String, byteSize: Int))] = [:]
+
     /// 流式 SHA-256 + 字节数：内存占用恒为一块（256KB）。
     static func fileSHA256(at url: URL) -> (sha256: String, byteSize: Int)? {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let fileSize = (attributes?[.size] as? NSNumber)?.int64Value ?? -1
+        let stamp = DigestStamp(
+            size: fileSize,
+            modified: (attributes?[.modificationDate] as? Date) ?? .distantPast
+        )
+        if fileSize >= 0, let cached = digestCache[url.path], cached.stamp == stamp {
+            return cached.digest
+        }
+
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         var hasher = SHA256()
@@ -346,7 +367,9 @@ struct SyncSnapshotBuilder {
             size += chunk.count
         }
         let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
-        return (digest, size)
+        let result = (sha256: digest, byteSize: size)
+        digestCache[url.path] = (stamp: DigestStamp(size: Int64(size), modified: stamp.modified), digest: result)
+        return result
     }
 
     /// 按真实字节判 MIME（魔数），不信任扩展名。

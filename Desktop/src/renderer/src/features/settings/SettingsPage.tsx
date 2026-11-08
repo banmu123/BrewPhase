@@ -75,6 +75,9 @@ function SyncSection() {
   const [conflicts, setConflicts] = useState<SyncConflictItem[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** 正在确认撤销的设备：撤销与「撤销并清空」是两个不同后果，不能一个按钮带过。 */
+  const [revokingId, setRevokingId] = useState<string | null>(null)
+  const [revokeNote, setRevokeNote] = useState<string | null>(null)
   const [now, setNow] = useState(Date.now())
 
   const refresh = useCallback(async () => {
@@ -95,6 +98,33 @@ function SyncSection() {
       window.clearInterval(timer)
     }
   }, [refresh])
+
+  /**
+   * 撤销配对。`wipe` 为真时先清空同步实体，再撤销授权。
+   *
+   * 顺序不能反：撤销之后这台设备的 token 立即失效，虽然本机 IPC 不受影响，
+   * 但语义上应当「先处置数据、再断开授权」——中途失败时用户还能重试，
+   * 而不是面对一台已经断开、内容却还在的机器。
+   */
+  async function confirmRevoke(id: string, wipe: boolean): Promise<void> {
+    setBusy(true)
+    setError(null)
+    setRevokeNote(null)
+    try {
+      if (wipe) {
+        const result = await api.sync.wipeData()
+        setRevokeNote(
+          `已清空 ${result.records} 条记录、${result.tags} 个标签、${result.canvases} 块画布、${result.mediaFiles} 个媒体文件`
+        )
+      }
+      setStatus(await api.sync.revokeDevice(id))
+      setRevokingId(null)
+    } catch (cause) {
+      setError((cause as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function toggleSync(enabled: boolean): Promise<void> {
     setBusy(true)
@@ -192,27 +222,76 @@ function SyncSection() {
       ) : (
         <div className="list" style={{ maxWidth: 420 }}>
           {status?.devices.map((device) => (
-            <div key={device.id} className="list-item" style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <span className="list-item__title">{device.name}</span>
-                <span className="list-item__meta">
-                  <span className="mono">{device.id}</span>
-                  {device.lastSyncAt && (
-                    <span>上次同步 {new Date(device.lastSyncAt).toLocaleString()}</span>
-                  )}
+            <div
+              key={device.id}
+              className="list-item"
+              style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}
+            >
+              <div className="row row--between">
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span className="list-item__title">{device.name}</span>
+                  <span className="list-item__meta">
+                    <span className="mono">{device.id}</span>
+                    {device.lastSyncAt && (
+                      <span>上次同步 {new Date(device.lastSyncAt).toLocaleString()}</span>
+                    )}
+                  </span>
                 </span>
-              </span>
-              <button
-                className="button button--danger"
-                onClick={async () => {
-                  if (!window.confirm(`撤销「${device.name}」的授权？它将无法再同步。`)) return
-                  setStatus(await api.sync.revokeDevice(device.id))
-                }}
-              >
-                撤销授权
-              </button>
+                {revokingId !== device.id && (
+                  <button
+                    className="button button--danger"
+                    disabled={busy}
+                    onClick={() => {
+                      setRevokeNote(null)
+                      setRevokingId(device.id)
+                    }}
+                  >
+                    撤销授权
+                  </button>
+                )}
+              </div>
+
+              {/* 「撤销」与「撤销并清空」后果不同，分两个按钮，不塞进一个确认框。 */}
+              {revokingId === device.id && (
+                <div className="stack" style={{ gap: 8 }}>
+                  <span className="note" style={{ margin: 0 }}>
+                    撤销后这台手机不能再同步。也可以同时清空它同步过来的内容：
+                    记录、标签、画布和媒体文件会被删除；豆子、冲煮、品鉴保留。
+                    清空不可恢复。
+                  </span>
+                  <div className="row">
+                    <button
+                      className="button button--ghost"
+                      disabled={busy}
+                      onClick={() => setRevokingId(null)}
+                    >
+                      取消
+                    </button>
+                    <button
+                      className="button"
+                      disabled={busy}
+                      onClick={() => void confirmRevoke(device.id, false)}
+                    >
+                      只撤销授权
+                    </button>
+                    <button
+                      className="button button--danger"
+                      disabled={busy}
+                      onClick={() => void confirmRevoke(device.id, true)}
+                    >
+                      撤销并清空内容
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
+        </div>
+      )}
+
+      {revokeNote && (
+        <div className="note" style={{ color: 'var(--sage)' }}>
+          {revokeNote}
         </div>
       )}
 

@@ -1314,8 +1314,49 @@ describe('同步事件广播（sync:changed 的触发点）', () => {
     expect(changes).toBe(0)
   })
 
-  it('媒体 finalize 校验失败不广播（残缺文件不该让页面以为可以显示）', async () => {
-    const content = Buffer.alloc(512, 3)
+  it('wipe：需要显式确认串，成功后清空同步实体并广播', async () => {
+    await applyRecord()
+    expect(changes).toBe(1)
+
+    // 空 body：400，一条数据都不许动
+    const noConfirm = Buffer.from(JSON.stringify({}))
+    const rejected = await fetch(`${baseUrl}/api/sync/wipe`, {
+      method: 'POST',
+      headers: signed(noConfirm),
+      body: noConfirm
+    })
+    expect(rejected.status).toBe(400)
+    expect(db.prepare('select count(*) as n from records').get()).toEqual({ n: 1 })
+    expect(changes).toBe(1)
+
+    const body = Buffer.from(JSON.stringify({ confirm: 'DELETE_SYNCED_CONTENT' }))
+    const response = await fetch(`${baseUrl}/api/sync/wipe`, {
+      method: 'POST',
+      headers: signed(body),
+      body: body
+    })
+    expect(response.status).toBe(200)
+    const outcome = (await response.json()) as { records: number; mediaFiles: number }
+    expect(outcome.records).toBe(1)
+    expect(db.prepare('select count(*) as n from records').get()).toEqual({ n: 0 })
+    // 清完广播一次：打开的 Records 页面要自己变空
+    expect(changes).toBe(2)
+  })
+
+  it('wipe：未鉴权一律 401（清空不可逆，不能只靠知道地址）', async () => {
+    await applyRecord()
+    const body = Buffer.from(JSON.stringify({ confirm: 'DELETE_SYNCED_CONTENT' }))
+    const response = await fetch(`${baseUrl}/api/sync/wipe`, {
+      method: 'POST',
+      headers: { ...signed(body), authorization: 'Bearer not-paired' },
+      body: body
+    })
+    expect(response.status).toBe(401)
+    expect(db.prepare('select count(*) as n from records').get()).toEqual({ n: 1 })
+    expect(changes).toBe(1)
+  })
+
+  it('媒体 finalize 校验失败不广播（残缺文件不该让页面以为可以显示）', async () => {    const content = Buffer.alloc(512, 3)
     await fetch(`${baseUrl}/api/sync/media/chunk?name=${mediaName}&offset=0`, {
       method: 'POST',
       headers: { 'content-type': 'application/octet-stream', ...signed(content) },

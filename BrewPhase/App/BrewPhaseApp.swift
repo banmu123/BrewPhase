@@ -77,6 +77,9 @@ struct BrewPhaseApp: App {
         // 六个建议标签要在示例记录之前铺好：示例记录会按名字挂到它们上面。
         RecordTag.seedIfNeeded(context: context)
         DemoData.installIfRequested(context: context)
+        // 数据落库 → 自动推送（已配对时）。seed 本身也会被它看到，但 2 秒
+        // 合并窗口把它们全部收进一轮，且未配对时什么都不做。
+        SyncAutoPush.install(container: container)
     }
 
     /// The recovery screen's one action: build the persistent container again.

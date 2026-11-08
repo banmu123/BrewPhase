@@ -166,6 +166,7 @@ export function registerIpc(params: {
   handle(IPC.syncEnable, (input) => sync.enable(Boolean(input)))
   handle(IPC.syncStartPairing, () => sync.startPairing())
   handle(IPC.syncRevokeDevice, (input) => sync.revokeDevice((input as { id: string }).id))
+  handle(IPC.syncWipeData, () => sync.wipeSyncedContent())
   handle(IPC.syncConflicts, () => sync.conflicts())
   handle(IPC.syncResolveConflict, (input) => {
     const value = input as { id: string; resolution: 'local' | 'remote' }

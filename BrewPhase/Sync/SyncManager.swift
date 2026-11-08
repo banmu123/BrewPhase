@@ -34,9 +34,18 @@ final class SyncManager: ObservableObject {
 
     static let protocolVersion = 1
 
+    /// 全 App 共用一个实例：设置页与「记录增删后的自动推送」必须看到同一份
+    /// `phase` / `lastSyncAt`，否则自动同步成功了设置页还显示旧时间。
+    static let shared = SyncManager()
+
     private let defaults: UserDefaults
     private static let baselineKey = "sync.baseline.v1"
     private static let lastSyncKey = "sync.lastSyncAt"
+
+    /// 同一时刻只跑一轮：自动推送与手动「立即同步」会撞车。
+    private var isRunning = false
+    /// 待执行的自动推送（窗口内合并，见 `scheduleAutoSync`）。
+    private var autoPushTask: Task<Void, Never>?
 
     private static let chunkSize = 256 * 1024
 
@@ -153,10 +162,45 @@ final class SyncManager: ObservableObject {
             for key in written { SyncKeychain.set(nil, forKey: key) }
             throw SyncError.keychainWriteFailed
         }
+        // 新配对 = 新基线：对面可能换了台 Mac、也可能被清空过。
+        // 留着旧基线会让首次同步只发增量，缺的那部分永远补不回来。
+        baseline = [:]
+        defaults.removeObject(forKey: Self.lastSyncKey)
+        lastSyncAt = nil
+        phase = .idle
         return response
     }
 
-    func unpair() {
+    /// 解除配对的结果。`localOnly` = 桌面端没清成（连不上/服务未运行），
+    /// 本地凭据仍然清掉了——用户要断开就必须能断开，不能因为对方离线而卡住。
+    enum UnpairOutcome: Equatable {
+        case wiped
+        case localOnly(reason: String)
+    }
+
+    /// 解除配对。`wipeRemote` 为真时**先**让桌面端清空同步实体，再清本地凭据。
+    ///
+    /// 顺序不能反：token 一清就再也发不出这条请求了。
+    @discardableResult
+    func unpair(wipeRemote: Bool) async -> UnpairOutcome {
+        var outcome = UnpairOutcome.wiped
+        if wipeRemote, let device = pairedDevice() {
+            do {
+                try await SyncNetworkClient(
+                    host: device.host,
+                    port: device.port,
+                    token: device.token,
+                    timeout: 8
+                ).wipeSyncedContent()
+            } catch {
+                outcome = .localOnly(reason: error.localizedDescription)
+            }
+        }
+        clearLocalCredentials()
+        return outcome
+    }
+
+    private func clearLocalCredentials() {
         for key in ["desktop.token", "desktop.host", "desktop.port", "desktop.deviceId", "desktop.deviceName"] {
             SyncKeychain.set(nil, forKey: key)
         }
@@ -166,9 +210,31 @@ final class SyncManager: ObservableObject {
         phase = .idle
     }
 
+    // MARK: - 自动推送
+
+    /// 记录增删后调用：2 秒合并窗口，未配对直接返回，失败静默（只更新 phase）。
+    ///
+    /// 不做「改一个字段就发一轮」：一轮要构建全量快照与媒体清单，
+    /// 2 秒足够把一次连续编辑合并。App 退到后台会被系统挂起，
+    /// 没跑成的那一轮由下一次编辑或用户手动同步补上。
+    func scheduleAutoSync(context: ModelContext) {
+        guard pairedDevice() != nil else { return }
+        autoPushTask?.cancel()
+        autoPushTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled, let self else { return }
+            await self.syncNow(context: context)
+        }
+    }
+
     // MARK: - 同步
 
     func syncNow(context: ModelContext) async {
+        // 自动推送与手动同步互斥：第二轮直接放弃，不做排队——
+        // 快照是「当前状态」，排队跑一轮过期快照没有意义。
+        guard !isRunning else { return }
+        isRunning = true
+        defer { isRunning = false }
         do {
             guard let device = pairedDevice() else {
                 phase = .failed("还没有配对的桌面端")

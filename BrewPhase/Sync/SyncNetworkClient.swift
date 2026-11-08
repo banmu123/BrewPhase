@@ -110,6 +110,24 @@ struct SyncNetworkClient {
         let _: [String: String] = try await post("api/sync/media/finalize", bodyData: payload, authenticated: true)
     }
 
+    // MARK: - 清空（撤销配对）
+
+    /// 让桌面端清空「同步实体」：记录 / 标签 / 画布 / 媒体文件。
+    ///
+    /// `confirm` 是服务端的显式确认串：清空不可逆，空 body 的请求会被 400 拒掉。
+    /// 豆子、冲煮、品鉴不在清空范围内——它们只属于那台 Mac。
+    func wipeSyncedContent() async throws {
+        struct WipeBody: Codable { var confirm: String }
+        struct WipeOutcome: Codable {
+            var records: Int
+            var tags: Int
+            var canvases: Int
+            var mediaFiles: Int
+        }
+        let payload = try JSONEncoder().encode(WipeBody(confirm: "DELETE_SYNCED_CONTENT"))
+        let _: WipeOutcome = try await post("api/sync/wipe", bodyData: payload, authenticated: true)
+    }
+
     // MARK: - 传输原语
 
     private func get<T: Decodable>(_ path: String) async throws -> T {
