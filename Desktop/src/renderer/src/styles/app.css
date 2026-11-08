@@ -1739,3 +1739,138 @@ textarea {
 .settings-group .overline {
   margin-top: 0;
 }
+
+/* ---------- Quiet Studio 工具栏 / 沉浸模式 / 便签编辑 ---------- */
+
+.studio-toolbar {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  box-shadow: var(--shadow-lifted);
+  z-index: 6;
+}
+
+.studio-toolbar__tool {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  justify-content: center;
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-small);
+  color: var(--ink-soft);
+  font-size: 15px;
+  transition: background 0.16s ease, color 0.16s ease;
+}
+
+.studio-toolbar__tool:hover {
+  background: var(--well);
+  color: var(--ink);
+  box-shadow: none;
+}
+
+.studio-toolbar__tool[data-active='true'] {
+  background: var(--well-deep);
+  color: var(--ink);
+}
+
+.studio-toolbar__tool--wide {
+  width: auto;
+  padding: 0 12px;
+  font-size: var(--fs-caption);
+  font-weight: 500;
+}
+
+.studio-toolbar__divider {
+  width: 1px;
+  height: 20px;
+  background: var(--hairline);
+  margin: 0 4px;
+}
+
+.studio-toolbar__colors {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.studio-toolbar__color {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--card);
+  box-shadow: 0 0 0 1px var(--hairline);
+  padding: 0;
+}
+
+.studio-toolbar__color[data-active='true'] {
+  box-shadow: 0 0 0 2px var(--focus);
+}
+
+/* 沉浸模式：侧栏与顶条退场，画布即全部 */
+body.canvas-focus .sidebar,
+body.canvas-focus .canvas-topbar {
+  display: none;
+}
+
+.canvas-save {
+  font-size: var(--fs-micro);
+  color: var(--ink-faint);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--well);
+}
+
+.canvas-save[data-state='error'] {
+  color: var(--priority);
+  background: rgba(168, 80, 63, 0.08);
+}
+
+.canvas-hint {
+  position: absolute;
+  left: 50%;
+  top: 20px;
+  transform: translateX(-50%);
+  z-index: 6;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-hover);
+  font-size: var(--fs-caption);
+  color: var(--ink-soft);
+  pointer-events: none;
+}
+
+/* 空状态引导：必须浮在 Konva canvas 之上，按钮才点得到 */
+.canvas-empty--guide {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  pointer-events: auto;
+  z-index: 5;
+}
+
+.note-editor-overlay {
+  position: fixed;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-panel);
+}
