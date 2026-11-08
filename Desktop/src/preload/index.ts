@@ -69,7 +69,15 @@ const api: RendererApi = {
     nodes: (canvasId) => invoke(IPC.canvasNodes, { canvasId }),
     addNode: (canvasId, recordId) => invoke(IPC.canvasNodeAdd, { canvasId, recordId }),
     moveNode: (id, positionX, positionY) => invoke(IPC.canvasNodeMove, { id, positionX, positionY }),
-    removeNode: (id) => invoke(IPC.canvasNodeRemove, { id })
+    removeNode: (id) => invoke(IPC.canvasNodeRemove, { id }),
+    rename: (id, name) => invoke(IPC.canvasRename, { id, name }),
+    notes: (canvasId) => invoke(IPC.canvasNotes, { canvasId }),
+    createNote: (canvasId, positionX, positionY) => invoke(IPC.canvasNoteCreate, { canvasId, positionX, positionY }),
+    updateNote: (note) => invoke(IPC.canvasNoteUpdate, note),
+    removeNote: (id) => invoke(IPC.canvasNoteRemove, { id }),
+    strokes: (canvasId) => invoke(IPC.canvasStrokes, { canvasId }),
+    saveStroke: (stroke) => invoke(IPC.canvasStrokeSave, stroke),
+    removeStroke: (id) => invoke(IPC.canvasStrokeRemove, { id })
   }
 }
 

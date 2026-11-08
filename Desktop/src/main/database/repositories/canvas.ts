@@ -1,8 +1,8 @@
 import { and, asc, desc, eq, sql } from 'drizzle-orm'
-import type { Canvas, CanvasNode, CanvasNodeWithRecord, RecordCarrier } from '../../../shared/contracts'
+import type { Canvas, CanvasNode, CanvasNodeWithRecord, CanvasNote, CanvasStroke, RecordCarrier } from '../../../shared/contracts'
 import { nextNodeOrigin } from '../../../shared/domain/placement'
 import type { Db } from '../client'
-import { canvasNodes, canvases, records } from '../schema'
+import { canvasNodes, canvasNotes, canvasStrokes, canvases, records } from '../schema'
 import { recordChange } from './sync-log'
 
 /**
@@ -176,6 +176,173 @@ function toNode(row: NodeRow): CanvasNode {
     height: row.height,
     zIndex: row.zIndex,
     annotation: row.annotation,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  }
+}
+
+// MARK: - 便签（画布上的自由想法，独立于 Records）
+
+export function listNotes(db: Db, canvasId: string): CanvasNote[] {
+  return db
+    .select()
+    .from(canvasNotes)
+    .where(eq(canvasNotes.canvasId, canvasId))
+    .orderBy(asc(canvasNotes.createdAt))
+    .all()
+    .map(toNote)
+}
+
+export function createNote(
+  db: Db,
+  deviceId: string,
+  input: { canvasId: string; positionX: number; positionY: number }
+): CanvasNote {
+  const id = crypto.randomUUID()
+  const at = Date.now()
+  db.transaction((tx) => {
+    tx.insert(canvasNotes)
+      .values({
+        id,
+        canvasId: input.canvasId,
+        positionX: input.positionX,
+        positionY: input.positionY,
+        createdAt: at,
+        updatedAt: at
+      })
+      .run()
+    recordChange(tx, { deviceId, entityType: 'canvasNote', entityId: id, operation: 'create' })
+    touchCanvas(tx, input.canvasId, at)
+  })
+  return toNote(db.select().from(canvasNotes).where(eq(canvasNotes.id, id)).get()!)
+}
+
+export function updateNote(db: Db, deviceId: string, note: CanvasNote): CanvasNote {
+  const at = Date.now()
+  db.transaction((tx) => {
+    tx.update(canvasNotes)
+      .set({
+        title: note.title,
+        body: note.body,
+        color: note.color,
+        positionX: note.positionX,
+        positionY: note.positionY,
+        width: note.width,
+        height: note.height,
+        updatedAt: at
+      })
+      .where(eq(canvasNotes.id, note.id))
+      .run()
+    recordChange(tx, { deviceId, entityType: 'canvasNote', entityId: note.id, operation: 'update' })
+    touchCanvas(tx, note.canvasID, at)
+  })
+  return toNote(db.select().from(canvasNotes).where(eq(canvasNotes.id, note.id)).get()!)
+}
+
+export function removeNote(db: Db, deviceId: string, id: string): void {
+  const row = db.select().from(canvasNotes).where(eq(canvasNotes.id, id)).get()
+  if (!row) return
+  const at = Date.now()
+  db.transaction((tx) => {
+    tx.delete(canvasNotes).where(eq(canvasNotes.id, id)).run()
+    recordChange(tx, { deviceId, entityType: 'canvasNote', entityId: id, operation: 'delete' })
+    touchCanvas(tx, row.canvasId, at)
+  })
+}
+
+// MARK: - 笔迹（自由绘制；points 是世界坐标的扁平数组）
+
+export function listStrokes(db: Db, canvasId: string): CanvasStroke[] {
+  return db
+    .select()
+    .from(canvasStrokes)
+    .where(eq(canvasStrokes.canvasId, canvasId))
+    .orderBy(asc(canvasStrokes.createdAt))
+    .all()
+    .map(toStroke)
+}
+
+export function saveStroke(db: Db, deviceId: string, stroke: CanvasStroke): CanvasStroke {
+  const at = Date.now()
+  const values = {
+    id: stroke.id,
+    canvasId: stroke.canvasID,
+    toolType: stroke.toolType,
+    points: JSON.stringify(stroke.points),
+    color: stroke.color,
+    width: stroke.width,
+    opacity: stroke.opacity,
+    zIndex: stroke.zIndex,
+    createdAt: stroke.createdAt,
+    updatedAt: at
+  }
+  db.transaction((tx) => {
+    tx.insert(canvasStrokes)
+      .values(values)
+      .onConflictDoUpdate({ target: canvasStrokes.id, set: { ...values, id: undefined } })
+      .run()
+    const existed = db.select().from(canvasStrokes).where(eq(canvasStrokes.id, stroke.id)).get()
+    recordChange(tx, {
+      deviceId,
+      entityType: 'canvasStroke',
+      entityId: stroke.id,
+      operation: existed ? 'update' : 'create'
+    })
+    touchCanvas(tx, stroke.canvasID, at)
+  })
+  return toStroke(db.select().from(canvasStrokes).where(eq(canvasStrokes.id, stroke.id)).get()!)
+}
+
+export function removeStroke(db: Db, deviceId: string, id: string): void {
+  const row = db.select().from(canvasStrokes).where(eq(canvasStrokes.id, id)).get()
+  if (!row) return
+  const at = Date.now()
+  db.transaction((tx) => {
+    tx.delete(canvasStrokes).where(eq(canvasStrokes.id, id)).run()
+    recordChange(tx, { deviceId, entityType: 'canvasStroke', entityId: id, operation: 'delete' })
+    touchCanvas(tx, row.canvasId, at)
+  })
+}
+
+// MARK: - 画布改名
+
+export function renameCanvas(db: Db, deviceId: string, id: string, name: string): Canvas {
+  const at = Date.now()
+  db.transaction((tx) => {
+    tx.update(canvases).set({ name: name.trim(), updatedAt: at }).where(eq(canvases.id, id)).run()
+    recordChange(tx, { deviceId, entityType: 'canvas', entityId: id, operation: 'update' })
+  })
+  return toCanvas(db.select().from(canvases).where(eq(canvases.id, id)).get()!)
+}
+
+// MARK: - 行映射
+
+function toNote(row: typeof canvasNotes.$inferSelect): CanvasNote {
+  return {
+    id: row.id,
+    canvasID: row.canvasId,
+    title: row.title,
+    body: row.body,
+    color: row.color,
+    positionX: row.positionX,
+    positionY: row.positionY,
+    width: row.width,
+    height: row.height,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  }
+}
+
+function toStroke(row: typeof canvasStrokes.$inferSelect): CanvasStroke {
+  return {
+    id: row.id,
+    canvasID: row.canvasId,
+    toolType: row.toolType === 'eraser' ? 'eraser' : 'pen',
+    points: JSON.parse(row.points) as number[],
+    color: row.color,
+    width: row.width,
+    opacity: row.opacity,
+    zIndex: row.zIndex,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   }

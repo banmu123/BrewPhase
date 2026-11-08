@@ -23,7 +23,7 @@ export const SYNC_PROTOCOL_VERSION = 1
 const TABLE_FOR_CONFLICT: Record<string, string | null> = {
   bean: 'beans', brew: 'brews', tasting: 'tastings', phaseRule: 'phase_rules',
   phaseReminder: 'phase_reminders', record: 'records', recordTag: 'record_tags',
-  recordTagLink: null, canvas: 'canvases', canvasNode: 'canvas_nodes'
+  recordTagLink: null, canvas: 'canvases', canvasNode: 'canvas_nodes', canvasNote: 'canvas_notes', canvasStroke: 'canvas_strokes'
 }
 
 type Row = Record<string, unknown>

@@ -26,7 +26,23 @@ import {
   listTags,
   updateRecord
 } from '../database/repositories/records'
-import { addNode, createCanvas, deleteCanvas, listCanvases, listNodes, moveNode, removeNode } from '../database/repositories/canvas'
+import {
+  addNode,
+  createCanvas,
+  createNote,
+  deleteCanvas,
+  listCanvases,
+  listNodes,
+  listNotes,
+  listStrokes,
+  moveNode,
+  removeNode,
+  removeNote,
+  removeStroke,
+  renameCanvas,
+  saveStroke,
+  updateNote
+} from '../database/repositories/canvas'
 import { importImageFromDialog } from '../media/store'
 import { resolveRecordMetadata } from '../metadata'
 import type { SyncService } from '../sync/sync-service'
@@ -155,6 +171,20 @@ export function registerIpc(params: {
     moveNode(db.db, db.deviceId, value.id, value.positionX, value.positionY)
     return null
   })
+  handle(IPC.canvasRename, (input) => {
+    const value = input as { id: string; name: string }
+    return renameCanvas(db.db, db.deviceId, value.id, value.name)
+  })
+  handle(IPC.canvasNotes, (input) => listNotes(db.db, (input as { canvasId: string }).canvasId))
+  handle(IPC.canvasNoteCreate, (input) => {
+    const value = input as { canvasId: string; positionX: number; positionY: number }
+    return createNote(db.db, db.deviceId, value)
+  })
+  handle(IPC.canvasNoteUpdate, (input) => updateNote(db.db, db.deviceId, input as Parameters<typeof updateNote>[2]))
+  handle(IPC.canvasNoteRemove, (input) => removeNote(db.db, db.deviceId, (input as { id: string }).id))
+  handle(IPC.canvasStrokes, (input) => listStrokes(db.db, (input as { canvasId: string }).canvasId))
+  handle(IPC.canvasStrokeSave, (input) => saveStroke(db.db, db.deviceId, input as Parameters<typeof saveStroke>[2]))
+  handle(IPC.canvasStrokeRemove, (input) => removeStroke(db.db, db.deviceId, (input as { id: string }).id))
   handle(IPC.canvasNodeRemove, (input) => {
     removeNode(db.db, db.deviceId, (input as { id: string }).id)
     return null

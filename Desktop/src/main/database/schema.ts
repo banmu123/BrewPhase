@@ -263,6 +263,26 @@ export const canvasStrokes = sqliteTable(
   (table) => [index('strokes_canvas_idx').on(table.canvasId)]
 )
 
+export const canvasNotes = sqliteTable(
+  'canvas_notes',
+  {
+    id: text('id').primaryKey(),
+    canvasId: text('canvas_id')
+      .notNull()
+      .references(() => canvases.id, { onDelete: 'cascade' }),
+    title: text('title').notNull().default(''),
+    body: text('body').notNull().default(''),
+    color: text('color').notNull().default('#f6f2df'),
+    positionX: real('position_x').notNull().default(0),
+    positionY: real('position_y').notNull().default(0),
+    width: real('width').notNull().default(220),
+    height: real('height').notNull().default(180),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (table) => [index('notes_canvas_idx').on(table.canvasId)]
+)
+
 /** 同步元数据：每条可同步实体一行。 */
 export const syncMeta = sqliteTable(
   'sync_meta',

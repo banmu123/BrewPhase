@@ -12,7 +12,7 @@ import { SYNC_PROTOCOL_VERSION } from '../version'
  * 5. 冲突不静默覆盖：同一实体两端都改过时上报，由用户选择或按规则合并。
  */
 
-export const ENTITY_TYPES = ['bean', 'brew', 'tasting', 'phaseRule', 'phaseReminder', 'record', 'recordTag', 'canvas', 'canvasNode'] as const
+export const ENTITY_TYPES = ['bean', 'brew', 'tasting', 'phaseRule', 'phaseReminder', 'record', 'recordTag', 'canvas', 'canvasNode', 'canvasNote', 'canvasStroke'] as const
 export const entityTypeSchema = z.enum(ENTITY_TYPES)
 export type EntityType = z.infer<typeof entityTypeSchema>
 

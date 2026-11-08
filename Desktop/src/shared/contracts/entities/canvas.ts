@@ -66,6 +66,25 @@ export type CanvasNodeWithRecord = CanvasNode & {
   recordPreviewPath: string | null
 }
 
+/**
+ * 画布便签：不进 Records 的自由想法，直接活在画布上。
+ * 与 CanvasNode.annotation（挂在引用节点上的备注）是两回事。
+ */
+export const canvasNoteSchema = z.object({
+  id: z.string().uuid(),
+  canvasID: z.string().uuid(),
+  title: z.string().max(200).default(''),
+  body: z.string().max(4_000).default(''),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#f6f2df'),
+  positionX: z.number().finite(),
+  positionY: z.number().finite(),
+  width: z.number().min(120).max(2_000),
+  height: z.number().min(100).max(2_000),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int()
+})
+export type CanvasNote = z.infer<typeof canvasNoteSchema>
+
 /** 视口是**界面状态**，不落库（Phase 1 的取舍，见 CANVAS_SPEC）。 */
 export type CanvasViewport = { scale: number; offsetX: number; offsetY: number }
 

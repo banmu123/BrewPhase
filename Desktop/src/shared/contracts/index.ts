@@ -1,5 +1,5 @@
 import type { Bean, BeanDraft, Brew, BrewDraft, PhaseRule, Tasting, TastingDraft } from './entities/coffee'
-import type { Canvas, CanvasNode, CanvasNodeWithRecord } from './entities/canvas'
+import type { Canvas, CanvasNode, CanvasNodeWithRecord, CanvasNote, CanvasStroke } from './entities/canvas'
 import type { ImportImageResult, RecordDraft, RecordItem, RecordQuery, RecordTag } from './entities/records'
 import type { SyncStatus, SyncConflictItem, WipeResult } from './sync'
 import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from './version'
@@ -91,6 +91,14 @@ export interface RendererApi {
     addNode: (canvasId: string, recordId: string) => Promise<CanvasNode>
     moveNode: (id: string, positionX: number, positionY: number) => Promise<void>
     removeNode: (id: string) => Promise<void>
+    rename: (id: string, name: string) => Promise<Canvas>
+    notes: (canvasId: string) => Promise<CanvasNote[]>
+    createNote: (canvasId: string, positionX: number, positionY: number) => Promise<CanvasNote>
+    updateNote: (note: CanvasNote) => Promise<CanvasNote>
+    removeNote: (id: string) => Promise<void>
+    strokes: (canvasId: string) => Promise<CanvasStroke[]>
+    saveStroke: (stroke: CanvasStroke) => Promise<CanvasStroke>
+    removeStroke: (id: string) => Promise<void>
   }
 }
 

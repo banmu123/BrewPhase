@@ -69,6 +69,8 @@ export type EntityType =
   | 'recordTagLink'
   | 'canvas'
   | 'canvasNode'
+  | 'canvasNote'
+  | 'canvasStroke'
 
 /** 逐条结果：iOS 按它决定基线推进，绝不能「整批 200 就全部提交」。 */
 export type SyncItemResult = {
@@ -114,6 +116,11 @@ export function localFingerprint(entityType: EntityType, row: Row): string | nul
   }
   const bool = (key: string): boolean => Number(row[key] ?? 0) === 1
   switch (entityType) {
+    // canvasNote / canvasStroke 由 iOS 侧暂不发送；指纹未知时按 null 处理，
+    // 上层会跳过基线比对，不会静默破坏现有实体的同步。
+    case 'canvasNote':
+    case 'canvasStroke':
+      return null
     case 'bean':
       return fingerprint(
         canonical([
@@ -206,7 +213,9 @@ const TABLES: Record<Exclude<EntityType, 'recordTagLink'>, string> = {
   record: 'records',
   recordTag: 'record_tags',
   canvas: 'canvases',
-  canvasNode: 'canvas_nodes'
+  canvasNode: 'canvas_nodes',
+  canvasNote: 'canvas_notes',
+  canvasStroke: 'canvas_strokes'
 }
 
 const TEXT_COLUMNS = new Set([

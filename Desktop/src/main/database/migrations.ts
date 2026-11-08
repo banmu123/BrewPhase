@@ -307,12 +307,31 @@ CREATE TABLE IF NOT EXISTS record_metadata (
 CREATE INDEX IF NOT EXISTS record_metadata_url_idx ON record_metadata(url_string);
 `
 
+/** 画布便签：独立于 Records 的自由想法（title/body/颜色/位置/尺寸）。 */
+const CANVAS_NOTES_SQL = `
+CREATE TABLE IF NOT EXISTS canvas_notes (
+  id TEXT PRIMARY KEY NOT NULL,
+  canvas_id TEXT NOT NULL REFERENCES canvases(id) ON DELETE CASCADE,
+  title TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  color TEXT NOT NULL DEFAULT '#f6f2df',
+  position_x REAL NOT NULL DEFAULT 0,
+  position_y REAL NOT NULL DEFAULT 0,
+  width REAL NOT NULL DEFAULT 220,
+  height REAL NOT NULL DEFAULT 180,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS notes_canvas_idx ON canvas_notes (canvas_id);
+`
+
 export const migrations: Migration[] = [
   { version: 1, name: 'init', sql: INIT_SQL },
   { version: 2, name: 'sync-align-ios', sql: SYNC_ALIGN_SQL },
   { version: 3, name: 'conflict-delete-operation', sql: CONFLICT_DELETE_OP_SQL },
   { version: 4, name: 'rejected-remote-fingerprints', sql: REJECTED_REMOTE_SQL },
-  { version: 5, name: 'resolver-metadata-separation', sql: RESOLVER_METADATA_SQL }
+  { version: 5, name: 'resolver-metadata-separation', sql: RESOLVER_METADATA_SQL },
+  { version: 6, name: 'canvas-notes', sql: CANVAS_NOTES_SQL }
 ]
 
 /**
@@ -336,3 +355,5 @@ export function migrate(sqlite: Database): void {
     }
   }
 }
+
+

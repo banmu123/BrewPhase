@@ -19,6 +19,7 @@ export type ThemeColors = {
   espresso: string
   roast: string
   latte: string
+  sage: string
   cream: string
   phaseResting: string
   phaseOpening: string
@@ -39,6 +40,7 @@ const VARS: Record<keyof ThemeColors, string> = {
   espresso: '--espresso',
   roast: '--roast',
   latte: '--latte',
+  sage: '--sage',
   cream: '--cream',
   phaseResting: '--phase-resting',
   phaseOpening: '--phase-opening',
