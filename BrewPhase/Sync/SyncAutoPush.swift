@@ -23,14 +23,21 @@ enum SyncAutoPush {
     /// 在 App 拿到容器后调用一次；重复调用是安全的（不叠加观察者）。
     static func install(container: ModelContainer) {
         guard observer == nil else { return }
-        let context = container.mainContext
-        installedContext = context
+        installedContext = container.mainContext
         observer = NotificationCenter.default.addObserver(
             forName: .NSManagedObjectContextDidSave,
             object: nil,
             queue: .main
         ) { _ in
-            SyncManager.shared.scheduleAutoSync(context: context)
+            // `queue: .main` 保证这个回调在主线程执行，但 @Sendable 签名不携带
+            // 这个事实——assumeIsolated 是把「已在主线程」显式交给类型系统，
+            // 让 MainActor 隔离的 SyncManager 与 mainContext 在这里可达。
+            // context 不进闭包捕获（ModelContext 非 Sendable），从上面的
+            // @MainActor 存储读回同一个实例。
+            MainActor.assumeIsolated {
+                guard let context = installedContext else { return }
+                SyncManager.shared.scheduleAutoSync(context: context)
+            }
         }
     }
 }
