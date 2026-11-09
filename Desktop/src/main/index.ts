@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { app, BrowserWindow, net, protocol, session } from 'electron'
@@ -103,6 +104,13 @@ if (!gotLock) {
 }
 
 function bootstrap(): void {
+  // 开发态跑的是 Electron 自己的二进制，Dock 会显示 Electron 默认图标；
+  // 打包版的图标来自 electron-builder 的 build/icon.icns，这里只补 dev / preview。
+  if (!app.isPackaged && process.platform === 'darwin') {
+    const iconPath = join(app.getAppPath(), 'build/icon.png')
+    if (existsSync(iconPath)) app.dock?.setIcon(iconPath)
+  }
+
   db = openDatabase(join(app.getPath('userData'), 'brewphase.db'))
 
   protocol.handle(MEDIA_SCHEME, async (request) => {

@@ -11,8 +11,12 @@ mac:
   category: public.app-category.food-and-drink
   target: [dmg, zip]
   hardenedRuntime: true
+  # 由 iOS 的 AppIcon 母版生成：squircle 底板 + 1024/512/256/128/64/32/16 十档
+  icon: build/icon.icns
 win:
   target: [nsis]
+  icon: build/icon.ico
 linux:
   target: [AppImage]
   category: Office
+  icon: build/icon.png
