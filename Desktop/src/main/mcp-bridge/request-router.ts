@@ -235,6 +235,16 @@ export function routeBridgeRequest(ctx: RouterContext, request: BridgeRequest): 
 
   const parsed = definition.input.safeParse(request.params ?? {})
   if (!parsed.success) {
+    // 参数校验失败的写调用同样进审计：已认证 + 有 scope，只差参数。
+    // 不记录参数原文，不进入 Service。
+    if (definition.write) {
+      writeAudit(ctx.db, {
+        clientId: client.id,
+        toolName,
+        success: false,
+        errorCode: 'VALIDATION_ERROR'
+      })
+    }
     const first = parsed.error.issues[0]
     return fail(requestId, 'VALIDATION_ERROR', first ? `${first.path.join('.') || 'params'}: ${first.message}` : 'invalid params')
   }
@@ -375,8 +385,12 @@ function errorCodeOf(error: unknown): string {
   return isApplicationError(error) ? (error as ApplicationError).code : 'INTERNAL_ERROR'
 }
 
+/**
+ * 错误信息只对**明确的业务错误**（ApplicationError）透传。
+ * 其余异常可能携带 SQL、数据库路径、系统绝对路径或堆栈——一律换成通用文案，
+ * 原文只进 Main 的日志（`[ipc]`/`[mcp-bridge]` 的 console.error），不回给 AI。
+ */
 function messageOf(error: unknown): string {
   if (isApplicationError(error)) return (error as Error).message
-  // 未归类异常：只给可读 message，绝不带堆栈/SQL。
-  return error instanceof Error ? error.message : 'internal error'
+  return 'An unexpected error occurred while processing the request.'
 }

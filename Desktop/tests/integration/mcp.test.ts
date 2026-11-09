@@ -560,3 +560,63 @@ describe('Coffee 工具（只读）', () => {
     }
   })
 })
+
+describe('MCP 安全边界（错误与审计）', () => {
+  it('非预期异常不外泄 SQL / 数据库路径 / 系统绝对路径', () => {
+    const client = makeClient(ALL_SCOPES)
+    const created = dataOf(
+      call('create_record', { carrier: 'text', title: '泄漏探测', idempotency_key: 'leak-1' }, client.token)
+    ) as { record_id: string }
+
+    const original = ctx.records.getForMcp
+    ctx.records.getForMcp = (() => {
+      throw new Error(
+        "SQLITE_ERROR: no such table: records — /Users/banmu/Library/Application Support/brewphase-desktop/brewphase.db — SELECT * FROM records"
+      )
+    }) as typeof ctx.records.getForMcp
+
+    try {
+      const response = call('get_record', { record_id: created.record_id }, client.token)
+      expect(errorOf(response)).toBe('INTERNAL_ERROR')
+      const message = response.error?.message ?? ''
+      expect(message).not.toContain('SQLITE')
+      expect(message).not.toContain('SELECT')
+      expect(message).not.toContain('/Users')
+      expect(message).not.toContain('brewphase.db')
+      expect(message).toMatch(/unexpected error/i)
+    } finally {
+      ctx.records.getForMcp = original
+    }
+  })
+
+  it('写工具参数校验失败：记一条失败审计，且不落任何数据', () => {
+    const client = makeClient(ALL_SCOPES)
+    const recordsBefore = handle.db.select().from(records).all().length
+    const auditBefore = handle.db.select().from(mcpOperationLog).all().length
+
+    // carrier=link 缺 url：Zod 通过（url 可选），Service 抛 VALIDATION_ERROR；
+    // 这里改用真正会被 Zod 拦下的情况：limit 越界不在写工具上，因此用
+    // create_record 传非法 carrier。
+    const response = call(
+      'create_record',
+      { carrier: 'audio', idempotency_key: 'audit-invalid-1' },
+      client.token
+    )
+    expect(errorOf(response)).toBe('VALIDATION_ERROR')
+
+    const logs = handle.db.select().from(mcpOperationLog).all()
+    expect(logs.length).toBe(auditBefore + 1)
+    const last = logs[logs.length - 1]
+    expect(last.toolName).toBe('create_record')
+    expect(last.errorCode).toBe('VALIDATION_ERROR')
+    expect(last.success).toBe(false)
+    expect(handle.db.select().from(records).all()).toHaveLength(recordsBefore)
+  })
+
+  it('只读工具参数校验失败不写审计（审计只覆盖写调用）', () => {
+    const client = makeClient(ALL_SCOPES)
+    const auditBefore = handle.db.select().from(mcpOperationLog).all().length
+    expect(errorOf(call('search_records', { limit: 999 }, client.token))).toBe('VALIDATION_ERROR')
+    expect(handle.db.select().from(mcpOperationLog).all().length).toBe(auditBefore)
+  })
+})
