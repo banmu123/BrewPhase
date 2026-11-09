@@ -17,6 +17,10 @@ struct CoffeeHomeView: View {
     @AppStorage(PrefKey.defaultWaterG) private var defaultWaterG: Double = 240
     @AppStorage(PrefKey.defaultWaterTemp) private var defaultWaterTemp: Double = 92
 
+    @Environment(\.modelContext) private var context
+    /// 首页桌面同步卡的可观察状态：phase / lastSyncAt 变化时卡片自己刷新。
+    @ObservedObject private var sync = SyncManager.shared
+
     @State private var isAddingBean = false
     @State private var brewingBean: Bean?
     @State private var isLoggingBrew = false
@@ -59,6 +63,11 @@ struct CoffeeHomeView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     header
+
+                    // 桌面同步入口（发现性）：header 之下、咖啡内容之前。
+                    // 未配对 = 引导卡；已配对 = 收敛成一行状态卡。
+                    DesktopSyncEntryCard(sync: .shared)
+                        .padding(.top, Metric.Space.lg)
 
                     if beans.isEmpty {
                         EmptyStateView(
@@ -355,6 +364,181 @@ struct CoffeeHomeView: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
+        }
+    }
+}
+
+// MARK: - 桌面同步入口
+
+/// 首页的桌面同步入口（§发现性）：未配对时是一张引导卡（配对 + 下载），
+/// 已配对时收敛成一行状态卡。连接状态只读 `SyncManager` / Keychain 的
+/// 真实数据，不做本地缓存猜测；同步过程直接复用 `SyncManager.phase`。
+private struct DesktopSyncEntryCard: View {
+    @ObservedObject var sync: SyncManager
+    @Environment(\.modelContext) private var context
+
+    var body: some View {
+        if sync.pairedDevice() != nil {
+            pairedCard
+        } else {
+            unpairedCard
+        }
+    }
+
+    private var deviceName: String {
+        let stored = SyncKeychain.string(forKey: "desktop.deviceName") ?? ""
+        return stored.isEmpty ? "BrewPhase Desktop" : stored
+    }
+
+    private var isSyncing: Bool {
+        switch sync.phase {
+        case .preparing, .sendingData, .sendingMedia: return true
+        default: return false
+        }
+    }
+
+    // MARK: 未配对
+
+    private var unpairedCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "laptopcomputer.and.iphone")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(Palette.roast)
+                    Text("连接桌面端")
+                        .font(TypeScale.bodyMedium.weight(.semibold))
+                        .foregroundStyle(Palette.ink)
+                    Spacer(minLength: 0)
+                    chip("未连接", color: Palette.inkFaint)
+                }
+
+                Text("将咖啡、收藏记录和画布同步到电脑，在更大的屏幕上管理你的个人工作空间。")
+                    .font(TypeScale.caption)
+                    .foregroundStyle(Palette.inkSoft)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 12) {
+                    NavigationLink {
+                        DesktopSyncView()
+                    } label: {
+                        Text("开始配对")
+                            .font(TypeScale.callout.weight(.semibold))
+                            .foregroundStyle(Palette.card)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(Capsule().fill(Palette.espresso))
+                    }
+                    .buttonStyle(.plain)
+
+                    Link(destination: AppLinks.desktopDownload) {
+                        Text("还没有安装？下载桌面端")
+                            .font(TypeScale.caption)
+                            .foregroundStyle(Palette.roast)
+                            .underline()
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Text("需要在同一个 Wi-Fi 局域网内连接。")
+                    .font(TypeScale.caption)
+                    .foregroundStyle(Palette.inkFaint)
+            }
+        }
+    }
+
+    // MARK: 已配对（收敛成一行状态卡，不占首页空间）
+
+    private var pairedCard: some View {
+        Card(padding: 0) {
+            NavigationLink {
+                DesktopSyncView()
+            } label: {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "laptopcomputer.and.iphone")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(Palette.moss)
+                        Text(LocalizedStringKey.alreadyLocalized(deviceName))
+                            .font(TypeScale.bodyMedium)
+                            .foregroundStyle(Palette.ink)
+                            .lineLimit(1)
+                        Spacer(minLength: 8)
+                        chip("已连接", color: Palette.moss)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Palette.inkFaint)
+                    }
+
+                    statusLine
+                }
+                .padding(Metric.cardPadding)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder private var statusLine: some View {
+        if isSyncing, let status = sync.compactStatus {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(LocalizedStringKey.alreadyLocalized(status))
+                    .font(TypeScale.caption)
+                    .foregroundStyle(Palette.inkSoft)
+            }
+        } else if case .failed = sync.phase {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("同步失败")
+                    .font(TypeScale.caption.weight(.medium))
+                    .foregroundStyle(Palette.priority)
+                if let reason = sync.lastFailedReasons.first {
+                    Text(reason)
+                        .font(TypeScale.caption)
+                        .foregroundStyle(Palette.inkFaint)
+                        .lineLimit(2)
+                }
+                Button {
+                    Task { await sync.syncNow(context: context) }
+                } label: {
+                    Text("重试")
+                        .font(TypeScale.caption.weight(.medium))
+                        .foregroundStyle(Palette.roast)
+                }
+                .buttonStyle(.plain)
+                .disabled(isSyncing)
+            }
+        } else {
+            HStack(spacing: 6) {
+                Text("上次同步")
+                    .font(TypeScale.caption)
+                    .foregroundStyle(Palette.inkFaint)
+                if let last = sync.lastSyncAt {
+                    Text(verbatim: Fmt.precise(last, calendar: DateMath.calendar))
+                        .font(TypeScale.dataSmall)
+                        .foregroundStyle(Palette.inkFaint)
+                } else {
+                    Text("尚未同步")
+                        .font(TypeScale.caption)
+                        .foregroundStyle(Palette.inkFaint)
+                }
+                Spacer(minLength: 0)
+                Text("管理同步")
+                    .font(TypeScale.caption)
+                    .foregroundStyle(Palette.roast)
+            }
+        }
+    }
+
+    private func chip(_ text: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .frame(width: 5, height: 5)
+                .foregroundStyle(color)
+            Text(text)
+                .font(TypeScale.micro)
+                .foregroundStyle(color)
         }
     }
 }

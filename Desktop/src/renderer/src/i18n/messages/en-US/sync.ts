@@ -11,7 +11,7 @@ export const sync = {
     alt: 'Pairing QR code',
     scanHint: 'Scan with BrewPhase for iOS',
     instructions:
-      "Open the camera in iPhone's More → Desktop sync and scan. The code is valid for two minutes and can be used only once.",
+      "Open the camera in iPhone's More → Data → Desktop sync (or the Connect desktop card on the home screen) and scan. The code is valid for two minutes and can be used only once.",
     expiresIn: (clock: string) => `expires in ${clock}`,
     regenerate: 'New code'
   },

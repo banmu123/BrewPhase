@@ -26,9 +26,9 @@ test('语言切换：中文 → English 即时生效，重启后保留', async (
 
   // 默认中文：导航与设置标题
   await expect(page.getByRole('button', { name: '记录', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: '更多', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '更多', exact: true }).click()
-  await expect(page.getByRole('heading', { name: '更多' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '设置', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '设置', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible()
   await expect(page.getByText('管理应用、数据与连接')).toBeVisible()
 
   // 切到 English：整页立即更新（不需要重启）
@@ -64,7 +64,7 @@ test('语言切换：中文 → English 即时生效，重启后保留', async (
 
   // 切回中文：立即生效，并同样落盘
   await page2.getByRole('button', { name: '简体中文', exact: true }).click()
-  await expect(page2.getByRole('heading', { name: '更多' })).toBeVisible()
+  await expect(page2.getByRole('heading', { name: '设置', exact: true })).toBeVisible()
   expect(
     await page2.evaluate(() => window.localStorage.getItem('brewphase.desktop.locale'))
   ).toBe('zh-CN')

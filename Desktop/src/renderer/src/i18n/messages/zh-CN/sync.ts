@@ -10,7 +10,7 @@ export const sync = {
   pairing: {
     alt: '配对二维码',
     scanHint: '用 BrewPhase iOS 扫码',
-    instructions: '在 iPhone 的「更多 → 桌面同步」里打开相机扫描。配对码两分钟内有效、只能使用一次。',
+    instructions: '在 iPhone 的「更多 → 数据 → 桌面同步」或首页的「连接桌面端」卡片里打开相机扫描。配对码两分钟内有效、只能使用一次。',
     expiresIn: (clock: string) => `${clock} 后失效`,
     regenerate: '换一个码'
   },

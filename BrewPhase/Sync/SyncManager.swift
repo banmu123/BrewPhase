@@ -80,6 +80,25 @@ final class SyncManager: ObservableObject {
     }
 
     /// 数据批次序号 → 可读阶段名（批次顺序 = allBatches 的实体依赖顺序）。
+    /// 首页桌面同步卡与同步页共用的「当前一句话状态」。
+    ///
+    /// `.idle` / `.done` 返回 nil：这两种情况用「上次同步时间」表达就够了，
+    /// 不要凭「已配对」猜一个「同步成功」出来。
+    var compactStatus: String? {
+        switch phase {
+        case .idle, .done:
+            return nil
+        case .preparing:
+            return L("正在准备数据…")
+        case .sendingData(let step):
+            return L("%@（第 %@/10 步）…", SyncManager.stageLabel(for: step), String(step))
+        case .sendingMedia(let done, let total):
+            return L("正在传输图片和视频 %@/%@…", String(done), String(total))
+        case .failed:
+            return L("同步失败")
+        }
+    }
+
     static func stageLabel(for step: Int) -> String {
         switch step {
         case 1: return L("正在同步豆子")
@@ -204,7 +223,7 @@ final class SyncManager: ObservableObject {
                 try await client.revokeDevice()
             } catch {
                 notes.append(
-                    L("Mac 上仍保留这台手机的授权：%@。可在 Mac 的「更多 → 设备同步」里撤销。", error.localizedDescription)
+                    L("Mac 上仍保留这台手机的授权：%@。可在 Mac 的「设置 → 设备同步」里撤销。", error.localizedDescription)
                 )
             }
         }

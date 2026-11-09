@@ -3,7 +3,7 @@ export const navigation = {
   records: '记录',
   coffee: '咖啡',
   canvas: '画布',
-  settings: '更多',
+  settings: '设置',
   hint: {
     records: '收集与探索',
     coffee: '观察与实验',

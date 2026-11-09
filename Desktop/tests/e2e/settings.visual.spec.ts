@@ -51,7 +51,7 @@ test('Settings 视觉验收：中英文 × 三页 × 宽窄窗口', async () => 
     await page.waitForTimeout(150)
   }
 
-  await page.getByRole('button', { name: '更多', exact: true }).click()
+  await page.getByRole('button', { name: '设置', exact: true }).click()
 
   for (const size of [
     { key: 'wide', width: 1200, height: 820 },

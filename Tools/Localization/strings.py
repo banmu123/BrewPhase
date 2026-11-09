@@ -1417,8 +1417,9 @@ EN: dict[str, str] = {
     "解除配对": "Unpair",
     "扫描桌面端二维码": "Scan desktop QR code",
     "连接桌面端": "Connect desktop",
-    "在 BrewPhase Desktop 的「更多 → 设备同步」里启用同步并出示二维码。": "Enable sync in BrewPhase Desktop under More → Device sync, then show the QR code.",
-    "第一版方向为 iPhone → 桌面端。两端都改过的数据会停在桌面端的冲突列表里等你裁决。": "First version syncs iPhone → desktop. Data edited on both sides waits in the desktop conflict list for you to decide.",
+    "在 BrewPhase Desktop 的「设置 → 设备同步」里启用同步并出示二维码。": "Enable sync in BrewPhase Desktop under Settings → Device sync, then show the QR code.",
+    "第一版方向为 iPhone → 桌面端。两端都改过的数据会停在桌面端的冲突列表里等你裁决。同步走局域网 HTTP（无 TLS），请在可信网络使用，桌面端需保持运行。":
+        "First version syncs iPhone → desktop. Data edited on both sides waits in the desktop conflict list for you to decide. LAN sync uses plain HTTP (no TLS) — use trusted networks and keep the desktop running.",
     "这不是 BrewPhase 的配对二维码": "This is not a BrewPhase pairing code",
     "配对码已过期，请在桌面端重新生成": "Pairing code expired — generate a new one on the desktop",
     "未配对": "Not paired",
@@ -1449,13 +1450,44 @@ EN: dict[str, str] = {
     "配对凭据保存失败，请重试；若反复出现请检查系统设置": "Couldn't save pairing credentials — try again; if it keeps happening, check system settings",
     "无法连接桌面端（已尝试 %@）。请确认 iPhone 与 Mac 在同一 Wi-Fi，桌面端同步已启用，且 Mac 防火墙允许 BrewPhase。":
         "Couldn't reach the desktop (tried %@). Make sure the iPhone and Mac are on the same Wi-Fi, sync is enabled on the desktop, and the Mac firewall allows BrewPhase.",
+    # 首页桌面同步入口卡
+    "将咖啡、收藏记录和画布同步到电脑，在更大的屏幕上管理你的个人工作空间。":
+        "Sync coffee, saved records and canvases to your computer, and manage your personal workspace on a bigger screen.",
+    "开始配对": "Start pairing",
+    "还没有安装？下载桌面端": "Not installed yet? Download the desktop app",
+    "需要在同一个 Wi-Fi 局域网内连接。": "Connect over the same Wi-Fi network.",
+    "未连接": "Not connected",
+    "已连接": "Connected",
+    "同步失败": "Sync failed",
+    "尚未同步": "Not synced yet",
+    "管理同步": "Manage sync",
+    # 首次配对引导
+    "配对步骤": "Pairing steps",
+    "扫码配对": "Scan to pair",
+    "重新扫描": "Scan again",
+    "还没有安装？": "Not installed yet?",
+    "下载桌面端": "Download the desktop app",
+    "下载页会列出已发布的平台、版本与安装说明；页面若提示尚未开放，说明安装包还未发布。":
+        "The download page lists released platforms, versions and install guides. If it says not yet available, the installers haven't been published.",
+    "在电脑上下载并安装 BrewPhase Desktop。": "Download and install BrewPhase Desktop on your computer.",
+    "打开桌面端的「设置 → 设备同步」，启用局域网同步，点「连接新手机」生成二维码。":
+        "Open Settings → Device sync on the desktop, turn on LAN sync, then click Connect new phone to generate a QR code.",
+    "回到 iPhone，扫描桌面端二维码完成配对。": "Back on the iPhone, scan the desktop's QR code to finish pairing.",
+    "同步只在可信局域网内进行，桌面端需要保持运行。":
+        "Syncing runs on a trusted LAN only, and the desktop app must stay running.",
+    "当前为 iPhone → Desktop 单向同步，桌面端的修改不会自动回传 iPhone。":
+        "Sync is one-way (iPhone → Desktop); changes made on the desktop are not pushed back automatically.",
+    "局域网同步使用 HTTP（无 TLS），不要在不可信的公共网络使用。":
+        "LAN sync uses plain HTTP (no TLS); avoid untrusted public networks.",
+    "安全与范围": "Security & scope",
+    "这不是云端同步：所有数据都只走局域网。": "This is not cloud sync: all data travels over the LAN only.",
     # 解除配对
     "已解除配对。": "Unpaired.",
     "已解除配对，Mac 上的同步内容已清空。": "Unpaired. Synced content on the Mac has been cleared.",
     "Mac 上的同步内容没能清空：%@":
         "Couldn't clear the synced content on the Mac: %@",
-    "Mac 上仍保留这台手机的授权：%@。可在 Mac 的「更多 → 设备同步」里撤销。":
-        "The Mac still keeps this iPhone's authorization: %@. You can revoke it on the Mac under More → Device sync.",
+    "Mac 上仍保留这台手机的授权：%@。可在 Mac 的「设置 → 设备同步」里撤销。":
+        "The Mac still keeps this iPhone's authorization: %@. You can revoke it on the Mac under Settings → Device sync.",
     "只解除配对": "Unpair only",
     "解除并清空 Mac 上的同步内容": "Unpair and clear synced content on the Mac",
     "清空会删掉 Mac 上从这台手机同步过来的内容：记录、标签、画布、媒体文件，以及全部咖啡数据——豆子、冲煮、品鉴（包括 Mac 上自己录入的）。清空不可恢复。":

@@ -1,6 +1,6 @@
-/** 更多 / Settings：页面骨架、二级导航、常规页。 */
+/** 设置 / Settings：页面骨架、二级导航、常规页。 */
 export const settings = {
-  title: '更多',
+  title: '设置',
   subtitle: '管理应用、数据与连接',
   nav: {
     general: '常规',

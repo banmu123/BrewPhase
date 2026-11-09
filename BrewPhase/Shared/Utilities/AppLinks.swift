@@ -10,4 +10,11 @@ enum AppLinks {
     /// Pages → Deploy from a branch → main /docs）记录在
     /// `Tools/Privacy-Compliance-Report.md`，属开发者手动操作。
     static let privacyPolicy = URL(string: "https://banmu123.github.io/BrewPhase/privacy.html")!
+
+    /// BrewPhase Desktop 下载页（CommitBrew 官网的 BrewPhase 专属页面）。
+    ///
+    /// 注意：`https://www.commitbrew.com/brewphase` 目前（2026-11-09）还未部署，
+    /// 直接访问是 404。发布 Desktop 安装包之前必须先上线这个页面；在页面
+    /// 就绪之前，这里的入口指向的是「尚未开放」的说明，不得伪造下载按钮。
+    static let desktopDownload = URL(string: "https://www.commitbrew.com/brewphase")!
 }

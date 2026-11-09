@@ -34,14 +34,14 @@ test('Settings：二级导航、常规信息与 AI 连接全流程', async () =>
   await pinLocale(page, 'zh-CN')
   await expect(page.locator('.sidebar__brand')).toHaveText('BREWPHASE')
 
-  await page.getByRole('button', { name: '更多', exact: true }).click()
+  await page.getByRole('button', { name: '设置', exact: true }).click()
 
   // —— 二级导航在，默认落在「常规」——
   const nav = (name: string) => page.getByRole('button', { name, exact: true })
   await expect(nav('常规')).toBeVisible()
   await expect(nav('设备同步')).toBeVisible()
   await expect(nav('AI 连接')).toBeVisible()
-  await expect(page.getByRole('heading', { name: '更多', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible()
   await expect(page.getByText('管理应用、数据与连接')).toBeVisible()
 
   // 常规页：语言分段、应用信息、数据目录
@@ -60,7 +60,7 @@ test('Settings：二级导航、常规信息与 AI 连接全流程', async () =>
   await expect(nav('AI connections')).toBeVisible()
   // 切回中文，后面的流程用中文断言
   await nav('简体中文').click()
-  await expect(page.getByRole('heading', { name: '更多', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible()
 
   // —— 设备同步页：启用同步 → 出现「连接新手机」与二维码入口 ——
   await nav('设备同步').click()

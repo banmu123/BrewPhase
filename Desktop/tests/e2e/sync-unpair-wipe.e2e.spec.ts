@@ -92,7 +92,7 @@ test('撤销授权并清空：记录与咖啡数据全部清零，阶段规则�
   await expect(page.locator('.record-tile', { hasText: '撤销测试记录' })).toHaveCount(1)
 
   // 设置页 → 设备同步子页 → 撤销授权 → 选「撤销并清空内容」
-  await page.getByRole('button', { name: '更多', exact: true }).click()
+  await page.getByRole('button', { name: '设置', exact: true }).click()
   await page.getByRole('button', { name: '设备同步', exact: true }).click()
   await expect(page.getByText('已配对设备')).toBeVisible()
   await page.getByRole('button', { name: '撤销授权' }).click()

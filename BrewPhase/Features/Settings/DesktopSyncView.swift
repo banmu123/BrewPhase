@@ -55,9 +55,17 @@ struct DesktopSyncView: View {
                 } header: {
                     Text("已配对桌面端")
                 } footer: {
-                    Text("第一版方向为 iPhone → 桌面端。两端都改过的数据会停在桌面端的冲突列表里等你裁决。")
+                    Text("第一版方向为 iPhone → 桌面端。两端都改过的数据会停在桌面端的冲突列表里等你裁决。同步走局域网 HTTP（无 TLS），请在可信网络使用，桌面端需保持运行。")
                 }
             } else {
+                // 首次配对引导：先讲清「装什么、在哪开」，再给扫码动作——
+                // 没装桌面端的用户不该直接面对一个扫不出码的相机。
+                Section {
+                    pairingSteps
+                } header: {
+                    Text("配对步骤")
+                }
+
                 Section {
                     Button {
                         showsScanner = true
@@ -70,11 +78,40 @@ struct DesktopSyncView: View {
                     }
                     if let pairingError {
                         Text(pairingError).foregroundStyle(Palette.priority)
+                        // 失败后的重扫入口：和主按钮同一个动作，只是不再藏在错误文字后面
+                        Button("重新扫描") { showsScanner = true }
+                            .disabled(pairingInFlight)
                     }
                 } header: {
-                    Text("连接桌面端")
+                    Text("扫码配对")
                 } footer: {
-                    Text("在 BrewPhase Desktop 的「更多 → 设备同步」里启用同步并出示二维码。")
+                    Text("在 BrewPhase Desktop 的「设置 → 设备同步」里启用同步并出示二维码。")
+                }
+
+                Section {
+                    Link(destination: AppLinks.desktopDownload) {
+                        Label("下载桌面端", systemImage: "arrow.down.circle")
+                    }
+                } header: {
+                    Text("还没有安装？")
+                } footer: {
+                    Text("下载页会列出已发布的平台、版本与安装说明；页面若提示尚未开放，说明安装包还未发布。")
+                }
+
+                Section {
+                    Text("同步只在可信局域网内进行，桌面端需要保持运行。")
+                        .font(TypeScale.caption)
+                        .foregroundStyle(Palette.inkSoft)
+                    Text("当前为 iPhone → Desktop 单向同步，桌面端的修改不会自动回传 iPhone。")
+                        .font(TypeScale.caption)
+                        .foregroundStyle(Palette.inkSoft)
+                    Text("局域网同步使用 HTTP（无 TLS），不要在不可信的公共网络使用。")
+                        .font(TypeScale.caption)
+                        .foregroundStyle(Palette.inkSoft)
+                } header: {
+                    Text("安全与范围")
+                } footer: {
+                    Text("这不是云端同步：所有数据都只走局域网。")
                 }
             }
         }
@@ -99,6 +136,33 @@ struct DesktopSyncView: View {
             Text(
                 "清空会删掉 Mac 上从这台手机同步过来的内容：记录、标签、画布、媒体文件，以及全部咖啡数据——豆子、冲煮、品鉴（包括 Mac 上自己录入的）。清空不可恢复。"
             )
+        }
+    }
+
+    // MARK: - 首次配对引导
+
+    /// 三步引导：装桌面端 → 桌面端出码 → 手机扫码。
+    private var pairingSteps: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            stepRow(index: 1, text: Text("在电脑上下载并安装 BrewPhase Desktop。"))
+            stepRow(index: 2, text: Text("打开桌面端的「设置 → 设备同步」，启用局域网同步，点「连接新手机」生成二维码。"))
+            stepRow(index: 3, text: Text("回到 iPhone，扫描桌面端二维码完成配对。"))
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func stepRow(index: Int, text: Text) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(verbatim: "\(index)")
+                .font(TypeScale.caption.weight(.semibold))
+                .foregroundStyle(Palette.roast)
+                .frame(width: 20, height: 20)
+                .background(Circle().fill(Palette.card))
+                .overlay(Circle().strokeBorder(Palette.hairline, lineWidth: 0.8))
+            text
+                .font(TypeScale.callout)
+                .foregroundStyle(Palette.ink)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
