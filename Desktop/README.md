@@ -23,9 +23,8 @@ pnpm install
 pnpm test
 pnpm typecheck
 
-# 构建并为本机 Electron 重建原生模块（ABI 不同，必须先重建再跑应用）
+# 构建（better-sqlite3 13 的 N-API 预编译二进制 Node / Electron 通用，不需要重建）
 pnpm build
-pnpm exec electron-builder install-app-deps
 
 pnpm start          # 预览构建产物
 pnpm dev            # 开发模式（HMR）
@@ -43,11 +42,11 @@ METADATA_LIVE_SMOKE=1 pnpm test:live
 > **设置 → AI 连接**里创建，明文只显示一次。完整配置步骤见下文
 > [MCP（AI Action Gateway）](#mcpai-action-gateway)。
 
-> **原生模块 ABI**：`better-sqlite3` 在 Node 与 Electron 下是两份二进制。
-> `pnpm test` 用 Node 构建；`electron-builder install-app-deps` 会把它换成 Electron
-> 构建，之后 Node 单测会加载失败。切换命令：
-> `pnpm exec electron-builder install-app-deps`（给应用）↔
-> `pnpm rebuild better-sqlite3`（给测试）。
+> **原生模块**：`better-sqlite3` 13 按 `process.platform/arch` 从 `prebuilds/` 加载
+> N-API 二进制，Node 与 Electron 的 ABI 通用，单测 / 应用 / 安装包共用同一份，
+> **不需要** `electron-builder install-app-deps` 重建。打包配置里因此设了
+> `npmRebuild: false`，并用 `asarUnpack` 把 `*.node` 解出 asar；以后若升级到
+> 需要编译的版本，这两处要一起改回。
 
 ## MCP（AI Action Gateway）
 
@@ -207,6 +206,79 @@ docs/           产品范围、架构、数据模型映射、同步协议、安�
   Canvas 受控读写；**没有删除、没有 SQL、没有文件系统**。见
   `docs/MCP_ARCHITECTURE.md` / `docs/MCP_TOOLS.md` / `docs/MCP_SECURITY.md`。
 
+## 打包与发布
+
+配置在 `electron-builder.yml`（v26 稳定线），图标与 macOS entitlements 在 `build/`，
+CI 在 `.github/workflows/desktop-release.yml`。产物落到 `Desktop/release/`（已 gitignore）。
+
+### 本地构建
+
+```bash
+cd Desktop
+pnpm dist              # electron-vite build + electron-builder（当前平台）
+pnpm exec electron-builder --mac --arm64 --publish never
+pnpm exec electron-builder --win --x64  --publish never   # 可交叉产出 NSIS，但未在 Windows 实机验证
+```
+
+文件名模板 `BrewPhase-${version}-${os}-${arch}.${ext}`。mac 出 `dmg + zip`，
+win 出 NSIS `exe`，linux 配置保留 `AppImage`（CI 暂不构建）。
+
+### CI 双平台
+
+| 触发方式 | 行为 |
+| --- | --- |
+| 手动 `workflow_dispatch` | 跑两个 job，各上传安装包 artifact（保留 14 天），**不发布** |
+| push tag `desktop-v*` | 同上，再用 `gh release create` 建**草稿 prerelease** Release，附上 dmg/zip/exe |
+
+| job | runner | 产物 | 覆盖步骤 |
+| --- | --- | --- | --- |
+| `macos-arm64` | `macos-latest` | `.dmg` / `.zip` | install → typecheck → test → build → 打包 |
+| `windows-x64` | `windows-latest` | NSIS `.exe` | 同上 |
+
+e2e（Playwright + 真 Electron）需要图形环境，**不进 CI**，发布前在本机跑 `pnpm e2e`。
+
+### 签名与公证（发布前置）
+
+凭据全部走 Repository Secrets，不写进配置文件：
+
+| Secret | 用途 |
+| --- | --- |
+| `MAC_CERT_P12_B64` / `MAC_CERT_PASSWORD` | Developer ID Application 证书（.p12 的 base64）/ 密码，用于 macOS 签名 |
+| `APPLE_API_KEY_P8_B64` / `APPLE_API_KEY_ID` / `APPLE_API_ISSUER` | App Store Connect API 密钥，用于 notarytool 公证 |
+| `WIN_CERT_P12_B64` / `WIN_CERT_PASSWORD` | Windows Authenticode 证书（.p12 的 base64）/ 密码 |
+
+- 五个 macOS secret 齐备时：签名 + `mac.notarize=true` + `forceCodeSigning=true`，
+  任一环节失败直接让 CI 红，避免静默产出未签名包。
+- 两个 Windows secret 齐备时走 `signtool` 签名。
+- 任一缺失时明确产出**未签名**包并在日志打 warning；macOS 同时关掉
+  `hardenedRuntime`，否则 ad-hoc 签名 + 库校验会让应用起不来。
+- 本机钥匙串若已有 Developer ID 证书，`pnpm dist` 会自动发现并签名（2026-11-09
+  本机验证过），但**签名 ≠ 公证**；没有 Apple 公证凭据的包仍不能对外分发。
+- 未签名包会被 macOS Gatekeeper / Windows SmartScreen 拦，**只能内测，不要对外发布**。
+- tag 触发只建草稿 Release：签名/公证状态、下载页可用性要人工核对后再 Publish。
+
+### 发布前检查清单
+
+- [ ] 本地 `pnpm typecheck` / `pnpm test` / `pnpm build` / `pnpm e2e` / `git diff --check` 全绿
+- [ ] 签名与公证 secrets 已配置，CI 日志没有 unsigned warning
+- [ ] 两个平台的安装包都实机安装、启动、退出过
+- [ ] 下载页 `https://www.commitbrew.com/brewphase` 已部署（**当前 HTTP 404**，
+      iOS 首页与设置页两个「下载桌面端」入口都指向它）
+- [ ] `package.json` 版本号与 `desktop-v*` tag 一致
+- [ ] Release 文案写明「暂不支持自动更新」，需要用户手动下载覆盖
+- [ ] 若作为正式版发布，去掉草稿的 prerelease 标记
+
+### 已知边界
+
+- 只出 macOS arm64 + Windows x64；Intel Mac 需给 matrix 加一条 `--mac --x64`
+  （或把 `mac.target` 改成 `arch: universal`），并重新验证公证。
+- Windows 包**不宣称 MCP 可用**：Named Pipe 权限未在 Windows 验证（见「未实现」）。
+  Windows job 的单测目前只在 macOS 本机全绿，windows-latest runner 尚未实跑；
+  首次触发若因平台差异失败，先看 CI 日志再决定修测试还是修代码。
+- 自动更新未实现；安装包只从 GitHub Releases / 自行分发，没有更新通道。
+- 本机受工具环境影响时，`electron-builder` 下载 Electron/7zip/dmgbuild 资源可能
+  撞到 TLS 证书或文件代理限制；CI runner 与本机普通终端不受此限制。
+
 ## 未实现（明确）
 
 - **真机端到端联调**：配对/同步/媒体链路的自动化覆盖是集成级（真 HTTP + 真 SQLite），
@@ -219,7 +291,10 @@ docs/           产品范围、架构、数据模型映射、同步协议、安�
 - MCP 的平台与能力边界：V1 只支持 macOS / Linux（Windows Named Pipe 权限未验证，
   不提供 TCP 退化）；WorkBuddy 若运行在没有本地进程访问能力的云端环境，无法连接
   本地 Bridge；MCP 写入是 `desktop_local_only`，不会自动回传 iOS。
-- 代码签名 / 公证 / 自动更新。
+- **自动更新**（electron-updater / 更新清单签名）：仍未实现，见「打包与发布」。
+  代码签名与公证的配置位、CI secrets 接线已就绪；CI 未配置 secrets 时产出的是
+  未签名内测包，不能对外发布。本机钥匙串若已有 Developer ID 证书，`pnpm dist`
+  会自动签名，但要对外分发仍须 notarytool 公证（需要 Apple 凭据）。
 
 ## 文档
 

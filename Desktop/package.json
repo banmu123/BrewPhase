@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "BrewPhase Desktop — local-first coffee, records and canvas",
+  "author": "BrewPhase",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -49,6 +50,7 @@
     "@vitejs/plugin-react": "^6.2.1",
     "drizzle-kit": "^0.31.11",
     "electron": "^45.2.3",
+    "electron-builder": "^26.18.0",
     "electron-vite": "^6.0.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.6",
