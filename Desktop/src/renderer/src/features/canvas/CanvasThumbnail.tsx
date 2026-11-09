@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Canvas } from '@shared/contracts'
 import { api } from '../../shared/api'
+import { useI18n } from '../../i18n'
 import { selectThumbnailItems, type ThumbnailItem } from './canvas-thumbnail-model'
 
 /**
@@ -32,6 +33,7 @@ const THUMB_PADDING = 10
 
 export function CanvasThumbnail(props: { canvas: Canvas; height?: number }) {
   const { canvas } = props
+  const { t } = useI18n()
   const height = props.height ?? 132
   const [data, setData] = useState<ThumbData | null>(() => {
     const hit = cache.get(canvas.id)
@@ -101,7 +103,7 @@ export function CanvasThumbnail(props: { canvas: Canvas; height?: number }) {
     return (
       <div ref={containerRef} className="canvas-thumb canvas-thumb--empty" style={{ height }}>
         <span className="canvas-thumb__brand">◈</span>
-        <span className="canvas-thumb__brand-name">{canvas.name || '未命名画布'}</span>
+        <span className="canvas-thumb__brand-name">{canvas.name || t.canvas.untitledCanvas}</span>
       </div>
     )
   }

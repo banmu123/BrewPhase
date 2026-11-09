@@ -22,12 +22,18 @@ export const MCP_SCOPES = [
 export const mcpScopeSchema = z.enum(MCP_SCOPES)
 export type McpScope = (typeof MCP_SCOPES)[number]
 
-/** 设置页展示时的分组（只是 UI 组织，不参与权限判断）。 */
-export const MCP_SCOPE_GROUPS: Array<{ label: string; scopes: McpScope[] }> = [
-  { label: '记录', scopes: ['records:read', 'records:create', 'records:update'] },
-  { label: '标签', scopes: ['tags:read', 'tags:create'] },
-  { label: '咖啡', scopes: ['coffee:read'] },
-  { label: '画布', scopes: ['canvas:read', 'canvas:write'] }
+/**
+ * 设置页展示时的分组。`group` 只是字典键——显示名由 Renderer 的 i18n
+ * （`t.mcp.create.scopeGroup[group]`）提供；权限判断与它对无关。
+ */
+export const MCP_SCOPE_GROUP_KEYS = ['records', 'tags', 'coffee', 'canvas'] as const
+export type McpScopeGroup = (typeof MCP_SCOPE_GROUP_KEYS)[number]
+
+export const MCP_SCOPE_GROUPS: Array<{ group: McpScopeGroup; scopes: McpScope[] }> = [
+  { group: 'records', scopes: ['records:read', 'records:create', 'records:update'] },
+  { group: 'tags', scopes: ['tags:read', 'tags:create'] },
+  { group: 'coffee', scopes: ['coffee:read'] },
+  { group: 'canvas', scopes: ['canvas:read', 'canvas:write'] }
 ]
 
 export const MCP_ERROR_CODES = [

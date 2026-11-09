@@ -8,83 +8,141 @@ import type {
   SyncConflictItem,
   SyncStatus
 } from '@shared/contracts'
-import { MCP_SCOPE_GROUPS, SYNC_PROTOCOL_VERSION } from '@shared/contracts'
+import { MCP_SCOPE_GROUPS } from '@shared/contracts'
 import { api } from '../../shared/api'
+import { SUPPORTED_LOCALES, useI18n } from '../../i18n'
 
 /**
- * 更多：应用信息、数据位置、设备同步。
+ * 更多 / Settings。
  *
- * 诚实性原则不变：状态栏只显示真实存在的状态（服务是否在跑、端口、设备、
- * 冲突数），不做假开关。同步只覆盖第一版真实实现的：启用服务、扫码配对、
- * 设备管理、冲突列表。
+ * 二级导航 + 内容页（常规 / 设备同步 / AI 连接）：导航只切分类，每个分类
+ * 独立滚动；内容仍在同一个 SettingsPage 里，页面切换不重建连接状态——
+ * 同步的轮询与 MCP 的客户端列表都各自在组件内维护，切走再回来会自己刷新。
+ *
+ * 全部文案走 i18n 字典（`t.settings.*` / `t.sync.*` / `t.mcp.*`）；
+ * 用户数据（设备名、客户端名、token、路径）不翻译。
  */
+
+type SettingsCategory = 'general' | 'sync' | 'mcp'
+
 export function SettingsPage({ info }: { info: AppInfo | null }) {
+  const { t } = useI18n()
+  const [category, setCategory] = useState<SettingsCategory>('general')
+
+  const categories: Array<{ key: SettingsCategory; label: string }> = [
+    { key: 'general', label: t.settings.nav.general },
+    { key: 'sync', label: t.settings.nav.sync },
+    { key: 'mcp', label: t.settings.nav.mcp }
+  ]
+
   return (
     <div className="page">
       <header className="page-header">
         <div className="page-header__titles">
-          <h1 className="page-title">更多</h1>
-          <p className="page-sub">本地优先 · 不传云端</p>
+          <h1 className="page-title">{t.settings.title}</h1>
+          <p className="page-sub">{t.settings.subtitle}</p>
         </div>
       </header>
 
       <div className="page-body">
-        <div className="settings-flow">
-          <section className="settings-group">
-            <div className="section">
-              <span className="overline">应用</span>
-              <div className="note">
-                版本 {info?.appVersion ?? '—'}
-                <br />
-                数据库 schema v{info?.dbSchemaVersion ?? '—'}
-                <br />
-                同步协议 v{SYNC_PROTOCOL_VERSION}
-                <br />
-                平台 {info?.platform ?? '—'}
-              </div>
-            </div>
+        <div className="settings-shell">
+          <nav className="settings-nav" aria-label={t.settings.title}>
+            {categories.map((item) => (
+              <button
+                key={item.key}
+                className="settings-nav__item"
+                data-active={category === item.key}
+                onClick={() => setCategory(item.key)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
 
-            <div className="section">
-              <span className="overline">数据</span>
-              <div className="note">
-                全部数据存在本机的 SQLite 与 media 目录里，不上传、不登录、不需要网络。
-                <br />
-                <span className="mono" style={{ fontSize: 10 }}>
-                  {info?.dataDir ?? '—'}
-                </span>
-              </div>
-            </div>
-
-            <div className="hairline" />
-            <span className="overline">这一版明确没有做</span>
-            <ul className="note" style={{ paddingLeft: 18, lineHeight: 2 }}>
-              <li>Bonjour 自动发现（二维码直连已可用）</li>
-              <li>TLS 传输加密（现行为局域网 HTTP + token/签名，见同步协议文档）</li>
-              <li>Reminders 的系统通知调度（只存意图）</li>
-              <li>画布手绘工具、连线与分组</li>
-              <li>视频播放器（视频文件完整保存，暂只有信息展示）</li>
-            </ul>
-          </section>
-
-          <section className="settings-group">
-            <div className="detail-body">
-              <SyncSection />
-            </div>
-          </section>
-
-          <section className="settings-group">
-            <div className="detail-body">
-              <McpSection />
-            </div>
-          </section>
+          <div className="settings-pane">
+            {category === 'general' && <GeneralSection info={info} />}
+            {category === 'sync' && <SyncSection />}
+            {category === 'mcp' && <McpSection />}
+          </div>
         </div>
       </div>
     </div>
   )
 }
 
+/** 常规：语言、应用信息、本地数据、关于。 */
+function GeneralSection({ info }: { info: AppInfo | null }) {
+  const { t, locale, setLocale } = useI18n()
+
+  return (
+    <div className="settings-section">
+      <h2 className="detail-title" style={{ marginTop: 0 }}>
+        {t.settings.general.title}
+      </h2>
+
+      <section className="settings-subsection">
+        <h2 className="settings-subsection__title">{t.settings.general.language}</h2>
+        <p className="note" style={{ marginBottom: 10 }}>
+          {t.settings.general.languageHint}
+        </p>
+        <div className="segmented" role="group" aria-label={t.settings.general.language}>
+          {SUPPORTED_LOCALES.map((item) => (
+            <button
+              key={item}
+              className="segmented__item"
+              data-active={locale === item}
+              onClick={() => setLocale(item)}
+            >
+              {t.settings.general.languageName[item]}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="settings-subsection">
+        <h2 className="settings-subsection__title">{t.settings.general.appInfo}</h2>
+        <dl className="info-list">
+          <dt>{t.settings.general.version}</dt>
+          <dd>{info?.appVersion ?? '—'}</dd>
+          <dt>{t.settings.general.schemaVersion}</dt>
+          <dd>v{info?.dbSchemaVersion ?? '—'}</dd>
+          <dt>{t.settings.general.syncProtocol}</dt>
+          <dd>v{info?.syncProtocolVersion ?? '—'}</dd>
+          <dt>{t.settings.general.platform}</dt>
+          <dd>{info?.platform ?? '—'}</dd>
+        </dl>
+      </section>
+
+      <section className="settings-subsection">
+        <h2 className="settings-subsection__title">{t.settings.general.localData}</h2>
+        <p className="note">{t.settings.general.localDataNote}</p>
+        <dl className="info-list">
+          <dt>{t.settings.general.dataDir}</dt>
+          <dd className="mono" style={{ fontSize: 11 }}>
+            {info?.dataDir ?? '—'}
+          </dd>
+        </dl>
+      </section>
+
+      <section className="settings-subsection">
+        <h2 className="settings-subsection__title">{t.settings.general.about}</h2>
+        <p className="note">{t.settings.general.aboutText}</p>
+        <div className="overline" style={{ marginTop: 14 }}>
+          {t.settings.general.notDone}
+        </div>
+        <ul className="note" style={{ paddingLeft: 18, lineHeight: 2, marginTop: 6 }}>
+          {t.settings.general.notDoneItems.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      </section>
+    </div>
+  )
+}
+
 /** 设备同步：启用 → 扫码配对 → 设备管理 → 冲突。 */
 function SyncSection() {
+  const { t, formatDateTime } = useI18n()
   const [status, setStatus] = useState<SyncStatus | null>(null)
   const [conflicts, setConflicts] = useState<SyncConflictItem[]>([])
   const [busy, setBusy] = useState(false)
@@ -127,9 +185,7 @@ function SyncSection() {
     try {
       if (wipe) {
         const result = await api.sync.wipeData()
-        setRevokeNote(
-          `已清空 ${result.records} 条记录、${result.tags} 个标签、${result.canvases} 块画布、${result.mediaFiles} 个媒体文件`
-        )
+        setRevokeNote(t.sync.devices.wiped(result.records, result.tags, result.canvases, result.mediaFiles))
       }
       setStatus(await api.sync.revokeDevice(id))
       setRevokingId(null)
@@ -170,17 +226,18 @@ function SyncSection() {
     : 0
 
   return (
-    <>
-      <span className="overline">设备同步</span>
-      <h2 className="detail-title">iPhone 记录的内容，回到电脑就在这里。</h2>
+    <div className="settings-section">
+      <h2 className="detail-title" style={{ marginTop: 0 }}>
+        {t.sync.headline}
+      </h2>
 
-      <div className="row" style={{ gap: 12, marginBottom: 14 }}>
+      <div className="row" style={{ gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
         <button
           className={status?.enabled ? 'button' : 'button button--primary'}
           disabled={busy}
           onClick={() => void toggleSync(!status?.enabled)}
         >
-          {status?.enabled ? '停用局域网同步' : '启用局域网同步'}
+          {status?.enabled ? t.sync.disable : t.sync.enable}
         </button>
         {status?.enabled && (
           <button
@@ -188,51 +245,54 @@ function SyncSection() {
             disabled={busy || pairingActive}
             onClick={() => void startPairing()}
           >
-            连接新手机
+            {t.sync.pairNew}
           </button>
         )}
         {status?.running && (
           <span className="note mono">
-            运行中 · 端口 {status.port} · {status.addresses[0] ?? '—'}
+            {t.sync.running(status.port ?? 0, status.addresses[0] ?? '—')}
           </span>
         )}
-        {status?.enabled && !status.running && <span className="error">服务未能启动</span>}
+        {status?.enabled && !status.running && <span className="error">{t.sync.startFailed}</span>}
       </div>
 
-      {error && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
+      {error && (
+        <div className="error" style={{ marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
 
       {status?.pairing && (
         <div className="panel" style={{ maxWidth: 360, marginBottom: 20 }}>
           <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
             <img
               src={status.pairing.qrDataUrl}
-              alt="配对二维码"
+              alt={t.sync.pairing.alt}
               width={148}
               height={148}
               style={{ borderRadius: 10, border: '1px solid var(--hairline)' }}
             />
             <div className="stack" style={{ flex: 1 }}>
               <span className="overline" style={{ margin: 0 }}>
-                用 BrewPhase iOS 扫码
+                {t.sync.pairing.scanHint}
               </span>
-              <div className="note">
-                在 iPhone 的「更多 → 桌面同步」里打开相机扫描。配对码两分钟内有效、
-                只能使用一次。
-              </div>
+              <div className="note">{t.sync.pairing.instructions}</div>
               <div className="mono" style={{ fontSize: 12, color: 'var(--roast)' }}>
-                {Math.floor(remainingSeconds / 60)}:{String(remainingSeconds % 60).padStart(2, '0')} 后失效
+                {t.sync.pairing.expiresIn(
+                  `${Math.floor(remainingSeconds / 60)}:${String(remainingSeconds % 60).padStart(2, '0')}`
+                )}
               </div>
               <button className="button button--ghost" onClick={() => void startPairing()}>
-                换一个码
+                {t.sync.pairing.regenerate}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      <span className="overline">已配对设备</span>
+      <span className="overline">{t.sync.devices.title}</span>
       {status?.devices.length === 0 ? (
-        <div className="empty">还没有配对的设备。</div>
+        <div className="empty">{t.sync.devices.empty}</div>
       ) : (
         <div className="list" style={{ maxWidth: 420 }}>
           {status?.devices.map((device) => (
@@ -247,7 +307,7 @@ function SyncSection() {
                   <span className="list-item__meta">
                     <span className="mono">{device.id}</span>
                     {device.lastSyncAt && (
-                      <span>上次同步 {new Date(device.lastSyncAt).toLocaleString()}</span>
+                      <span>{t.sync.devices.lastSync(formatDateTime(device.lastSyncAt))}</span>
                     )}
                   </span>
                 </span>
@@ -260,7 +320,7 @@ function SyncSection() {
                       setRevokingId(device.id)
                     }}
                   >
-                    撤销授权
+                    {t.sync.devices.revoke}
                   </button>
                 )}
               </div>
@@ -269,31 +329,29 @@ function SyncSection() {
               {revokingId === device.id && (
                 <div className="stack" style={{ gap: 8 }}>
                   <span className="note" style={{ margin: 0 }}>
-                    撤销后这台手机不能再同步。也可以同时清空它同步过来的内容：
-                    记录、标签、画布和媒体文件会被删除；豆子、冲煮、品鉴保留。
-                    清空不可恢复。
+                    {t.sync.devices.revokeExplain}
                   </span>
-                  <div className="row">
+                  <div className="row" style={{ flexWrap: 'wrap' }}>
                     <button
                       className="button button--ghost"
                       disabled={busy}
                       onClick={() => setRevokingId(null)}
                     >
-                      取消
+                      {t.sync.devices.cancel}
                     </button>
                     <button
                       className="button"
                       disabled={busy}
                       onClick={() => void confirmRevoke(device.id, false)}
                     >
-                      只撤销授权
+                      {t.sync.devices.revokeOnly}
                     </button>
                     <button
                       className="button button--danger"
                       disabled={busy}
                       onClick={() => void confirmRevoke(device.id, true)}
                     >
-                      撤销并清空内容
+                      {t.sync.devices.revokeAndWipe}
                     </button>
                   </div>
                 </div>
@@ -310,11 +368,11 @@ function SyncSection() {
       )}
 
       <div className="hairline" />
-      <span className="overline">冲突{conflicts.length > 0 ? ` · ${conflicts.length}` : ''}</span>
+      <span className="overline">
+        {conflicts.length > 0 ? t.sync.conflicts.titleWithCount(conflicts.length) : t.sync.conflicts.title}
+      </span>
       {conflicts.length === 0 ? (
-        <div className="note">
-          同一份数据在两端都被修改时会停在这里等你裁决，绝不静默覆盖。
-        </div>
+        <div className="note">{t.sync.conflicts.empty}</div>
       ) : (
         <div className="stack" style={{ maxWidth: 520 }}>
           {conflicts.map((conflict) => (
@@ -324,16 +382,15 @@ function SyncSection() {
                   {conflict.entityType} · {conflict.remoteSummary}
                 </span>
                 <span className="note mono" style={{ fontSize: 10 }}>
-                  {new Date(conflict.createdAt).toLocaleString()}
+                  {formatDateTime(conflict.createdAt)}
                 </span>
               </div>
               {conflict.remoteOperation === 'delete' && (
                 <div className="note" style={{ marginBottom: 8 }}>
-                  手机端删除了这条记录，但电脑端修改过它。保留则两端各留一份；
-                  接受将删除电脑端的这条记录。
+                  {t.sync.conflicts.deleteExplain}
                 </div>
               )}
-              <div className="row">
+              <div className="row" style={{ flexWrap: 'wrap' }}>
                 <button
                   className="button"
                   onClick={async () => {
@@ -341,28 +398,28 @@ function SyncSection() {
                     setConflicts(await api.sync.conflicts())
                   }}
                 >
-                  保留电脑版本
+                  {t.sync.conflicts.keepLocal}
                 </button>
                 <button
                   className="button button--primary"
                   onClick={async () => {
                     const message =
-                      conflict.remoteOperation === 'delete'
-                        ? '确认删除电脑端的这条记录？（手机端已删除）'
-                        : undefined
+                      conflict.remoteOperation === 'delete' ? t.sync.conflicts.confirmDelete : undefined
                     if (message && !window.confirm(message)) return
                     setStatus(await api.sync.resolveConflict(conflict.id, 'remote'))
                     setConflicts(await api.sync.conflicts())
                   }}
                 >
-                  {conflict.remoteOperation === 'delete' ? '接受删除' : '接受手机版本'}
+                  {conflict.remoteOperation === 'delete'
+                    ? t.sync.conflicts.acceptDelete
+                    : t.sync.conflicts.acceptRemote}
                 </button>
               </div>
             </div>
           ))}
         </div>
       )}
-    </>
+    </div>
   )
 }
 
@@ -373,6 +430,7 @@ function SyncSection() {
  * 真实值；明文 token 只在创建成功的那一次出现在这个组件里，关闭即不可再取。
  */
 function McpSection() {
+  const { t, formatDateTime } = useI18n()
   const [clients, setClients] = useState<McpClientInfo[]>([])
   const [status, setStatus] = useState<McpBridgeStatus | null>(null)
   const [name, setName] = useState('')
@@ -436,54 +494,57 @@ function McpSection() {
   const copy = async (text: string, label: string): Promise<void> => {
     try {
       await navigator.clipboard.writeText(text)
-      setCopyNote(`已复制${label}`)
+      setCopyNote(label)
     } catch {
-      setCopyNote('复制失败：请手动选择文本')
+      setCopyNote(t.common.copyFailed)
     }
   }
 
   return (
-    <>
-      <span className="overline">AI 连接</span>
-      <h2 className="detail-title">让 Codex、WorkBuddy 这类 Agent 读写你的 BrewPhase。</h2>
-      <div className="note" style={{ marginBottom: 14 }}>
-        每个客户端单独授权、单独撤销；权限检查在桌面端主进程完成，Agent 拿不到数据库，
-        也没有删除权限。写入只落在这台 Mac 上（不会自动同步到 iPhone）。
-        <br />
-        <span className="mono" style={{ fontSize: 10 }}>
-          Bridge：{status?.running ? `运行中 · ${status.socketPath ?? ''}` : '未运行'}
-          {status && !status.platformSupported ? '（当前平台 V1 不支持本地 Bridge）' : ''}
-        </span>
+    <div className="settings-section">
+      <h2 className="detail-title" style={{ marginTop: 0 }}>
+        {t.mcp.headline}
+      </h2>
+      <p className="note" style={{ marginBottom: 8 }}>
+        {t.mcp.intro}
+      </p>
+      <div className="note mono" style={{ fontSize: 10, marginBottom: 14 }}>
+        {status?.running
+          ? t.mcp.bridge.running(status.socketPath ?? '—')
+          : t.mcp.bridge.stopped}
+        {status && !status.platformSupported ? t.mcp.bridge.unsupported : ''}
       </div>
 
       {error && <div className="field-hint field-hint--error">{error}</div>}
 
       {created ? (
-        <div className="section">
-          <span className="overline">「{created.name}」已创建——token 只显示这一次</span>
+        <div className="panel" style={{ marginBottom: 20 }}>
+          <span className="overline" style={{ marginTop: 0 }}>
+            {t.mcp.created.title(created.name)}
+          </span>
           <div className="note" style={{ margin: '8px 0' }}>
             <span className="mono" style={{ wordBreak: 'break-all', fontSize: 11 }}>
               {created.token}
             </span>
           </div>
           <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-            <button className="button" onClick={() => void copy(created.token, ' token')}>
-              复制 Token
+            <button className="button" onClick={() => void copy(created.token, t.mcp.created.copyToken)}>
+              {t.mcp.created.copyToken}
             </button>
             <button
               className="button"
-              onClick={() => void copy(codexConfig(status, created.token), ' Codex 配置')}
+              onClick={() => void copy(codexConfig(status, created.token), t.mcp.created.copyCodex)}
             >
-              复制 Codex 配置
+              {t.mcp.created.copyCodex}
             </button>
             <button
               className="button"
-              onClick={() => void copy(workbuddyConfig(status, created.token), ' WorkBuddy 配置')}
+              onClick={() => void copy(workbuddyConfig(status, created.token), t.mcp.created.copyWorkBuddy)}
             >
-              复制 WorkBuddy 配置
+              {t.mcp.created.copyWorkBuddy}
             </button>
             <button className="button button--ghost" onClick={() => setCreated(null)}>
-              我已保存，收起
+              {t.mcp.created.dismiss}
             </button>
           </div>
           {copyNote && <div className="field-hint field-hint__ok">{copyNote}</div>}
@@ -495,15 +556,17 @@ function McpSection() {
           </pre>
         </div>
       ) : (
-        <div className="section">
-          <span className="overline">新建客户端</span>
+        <div className="panel" style={{ marginBottom: 20 }}>
+          <span className="overline" style={{ marginTop: 0 }}>
+            {t.mcp.create.title}
+          </span>
           <div className="field-row" style={{ gap: 10, alignItems: 'flex-end', marginTop: 8 }}>
             <div className="field" style={{ flex: '1 1 180px' }}>
-              <label htmlFor="mcp-client-name">名称</label>
+              <label htmlFor="mcp-client-name">{t.mcp.create.name}</label>
               <input
                 id="mcp-client-name"
                 value={name}
-                placeholder="例如 Codex / WorkBuddy"
+                placeholder={t.mcp.create.namePlaceholder}
                 maxLength={80}
                 onChange={(event) => setName(event.target.value)}
               />
@@ -513,13 +576,17 @@ function McpSection() {
               disabled={busy || !name.trim() || scopes.length === 0}
               onClick={() => void create()}
             >
-              创建并生成 Token
+              {t.mcp.create.submit}
             </button>
           </div>
           <div className="note" style={{ marginTop: 10 }}>
             {MCP_SCOPE_GROUPS.map((group) => (
-              <div key={group.label} className="row" style={{ gap: 12, flexWrap: 'wrap', marginBottom: 6 }}>
-                <span style={{ minWidth: 40 }}>{group.label}</span>
+              <div
+                key={group.group}
+                className="row"
+                style={{ gap: 12, flexWrap: 'wrap', marginBottom: 6 }}
+              >
+                <span style={{ minWidth: 40 }}>{t.mcp.create.scopeGroup[group.group]}</span>
                 {group.scopes.map((scope) => (
                   <label key={scope} className="row" style={{ gap: 4, cursor: 'pointer' }}>
                     <input
@@ -538,57 +605,62 @@ function McpSection() {
         </div>
       )}
 
-      <div className="section">
-        <span className="overline">已授权客户端</span>
-        {clients.length === 0 ? (
-          <div className="note" style={{ marginTop: 6 }}>
-            还没有已授权的客户端。
-          </div>
-        ) : (
-          <div style={{ display: 'grid', gap: 10, marginTop: 8 }}>
-            {clients.map((client) => {
-              const revoked = client.revokedAt !== null
-              return (
-                <div key={client.id} className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 600 }}>
-                      {client.name}
-                      {revoked && <span className="note">（已撤销）</span>}
-                    </div>
-                    <div className="mono" style={{ fontSize: 10, opacity: 0.7 }}>
-                      {client.scopes.join(' · ')}
-                    </div>
-                    <div className="note" style={{ fontSize: 10 }}>
-                      最近使用：{client.lastUsedAt ? new Date(client.lastUsedAt).toLocaleString() : '从未'}
-                    </div>
+      <span className="overline">{t.mcp.clients.title}</span>
+      {clients.length === 0 ? (
+        <div className="note" style={{ marginTop: 6 }}>
+          {t.mcp.clients.empty}
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gap: 10, marginTop: 8 }}>
+          {clients.map((client) => {
+            const revoked = client.revokedAt !== null
+            return (
+              <div key={client.id} className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600 }}>
+                    {client.name}
+                    {revoked && <span className="note">{t.mcp.clients.revoked}</span>}
                   </div>
-                  {!revoked &&
-                    (revokingId === client.id ? (
-                      <button className="button button--danger" disabled={busy} onClick={() => void revoke(client.id)}>
-                        确认撤销
-                      </button>
-                    ) : (
-                      <button className="button button--ghost" onClick={() => setRevokingId(client.id)}>
-                        撤销
-                      </button>
-                    ))}
+                  <div className="mono" style={{ fontSize: 10, opacity: 0.7 }}>
+                    {client.scopes.join(' · ')}
+                  </div>
+                  <div className="note" style={{ fontSize: 10 }}>
+                    {t.mcp.clients.lastUsed(
+                      client.lastUsedAt ? formatDateTime(client.lastUsedAt) : t.common.never
+                    )}
+                  </div>
                 </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
+                {!revoked &&
+                  (revokingId === client.id ? (
+                    <button
+                      className="button button--danger"
+                      disabled={busy}
+                      onClick={() => void revoke(client.id)}
+                    >
+                      {t.mcp.clients.revokeConfirm}
+                    </button>
+                  ) : (
+                    <button className="button button--ghost" onClick={() => setRevokingId(client.id)}>
+                      {t.mcp.clients.revoke}
+                    </button>
+                  ))}
+              </div>
+            )
+          })}
+        </div>
+      )}
 
-      <div className="section">
-        <span className="overline">本机连接信息</span>
+      <div className="hairline" />
+      <details className="settings-details">
+        <summary>{t.mcp.local.title}</summary>
         <div className="note" style={{ fontSize: 10, lineHeight: 1.9 }}>
-          MCP 入口：<span className="mono">{status?.mcpEntryPath ?? '—'}</span>
+          {t.mcp.local.entry}：<span className="mono">{status?.mcpEntryPath ?? '—'}</span>
           <br />
-          数据目录：<span className="mono">{status?.userDataDir ?? '—'}</span>
+          {t.mcp.local.dataDir}：<span className="mono">{status?.userDataDir ?? '—'}</span>
           <br />
-          启动命令：<span className="mono">node {status?.mcpEntryPath ?? '<out/mcp/stdio.mjs>'}</span>
+          {t.mcp.local.command}：<span className="mono">node {status?.mcpEntryPath ?? '<out/mcp/stdio.mjs>'}</span>
           <br />
-          需要先运行 <span className="mono">pnpm mcp:build</span>，并保持 BrewPhase Desktop 打开。
+          {t.mcp.local.buildHint('pnpm mcp:build')}
         </div>
         {status && (
           <button
@@ -597,15 +669,15 @@ function McpSection() {
             onClick={() =>
               void copy(
                 `node ${status.mcpEntryPath}\nuser-data: ${status.userDataDir}\nbridge: ${status.socketPath ?? 'n/a'} (v${status.protocolVersion})`,
-                '启动信息'
+                t.mcp.local.copyInfo
               )
             }
           >
-            复制启动信息
+            {t.mcp.local.copyInfo}
           </button>
         )}
-      </div>
-    </>
+      </details>
+    </div>
   )
 }
 

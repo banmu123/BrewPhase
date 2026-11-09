@@ -1,4 +1,5 @@
 import { test, expect, type ElectronApplication } from '@playwright/test'
+import { pinLocale } from './locale'
 import Database from 'better-sqlite3'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -85,8 +86,9 @@ test('手机同步写库后，Records 一直开着也能自动更新', async () 
     }
   })
   const page = await app.firstWindow()
+  await pinLocale(page)
   await page.waitForLoadState('domcontentloaded')
-  await page.getByRole('button', { name: 'Records', exact: true }).click()
+  await page.getByRole('button', { name: '记录', exact: true }).click()
   await expect(page.locator('.record-tile')).toHaveCount(3)
 
   // 先选中第一条：后面的写入不能把用户正在看的详情顶掉
@@ -158,9 +160,9 @@ test('手机同步写库后，Records 一直开着也能自动更新', async () 
   expect(new Set(titles).size).toBe(titles.length)
 
   // ── 离开页面后广播不再触发查询：切回来数据仍然正确 ────────────────
-  await page.getByRole('button', { name: 'Coffee', exact: true }).click()
+  await page.getByRole('button', { name: '咖啡', exact: true }).click()
   await broadcast(app)
-  await page.getByRole('button', { name: 'Records', exact: true }).click()
+  await page.getByRole('button', { name: '记录', exact: true }).click()
   await expect(page.locator('.record-tile')).toHaveCount(4)
 
   await page.screenshot({ path: '/tmp/records-sync-refresh.png' })

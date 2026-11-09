@@ -16,7 +16,8 @@ import { screenToWorld, zoomAt, CANVAS_LIMITS } from '@shared/contracts'
 import { embedURL } from '@shared/link-embed'
 import { nextNodeOrigin, fitViewport } from '@shared/domain/placement'
 import { previewFileFor } from './canvas-thumbnail-model'
-import { api, formatDate } from '../../shared/api'
+import { api } from '../../shared/api'
+import { useI18n } from '../../i18n'
 import { useAppStore } from '../../app/store'
 import { refreshThemeColors, themeColors } from '../../shared/tokens'
 import { CanvasThumbnail } from './CanvasThumbnail'
@@ -74,6 +75,8 @@ function contentRects(
 }
 
 export function CanvasPage() {
+  const { t, formatDate, formatNumber } = useI18n()
+
   // ===== 视图层级 =====
   const [view, setView] = useState<'gallery' | 'workspace'>('gallery')
   const [canvases, setCanvases] = useState<Canvas[]>([])
@@ -556,7 +559,7 @@ export function CanvasPage() {
           finalY = origin.y
         }
         batch.push({ x: finalX, y: finalY, width: node.width, height: node.height })
-        succeeded.push(record.title || '未命名记录')
+        succeeded.push(record.title || t.canvas.untitledRecord)
       } catch (cause) {
         lastError = (cause as Error).message
         break // 连续失败大概率是同一原因：停止本批，已成功的保留
@@ -566,7 +569,7 @@ export function CanvasPage() {
       setPickedItems((current) => {
         const next = new Map(current)
         for (const record of pickedItems.values()) {
-          if (succeeded.includes(record.title || '未命名记录')) next.delete(record.id)
+          if (succeeded.includes(record.title || t.canvas.untitledRecord)) next.delete(record.id)
         }
         return next
       })
@@ -574,12 +577,9 @@ export function CanvasPage() {
     }
     if (lastError) {
       const skipped = pickedItems.size - succeeded.length
-      setPickerError(
-        `已加入 ${succeeded.length} 项${succeeded.length ? `（${succeeded.join('、')}）` : ''}；` +
-          `${skipped} 项加入失败：${lastError}`
-      )
+      setPickerError(t.canvas.picker.batchPartial(succeeded.length, succeeded, skipped, lastError))
     }
-  }, [active, pickedItems, nodes, viewport, size, withSave, loadContent])
+  }, [active, pickedItems, nodes, viewport, size, withSave, loadContent, t])
 
   // MARK: - 笔迹
 
@@ -642,7 +642,7 @@ export function CanvasPage() {
   const confirmDialog = useCallback(async (): Promise<void> => {
     if (!dialog) return
     if (dialog.kind === 'create') {
-      const created = await api.canvas.create(dialog.value.trim() || '未命名画布')
+      const created = await api.canvas.create(dialog.value.trim() || t.canvas.untitledCanvas)
       await loadCanvases()
       setActiveId(created.id)
       setView('workspace')
@@ -650,7 +650,7 @@ export function CanvasPage() {
       return
     }
     if (dialog.kind === 'rename' && dialog.canvasId) {
-      await withSave(() => api.canvas.rename(dialog.canvasId!, dialog.value.trim() || '未命名画布'))
+      await withSave(() => api.canvas.rename(dialog.canvasId!, dialog.value.trim() || t.canvas.untitledCanvas))
       await loadCanvases()
       setDialog(null)
       return
@@ -664,7 +664,7 @@ export function CanvasPage() {
       await loadCanvases()
       setDialog(null)
     }
-  }, [dialog, activeId, loadCanvases, withSave])
+  }, [dialog, activeId, loadCanvases, withSave, t])
 
   // MARK: - Gallery
 
@@ -673,12 +673,15 @@ export function CanvasPage() {
       <div className="page">
         <header className="page-header">
           <div className="page-header__titles">
-            <h1 className="page-title">Canvas</h1>
-            <p className="page-sub">Your creative spaces · {canvases.length} 块</p>
+            <h1 className="page-title">{t.canvas.title}</h1>
+            <p className="page-sub">{t.canvas.gallerySubtitle(canvases.length)}</p>
           </div>
           <div className="page-header__actions">
-            <button className="button button--primary" onClick={() => setDialog({ kind: 'create', value: '新的画布' })}>
-              新建画布
+            <button
+              className="button button--primary"
+              onClick={() => setDialog({ kind: 'create', value: t.canvas.newCanvasName })}
+            >
+              {t.canvas.gallery.newCanvas}
             </button>
           </div>
         </header>
@@ -686,13 +689,11 @@ export function CanvasPage() {
         <div className="page-body">
           {error && <div className="error">{error}</div>}
           {galleryLoading ? (
-            <div className="empty">正在读取画布…</div>
+            <div className="empty">{t.canvas.gallery.loading}</div>
           ) : canvases.length === 0 ? (
             <div className="empty" style={{ padding: '60px 0' }}>
-              <strong>还没有画布。</strong>
-              <div style={{ marginTop: 8, color: 'var(--ink-faint)' }}>
-                画布是一个自己命名的空间，把记录里的东西放在一起连接与创造。
-              </div>
+              <strong>{t.canvas.gallery.emptyTitle}</strong>
+              <div style={{ marginTop: 8, color: 'var(--ink-faint)' }}>{t.canvas.gallery.emptyBody}</div>
             </div>
           ) : (
             <div className="gallery-grid">
@@ -701,24 +702,24 @@ export function CanvasPage() {
                   <button className="gallery-card__open" onClick={() => { setActiveId(canvas.id); setView('workspace') }}>
                     <CanvasThumbnail canvas={canvas} />
                     <span className="gallery-card__body">
-                      <span className="gallery-card__name">{canvas.name || '未命名画布'}</span>
+                      <span className="gallery-card__name">{canvas.name || t.canvas.untitledCanvas}</span>
                       {canvas.note && <span className="gallery-card__note">{canvas.note}</span>}
-                      <span className="gallery-card__meta">{formatDate(canvas.updatedAt)} 更新</span>
+                      <span className="gallery-card__meta">{t.canvas.updatedAt(formatDate(canvas.updatedAt))}</span>
                     </span>
                   </button>
                   <span className="gallery-card__actions">
                     <button
                       className="button button--ghost"
-                      title="重命名"
-                      aria-label={`重命名 ${canvas.name || '未命名画布'}`}
+                      title={t.canvas.gallery.rename}
+                      aria-label={t.canvas.gallery.renameNamed(canvas.name || t.canvas.untitledCanvas)}
                       onClick={() => setDialog({ kind: 'rename', canvasId: canvas.id, value: canvas.name || '' })}
                     >
                       ✎
                     </button>
                     <button
                       className="button button--ghost"
-                      title="删除画布"
-                      aria-label={`删除 ${canvas.name || '未命名画布'}`}
+                      title={t.canvas.gallery.deleteCanvas}
+                      aria-label={t.canvas.gallery.deleteNamed(canvas.name || t.canvas.untitledCanvas)}
                       onClick={() => setDialog({ kind: 'delete', canvasId: canvas.id, value: '' })}
                     >
                       ✕
@@ -750,8 +751,8 @@ export function CanvasPage() {
         <div className="canvas-topbar">
           <button
             className="button button--ghost canvas-back"
-            aria-label="返回画布集合"
-            title="返回画布集合"
+            aria-label={t.canvas.workspace.back}
+            title={t.canvas.workspace.back}
             onClick={() => {
               setPlayingNodeId(null)
               setView('gallery')
@@ -765,9 +766,9 @@ export function CanvasPage() {
                 className="switcher-trigger"
                 data-open={switcherOpen}
                 onClick={() => setSwitcherOpen((value) => !value)}
-                aria-label="切换画布"
+                aria-label={t.canvas.workspace.switchCanvas}
               >
-                <span className="switcher-trigger__name">{active.name || '未命名画布'}</span>
+                <span className="switcher-trigger__name">{active.name || t.canvas.untitledCanvas}</span>
                 <span className="switcher-trigger__arrow">▾</span>
               </button>
               {switcherOpen && (
@@ -775,12 +776,12 @@ export function CanvasPage() {
                   <div className="pop-backdrop" onClick={() => setSwitcherOpen(false)} />
                   <div className="switcher-pop" role="menu">
                     <div className="row row--between" style={{ padding: '2px 4px 10px' }}>
-                      <span className="overline" style={{ margin: 0 }}>My Canvases</span>
+                      <span className="overline" style={{ margin: 0 }}>{t.canvas.workspace.myCanvases}</span>
                       <button
                         className="button button--ghost"
-                        onClick={() => setDialog({ kind: 'create', value: '新的画布' })}
+                        onClick={() => setDialog({ kind: 'create', value: t.canvas.newCanvasName })}
                       >
-                        新建
+                        {t.canvas.workspace.newCanvas}
                       </button>
                     </div>
                     <div className="switcher-list">
@@ -793,26 +794,28 @@ export function CanvasPage() {
                               setSwitcherOpen(false)
                             }}
                           >
-                            <span className="switcher-item__name">{canvas.name || '未命名画布'}</span>
-                            <span className="switcher-item__meta">{formatDate(canvas.updatedAt)} 更新</span>
+                            <span className="switcher-item__name">{canvas.name || t.canvas.untitledCanvas}</span>
+                            <span className="switcher-item__meta">
+                              {t.canvas.updatedAt(formatDate(canvas.updatedAt))}
+                            </span>
                           </button>
                           <button
                             className="switcher-item__more"
-                            title="重命名"
+                            title={t.canvas.gallery.rename}
                             onClick={() => setDialog({ kind: 'rename', canvasId: canvas.id, value: canvas.name || '' })}
                           >
                             ✎
                           </button>
                           <button
                             className="switcher-item__more"
-                            title="删除画布"
+                            title={t.canvas.gallery.deleteCanvas}
                             onClick={() => setDialog({ kind: 'delete', canvasId: canvas.id, value: '' })}
                           >
                             ✕
                           </button>
                         </div>
                       ))}
-                      {canvases.length === 0 && <div className="empty">还没有画布。</div>}
+                      {canvases.length === 0 && <div className="empty">{t.canvas.gallery.emptyTitle}</div>}
                     </div>
                   </div>
                 </>
@@ -821,8 +824,8 @@ export function CanvasPage() {
           )}
           <SaveBadge state={saveState} />
           <span className="spacer" />
-          <button className="button button--ghost" title="沉浸模式" onClick={() => setFocusMode(true)}>
-            Focus
+          <button className="button button--ghost" title={t.canvas.workspace.focusMode} onClick={() => setFocusMode(true)}>
+            {t.canvas.workspace.focus}
           </button>
         </div>
 
@@ -1056,18 +1059,18 @@ export function CanvasPage() {
               </Layer>
             </Stage>
           ) : (
-            <div className="canvas-empty">还没有画布。返回集合新建一块开始。</div>
+            <div className="canvas-empty">{t.canvas.workspace.noCanvas}</div>
           )}
 
           {active && loadState === 'loading' && nodes.length === 0 && (
-            <div className="canvas-loading">正在读取画布…</div>
+            <div className="canvas-loading">{t.canvas.workspace.loading}</div>
           )}
 
           {active && loadState === 'error' && (
             <div className="canvas-failure">
-              <span>画布内容没能读出来。</span>
+              <span>{t.canvas.workspace.loadFailed}</span>
               <button className="button" onClick={() => active && void loadContent(active.id)}>
-                重新加载
+                {t.canvas.workspace.reload}
               </button>
             </div>
           )}
@@ -1081,7 +1084,7 @@ export function CanvasPage() {
             />
           )}
 
-          {active && tool === 'note' && <div className="canvas-hint">在画布上点一下，放一张便签</div>}
+          {active && tool === 'note' && <div className="canvas-hint">{t.canvas.workspace.noteHint}</div>}
 
           <StudioToolbar
             tool={tool}
@@ -1095,30 +1098,30 @@ export function CanvasPage() {
           />
 
           <div className="canvas-hud">
-            <span className="canvas-hud__zoom mono">{Math.round(viewport.scale * 100)}%</span>
+            <span className="canvas-hud__zoom mono">{formatNumber(Math.round(viewport.scale * 100))}%</span>
             <button
               className="button"
-              aria-label="缩小"
-              title="缩小"
+              aria-label={t.canvas.zoom.out}
+              title={t.canvas.zoom.out}
               onClick={() => { markUserAdjusted(); setViewport((current) => zoomAt(current, current.scale / 1.15, { x: size.width / 2, y: size.height / 2 })) }}
             >
               －
             </button>
             <button
               className="button"
-              aria-label="放大"
-              title="放大"
+              aria-label={t.canvas.zoom.in}
+              title={t.canvas.zoom.in}
               onClick={() => { markUserAdjusted(); setViewport((current) => zoomAt(current, current.scale * 1.15, { x: size.width / 2, y: size.height / 2 })) }}
             >
               ＋
             </button>
-            <button className="button" aria-label="适配全部内容" title="Fit All (0)" onClick={() => fitAll()}>
-              Fit
+            <button className="button" aria-label={t.canvas.zoom.fit} title={t.canvas.zoom.fitTitle} onClick={() => fitAll()}>
+              {t.canvas.zoom.fitLabel}
             </button>
             <button
               className="button"
-              aria-label="回到 100%"
-              title="100% (1)"
+              aria-label={t.canvas.zoom.reset}
+              title={t.canvas.zoom.resetTitle}
               onClick={() => { markUserAdjusted(); setViewport((current) => zoomAt(current, 1, { x: size.width / 2, y: size.height / 2 })) }}
             >
               1:1
@@ -1127,25 +1130,34 @@ export function CanvasPage() {
 
           {/* 添加记录：独立 Picker（搜索走 records.list 数据库谓词 + 分页 + 多选） */}
           {sidePanel === 'picker' && active && (
-            <aside className="picker-panel" role="dialog" aria-label="添加记录">
+            <aside className="picker-panel" role="dialog" aria-label={t.canvas.picker.title}>
               <div className="row row--between" style={{ marginBottom: 4 }}>
-                <span className="overline" style={{ margin: 0 }}>添加记录</span>
-                <button className="button button--ghost" aria-label="关闭面板" onClick={() => setSidePanel(null)}>
+                <span className="overline" style={{ margin: 0 }}>{t.canvas.picker.title}</span>
+                <button
+                  className="button button--ghost"
+                  aria-label={t.canvas.workspace.closePanel}
+                  onClick={() => setSidePanel(null)}
+                >
                   ✕
                 </button>
               </div>
-              <p className="page-sub" style={{ margin: '0 0 10px' }}>从你的收藏中挑选内容</p>
+              <p className="page-sub" style={{ margin: '0 0 10px' }}>{t.canvas.picker.subtitle}</p>
 
               <input
-                placeholder="搜索标题、备注、来源、作者…"
+                placeholder={t.canvas.picker.searchPlaceholder}
                 value={pickerSearch}
                 onChange={(event) => setPickerSearch(event.target.value)}
                 style={{ marginBottom: 10 }}
               />
 
               <div className="chips" style={{ marginBottom: 12 }}>
-                {([['all', '全部'], ['image', '图片'], ['video', '视频'], ['link', '链接'], ['text', '文字']] as const).map(
-                  ([key, label]) => (
+                {([
+                  ['all', t.canvas.carrier.all],
+                  ['image', t.canvas.carrier.image],
+                  ['video', t.canvas.carrier.video],
+                  ['link', t.canvas.carrier.link],
+                  ['text', t.canvas.carrier.text]
+                ] as const).map(([key, label]) => (
                     <button
                       key={key}
                       className="chip"
@@ -1189,7 +1201,7 @@ export function CanvasPage() {
                     >
                       {record.carrier === 'text' ? (
                         <span className="add-card__thumb add-card__thumb--text">
-                          {(record.title || record.summary || record.note || record.carrier).slice(0, 2)}
+                          {(record.title || record.summary || record.note || t.canvas.carrier[record.carrier]).slice(0, 2)}
                         </span>
                       ) : previewFileFor(record.carrier, record.previewPath, record.mediaPath) ? (
                         <img
@@ -1206,11 +1218,11 @@ export function CanvasPage() {
                         </span>
                       )}
                       <span className="add-card__body">
-                        <span className="add-card__title">{record.title || '未命名记录'}</span>
+                        <span className="add-card__title">{record.title || t.canvas.untitledRecord}</span>
                         <span className="add-card__meta">
-                          {record.carrier}
-                          {already && ' · 已在画布'}
-                          {isOn && ' · 已选择'}
+                          {t.canvas.carrier[record.carrier]}
+                          {already && t.canvas.picker.alreadyOnCanvas}
+                          {isOn && t.canvas.picker.selected}
                         </span>
                       </span>
                       <span className={`add-card__check${isOn ? ' add-card__check--on' : ''}`} aria-hidden>
@@ -1219,14 +1231,14 @@ export function CanvasPage() {
                     </button>
                   )
                 })}
-                {pickerLoading && <div className="empty">正在读取…</div>}
-                {pickerLoadingMore && <div className="empty">正在加载更多…</div>}
+                {pickerLoading && <div className="empty">{t.canvas.picker.loading}</div>}
+                {pickerLoadingMore && <div className="empty">{t.canvas.picker.loadingMore}</div>}
                 {!pickerLoading && pickerRecords.length === 0 && (
                   <div className="empty">
-                    没有匹配的记录。
+                    {t.canvas.picker.empty}
                     {pickerSearch.trim() && (
                       <button className="button" style={{ marginTop: 8 }} onClick={() => setPickerSearch('')}>
-                        清除搜索
+                        {t.canvas.picker.clearSearch}
                       </button>
                     )}
                   </div>
@@ -1236,7 +1248,7 @@ export function CanvasPage() {
 
               {pickedItems.size > 0 && (
                 <button className="button button--primary picker-join" onClick={() => void addPicked()}>
-                  加入 {pickedItems.size} 项
+                  {t.canvas.picker.addCount(pickedItems.size)}
                 </button>
               )}
             </aside>
@@ -1244,17 +1256,21 @@ export function CanvasPage() {
 
           {/* 选中内容：节点 / 便签 inspector（备注编辑只写 CanvasNode.annotation） */}
           {sidePanel === 'inspector' && active && (selectedNode || selectedNote) && (
-            <aside className="node-panel" role="dialog" aria-label="选中内容">
+            <aside className="node-panel" role="dialog" aria-label={t.canvas.inspector.title}>
               <div className="row row--between" style={{ marginBottom: 12 }}>
-                <span className="overline" style={{ margin: 0 }}>Selected</span>
-                <button className="button button--ghost" aria-label="关闭面板" onClick={() => setSidePanel(null)}>
+                <span className="overline" style={{ margin: 0 }}>{t.canvas.inspector.overline}</span>
+                <button
+                  className="button button--ghost"
+                  aria-label={t.canvas.workspace.closePanel}
+                  onClick={() => setSidePanel(null)}
+                >
                   ✕
                 </button>
               </div>
 
               {selectedNode ? (
                 <div className="stack">
-                  <div className="note">{selectedNode.recordTitle || '未命名记录'}</div>
+                  <div className="note">{selectedNode.recordTitle || t.canvas.untitledRecord}</div>
                   <div className="note mono">
                     {selectedNode.width}×{selectedNode.height} · ({selectedNode.positionX.toFixed(0)},{' '}
                     {selectedNode.positionY.toFixed(0)})
@@ -1266,16 +1282,16 @@ export function CanvasPage() {
                         setPlayingNodeId((current) => (current === selectedNode.id ? null : selectedNode.id))
                       }
                     >
-                      {playingNodeId === selectedNode.id ? '⏸ 停止播放' : '▶ 播放'}
+                      {playingNodeId === selectedNode.id ? t.canvas.inspector.stopPlay : t.canvas.inspector.play}
                     </button>
                   )}
 
                   {annotationDraft && annotationDraft.id === selectedNode.id ? (
                     <>
-                      <span className="overline">画布备注</span>
+                      <span className="overline">{t.canvas.inspector.annotationLabel}</span>
                       <textarea
                         value={annotationDraft.value}
-                        placeholder="只属于这块画布，不会改动记录本身。"
+                        placeholder={t.canvas.inspector.annotationPlaceholder}
                         autoFocus
                         onChange={(event) =>
                           setAnnotationDraft({ id: selectedNode.id, value: event.target.value })
@@ -1283,10 +1299,10 @@ export function CanvasPage() {
                       />
                       <div className="row">
                         <button className="button button--primary" onClick={() => void saveAnnotation()}>
-                          保存
+                          {t.common.save}
                         </button>
                         <button className="button" onClick={() => setAnnotationDraft(null)}>
-                          取消
+                          {t.common.cancel}
                         </button>
                       </div>
                     </>
@@ -1294,22 +1310,22 @@ export function CanvasPage() {
                     <>
                       {selectedNode.annotation && (
                         <div className="note" style={{ fontStyle: 'italic', color: 'var(--ink-soft)' }}>
-                          「{selectedNode.annotation}」
+                          {t.canvas.inspector.annotationQuote(selectedNode.annotation)}
                         </div>
                       )}
                       <button
                         className="button"
                         onClick={() => setAnnotationDraft({ id: selectedNode.id, value: selectedNode.annotation })}
                       >
-                        编辑画布备注
+                        {t.canvas.inspector.editAnnotation}
                       </button>
                     </>
                   )}
 
                   <button className="button button--danger" onClick={() => void removeNodeById(selectedNode.id)}>
-                    从画布移除
+                    {t.canvas.inspector.remove}
                   </button>
-                  <div className="note">只解除引用，原始记录还在记录库里。</div>
+                  <div className="note">{t.canvas.inspector.removeHint}</div>
                 </div>
               ) : selectedNote ? (
                 <NoteEditor
@@ -1332,7 +1348,7 @@ export function CanvasPage() {
                   return (
                     <>
                       <button role="menuitem" onClick={() => { openRecord(node.recordID); setContextMenu(null) }}>
-                        打开原记录
+                        {t.canvas.contextMenu.openRecord}
                       </button>
                       {node.recordURLString && (
                         <button
@@ -1342,7 +1358,7 @@ export function CanvasPage() {
                             setContextMenu(null)
                           }}
                         >
-                          打开原始来源
+                          {t.canvas.contextMenu.openSource}
                         </button>
                       )}
                       <button
@@ -1354,7 +1370,7 @@ export function CanvasPage() {
                           setContextMenu(null)
                         }}
                       >
-                        编辑画布备注
+                        {t.canvas.inspector.editAnnotation}
                       </button>
                       <button
                         role="menuitem"
@@ -1364,7 +1380,7 @@ export function CanvasPage() {
                           setContextMenu(null)
                         }}
                       >
-                        从画布移除
+                        {t.canvas.inspector.remove}
                       </button>
                     </>
                   )
@@ -1428,6 +1444,7 @@ function NodePlaySurface(props: {
   onStop: () => void
 }) {
   const { node, viewport, wrapElement } = props
+  const { t } = useI18n()
   const [, forceTick] = useState(0)
   // 窗口/容器尺寸变化 → 重取 getBoundingClientRect（fixed 坐标随布局走）。
   // handler 在 effect 内定义一次：add 与 remove 必须是同一个引用。
@@ -1471,7 +1488,7 @@ function NodePlaySurface(props: {
     body = (
       <iframe
         src={embed}
-        title="视频播放"
+        title={t.canvas.player.videoTitle}
         allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
         allowFullScreen
       />
@@ -1479,10 +1496,10 @@ function NodePlaySurface(props: {
   } else {
     body = (
       <div className="node-play-surface__error">
-        <span>视频加载失败。</span>
+        <span>{t.canvas.player.loadFailed}</span>
         {node.recordURLString && (
           <button className="button" onClick={() => window.open(node.recordURLString, '_blank')}>
-            在浏览器打开
+            {t.canvas.player.openInBrowser}
           </button>
         )}
       </div>
@@ -1498,7 +1515,12 @@ function NodePlaySurface(props: {
       onDoubleClick={(event) => event.stopPropagation()}
     >
       {body}
-      <button className="node-play-surface__stop" aria-label="停止播放" title="停止播放 (Esc)" onClick={props.onStop}>
+      <button
+        className="node-play-surface__stop"
+        aria-label={t.canvas.player.stop}
+        title={t.canvas.player.stopTitle}
+        onClick={props.onStop}
+      >
         ⏸
       </button>
     </div>
@@ -1514,21 +1536,27 @@ function CanvasDialog(props: {
   onConfirm: () => void
 }) {
   const { dialog } = props
+  const { t } = useI18n()
   const isDelete = dialog.kind === 'delete'
-  const title = dialog.kind === 'create' ? '新建画布' : dialog.kind === 'rename' ? '重命名画布' : '删除这块画布？'
+  const title =
+    dialog.kind === 'create'
+      ? t.canvas.dialog.createTitle
+      : dialog.kind === 'rename'
+        ? t.canvas.dialog.renameTitle
+        : t.canvas.dialog.deleteTitle
   return (
     <div className="dialog-backdrop" onClick={props.onCancel}>
       <div className="dialog" role="dialog" aria-label={title} onClick={(event) => event.stopPropagation()}>
         <strong>{title}</strong>
         {isDelete ? (
           <p className="page-sub" style={{ margin: 0 }}>
-            画布上的节点、便签和笔迹会一起消失；原始记录不受影响，删除后不可恢复。
+            {t.canvas.dialog.deleteBody}
           </p>
         ) : (
           <input
             value={dialog.value}
             autoFocus
-            placeholder="画布叫什么"
+            placeholder={t.canvas.dialog.namePlaceholder}
             onChange={(event) => props.onChange(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter') props.onConfirm()
@@ -1537,15 +1565,15 @@ function CanvasDialog(props: {
         )}
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button className="button" onClick={props.onCancel}>
-            取消
+            {t.common.cancel}
           </button>
           {isDelete ? (
             <button className="button button--danger" onClick={props.onConfirm}>
-              确认删除
+              {t.canvas.dialog.confirmDelete}
             </button>
           ) : (
             <button className="button button--primary" onClick={props.onConfirm}>
-              确认
+              {t.common.confirm}
             </button>
           )}
         </div>
@@ -1566,12 +1594,13 @@ function StudioToolbar(props: {
   onAddImage: () => void
   onAddRecord: () => void
 }) {
-  const items: Array<{ key: StudioTool; label: string; hint: string; glyph: string }> = [
-    { key: 'select', label: 'Select', hint: '选择 (V)', glyph: '◇' },
-    { key: 'hand', label: 'Hand', hint: '抓 Hand (H / Space)', glyph: '✋' },
-    { key: 'pen', label: 'Pen', hint: '画笔 (P)', glyph: '✎' },
-    { key: 'eraser', label: 'Eraser', hint: '按笔画擦除 (E)', glyph: '⌫' },
-    { key: 'note', label: 'Note', hint: '点画布放便签 (N)', glyph: '▤' }
+  const { t } = useI18n()
+  const items: Array<{ key: StudioTool; hint: string; glyph: string }> = [
+    { key: 'select', hint: t.canvas.tools.selectHint, glyph: '◇' },
+    { key: 'hand', hint: t.canvas.tools.handHint, glyph: '✋' },
+    { key: 'pen', hint: t.canvas.tools.penHint, glyph: '✎' },
+    { key: 'eraser', hint: t.canvas.tools.eraserHint, glyph: '⌫' },
+    { key: 'note', hint: t.canvas.tools.noteHint, glyph: '▤' }
   ]
   return (
     <div className="studio-toolbar">
@@ -1595,7 +1624,7 @@ function StudioToolbar(props: {
               className="studio-toolbar__color"
               style={{ background: color }}
               data-active={props.penColor === color}
-              aria-label={`画笔颜色 ${color}`}
+              aria-label={t.canvas.tools.penColor(color)}
               onClick={() => props.onPenColor(color)}
             />
           ))}
@@ -1604,31 +1633,36 @@ function StudioToolbar(props: {
       <span className="studio-toolbar__divider" />
       <button
         className="studio-toolbar__tool studio-toolbar__tool--wide"
-        title="新建便签 (N)"
+        title={t.canvas.toolbar.newNoteTitle}
         onClick={props.onNote}
       >
-        便签
+        {t.canvas.toolbar.note}
       </button>
-      <button className="studio-toolbar__tool studio-toolbar__tool--wide" title="导入图片" onClick={props.onAddImage}>
-        图片
+      <button
+        className="studio-toolbar__tool studio-toolbar__tool--wide"
+        title={t.canvas.toolbar.importImageTitle}
+        onClick={props.onAddImage}
+      >
+        {t.canvas.toolbar.image}
       </button>
       <button
         className="studio-toolbar__tool studio-toolbar__tool--wide"
         data-active={props.pickerActive}
-        title="添加记录"
+        title={t.canvas.toolbar.addRecordTitle}
         onClick={props.onAddRecord}
       >
-        记录
+        {t.canvas.toolbar.record}
       </button>
     </div>
   )
 }
 
 function SaveBadge({ state }: { state: SaveState }) {
+  const { t } = useI18n()
   if (state === 'idle') return null
   return (
     <span className="canvas-save" data-state={state}>
-      {state === 'saving' ? 'Saving…' : state === 'saved' ? 'Saved' : 'Save Failed'}
+      {state === 'saving' ? t.common.saving : state === 'saved' ? t.canvas.save.saved : t.canvas.save.failed}
     </span>
   )
 }
@@ -1644,6 +1678,7 @@ function NoteShape(props: {
   onMoved: (x: number, y: number) => void | Promise<void>
 }) {
   const colors = themeColors()
+  const { t } = useI18n()
   return (
     <Group
       x={props.note.positionX}
@@ -1673,7 +1708,7 @@ function NoteShape(props: {
         x={14}
         y={12}
         width={props.note.width - 28}
-        text={props.note.title || '便签'}
+        text={props.note.title || t.canvas.note.defaultTitle}
         fontSize={13}
         fontStyle="600"
         fontFamily={KONVA_FONT}
@@ -1688,7 +1723,7 @@ function NoteShape(props: {
         y={40}
         width={props.note.width - 28}
         height={props.note.height - 54}
-        text={props.note.body || '双击编辑这条想法。'}
+        text={props.note.body || t.canvas.note.defaultBody}
         fontSize={12}
         fontFamily={KONVA_FONT}
         fill={colors.inkSoft}
@@ -1705,16 +1740,17 @@ function NoteEditor(props: {
   onChange: (next: CanvasNote) => void
   onRemove: () => void
 }) {
+  const { t } = useI18n()
   return (
     <div className="stack">
       <input
         value={props.note.title}
-        placeholder="标题"
+        placeholder={t.canvas.note.titlePlaceholder}
         onChange={(event) => void props.onChange({ ...props.note, title: event.target.value })}
       />
       <textarea
         value={props.note.body}
-        placeholder="写点什么…"
+        placeholder={t.canvas.note.bodyPlaceholder}
         onChange={(event) => void props.onChange({ ...props.note, body: event.target.value })}
       />
       <div className="row">
@@ -1724,13 +1760,13 @@ function NoteEditor(props: {
             className="studio-toolbar__color"
             style={{ background: color }}
             data-active={props.note.color === color}
-            aria-label={`便签颜色 ${color}`}
+            aria-label={t.canvas.note.colorLabel(color)}
             onClick={() => void props.onChange({ ...props.note, color })}
           />
         ))}
         <span style={{ flex: 1 }} />
         <button className="button button--danger" onClick={props.onRemove}>
-          删除便签
+          {t.canvas.note.delete}
         </button>
       </div>
     </div>
@@ -1744,6 +1780,7 @@ function NoteEditorOverlay(props: {
   onChange: (next: CanvasNote) => void
   onClose: () => void
 }) {
+  const { t } = useI18n()
   const left = props.note.positionX * props.viewport.scale + props.viewport.offsetX
   const top = props.note.positionY * props.viewport.scale + props.viewport.offsetY
   return (
@@ -1757,13 +1794,13 @@ function NoteEditorOverlay(props: {
     >
       <input
         value={props.note.title}
-        placeholder="标题"
+        placeholder={t.canvas.note.titlePlaceholder}
         autoFocus
         onChange={(event) => void props.onChange({ ...props.note, title: event.target.value })}
       />
       <textarea
         value={props.note.body}
-        placeholder="写点什么…"
+        placeholder={t.canvas.note.bodyPlaceholder}
         onChange={(event) => void props.onChange({ ...props.note, body: event.target.value })}
       />
       <div className="row">
@@ -1773,13 +1810,13 @@ function NoteEditorOverlay(props: {
             className="studio-toolbar__color"
             style={{ background: color }}
             data-active={props.note.color === color}
-            aria-label={`便签颜色 ${color}`}
+            aria-label={t.canvas.note.colorLabel(color)}
             onClick={() => void props.onChange({ ...props.note, color })}
           />
         ))}
         <span style={{ flex: 1 }} />
         <button className="button" onClick={props.onClose}>
-          完成
+          {t.canvas.note.done}
         </button>
       </div>
     </div>
@@ -1802,6 +1839,7 @@ function CanvasNodeShape(props: {
   onResized?: (width: number, height: number) => void | Promise<void>
 }) {
   const { node, isPlaying } = props
+  const { t } = useI18n()
   const playback = playbackOf(node)
   // 按载体选预览文件（视频本体绝不当图片）；播放中封面不需要再加载。
   const image = useLocalImage(
@@ -1844,7 +1882,7 @@ function CanvasNodeShape(props: {
           radius={radius}
           selected={props.selected}
           missingSymbol="▣"
-          fallbackTitle="未命名记录"
+          fallbackTitle={t.canvas.untitledRecord}
         />
       )}
       {node.recordCarrier === 'video' && (
@@ -1856,7 +1894,7 @@ function CanvasNodeShape(props: {
             radius={radius}
             selected={props.selected}
             missingSymbol="▶"
-            fallbackTitle="未命名视频"
+            fallbackTitle={t.canvas.untitledVideo}
           />
           {playback !== null && !isPlaying && <PlayBadge onTogglePlay={props.onTogglePlay} node={node} />}
         </>
@@ -1997,6 +2035,7 @@ function LinkCardBody(props: {
   onOpenSource: () => void
 }) {
   const { node, image, colors } = props
+  const { t } = useI18n()
   const coverHeight = Math.max(60, Math.min(160, node.height * 0.5))
   const bodyTop = coverHeight
   const bodyHeight = node.height - coverHeight
@@ -2014,7 +2053,7 @@ function LinkCardBody(props: {
           x={12}
           y={bodyTop + 10}
           width={node.width - 24}
-          text={node.recordTitle || '未命名链接'}
+          text={node.recordTitle || t.canvas.untitledLink}
           fontSize={12.5}
           fontStyle="600"
           fontFamily={KONVA_FONT}
@@ -2092,6 +2131,7 @@ function TextCardBody(props: {
   selected: boolean
 }) {
   const { node, colors } = props
+  const { t } = useI18n()
   const hasTitle = !!node.recordTitle.trim()
   return (
     <>
@@ -2129,7 +2169,7 @@ function TextCardBody(props: {
         y={hasTitle ? 56 : 14}
         width={node.width - 28}
         height={node.height - (hasTitle ? 92 : 48)}
-        text={node.recordNote || '（没有正文）'}
+        text={node.recordNote || t.canvas.textCard.noBody}
         fontSize={12}
         fontFamily={KONVA_FONT}
         fill={colors.inkSoft}
@@ -2166,6 +2206,7 @@ function MissingMediaBody(props: {
   radius: number
 }) {
   const { node, colors } = props
+  const { t } = useI18n()
   return (
     <>
       <Rect
@@ -2191,7 +2232,7 @@ function MissingMediaBody(props: {
         x={12}
         y={node.height - 26}
         width={node.width - 24}
-        text={node.recordTitle || carrierLabelOf(node.recordCarrier)}
+        text={node.recordTitle || carrierLabelOf(t.canvas.carrier, node.recordCarrier)}
         fontSize={11}
         fontStyle="600"
         fontFamily={KONVA_FONT}
@@ -2253,14 +2294,15 @@ function CanvasEmptyState(props: {
   onAddNote: () => void
   onStartDraw: () => void
 }) {
+  const { t } = useI18n()
   return (
     <div className="canvas-empty canvas-empty--guide">
-      <span className="overline" style={{ margin: 0 }}>从一个小动作开始</span>
+      <span className="overline" style={{ margin: 0 }}>{t.canvas.empty.overline}</span>
       <div className="row" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
-        <button className="button" onClick={props.onAddRecord}>添加一条记录</button>
-        <button className="button" onClick={props.onAddImage}>导入一张图片</button>
-        <button className="button" onClick={props.onAddNote}>创建一张便签</button>
-        <button className="button" onClick={props.onStartDraw}>随手画一笔</button>
+        <button className="button" onClick={props.onAddRecord}>{t.canvas.empty.addRecord}</button>
+        <button className="button" onClick={props.onAddImage}>{t.canvas.empty.addImage}</button>
+        <button className="button" onClick={props.onAddNote}>{t.canvas.empty.addNote}</button>
+        <button className="button" onClick={props.onStartDraw}>{t.canvas.empty.draw}</button>
       </div>
     </div>
   )
@@ -2268,8 +2310,11 @@ function CanvasEmptyState(props: {
 
 const KONVA_FONT = "-apple-system, 'PingFang SC', 'Segoe UI', sans-serif"
 
-function carrierLabelOf(carrier: string): string {
-  return carrier === 'text' ? '文字' : carrier === 'link' ? '链接' : carrier === 'video' ? '视频' : '图片'
+function carrierLabelOf(
+  labels: { image: string; video: string; link: string; text: string },
+  carrier: string
+): string {
+  return carrier === 'text' ? labels.text : carrier === 'link' ? labels.link : carrier === 'video' ? labels.video : labels.image
 }
 
 function providerHostOf(node: CanvasNodeWithRecord): string {

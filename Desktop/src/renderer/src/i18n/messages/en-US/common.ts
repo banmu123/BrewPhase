@@ -1,0 +1,25 @@
+/** Shared wording used across modules. */
+export const common = {
+  cancel: 'Cancel',
+  confirm: 'Confirm',
+  save: 'Save',
+  saving: 'Saving…',
+  delete: 'Delete',
+  edit: 'Edit',
+  close: 'Close',
+  copy: 'Copy',
+  copied: 'Copied',
+  copyFailed: "Couldn't copy — select the text manually",
+  loading: 'Loading…',
+  retry: 'Retry',
+  search: 'Search',
+  clear: 'Clear',
+  all: 'All',
+  none: 'None',
+  unknown: 'Unknown',
+  never: 'Never',
+  empty: 'Nothing here yet',
+  error: 'Something went wrong',
+  count: (n: number) => `${n} records`,
+  fileCount: (n: number) => `${n} files`
+}

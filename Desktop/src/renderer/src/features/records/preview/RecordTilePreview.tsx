@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { RecordItem } from '@shared/contracts'
+import { useI18n } from '../../../i18n'
 import { BilibiliMark, ForkGlyph, GitHubMark, PlayGlyph, StarGlyph, XMark, YouTubeMark } from './PlatformMarks'
 import { buildPreview, formatCount, type RecordPreview } from './preview-model'
 
@@ -13,7 +14,15 @@ import { buildPreview, formatCount, type RecordPreview } from './preview-model'
  */
 
 export function RecordTilePreview(props: { item: RecordItem; mediaUrl: (name: string) => string }) {
-  const preview = useMemo(() => buildPreview(props.item, props.mediaUrl), [props.item, props.mediaUrl])
+  const { t } = useI18n()
+  const preview = useMemo(
+    () =>
+      buildPreview(props.item, props.mediaUrl, {
+        webPlatform: t.records.platform.web,
+        socialPost: t.records.preview.socialPost
+      }),
+    [props.item, props.mediaUrl, t]
+  )
   return <PreviewBody preview={preview} mediaUrl={props.mediaUrl} />
 }
 

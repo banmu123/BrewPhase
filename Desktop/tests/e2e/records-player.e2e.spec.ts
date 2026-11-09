@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { pinLocale } from './locale'
 import Database from 'better-sqlite3'
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -87,6 +88,7 @@ test('详情里的播放器：按内容 ID 播放、放大、非法 ID 不出现
     }
   })
   const page = await app.firstWindow()
+  await pinLocale(page)
 
   const stub = '<!doctype html><html><body><p>stub player</p></body></html>'
   await page.route('https://i.ytimg.com/**', (route) =>
@@ -100,7 +102,7 @@ test('详情里的播放器：按内容 ID 播放、放大、非法 ID 不出现
   )
 
   await page.waitForLoadState('domcontentloaded')
-  await page.getByRole('button', { name: 'Records', exact: true }).click()
+  await page.getByRole('button', { name: '记录', exact: true }).click()
   await expect(page.locator('.record-tile')).toHaveCount(3)
 
   // 1) 点卡片打开详情浮层；默认只显示封面：没有 iframe，点一下才创建

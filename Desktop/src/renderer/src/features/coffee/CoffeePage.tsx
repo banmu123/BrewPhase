@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Bean, BeanDraft, Brew, BrewDraft, PhaseRule, Tasting } from '@shared/contracts'
-import { dayAfterRoast, defaultRuleFor, phaseFor, PHASE_LABELS } from '@shared/domain/phase'
-import { api, formatDate, ratioText, toDateInput, toEpoch } from '../../shared/api'
+import { dayAfterRoast, defaultRuleFor, phaseFor } from '@shared/domain/phase'
+import { api, ratioText, toDateInput, toEpoch } from '../../shared/api'
+import { useI18n } from '../../i18n'
 
 /**
  * Coffee：豆子 → 冲煮 → 品鉴，三段同屏。
@@ -11,6 +12,7 @@ import { api, formatDate, ratioText, toDateInput, toEpoch } from '../../shared/a
  * 与提交，避免出现「界面算一套、落库算另一套」。
  */
 export function CoffeePage() {
+  const { t, formatDate, formatNumber } = useI18n()
   const [beans, setBeans] = useState<Bean[]>([])
   const [rules, setRules] = useState<PhaseRule[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -78,8 +80,8 @@ export function CoffeePage() {
     <div className="page">
       <header className="page-header">
         <div className="page-header__titles">
-          <h1 className="page-title">Coffee</h1>
-          <p className="page-sub">Your personal coffee shelf · {beans.length} 包在架</p>
+          <h1 className="page-title">{t.coffee.title}</h1>
+          <p className="page-sub">{t.coffee.shelfSummary(beans.length)}</p>
         </div>
         <div className="page-header__actions">
           <button
@@ -89,7 +91,7 @@ export function CoffeePage() {
               setPanelOpen(false)
             }}
           >
-            {creatingBean ? '收起表单' : '新增豆子'}
+            {creatingBean ? t.coffee.collapseForm : t.coffee.addBean}
           </button>
         </div>
       </header>
@@ -99,10 +101,10 @@ export function CoffeePage() {
           {error && <div className="error">{error}</div>}
 
           <section className="coffee-section">
-            <span className="overline">Currently Brewing</span>
+            <span className="overline">{t.coffee.currentlyBrewing}</span>
 
             {beans.length === 0 ? (
-              <div className="empty">还没有豆子。先记一包，冲煮与品鉴会挂到它下面。</div>
+              <div className="empty">{t.coffee.empty.noBeans}</div>
             ) : (
               <div className="shelf">
                 {beans.map((bean) => {
@@ -120,8 +122,8 @@ export function CoffeePage() {
                         setCreatingBean(false)
                       }}
                     >
-                      <span className="shelf-card__name">{bean.name || '未命名豆子'}</span>
-                      <span className="shelf-card__meta">{bean.roaster || '未填烘焙商'}</span>
+                      <span className="shelf-card__name">{bean.name || t.coffee.unnamedBean}</span>
+                      <span className="shelf-card__meta">{bean.roaster || t.coffee.noRoaster}</span>
                       <span className="shelf-card__stock mono">
                         {bean.remainingG.toFixed(0)} / {bean.weightG.toFixed(0)}g
                       </span>
@@ -133,7 +135,7 @@ export function CoffeePage() {
                         />
                       </div>
                       {beanPhase && (
-                        <span className={`badge badge--${beanPhase}`}>{PHASE_LABELS[beanPhase].title}</span>
+                        <span className={`badge badge--${beanPhase}`}>{t.coffee.phase[beanPhase].title}</span>
                       )}
                     </button>
                   )
@@ -144,7 +146,7 @@ export function CoffeePage() {
             {creatingBean && (
               <div className="panel" style={{ marginTop: 18, maxWidth: 460 }}>
                 <BeanForm
-                  title="新的一包豆"
+                  title={t.coffee.newBean}
                   onCancel={() => setCreatingBean(false)}
                   onSubmit={async (draft) => {
                     await api.coffee.createBean(draft)
@@ -159,12 +161,12 @@ export function CoffeePage() {
       </div>
 
       {panelOpen && selected && (
-        <aside className="float-panel" role="dialog" aria-label="豆子详情">
+        <aside className="float-panel" role="dialog" aria-label={t.coffee.beanDetail}>
           <div className="row row--between" style={{ marginBottom: 14 }}>
-            <span className="overline" style={{ margin: 0 }}>豆子档案</span>
+            <span className="overline" style={{ margin: 0 }}>{t.coffee.beanProfile}</span>
             <button
               className="button button--ghost"
-              aria-label="关闭详情"
+              aria-label={t.coffee.closeDetail}
               onClick={() => setPanelOpen(false)}
             >
               ✕
@@ -172,15 +174,15 @@ export function CoffeePage() {
           </div>
 
           <div className="hero">
-            <h2 className="hero__name">{selected.name || '未命名豆子'}</h2>
+            <h2 className="hero__name">{selected.name || t.coffee.unnamedBean}</h2>
             <div className="hero__meta">
-              <span>{selected.roaster || '未填烘焙商'}</span>
-              <span>{roastLabel(selected.roastLevel)}</span>
-              <span>烘焙 {formatDate(selected.roastDate)}</span>
-              {day != null && <span>第 {day} 天</span>}
+              <span>{selected.roaster || t.coffee.noRoaster}</span>
+              <span>{t.coffee.roastLevel[selected.roastLevel]}</span>
+              <span>{t.coffee.roastedOn(selected.roastDate != null ? formatDate(selected.roastDate) : '—')}</span>
+              {day != null && <span>{t.coffee.dayCount(day)}</span>}
               {phase && (
                 <span className={`badge badge--${phase}`}>
-                  {PHASE_LABELS[phase].title} · {PHASE_LABELS[phase].hint}
+                  {t.coffee.phase[phase].title} · {t.coffee.phase[phase].hint}
                 </span>
               )}
             </div>
@@ -191,7 +193,7 @@ export function CoffeePage() {
                   {selected.remainingG.toFixed(1)}g / {selected.weightG.toFixed(0)}g
                 </span>
                 <span style={{ fontSize: 10, color: 'var(--ink-faint)' }}>
-                  {selected.status === 'finished' ? '已喝完' : '在喝'}
+                  {selected.status === 'finished' ? t.coffee.status.finished : t.coffee.status.active}
                 </span>
               </div>
               <div className="stock-bar">
@@ -214,10 +216,10 @@ export function CoffeePage() {
           <div className="float-panel__section">
             <div className="row row--between" style={{ marginBottom: 10 }}>
               <span className="overline" style={{ margin: 0 }}>
-                冲煮 · {brews.length}
+                {t.coffee.brews(brews.length)}
               </span>
               <button className="button button--primary" onClick={() => setLoggingBrew((value) => !value)}>
-                记一杯
+                {t.coffee.logBrew}
               </button>
             </div>
 
@@ -234,7 +236,7 @@ export function CoffeePage() {
             )}
 
             {brews.length === 0 ? (
-              <div className="empty">还没有冲煮记录。记一杯，库存会按实际粉量扣。</div>
+              <div className="empty">{t.coffee.empty.noBrews}</div>
             ) : (
               brews.map((brew) => (
                 <div key={brew.id} className="brew-row">
@@ -243,14 +245,14 @@ export function CoffeePage() {
                     {brew.coffeeG}g → {brew.waterG}g
                   </span>
                   <span style={{ color: 'var(--ink-soft)' }}>
-                    {brew.method || '未填手法'} · {ratioText(brew.coffeeG, brew.waterG)}
+                    {brew.method || t.coffee.noMethod} · {ratioText(brew.coffeeG, brew.waterG)}
                   </span>
                   <span className="mono" style={{ color: 'var(--ink-faint)' }}>
                     {formatSeconds(brew.timeSeconds)}
                   </span>
                   <button
                     className="button button--ghost"
-                    title="删除这次冲煮，库存按实扣量退回"
+                    title={t.coffee.deleteBrewTitle}
                     onClick={async () => {
                       await api.coffee.deleteBrew(brew.id)
                       await refreshAll()
@@ -263,27 +265,27 @@ export function CoffeePage() {
             )}
 
             <div className="hairline" />
-            <span className="overline">品鉴 · {tastings.length}</span>
+            <span className="overline">{t.coffee.tastings(tastings.length)}</span>
             {tastings.length === 0 ? (
-              <div className="empty">还没有品鉴。记一杯之后会自动留下一条。</div>
+              <div className="empty">{t.coffee.empty.noTastings}</div>
             ) : (
               tastings.map((tasting) => (
                 <div key={tasting.id} className="brew-row" style={{ gridTemplateColumns: '76px 1fr 1fr 60px' }}>
                   <span className="brew-row__date">{formatDate(tasting.date)}</span>
-                  <span>第 {tasting.dayAfterRoast} 天</span>
+                  <span>{t.coffee.dayCount(tasting.dayAfterRoast)}</span>
                   <span style={{ color: 'var(--ink-soft)' }}>
-                    {tasting.flavorTags.join(' · ') || '未记风味'}
+                    {tasting.flavorTags.join(' · ') || t.coffee.noFlavor}
                   </span>
-                  <span className="mono">{tasting.score || '—'}</span>
+                  <span className="mono">{tasting.score ? formatNumber(tasting.score) : '—'}</span>
                 </div>
               ))
             )}
           </div>
 
           <div className="hairline" />
-          <span className="overline">编辑档案</span>
+          <span className="overline">{t.coffee.editProfile}</span>
           <BeanForm
-            title="编辑"
+            title={t.common.edit}
             bean={selected}
             onCancel={() => undefined}
             cancelLabel=""
@@ -294,33 +296,38 @@ export function CoffeePage() {
           />
 
           <div className="hairline" />
-          <span className="overline">风味窗口</span>
+          <span className="overline">{t.coffee.phaseWindow}</span>
           {rule ? (
             <>
               <div className="note">
-                养豆 {rule.restMinDays}–{rule.restMaxDays} 天 · 黄金 {rule.peakStartDay}–{rule.peakEndDay} 天 ·
-                第 {rule.declineStartDay} 天起衰减
+                {t.coffee.windowNote(
+                  rule.restMinDays,
+                  rule.restMaxDays,
+                  rule.peakStartDay,
+                  rule.peakEndDay,
+                  rule.declineStartDay
+                )}
               </div>
               <div className="note" style={{ marginTop: 8 }}>
-                基于默认窗口估算，不是保质期结论。
+                {t.coffee.windowNoteHint}
               </div>
             </>
           ) : (
-            <div className="empty">没有可用规则。</div>
+            <div className="empty">{t.coffee.empty.noRule}</div>
           )}
 
           <div className="hairline" />
           <button
             className="button button--danger"
             onClick={async () => {
-              if (!window.confirm(`删除「${selected.name}」？它的冲煮与品鉴会一并删除。`)) return
+              if (!window.confirm(t.coffee.confirmDeleteBean(selected.name))) return
               await api.coffee.deleteBean(selected.id)
               setPanelOpen(false)
               setSelectedId(null)
               await loadBeans()
             }}
           >
-            删除这包豆子
+            {t.coffee.deleteBean}
           </button>
         </aside>
       )}
@@ -337,6 +344,7 @@ function BeanForm(props: {
   onCancel: () => void
   onSubmit: (draft: BeanDraft) => Promise<void>
 }) {
+  const { t } = useI18n()
   const { bean } = props
   const [name, setName] = useState(bean?.name ?? '')
   const [roaster, setRoaster] = useState(bean?.roaster ?? '')
@@ -358,6 +366,7 @@ function BeanForm(props: {
         setError(null)
         try {
           await props.onSubmit({
+            // 落库默认值不随界面语言变化：数据语义应稳定（展示层再翻译空名称）。
             name: name.trim() || '未命名豆子',
             roaster,
             roastLevel,
@@ -378,61 +387,69 @@ function BeanForm(props: {
         {props.title}
       </span>
       <div className="field">
-        <label>名字</label>
-        <input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：哥伦比亚 粉波旁" />
+        <label>{t.coffee.form.name}</label>
+        <input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder={t.coffee.placeholder.name}
+        />
       </div>
       <div className="field">
-        <label>烘焙商</label>
-        <input value={roaster} onChange={(event) => setRoaster(event.target.value)} placeholder="例如：Onibus" />
+        <label>{t.coffee.form.roaster}</label>
+        <input
+          value={roaster}
+          onChange={(event) => setRoaster(event.target.value)}
+          placeholder={t.coffee.placeholder.roaster}
+        />
       </div>
       <div className="field">
-        <label>烘焙度</label>
+        <label>{t.coffee.form.roastLevel}</label>
         <select value={roastLevel} onChange={(event) => setRoastLevel(event.target.value as Bean['roastLevel'])}>
-          <option value="light">浅烘</option>
-          <option value="medium">中烘</option>
-          <option value="mediumDark">中深烘</option>
-          <option value="dark">深烘</option>
-          <option value="espressoBlend">意式拼配</option>
+          <option value="light">{t.coffee.roastLevel.light}</option>
+          <option value="medium">{t.coffee.roastLevel.medium}</option>
+          <option value="mediumDark">{t.coffee.roastLevel.mediumDark}</option>
+          <option value="dark">{t.coffee.roastLevel.dark}</option>
+          <option value="espressoBlend">{t.coffee.roastLevel.espressoBlend}</option>
         </select>
       </div>
       <div className="field-row">
         <div className="field">
-          <label>烘焙日期</label>
+          <label>{t.coffee.form.roastDate}</label>
           <input type="date" value={roastDate} onChange={(event) => setRoastDate(event.target.value)} />
         </div>
         <div className="field">
-          <label>开封日期</label>
+          <label>{t.coffee.form.openDate}</label>
           <input type="date" value={openDate} onChange={(event) => setOpenDate(event.target.value)} />
         </div>
       </div>
       <div className="field-row">
         <div className="field">
-          <label>总量 g</label>
+          <label>{t.coffee.form.weightG}</label>
           <input type="number" value={weightG} onChange={(event) => setWeightG(event.target.value)} />
         </div>
         <div className="field">
-          <label>剩余 g</label>
+          <label>{t.coffee.form.remainingG}</label>
           <input type="number" value={remainingG} onChange={(event) => setRemainingG(event.target.value)} />
         </div>
       </div>
       <div className="field">
-        <label>价格</label>
+        <label>{t.coffee.form.price}</label>
         <input type="number" value={price} onChange={(event) => setPrice(event.target.value)} />
       </div>
       {error && <div className="error">{error}</div>}
       <div className="row">
         <button className="button button--primary" type="submit" disabled={busy}>
-          {busy ? '保存中…' : '保存'}
+          {busy ? t.common.saving : t.common.save}
         </button>
         {props.cancelLabel !== '' && (
           <button className="button button--ghost" type="button" onClick={props.onCancel}>
-            {props.cancelLabel ?? '取消'}
+            {props.cancelLabel ?? t.common.cancel}
           </button>
         )}
       </div>
       {bean && (
         <div className="note">
-          改「剩余 g」等于一次盘点：之前的冲煮不再参与自动退粉。
+          {t.coffee.stockNote}
         </div>
       )}
     </form>
@@ -444,11 +461,13 @@ function BrewForm(props: {
   onCancel: () => void
   onSubmit: (draft: BrewDraft) => Promise<void>
 }) {
+  const { t } = useI18n()
   const [method, setMethod] = useState('V60')
   const [coffeeG, setCoffeeG] = useState('15')
   const [waterG, setWaterG] = useState('250')
   const [waterTemp, setWaterTemp] = useState('92')
   const [timeSeconds, setTimeSeconds] = useState('150')
+  // 研磨度是自由文本数据（会被保存并同步），默认值不跟随界面语言。
   const [grindSize, setGrindSize] = useState('中细')
   const [score, setScore] = useState('80')
   const [notes, setNotes] = useState('')
@@ -491,65 +510,53 @@ function BrewForm(props: {
     >
       <div className="field-row">
         <div className="field">
-          <label>手法</label>
+          <label>{t.coffee.brew.method}</label>
           <input value={method} onChange={(event) => setMethod(event.target.value)} />
         </div>
         <div className="field">
-          <label>研磨</label>
+          <label>{t.coffee.brew.grind}</label>
           <input value={grindSize} onChange={(event) => setGrindSize(event.target.value)} />
         </div>
       </div>
       <div className="field-row">
         <div className="field">
-          <label>粉量 g</label>
+          <label>{t.coffee.brew.coffeeG}</label>
           <input type="number" value={coffeeG} onChange={(event) => setCoffeeG(event.target.value)} />
         </div>
         <div className="field">
-          <label>水量 g</label>
+          <label>{t.coffee.brew.waterG}</label>
           <input type="number" value={waterG} onChange={(event) => setWaterG(event.target.value)} />
         </div>
       </div>
       <div className="field-row">
         <div className="field">
-          <label>水温 ℃</label>
+          <label>{t.coffee.brew.waterTemp}</label>
           <input type="number" value={waterTemp} onChange={(event) => setWaterTemp(event.target.value)} />
         </div>
         <div className="field">
-          <label>时间 秒</label>
+          <label>{t.coffee.brew.time}</label>
           <input type="number" value={timeSeconds} onChange={(event) => setTimeSeconds(event.target.value)} />
         </div>
       </div>
       <div className="field">
-        <label>评分</label>
+        <label>{t.coffee.brew.score}</label>
         <input type="number" value={score} onChange={(event) => setScore(event.target.value)} />
       </div>
       <div className="field">
-        <label>备注</label>
+        <label>{t.coffee.brew.notes}</label>
         <textarea value={notes} onChange={(event) => setNotes(event.target.value)} />
       </div>
       {error && <div className="error">{error}</div>}
       <div className="row">
         <button className="button button--primary" type="submit" disabled={busy}>
-          {busy ? '保存中…' : '保存这杯'}
+          {busy ? t.common.saving : t.coffee.brew.save}
         </button>
         <button className="button button--ghost" type="button" onClick={props.onCancel}>
-          取消
+          {t.common.cancel}
         </button>
       </div>
     </form>
   )
-}
-
-function roastLabel(level: Bean['roastLevel']): string {
-  return (
-    {
-      light: '浅烘',
-      medium: '中烘',
-      mediumDark: '中深烘',
-      dark: '深烘',
-      espressoBlend: '意式拼配'
-    } as Record<Bean['roastLevel'], string>
-  )[level]
 }
 
 function formatSeconds(seconds: number): string {

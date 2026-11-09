@@ -6,17 +6,8 @@ import { CanvasPage } from '../features/canvas/CanvasPage'
 import { CoffeePage } from '../features/coffee/CoffeePage'
 import { RecordsPage } from '../features/records/RecordsPage'
 import { SettingsPage } from '../features/settings/SettingsPage'
+import { useI18n } from '../i18n'
 import { useAppStore, type ModuleKey } from './store'
-
-const SPACES: { key: ModuleKey; label: string; hint: string; icon: typeof BeanIcon }[] = [
-  { key: 'records', label: 'Records', hint: 'Collect & Explore', icon: RecordsIcon },
-  { key: 'coffee', label: 'Coffee', hint: 'Observe & Experiment', icon: BeanIcon },
-  { key: 'canvas', label: 'Canvas', hint: 'Connect & Create', icon: CanvasIcon }
-]
-
-const SYSTEM: { key: ModuleKey; label: string; hint: string; icon: typeof BeanIcon }[] = [
-  { key: 'settings', label: '更多', hint: '应用与数据', icon: SlidersIcon }
-]
 
 /**
  * Light Studio 外壳：76px 窄侧边栏 + 自适应主工作区。
@@ -27,6 +18,7 @@ const SYSTEM: { key: ModuleKey; label: string; hint: string; icon: typeof BeanIc
  */
 export function App() {
   const { module, setModule } = useAppStore()
+  const { t } = useI18n()
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -37,7 +29,17 @@ export function App() {
       .catch((cause: Error) => setError(cause.message))
   }, [])
 
-  const renderItem = (item: (typeof SPACES)[number]) => {
+  const spaces: { key: ModuleKey; label: string; hint: string; icon: typeof BeanIcon }[] = [
+    { key: 'records', label: t.navigation.records, hint: t.navigation.hint.records, icon: RecordsIcon },
+    { key: 'coffee', label: t.navigation.coffee, hint: t.navigation.hint.coffee, icon: BeanIcon },
+    { key: 'canvas', label: t.navigation.canvas, hint: t.navigation.hint.canvas, icon: CanvasIcon }
+  ]
+
+  const systems: { key: ModuleKey; label: string; hint: string; icon: typeof BeanIcon }[] = [
+    { key: 'settings', label: t.navigation.settings, hint: t.navigation.hint.settings, icon: SlidersIcon }
+  ]
+
+  const renderItem = (item: (typeof spaces)[number]) => {
     const Icon = item.icon
     return (
       <button
@@ -62,17 +64,17 @@ export function App() {
           <span className="sr-only">BREWPHASE</span>
         </div>
 
-        <nav className="sidebar__nav">{SPACES.map(renderItem)}</nav>
+        <nav className="sidebar__nav">{spaces.map(renderItem)}</nav>
 
         <div className="sidebar__spacer" />
-        {SYSTEM.map(renderItem)}
+        {systems.map(renderItem)}
         <div className="sidebar__meta">{info ? `v${info.appVersion}` : '—'}</div>
       </aside>
 
       <main className="workspace">
         {error ? (
           <div className="empty" style={{ margin: 40 }}>
-            <strong>应用没能连上本地服务。</strong>
+            <strong>{t.navigation.appUnreachable}</strong>
             <div className="error">{error}</div>
           </div>
         ) : module === 'coffee' ? (

@@ -100,9 +100,26 @@ export function formatCount(value: number): string {
   return `${Math.round((value / 1_000_000) * 10) / 10}m`
 }
 
+/** 预览视图里需要按当前语言显示的固定文案（来自 i18n，避免纯逻辑层硬编码）。 */
+export type PreviewCopy = {
+  /** 网页平台没有域名可显示时的名称 */
+  webPlatform: string
+  /** X 动态没有标题时的占位名 */
+  socialPost: string
+}
+
+const DEFAULT_PREVIEW_COPY: PreviewCopy = {
+  webPlatform: '网页',
+  socialPost: '社交动态'
+}
+
 /** 记录 → 平台预览视图。mediaUrl 由调用方注入（bpmedia:// 文件名转换）。 */
-export function buildPreview(item: RecordItem, mediaUrl: (name: string) => string): RecordPreview {
-  const platform = detectPlatform(item)
+export function buildPreview(
+  item: RecordItem,
+  mediaUrl: (name: string) => string,
+  copy: PreviewCopy = DEFAULT_PREVIEW_COPY
+): RecordPreview {
+  const platform = detectPlatform(item, copy.webPlatform)
   // 记录字段 = iOS 同步数据 / 桌面用户编辑；metadata = Desktop 单方抓取。
   // 一律「记录优先、本地派生补空」，两边都不伪造。
   const local = item.metadata
@@ -216,7 +233,7 @@ export function buildPreview(item: RecordItem, mediaUrl: (name: string) => strin
         kind: remoteImage ? 'remote-image' : 'text',
         videoId: null,
         body: pick(item.summary, local?.description, item.note) || null,
-        title: item.title.trim() || (summary ? '' : '社交动态')
+        title: item.title.trim() || (summary ? '' : copy.socialPost)
       }
     }
     default: {

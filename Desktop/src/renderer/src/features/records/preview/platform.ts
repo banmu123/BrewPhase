@@ -67,32 +67,33 @@ function detectByProvider(item: RecordItem): PlatformType | null {
   return null
 }
 
-/** 网页平台的角标：域名（去掉 www.）；没有地址退回「网页」。 */
-function webLabel(item: RecordItem): string {
+/** 网页平台的角标：域名（去掉 www.）；没有地址退回本地化的「网页」。 */
+function webLabel(item: RecordItem, fallback: string): string {
   const raw = bestURLText(item)
   try {
     const url = new URL(raw)
     if (url.protocol === 'http:' || url.protocol === 'https:') {
-      return url.hostname.replace(/^www\./, '') || '网页'
+      return url.hostname.replace(/^www\./, '') || fallback
     }
   } catch {
     /* fallthrough */
   }
-  return '网页'
+  return fallback
 }
 
 /**
  * 记录的链接平台视图。本地媒体与文字不走这里（carrier 决定）。
  * provider 与 URL 现认冲突时**以 provider 为准**——它是创建时的解析结果。
+ * `webFallback` 只用于没有域名可显示的网页平台（由调用方按当前语言传入）。
  */
-export function detectPlatform(item: RecordItem): PlatformView {
+export function detectPlatform(item: RecordItem, webFallback = '网页'): PlatformView {
   if (item.carrier !== 'link') {
-    return { platform: 'web', label: webLabel(item), accent: 'var(--ink-faint)' }
+    return { platform: 'web', label: webLabel(item, webFallback), accent: 'var(--ink-faint)' }
   }
   const byProvider = detectByProvider(item)
   const platform = byProvider ?? detectByURL(item) ?? 'web'
   if (platform === 'web') {
-    return { platform: 'web', label: webLabel(item), accent: 'var(--ink-faint)' }
+    return { platform: 'web', label: webLabel(item, webFallback), accent: 'var(--ink-faint)' }
   }
   return PLATFORM_BRANDS[platform]
 }

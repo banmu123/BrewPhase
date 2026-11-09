@@ -1707,28 +1707,167 @@ textarea {
   animation: float-panel-in 0.18s ease;
 }
 
-/* ---------- Settings：分组列表 ---------- */
+/* ---------- Settings：二级导航 + 内容页 ---------- */
 
-.settings-flow {
+.settings-shell {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding: 8px 36px 56px;
+  display: grid;
+  grid-template-columns: 192px minmax(0, 1fr);
+  gap: 28px;
+  padding: 6px 36px 0;
+}
+
+.settings-nav {
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  max-width: 760px;
+  gap: 2px;
+  padding: 2px 0 24px;
+  min-width: 0;
 }
 
-.settings-group {
-  background: var(--card);
+.settings-nav__item {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: var(--radius-small);
+  color: var(--ink-soft);
+  font-size: var(--fs-callout);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.settings-nav__item:hover {
+  background: var(--well);
+  color: var(--ink);
+}
+
+.settings-nav__item[data-active='true'] {
+  background: var(--well-deep);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.settings-pane {
+  min-width: 0;
+  overflow: auto;
+  padding: 2px 8px 56px 2px;
+  scrollbar-gutter: stable;
+}
+
+.settings-section {
+  max-width: 720px;
+}
+
+.settings-subsection + .settings-subsection {
+  margin-top: 26px;
+  padding-top: 22px;
+  border-top: 1px solid var(--hairline);
+}
+
+.settings-subsection__title {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+
+/* 应用信息等键值列表 */
+.info-list {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 8px 16px;
+  margin: 10px 0 0;
+  font-size: var(--fs-callout);
+}
+
+.info-list dt {
+  color: var(--ink-faint);
+}
+
+.info-list dd {
+  margin: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* 语言分段控件 */
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--well);
   border: 1px solid var(--hairline);
-  border-radius: var(--radius);
-  padding: 18px 20px 20px;
+  border-radius: 999px;
 }
 
-.settings-group .overline {
-  margin-top: 0;
+.segmented__item {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 7px 16px;
+  border-radius: 999px;
+  font-size: var(--fs-callout);
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.segmented__item[data-active='true'] {
+  background: var(--card);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(48, 55, 47, 0.08);
+}
+
+/* 技术细节折叠（MCP 本机连接信息） */
+.settings-details {
+  margin-top: 12px;
+}
+
+.settings-details > summary {
+  cursor: pointer;
+  color: var(--ink-soft);
+  font-size: var(--fs-callout);
+  user-select: none;
+}
+
+.settings-details[open] > summary {
+  margin-bottom: 10px;
+}
+
+/* 窗口最小宽度是 980（window.ts 的 minWidth）；内容区低于此值就走顶部 Tabs。 */
+@media (max-width: 1000px) {
+  .settings-shell {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding: 6px 20px 0;
+  }
+
+  .settings-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 0 0 6px;
+    border-bottom: 1px solid var(--hairline);
+    gap: 4px;
+  }
+
+  .settings-nav__item {
+    padding: 8px 14px;
+  }
+
+  .settings-pane {
+    padding-right: 2px;
+  }
+
+  .info-list {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .info-list dt {
+    margin-top: 8px;
+  }
 }
 
 /* ---------- Quiet Studio 工具栏 / 沉浸模式 / 便签编辑 ---------- */

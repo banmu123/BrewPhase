@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { pinLocale } from './locale'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -31,8 +32,9 @@ test('新建链接：本地识别 + 保存不被阻塞', async () => {
     }
   })
   const page = await app.firstWindow()
+  await pinLocale(page)
   await page.waitForLoadState('domcontentloaded')
-  await page.getByRole('button', { name: 'Records', exact: true }).click()
+  await page.getByRole('button', { name: '记录', exact: true }).click()
 
   // 打开「新链接」表单
   await page.getByRole('button', { name: '新链接' }).click()

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { embedURL } from '@shared/link-embed'
 import { parseLink } from '@shared/link-parser'
+import { useI18n } from '../../../i18n'
 import type { RecordPreview } from './preview-model'
 
 /**
@@ -15,6 +16,7 @@ import type { RecordPreview } from './preview-model'
  */
 export function LinkPlayer(props: { preview: RecordPreview }) {
   const { preview } = props
+  const { t } = useI18n()
   const platform = preview.platform.platform
   // 记录里的 contentID 是权威值；早期同步过来的记录可能没有这个字段，
   // 再按地址现认一次——有地址却显示「不能播」才是最让人困惑的状态。
@@ -52,7 +54,7 @@ export function LinkPlayer(props: { preview: RecordPreview }) {
           <button
             type="button"
             className="link-player__cover"
-            aria-label={`播放：${preview.title}`}
+            aria-label={t.records.player.play(preview.title)}
             onClick={() => setPlaying(true)}
           >
             {preview.remoteImage ? (
@@ -67,16 +69,16 @@ export function LinkPlayer(props: { preview: RecordPreview }) {
 
       {zoomed ? (
         <button type="button" className="link-player__close" onClick={() => setZoomed(false)}>
-          关闭
+          {t.common.close}
         </button>
       ) : (
         <div className="link-player__bar">
           {/* 播放中不必再说明状态：iframe 摆在那里，「收起」就是它的反面动作。 */}
-          {!playing && <span className="link-player__note">点封面在 App 内播放</span>}
+          {!playing && <span className="link-player__note">{t.records.player.note}</span>}
           <span className="link-player__actions">
             {playing && (
               <button type="button" className="button button--ghost" onClick={() => setPlaying(false)}>
-                收起
+                {t.records.player.collapse}
               </button>
             )}
             <button
@@ -87,11 +89,11 @@ export function LinkPlayer(props: { preview: RecordPreview }) {
                 setZoomed(true)
               }}
             >
-              放大
+              {t.records.player.expand}
             </button>
             {preview.detailUrl && (
               <a className="button button--ghost" href={preview.detailUrl} target="_blank" rel="noreferrer">
-                浏览器打开
+                {t.records.player.openBrowser}
               </a>
             )}
           </span>

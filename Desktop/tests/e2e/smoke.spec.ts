@@ -1,4 +1,5 @@
 import { _electron as electron, expect, test } from '@playwright/test'
+import { pinLocale } from './locale'
 
 /**
  * E2E 冒烟：真的把 Electron 拉起来，确认主进程能开库、preload 桥能通、
@@ -24,24 +25,25 @@ test('应用启动、连上本地库、三个模块可切换', async () => {
     env: launchEnv()
   })
   const page = await app.firstWindow()
+  await pinLocale(page)
 
   await expect(page.locator('.sidebar__brand')).toHaveText('BREWPHASE')
   // `exact` 是必须的：这条用例跑在**真实库**上，豆名列里完全可能出现
   // 「启程咖啡」这种名字，模糊匹配会把豆子按钮一起选中（strict mode 直接失败）。
   const nav = (name: string) => page.getByRole('button', { name, exact: true })
-  await expect(nav('Coffee')).toBeVisible()
-  await expect(nav('Records')).toBeVisible()
-  await expect(nav('Canvas')).toBeVisible()
+  await expect(nav('咖啡')).toBeVisible()
+  await expect(nav('记录')).toBeVisible()
+  await expect(nav('画布')).toBeVisible()
 
   // 通过 preload 桥拿一次应用信息：能拿到就说明 IPC + 数据库都通了。
   const info = await page.evaluate(async () => window.brewphase.app.info())
   expect(info.dbSchemaVersion).toBe(1)
   expect(info.syncProtocolVersion).toBe(1)
 
-  await nav('Records').click()
-  await expect(page.getByRole('heading', { name: 'Records' })).toBeVisible()
+  await nav('记录').click()
+  await expect(page.getByRole('heading', { name: '记录' })).toBeVisible()
 
-  await nav('Canvas').click()
+  await nav('画布').click()
   await expect(page.locator('.gallery-grid')).toBeVisible() // Canvas 现在先进集合页（Gallery）
 
   await app.close()

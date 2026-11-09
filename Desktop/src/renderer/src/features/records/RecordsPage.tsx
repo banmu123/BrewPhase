@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { RecordCarrier, RecordDraft, RecordItem, RecordTag } from '@shared/contracts'
-import { carrierLabel } from '@shared/contracts'
 import { coalesce } from '@shared/coalesce'
-import { api, formatDate } from '../../shared/api'
+import { api } from '../../shared/api'
 import { useAppStore } from '../../app/store'
 import { SearchIcon } from '../../shared/icons'
-import { parseLink, providerLabel } from '@shared/link-parser'
+import { parseLink } from '@shared/link-parser'
+import { useI18n } from '../../i18n'
 import { LinkPlayer } from './preview/LinkPlayer'
 import { RecordTilePreview } from './preview/RecordTilePreview'
 import { detectPlatform } from './preview/platform'
@@ -30,6 +30,7 @@ const CARRIERS: (RecordCarrier | null)[] = [null, 'link', 'image', 'video', 'tex
  * `bpmedia://` 协议显示，renderer 从头到尾拿不到真实路径。
  */
 export function RecordsPage() {
+  const { t, formatDate, formatNumber } = useI18n()
   const [items, setItems] = useState<RecordItem[]>([])
   const [tags, setTags] = useState<RecordTag[]>([])
   const [search, setSearch] = useState('')
@@ -47,6 +48,10 @@ export function RecordsPage() {
    */
   const [pinnedRecord, setPinnedRecord] = useState<RecordItem | null>(null)
   const selected = items.find((item) => item.id === selectedId) ?? pinnedRecord
+  const previewCopy = useMemo(
+    () => ({ webPlatform: t.records.platform.web, socialPost: t.records.preview.socialPost }),
+    [t]
+  )
 
   // 画布双击节点跳转过来：按 ID 直接取记录详情（不依赖列表数据），然后清掉待办。
   // consume 放在 fetch 成功之后：StrictMode 下 effect 会双跑，先消费会取消第一次
@@ -63,7 +68,7 @@ export function RecordsPage() {
         if (!alive) return
         consumeOpenRecord()
         if (!record) {
-          setError('要打开的记录已经被删除。')
+          setError(t.records.errors.recordDeleted)
           return
         }
         setPinnedRecord(record)
@@ -73,7 +78,7 @@ export function RecordsPage() {
       .catch((cause: Error) => {
         if (alive) {
           consumeOpenRecord()
-          setError(`没能打开记录：${cause.message}`)
+          setError(t.records.errors.openFailed(cause.message))
         }
       })
     return () => {
@@ -163,31 +168,33 @@ export function RecordsPage() {
 
   // 详情区与播放器共用同一份预览视图：列表看到的和详情看到的永远一致。
   const selectedPreview = useMemo(
-    () => (selected ? buildPreview(selected, mediaUrl) : null),
-    [selected, mediaUrl]
+    () => (selected ? buildPreview(selected, mediaUrl, previewCopy) : null),
+    [selected, mediaUrl, previewCopy]
   )
 
   return (
     <div className="page">
       <header className="page-header">
         <div className="page-header__titles">
-          <h1 className="page-title">Records</h1>
-          <p className="page-sub">A personal collection of things that matter · {items.length} 条</p>
+          <h1 className="page-title">{t.records.title}</h1>
+          <p className="page-sub">
+            {t.records.subtitle} · {t.records.count(formatNumber(items.length))}
+          </p>
         </div>
         <div className="page-header__actions">
           <div className="search">
             <SearchIcon size={15} />
             <input
-              placeholder="搜索标题、备注、网址…"
+              placeholder={t.records.searchPlaceholder}
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
           </div>
           <button className="button button--ghost" onClick={() => setCreating('text')}>
-            新文字
+            {t.records.newText}
           </button>
           <button className="button button--primary" onClick={() => setCreating('link')}>
-            新链接
+            {t.records.newLink}
           </button>
           <button
             className="button button--ghost"
@@ -197,7 +204,7 @@ export function RecordsPage() {
                 if (!imported) return
                 const created = await api.records.create({
                   carrier: 'image',
-                  title: '导入的图片',
+                  title: t.records.importedImageTitle,
                   note: '',
                   urlString: '',
                   canonicalURL: null,
@@ -218,7 +225,7 @@ export function RecordsPage() {
               }
             }}
           >
-            导入图片
+            {t.records.importImage}
           </button>
         </div>
       </header>
@@ -235,7 +242,7 @@ export function RecordsPage() {
                     data-active={carrier === item}
                     onClick={() => setCarrier(item)}
                   >
-                    {item ? carrierLabel[item] : '全部'}
+                    {item ? t.records.carrier[item] : t.common.all}
                   </button>
                 ))}
               </div>
@@ -244,7 +251,7 @@ export function RecordsPage() {
                 onChange={(event) => setTagId(event.target.value || null)}
                 style={{ width: 160 }}
               >
-                <option value="">所有标签</option>
+                <option value="">{t.records.allTags}</option>
                 {tags.map((tag) => (
                   <option key={tag.id} value={tag.id}>
                     {tag.name}
@@ -277,7 +284,7 @@ export function RecordsPage() {
             )}
 
             {items.length === 0 ? (
-              <div className="empty">还没有记录。先从一条链接、一张图或一段文字开始。</div>
+              <div className="empty">{t.records.empty}</div>
             ) : (
               <div className="record-masonry">
                 {items.map((item) => (
@@ -301,20 +308,20 @@ export function RecordsPage() {
           </section>
 
           {panelOpen && selected && (
-          <aside className="float-panel" role="dialog" aria-label="记录详情">
+          <aside className="float-panel" role="dialog" aria-label={t.records.detail.ariaLabel}>
               <>
                 <div className="record-side__detail">
                   <div className="row row--between">
-                    <span className="overline" style={{ margin: 0 }}>{carrierLabel[selected.carrier]}</span>
+                    <span className="overline" style={{ margin: 0 }}>{t.records.carrier[selected.carrier]}</span>
                     <button
                       className="button button--ghost"
-                      aria-label="关闭详情"
+                      aria-label={t.records.detail.close}
                       onClick={() => setPanelOpen(false)}
                     >
                       ✕
                     </button>
                   </div>
-                  <h2 className="detail-title">{recordDisplayTitle(selected) || '未命名记录'}</h2>
+                  <h2 className="detail-title">{recordDisplayTitle(selected) || t.records.untitled}</h2>
                   <div className="detail-meta">
                     <span>{formatDate(selected.createdAt)}</span>
                     {(selected.sourceName || selected.metadata?.sourceName) && (
@@ -382,17 +389,18 @@ function RecordTile(props: {
   onClick: () => void
 }) {
   const { item } = props
-  const platform = useMemo(() => detectPlatform(item), [item])
+  const { t, formatDate } = useI18n()
+  const platform = useMemo(() => detectPlatform(item, t.records.platform.web), [item, t])
   // 平台标签：链接用平台识别，本地媒体与文字用载体名——本地内容不该显示「网页」。
-  const metaLabel = item.carrier === 'link' ? platform.label : carrierLabel[item.carrier]
+  const metaLabel = item.carrier === 'link' ? platform.label : t.records.carrier[item.carrier]
   const previewTitle = useMemo(() => {
     // 用户标题 → 本地派生标题 → GitHub 仓库身份 → 摘要首行 → 载体名
     const composed = recordDisplayTitle(item)
     if (composed) return composed
     const identity = item.platformContentID ?? item.metadata?.contentId ?? null
     if (platform.platform === 'github' && identity) return identity
-    return carrierLabel[item.carrier]
-  }, [platform, item])
+    return t.records.carrier[item.carrier]
+  }, [platform, item, t])
   // 视频平台把频道/UP 主带进元信息行（§顺手检查 2）。
   const metaAuthor =
     (platform.platform === 'youtube' || platform.platform === 'bilibili') && item.authorName
@@ -405,13 +413,13 @@ function RecordTile(props: {
       data-active={props.active}
       data-platform={platform.platform}
       onClick={props.onClick}
-      aria-label={previewTitle || carrierLabel[item.carrier]}
+      aria-label={previewTitle || t.records.carrier[item.carrier]}
     >
       <span className={`record-tile__media${item.carrier === 'text' ? ' record-tile__media--text' : ' record-tile__media--platform'}`}>
         <RecordTilePreview item={item} mediaUrl={props.mediaUrl} />
       </span>
       <span className="record-tile__body">
-        <span className="record-tile__title">{previewTitle || carrierLabel[item.carrier]}</span>
+        <span className="record-tile__title">{previewTitle || t.records.carrier[item.carrier]}</span>
         <span className="record-tile__meta">
           <span data-platform-label={platform.platform}>{metaLabel}</span>
           {metaAuthor && <span>{metaAuthor}</span>}
@@ -429,19 +437,20 @@ function RecordTile(props: {
 
 /** 表单里的本地识别状态行：已识别什么平台、内容 ID 是否取到。 */
 function ParsedLinkStatus(props: { parsed: ReturnType<typeof parseLink> | null }) {
+  const { t } = useI18n()
   const { parsed } = props
   if (!parsed) return null
   if (!parsed.valid) {
-    return <span className="field-hint field-hint--error">不是有效的网页地址（只支持 http/https）</span>
+    return <span className="field-hint field-hint--error">{t.records.link.invalid}</span>
   }
   const detail = parsed.shortLink
-    ? '短链接，保存后解析最终地址'
+    ? t.records.link.short
     : parsed.contentId
-      ? '已提取内容 ID，保存后获取预览'
-      : '保存后尝试获取预览'
+      ? t.records.link.contentId
+      : t.records.link.tryPreview
   return (
     <span className="field-hint">
-      <span className="field-hint__ok">已识别 {providerLabel[parsed.provider]}</span>
+      <span className="field-hint__ok">{t.records.link.recognized(t.records.provider[parsed.provider])}</span>
       <span> · {detail}</span>
     </span>
   )
@@ -453,6 +462,7 @@ function NewRecordForm(props: {
   onCancel: () => void
   onSubmit: (draft: RecordDraft) => Promise<void>
 }) {
+  const { t } = useI18n()
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
   const [url, setUrl] = useState('')
@@ -475,7 +485,7 @@ function NewRecordForm(props: {
         setError(null)
         try {
           if (props.carrier === 'link' && url.trim() && parsed && !parsed.valid) {
-            setError('这不是有效的网页地址，未保存')
+            setError(t.records.form.invalidUrlNotSaved)
             setBusy(false)
             return
           }
@@ -501,21 +511,21 @@ function NewRecordForm(props: {
       }}
     >
       <span className="overline" style={{ margin: 0 }}>
-        {props.carrier === 'text' ? '新文字' : '新链接'}
+        {props.carrier === 'text' ? t.records.newText : t.records.newLink}
       </span>
       <div className="field">
-        <label>标题</label>
+        <label>{t.records.form.title}</label>
         <input value={title} onChange={(event) => setTitle(event.target.value)} />
       </div>
       {props.carrier === 'link' ? (
         <div className="field">
-          <label>网址</label>
+          <label>{t.records.form.url}</label>
           <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://" />
           <ParsedLinkStatus parsed={parsed} />
         </div>
       ) : (
         <div className="field">
-          <label>正文</label>
+          <label>{t.records.form.body}</label>
           <textarea value={body} onChange={(event) => setBody(event.target.value)} />
         </div>
       )}
@@ -543,10 +553,10 @@ function NewRecordForm(props: {
           type="submit"
           disabled={busy || (props.carrier === 'link' && url.trim() !== '' && parsed != null && !parsed.valid)}
         >
-          {busy ? '保存中…' : '保存'}
+          {busy ? t.common.saving : t.common.save}
         </button>
         <button className="button button--ghost" type="button" onClick={props.onCancel}>
-          取消
+          {t.common.cancel}
         </button>
       </div>
     </form>
@@ -555,6 +565,7 @@ function NewRecordForm(props: {
 
 /** 详情侧栏的「预览信息」：与卡片共用 buildPreview 的结果，不另造一套取值。 */
 function PreviewInfo(props: { preview: RecordPreview }) {
+  const { t } = useI18n()
   const { preview } = props
   const stats: string[] = []
   if (preview.language) stats.push(preview.language)
@@ -571,14 +582,20 @@ function PreviewInfo(props: { preview: RecordPreview }) {
     <div className="preview-info">
       <div className="row row--between">
         <span className="overline" style={{ margin: 0 }}>
-          预览信息
+          {t.records.preview.title}
         </span>
         <span className="preview-info__chip" data-platform={preview.platform.platform}>
           {preview.platform.label}
         </span>
       </div>
-      {identity && <InfoRow label={preview.platform.platform === 'github' ? '仓库' : '内容'} value={identity} mono />}
-      {stats.length > 0 && <InfoRow label="数据" value={stats.join(' · ')} />}
+      {identity && (
+        <InfoRow
+          label={preview.platform.platform === 'github' ? t.records.preview.repository : t.records.preview.content}
+          value={identity}
+          mono
+        />
+      )}
+      {stats.length > 0 && <InfoRow label={t.records.preview.stats} value={stats.join(' · ')} />}
       {preview.description && <p className="preview-info__desc">{preview.description}</p>}
       {preview.remoteImage && (
         <img className="preview-info__thumb" src={preview.remoteImage} alt="" loading="lazy" referrerPolicy="no-referrer" />
@@ -602,6 +619,7 @@ function RecordInspector(props: {
   onChanged: () => Promise<void>
   onDeleted: () => void
 }) {
+  const { t, formatDate } = useI18n()
   const { item } = props
   // 编辑态带 dirty 标记：异步元数据补全后列表会重载，只有**用户没改过**的
   // 字段才跟随 item 同步（见 inspector-state.ts）。
@@ -625,7 +643,14 @@ function RecordInspector(props: {
   const urlChanged = urlString.trim() !== item.urlString.trim()
   const parsedUrl = useMemo(() => (urlChanged && urlString.trim() ? parseLink(urlString) : null), [urlChanged, urlString])
   // 与卡片用同一个组装结果，保证「列表看到的」和「详情看到的」永远一致
-  const preview = useMemo(() => buildPreview(item, api.records.mediaUrl), [item])
+  const preview = useMemo(
+    () =>
+      buildPreview(item, api.records.mediaUrl, {
+        webPlatform: t.records.platform.web,
+        socialPost: t.records.preview.socialPost
+      }),
+    [item, t]
+  )
 
   async function refreshPreview(force: boolean): Promise<void> {
     setRefreshing(true)
@@ -642,11 +667,11 @@ function RecordInspector(props: {
   return (
     <div className="stack">
       <span className="overline" style={{ margin: 0 }}>
-        记录属性
+        {t.records.inspector.title}
       </span>
       {item.carrier === 'link' && (
         <div className="field">
-          <label>网址</label>
+          <label>{t.records.form.url}</label>
           <input value={urlString} onChange={(event) => setUrlString(event.target.value)} placeholder="https://" />
           {urlChanged && <ParsedLinkStatus parsed={parsedUrl} />}
         </div>
@@ -655,12 +680,12 @@ function RecordInspector(props: {
         <div className="row row--between">
           <span className="note" style={{ margin: 0 }}>
             {item.metadataStatus === 'pending'
-              ? '正在获取预览…'
+              ? t.records.metadata.pending
               : item.metadataStatus === 'ok' || item.metadataStatus === 'resolved'
-                ? '预览信息已更新'
+                ? t.records.metadata.ok
                 : item.metadataStatus === 'partial'
-                  ? '已获取部分预览信息'
-                  : '暂时无法获取预览'}
+                  ? t.records.metadata.partial
+                  : t.records.metadata.unavailable}
           </span>
           <button
             className="button button--ghost"
@@ -668,28 +693,32 @@ function RecordInspector(props: {
             disabled={refreshing}
             onClick={() => void refreshPreview(true)}
           >
-            {refreshing ? '获取中…' : item.metadataStatus === 'failed' || item.metadataStatus === 'idle' ? '获取预览' : '刷新预览'}
+            {refreshing
+              ? t.records.metadata.fetching
+              : item.metadataStatus === 'failed' || item.metadataStatus === 'idle'
+                ? t.records.metadata.fetch
+                : t.records.metadata.refresh}
           </button>
         </div>
       )}
       {item.carrier === 'link' && <PreviewInfo preview={preview} />}
       <div className="field">
-        <label>标题</label>
+        <label>{t.records.form.title}</label>
         <input
           value={title}
           placeholder={item.metadata?.title ?? ''}
           onChange={(event) => setTitle(event.target.value)}
         />
         {!title.trim() && item.metadata?.title && (
-          <span className="field-hint">灰字是本机抓到的标题，输入后才会成为你的标题</span>
+          <span className="field-hint">{t.records.inspector.titleHint}</span>
         )}
       </div>
       <div className="field">
-        <label>备注</label>
+        <label>{t.records.inspector.note}</label>
         <textarea value={note} onChange={(event) => setNote(event.target.value)} style={{ minHeight: 90 }} />
       </div>
       <div className="field">
-        <label>标签</label>
+        <label>{t.records.inspector.tags}</label>
         <div className="chips">
           {props.tags.map((tag) => (
             <button
@@ -709,7 +738,7 @@ function RecordInspector(props: {
         </div>
       </div>
       <div className="row">
-        <input placeholder="新标签" value={newTag} onChange={(event) => setNewTag(event.target.value)} />
+        <input placeholder={t.records.inspector.newTag} value={newTag} onChange={(event) => setNewTag(event.target.value)} />
         <button
           className="button"
           type="button"
@@ -721,7 +750,7 @@ function RecordInspector(props: {
             await props.onChanged()
           }}
         >
-          添加
+          {t.records.inspector.addTag}
         </button>
       </div>
 
@@ -770,32 +799,32 @@ function RecordInspector(props: {
             }
           }}
         >
-          {busy ? '保存中…' : '保存修改'}
+          {busy ? t.common.saving : t.records.inspector.saveChanges}
         </button>
         <button
           className="button button--danger"
           onClick={async () => {
-            if (!window.confirm('删除这条记录？它所在的画布节点会一起消失。')) return
+            if (!window.confirm(t.records.inspector.deleteConfirm)) return
             await api.records.remove(item.id)
             props.onDeleted()
           }}
         >
-          删除
+          {t.common.delete}
         </button>
       </div>
 
       <div className="hairline" />
-      <span className="overline">信息</span>
+      <span className="overline">{t.records.inspector.info}</span>
       <div className="note">
-        载体：{carrierLabel[item.carrier]}
+        {t.records.inspector.carrierLine(t.records.carrier[item.carrier])}
         <br />
-        创建：{formatDate(item.createdAt)}
+        {t.records.inspector.createdLine(formatDate(item.createdAt))}
         <br />
-        修改：{formatDate(item.updatedAt)}
+        {t.records.inspector.updatedLine(formatDate(item.updatedAt))}
         {item.mediaPath && (
           <>
             <br />
-            文件：{item.mediaPath}
+            {t.records.inspector.fileLine(item.mediaPath)}
           </>
         )}
       </div>

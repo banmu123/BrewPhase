@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { pinLocale } from './locale'
 import Database from 'better-sqlite3'
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -105,6 +106,7 @@ test('Records 平台差异化卡片视觉验收', async () => {
     }
   })
   const page = await app.firstWindow()
+  await pinLocale(page)
 
   // mock 远程缩略图：og 图与 YouTube 官方缩略图都不依赖真实网络
   await page.route('https://mock.test/**', (route) => route.fulfill({ status: 200, body: MOCK_PNG, contentType: 'image/png' }))

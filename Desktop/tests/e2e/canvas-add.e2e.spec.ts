@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { pinLocale } from './locale'
 import Database from 'better-sqlite3'
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -102,6 +103,7 @@ async function launch(fixture: Fixture) {
     }
   })
   const page = await app.firstWindow()
+  await pinLocale(page)
   await page.waitForLoadState('domcontentloaded')
   return { app, page }
 }
@@ -248,7 +250,7 @@ test('画布：Gallery 导航、多选批量、拖动、双击打开、画布备
   const { app, page } = await launch(fixture)
 
   // 1) Gallery：集合页出现，卡片有真实缩略图容器
-  await page.getByRole('button', { name: 'Canvas', exact: true }).click()
+  await page.getByRole('button', { name: '画布', exact: true }).click()
   await expect(page.locator('.gallery-grid')).toBeVisible()
   await expect(page.locator('.gallery-card')).toHaveCount(1)
   await expect(page.locator('.gallery-card__name')).toHaveText('第一块画布')
@@ -315,11 +317,11 @@ test('画布：Gallery 导航、多选批量、拖动、双击打开、画布备
   await page.mouse.dblclick(center.x, center.y)
   await page.waitForTimeout(600)
   // sidebar 的 Records 高亮 + 详情浮层出现
-  await expect(page.locator('.sidebar__item[data-active="true"]')).toHaveText(/Records/)
+  await expect(page.locator('.sidebar__item[data-active="true"]')).toHaveText('记录')
   await expect(page.locator('.float-panel')).toBeVisible({ timeout: 5_000 })
 
   // 8) 回到 Canvas → 重进画布 → 返回 Gallery：空间缩略图出现
-  await page.getByRole('button', { name: 'Canvas', exact: true }).click()
+  await page.getByRole('button', { name: '画布', exact: true }).click()
   await page.locator('.gallery-card__open').click()
   await expect(page.locator('.canvas-topbar')).toBeVisible()
   await page.locator('.canvas-back').click()
@@ -347,7 +349,7 @@ test('画布：链接节点的 Embed 播放（iframe 只由内容 ID 拼白名�
     route.fulfill({ status: 200, body: stub, contentType: 'text/html' })
   )
 
-  await page.getByRole('button', { name: 'Canvas', exact: true }).click()
+  await page.getByRole('button', { name: '画布', exact: true }).click()
   await page.locator('.gallery-card__open').click()
   await expect(page.locator('.canvas-topbar')).toBeVisible()
 
@@ -402,7 +404,7 @@ test('画布：本地视频真实播放、生命周期单实例与播放器定�
   seed(fixture)
   const { app, page } = await launch(fixture)
 
-  await page.getByRole('button', { name: 'Canvas', exact: true }).click()
+  await page.getByRole('button', { name: '画布', exact: true }).click()
   await page.locator('.gallery-card__open').click()
   await expect(page.locator('.canvas-topbar')).toBeVisible()
 

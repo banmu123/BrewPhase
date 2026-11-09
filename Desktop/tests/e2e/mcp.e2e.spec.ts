@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { _electron as electron, expect, test } from '@playwright/test'
+import { pinLocale } from './locale'
 import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 
@@ -31,6 +32,7 @@ test('MCP：Bridge 随 App 启停、Agent 写入、UI 刷新、撤销即失效',
   const userData = mkdtempSync(join(tmpdir(), 'brewphase-mcp-e2e-'))
   const app = await electron.launch({ args: ['.', '--no-sandbox', '--disable-gpu'], env: launchEnv(userData) })
   const page = await app.firstWindow()
+  await pinLocale(page)
   await expect(page.locator('.sidebar__brand')).toHaveText('BREWPHASE')
 
   // 1) Bridge 随主进程启动，而且 socket 文件真实存在
@@ -74,7 +76,7 @@ test('MCP：Bridge 随 App 启停、Agent 写入、UI 刷新、撤销即失效',
   expect((createdRecord.structuredContent as { sync_status: string }).sync_status).toBe('desktop_local_only')
 
   // 4) 不切页也自动刷新：Records 页面订阅了 app:changed
-  await page.getByRole('button', { name: 'Records', exact: true }).click()
+  await page.getByRole('button', { name: '记录', exact: true }).click()
   await expect(page.getByText(title, { exact: false }).first()).toBeVisible({ timeout: 10_000 })
 
   // 5) 画布写入同样走真链（创建画布 + 便签）
@@ -90,7 +92,7 @@ test('MCP：Bridge 随 App 启停、Agent 写入、UI 刷新、撤销即失效',
   })
   expect(note.isError).toBeFalsy()
 
-  await page.getByRole('button', { name: 'Canvas', exact: true }).click()
+  await page.getByRole('button', { name: '画布', exact: true }).click()
   await expect(page.getByText('E2E 画布').first()).toBeVisible({ timeout: 10_000 })
 
   // 6) 撤销后下一次调用 → UNAUTHORIZED（Main 每请求查库）
@@ -111,6 +113,7 @@ test('MCP：Bridge 随 App 启停、Agent 写入、UI 刷新、撤销即失效',
   // 8) 重启：Bridge 能重新启动（失效 socket 不会挡路）
   const app2 = await electron.launch({ args: ['.', '--no-sandbox', '--disable-gpu'], env: launchEnv(userData) })
   const page2 = await app2.firstWindow()
+  await pinLocale(page2)
   await expect(page2.locator('.sidebar__brand')).toHaveText('BREWPHASE')
   const status2 = await page2.evaluate(async () => window.brewphase.mcp.bridgeStatus())
   expect(status2.running).toBe(true)

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { pinLocale } from './locale'
 import Database from 'better-sqlite3'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -70,15 +71,17 @@ test('撤销授权并清空：同步实体清零，豆子保留', async () => {
     }
   })
   const page = await app.firstWindow()
+  await pinLocale(page)
   await page.waitForLoadState('domcontentloaded')
 
   // 清空之前：记录页有内容
-  await page.getByRole('button', { name: 'Records', exact: true }).click()
+  await page.getByRole('button', { name: '记录', exact: true }).click()
   await expect(page.locator('.record-tile')).toHaveCount(1)
   await expect(page.locator('.record-tile', { hasText: '撤销测试记录' })).toHaveCount(1)
 
-  // 设置页 → 撤销授权 → 选「撤销并清空内容」
+  // 设置页 → 设备同步子页 → 撤销授权 → 选「撤销并清空内容」
   await page.getByRole('button', { name: '更多', exact: true }).click()
+  await page.getByRole('button', { name: '设备同步', exact: true }).click()
   await expect(page.getByText('已配对设备')).toBeVisible()
   await page.getByRole('button', { name: '撤销授权' }).click()
   // 两个后果分开的按钮：确认 UI 没有把「清空」藏在默认动作里
@@ -104,14 +107,14 @@ test('撤销授权并清空：同步实体清零，豆子保留', async () => {
   }
 
   // 记录页跟着变空（撤销时广播了 sync:changed）
-  await page.getByRole('button', { name: 'Records', exact: true }).click()
+  await page.getByRole('button', { name: '记录', exact: true }).click()
   await expect(page.locator('.record-tile')).toHaveCount(0)
   await page.waitForTimeout(600)
   await expect(page.locator('.record-tile')).toHaveCount(0)
   await expect(page.getByText('还没有记录。先从一条链接、一张图或一段文字开始。')).toBeVisible()
 
   // 咖啡数据一条都不能少
-  await page.getByRole('button', { name: 'Coffee', exact: true }).click()
+  await page.getByRole('button', { name: '咖啡', exact: true }).click()
   await expect(page.getByText('耶加雪菲 沃卡').first()).toBeVisible()
 
   await page.screenshot({ path: '/tmp/sync-unpair-wipe.png' })

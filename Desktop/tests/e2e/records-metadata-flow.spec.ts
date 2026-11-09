@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { pinLocale } from './locale'
 import Database from 'better-sqlite3'
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -63,8 +64,9 @@ test('同步链接的元数据补全：卡片/详情/搜索/编辑优先级', as
     }
   })
   const page = await app.firstWindow()
+  await pinLocale(page)
   await page.waitForLoadState('domcontentloaded')
-  await page.getByRole('button', { name: 'Records', exact: true }).click()
+  await page.getByRole('button', { name: '记录', exact: true }).click()
 
   // 1) 启动恢复 → 抓取 → 卡片标题从 pending 变成自动标题（不需要重启/切页）
   await expect(page.locator('.record-tile__title')).toHaveText('banmu123/BrewPhase', { timeout: 20_000 })
