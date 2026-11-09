@@ -21,15 +21,6 @@ struct ExportBundle: Codable, Equatable {
 
     static let currentFormatVersion = 1
 
-    static let empty = ExportBundle(
-        app: "BrewPhase",
-        formatVersion: currentFormatVersion,
-        appVersion: "1.0",
-        exportedAt: Date(),
-        disclaimer: DefaultPhaseRules.disclaimer,
-        beans: [], brews: [], tastings: [], reminders: [], phaseRules: []
-    )
-
     var totalRecords: Int {
         beans.count + brews.count + tastings.count + reminders.count + phaseRules.count
     }

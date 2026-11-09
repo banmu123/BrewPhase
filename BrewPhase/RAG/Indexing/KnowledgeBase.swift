@@ -152,7 +152,6 @@ enum KnowledgeBase {
                 content: content,
                 metadata: DocumentMetadata(
                     docDate: updatedAt,
-                    category: document.category,
                     reference: document.source,
                     entityIds: document.entityIds.isEmpty ? nil : document.entityIds,
                     scope: document.scope,
@@ -160,32 +159,6 @@ enum KnowledgeBase {
                 ),
                 updatedAt: updatedAt
             )
-        }
-    }
-
-    /// 分类的中文名，用于界面分组与引用展示。
-    static func categoryLabel(_ category: String) -> String {
-        switch category {
-        case "brewing": return L("冲煮")
-        case "grind": return L("研磨")
-        case "water": return L("水温")
-        case "ratio": return L("粉水比")
-        case "time": return L("萃取时间")
-        case "process": return L("处理法")
-        case "roast": return L("烘焙")
-        case "freshness": return L("新鲜度")
-        case "tasting": return L("品鉴")
-        // v2 新增的分类
-        case "fundamentals": return L("咖啡基础")
-        case "origins": return L("产地")
-        case "varieties": return L("品种")
-        case "processing": return L("处理法")
-        case "espresso": return L("意式浓缩")
-        case "cleaning": return L("清洁维护")
-        case "sensory": return L("感官")
-        case "health": return L("咖啡与健康")
-        case "terminology": return L("术语")
-        default: return category
         }
     }
 }

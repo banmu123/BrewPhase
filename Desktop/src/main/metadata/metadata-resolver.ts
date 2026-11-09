@@ -1,6 +1,6 @@
 import { parseLink, type ParsedLink } from '../../shared/link-parser'
 import { safeFetchText } from './metadata-security'
-import type { ResolvedLinkMetadata, TextFetcher } from './metadata-normalizer'
+import { emptyMetadata, type ResolvedLinkMetadata, type TextFetcher } from './metadata-normalizer'
 import { resolveBilibili } from './providers/bilibili'
 import { resolveGeneric } from './providers/generic'
 import { resolveGitHub } from './providers/github'
@@ -22,22 +22,7 @@ export async function resolveMetadata(
   fetchText: TextFetcher = safeFetchText
 ): Promise<ResolvedLinkMetadata> {
   if (!parsed.valid) {
-    return {
-      provider: 'generic',
-      contentId: null,
-      canonicalUrl: '',
-      title: null,
-      description: null,
-      thumbnailUrl: null,
-      sourceName: null,
-      authorName: null,
-      repositoryLanguage: null,
-      repositoryStars: null,
-      repositoryForks: null,
-      repositoryLicense: null,
-      status: 'failed',
-      errorMessage: '不是有效的网页地址'
-    }
+    return { ...emptyMetadata('generic', ''), errorMessage: '不是有效的网页地址' }
   }
 
   try {
@@ -55,22 +40,11 @@ export async function resolveMetadata(
     }
   } catch (error) {
     // provider 内部已兜底；这里是最后的防线（比如构造 payload 时的意外）
-    return {
-      provider: parsed.provider,
-      contentId: parsed.contentId,
-      canonicalUrl: parsed.canonicalUrl,
-      title: null,
-      description: null,
-      thumbnailUrl: null,
-      sourceName: null,
-      authorName: parsed.authorHint ? `@${parsed.authorHint}` : null,
-      repositoryLanguage: null,
-      repositoryStars: null,
-      repositoryForks: null,
-      repositoryLicense: null,
-      status: 'failed',
-      errorMessage: (error as Error).message.slice(0, 200)
-    }
+    const metadata = emptyMetadata(parsed.provider, parsed.canonicalUrl)
+    metadata.contentId = parsed.contentId
+    metadata.authorName = parsed.authorHint ? `@${parsed.authorHint}` : null
+    metadata.errorMessage = (error as Error).message.slice(0, 200)
+    return metadata
   }
 }
 

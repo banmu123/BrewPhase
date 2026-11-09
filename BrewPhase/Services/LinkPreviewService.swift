@@ -13,8 +13,6 @@ enum LinkPreviewService {
         var summary: String?
         var siteName: String?
         var imageURL: URL?
-        var iconURL: URL?
-        var canonicalURL: URL?
         var ogType: String?
 
         var isEmpty: Bool {
@@ -60,8 +58,6 @@ enum LinkPreviewService {
             return nil
         }
 
-        let links = linkTags(in: html)
-
         var preview = Preview()
         preview.title = meta("og:title", "twitter:title") ?? titleTag(in: html)?.trimmed.nonEmpty
         preview.summary = meta("og:description", "twitter:description", "description")
@@ -71,13 +67,6 @@ enum LinkPreviewService {
         if let raw = meta("og:image", "twitter:image", "twitter:image:src") {
             preview.imageURL = absolute(raw, base: base)
         }
-        if let icon = links.first(where: { $0.rel.contains("icon") })?.href {
-            preview.iconURL = absolute(icon, base: base)
-        }
-        if let canonical = links.first(where: { $0.rel == "canonical" })?.href {
-            preview.canonicalURL = absolute(canonical, base: base)
-        }
-        if preview.canonicalURL == nil { preview.canonicalURL = base }
 
         return preview.isEmpty ? .empty : .preview(preview)
     }
@@ -126,23 +115,6 @@ enum LinkPreviewService {
             guard let key = (attributes["property"] ?? attributes["name"] ?? attributes["itemprop"])?
                 .trimmed.lowercased(), !key.isEmpty else { continue }
             result.append((key, decodeEntities(content)))
-        }
-        return result
-    }
-
-    /// `<link>` 只关心 rel 与 href：图标与规范地址。
-    static func linkTags(in html: String) -> [(rel: String, href: String)] {
-        let tagPattern = try? NSRegularExpression(pattern: "<link\\s+[^>]*>", options: [.caseInsensitive])
-        let range = NSRange(html.startIndex..., in: html)
-        let tags = tagPattern?.matches(in: html, range: range) ?? []
-
-        var result: [(rel: String, href: String)] = []
-        for match in tags {
-            guard let tagRange = Range(match.range, in: html) else { continue }
-            let attributes = attributePairs(in: String(html[tagRange]))
-            guard let rel = attributes["rel"]?.trimmed.lowercased(), !rel.isEmpty,
-                  let href = attributes["href"]?.trimmed, !href.isEmpty else { continue }
-            result.append((rel, decodeEntities(href)))
         }
         return result
     }

@@ -1,6 +1,7 @@
-# BrewPhase 同步协议 v2（iOS → Desktop，局域网，已实现）
+# BrewPhase 同步协议 v1（iOS → Desktop，局域网，已实现）
 
-> v1 只有结构没有实现；**v2 起为已落地的传输协议**。安全模型沿用
+> 协议版本号（`protocolVersion=1`，wire 与 QR 一致）自首次落地以来未变；
+> 早期文档把「结构阶段/传输阶段」误标为 v1/v2，2026-11-09 修正。安全模型沿用
 > BrewPing 已验证的设计（见 `BREWPING_REUSE_AUDIT.md`），数据语义见
 > `FEATURE_PARITY_AUDIT.md`。
 
@@ -9,7 +10,7 @@
 - 方向：第一版 **iOS → Desktop** 单向；协议字段为未来双向预留
   （`originDeviceId` / `revision` / tombstone）。
 - 传输：局域网 HTTP（端口首选 **47821**，被占自动回落并把实际端口写进二维码）。
-  **TLS 是下一跳**：协议字段 `certificateFingerprint` 已预留，落地后两端同时升级。
+  **TLS 是下一跳**（落地时两端同时升级、wire 版本随之 +1）。
   当前防护 = 一次性高熵配对码 + 每设备独立 Token（服务端只存 SHA-256）+
   时间戳/nonce/HMAC 防重放；威胁模型与 BrewPing 现行版本一致。
 - 发现：二维码直连（`host`/`hosts` 候选）。Bonjour（`_brewphase._tcp`）作为
@@ -50,7 +51,7 @@
 | 路由 | 说明 |
 |---|---|
 | `GET /api/status` | 无鉴权健康检查 `{service, protocolVersion}` |
-| `GET /api/sync/manifest` | 各实体计数（导入前预检查） |
+| `GET /api/sync/manifest` | 连通性/版本探针 `{protocolVersion, desktopDeviceId}`；iOS 只检查请求成功，不消费响应体 |
 | `POST /api/sync/apply` | 批量合并（见 §4），返回 `{appliedCount, skippedCount, conflictCount, failedItems[], results[]}`（逐条 `{entityType,id,status,reason?}`） |
 | `POST /api/sync/media/manifest` | 清单比对 → `{missing[], have[], rejected[]}` |
 | `POST /api/sync/media/chunk?name=&offset=` | 256KB 分块追加；offset 必须等于已收字节数（断点续传查询 `GET /api/sync/media/offset`）；同名分块互斥 |

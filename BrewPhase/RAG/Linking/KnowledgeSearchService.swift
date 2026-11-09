@@ -7,12 +7,11 @@ import Foundation
 /// | | 输入 | 做什么 | 是否用 embedding |
 /// |---|---|---|---|
 /// | `HybridRetriever`（既有） | 用户的一句**问题** | 意图 → 结构化 + 向量 + 融合 | 是 |
-/// | `KnowledgeSearchService`（本文件） | 一包**豆子的属性** | 实体 → 结构过滤 → 知识证据 | 否（语义入口单独提供） |
+/// | `KnowledgeSearchService`（本文件） | 一包**豆子的属性** | 实体 → 结构过滤 → 知识证据 | 否 |
 ///
 /// 这正是规格 §三 的意思：Bean 侧不是「问题 → embedding → TopK」，而是
 /// 「先知道这是什么豆，再知道该看什么知识」。所以本服务的主路径是**确定性**的：
-/// 给同一包豆子，永远返回同一批知识、同一个顺序。只有 `semanticEvidence` 是语义的，
-/// 而它复用既有的 `VectorIndex` + `EmbeddingProvider`，不新造向量层。
+/// 给同一包豆子，永远返回同一批知识、同一个顺序。
 ///
 /// 全部方法读的是随包的 `knowledge_base.json`（v2，含 `entityIds` / `scope` /
 /// `authorityTier`），离线可用，无网络、无模型依赖。
@@ -30,16 +29,9 @@ struct KnowledgeSearchService {
 
     // MARK: - §十九 基础检索
 
-    func allDocuments() -> [KnowledgeDocument] { documents }
-
-    func document(withID id: String) -> KnowledgeDocument? {
-        documents.first { $0.id == id }
-    }
-
     /// 自由文本检索：词法重合度排序。
     ///
     /// 刻意**不**用 embedding：这个方法被链接层同步调用，必须确定性、零依赖。
-    /// 真正的语义检索走 `semanticEvidence`，那里复用既有向量索引。
     func search(_ query: String, languageCode: String, limit: Int = 8) -> [KnowledgeEvidence] {
         let trimmed = query.trimmed
         guard !trimmed.isEmpty else { return [] }
@@ -63,20 +55,6 @@ struct KnowledgeSearchService {
             .sorted { ($0.relevance, $1.documentID) > ($1.relevance, $0.documentID) }
             .prefix(limit)
             .map { $0 }
-    }
-
-    /// 某包豆子相关的知识（规格 §二十 的核心入口）。
-    ///
-    /// 等价于 `KnowledgeLinkingService` 里的知识部分，单独留一个入口是为了让
-    /// 「只想要知识、不要链接边」的调用方不必先建上下文。
-    func searchByBean(
-        _ bean: Bean,
-        method: String? = nil,
-        languageCode: String,
-        limit: Int = 8
-    ) -> [KnowledgeEvidence] {
-        let context = BeanContextResolver(graph: graph).context(for: bean, method: method)
-        return evidence(forEntityIDs: context.entityIDs, languageCode: languageCode, limit: limit)
     }
 
     func searchByEntity(_ entityID: String, languageCode: String, limit: Int = 8) -> [KnowledgeEvidence] {
@@ -142,44 +120,6 @@ struct KnowledgeSearchService {
             .map { $0 }
     }
 
-    // MARK: - 语义检索（复用既有向量索引，规格 §三十七/§三十九）
-
-    /// 在**给定实体集合**内做语义检索。
-    ///
-    /// 这是唯一用到 embedding 的入口，而且它做的是「先收窄范围，再算相似度」——
-    /// 与规格 §三 的反对做法正好相反。`VectorIndex` 与 `EmbeddingProvider` 由调用方
-    /// 注入（`AskEngine` 已经持有这两个对象），本层不自己造索引。
-    @MainActor
-    func semanticEvidence(
-        query: String,
-        languageCode: String,
-        entityIDs: [String] = [],
-        provider: EmbeddingProvider,
-        index: VectorIndex,
-        limit: Int = 6
-    ) async -> [KnowledgeEvidence] {
-        let trimmed = query.trimmed
-        guard !trimmed.isEmpty, let vector = await provider.embed(trimmed) else { return [] }
-
-        let filter = MetadataFilter(sourceTypes: [.knowledge], entityIDs: entityIDs)
-        let hits = (try? index.search(vector: vector, filter: filter, limit: limit)) ?? []
-
-        return hits.map { hit in
-            KnowledgeEvidence(
-                documentID: hit.passage.sourceId,
-                title: hit.passage.title,
-                body: hit.passage.content,
-                category: hit.passage.metadata.category ?? "",
-                source: hit.passage.metadata.reference ?? L("内置知识库"),
-                sourceIDs: [],
-                authorityTier: hit.passage.metadata.authorityTier,
-                scope: hit.passage.metadata.scope,
-                matchedEntities: displayNames(for: hit.passage.metadata.entityIds ?? [], languageCode: languageCode),
-                relevance: min(1.0, max(0.0, (hit.similarity + 1) / 2))
-            )
-        }
-    }
-
     // MARK: - 组装
 
     /// 一条知识 → 证据。排序分是**确定性公式**，不用模型打分：
@@ -195,7 +135,6 @@ struct KnowledgeSearchService {
             documentID: document.id,
             title: document.title.text(for: languageCode) ?? document.id,
             body: document.content.text(for: languageCode) ?? "",
-            category: document.category,
             source: document.source,
             sourceIDs: document.sourceIds,
             authorityTier: document.authorityTier,

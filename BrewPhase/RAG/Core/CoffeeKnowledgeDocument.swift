@@ -42,7 +42,6 @@ struct DocumentMetadata: Codable, Equatable, Sendable {
     /// 这条资料属于哪包豆子。跨类型过滤的主键。
     var beanID: UUID?
     var brewID: UUID?
-    var tastingID: UUID?
 
     /// 冲煮相关。
     var method: String?
@@ -61,8 +60,7 @@ struct DocumentMetadata: Codable, Equatable, Sendable {
     var roaster: String?
     var roastLevel: String?
 
-    /// 知识库专用：分类与出处。协议要求 source 必须能记录来源。
-    var category: String?
+    /// 知识库专用：出处。协议要求 source 必须能记录来源。
     var reference: String?
     /// 知识实体 id（规格 §十一/§十三）。
     ///
@@ -86,7 +84,6 @@ struct DocumentMetadata: Codable, Equatable, Sendable {
     init(
         beanID: UUID? = nil,
         brewID: UUID? = nil,
-        tastingID: UUID? = nil,
         method: String? = nil,
         grinder: String? = nil,
         docDate: Date? = nil,
@@ -96,7 +93,6 @@ struct DocumentMetadata: Codable, Equatable, Sendable {
         process: String? = nil,
         roaster: String? = nil,
         roastLevel: String? = nil,
-        category: String? = nil,
         reference: String? = nil,
         entityIds: [String]? = nil,
         scope: String? = nil,
@@ -105,7 +101,6 @@ struct DocumentMetadata: Codable, Equatable, Sendable {
     ) {
         self.beanID = beanID
         self.brewID = brewID
-        self.tastingID = tastingID
         self.method = method
         self.grinder = grinder
         self.docDate = docDate
@@ -115,7 +110,6 @@ struct DocumentMetadata: Codable, Equatable, Sendable {
         self.process = process
         self.roaster = roaster
         self.roastLevel = roastLevel
-        self.category = category
         self.reference = reference
         self.entityIds = entityIds
         self.scope = scope
@@ -134,7 +128,7 @@ struct DocumentMetadata: Codable, Equatable, Sendable {
 /// 注意这里**没有** `embedding` 字段。协议 §5 的示意里有，但把它放在文档上会
 /// 造成两个后果：文档一旦带上向量就不再是可比较的值类型，而向量属于索引、
 /// 不属于资料本身——同一份资料换一个 embedding 模型仍然成立。所以向量存在
-/// `KnowledgeChunkRecord` 里，和 `modelIdentifier` 绑在一起，见 `RAG/Store`。
+/// `EmbeddingRecord` 里，和 `modelIdentifier` 绑在一起，见 `RAG/Store`。
 struct CoffeeKnowledgeDocument: Identifiable, Equatable, Sendable {
 
     let sourceType: KnowledgeSourceType

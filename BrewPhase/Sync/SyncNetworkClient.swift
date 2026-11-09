@@ -34,8 +34,8 @@ struct SyncNetworkClient {
 
         var errorDescription: String? {
             switch self {
-            case .http(let status, let message): return "服务返回 \(status)：\(message)"
-            case .invalidResponse: return "服务响应无法解析"
+            case .http(let status, let message): return L("服务返回 %@：%@", String(status), message)
+            case .invalidResponse: return L("服务响应无法解析")
             }
         }
     }
@@ -60,10 +60,10 @@ struct SyncNetworkClient {
 
     // MARK: - 同步
 
+    /// 连通性/版本探针：iOS 只检查请求成功，响应内容不消费。
     struct Manifest: Codable {
         var protocolVersion: Int
         var desktopDeviceId: String
-        var entityCounts: [String: Int]
     }
 
     func manifest() async throws -> Manifest {

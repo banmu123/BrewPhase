@@ -134,7 +134,7 @@ beforeEach(() => {
       fetchCount += 1
       // 每轮转发到当前 fetchImpl，便于用例中途替换抓取行为
       const fetcher: TextFetcher = (url, opts) => fetchImpl(url, opts)
-      await resolveRecordMetadata(handle.db, handle.deviceId, job.recordId, false, job.urlString, fetcher)
+      await resolveRecordMetadata(handle.db, job.recordId, false, job.urlString, fetcher)
     }
   })
 })
@@ -295,7 +295,7 @@ describe('同步后自动补全（Phase 3.2）', () => {
     await queue.drain()
     expect(fetchCount).toBe(1)
 
-    await resolveRecordMetadata(handle.db, handle.deviceId, RECORD_ID, true, URL, fetchImpl)
+    await resolveRecordMetadata(handle.db, RECORD_ID, true, URL, fetchImpl)
     expect(fetchCount).toBe(1) // 这里的 fetchCount 只统计队列执行体
     expect(getRecord(handle.db, RECORD_ID)?.metadata?.status).toBe('ok')
   })

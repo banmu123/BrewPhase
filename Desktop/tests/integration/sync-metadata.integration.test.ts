@@ -175,7 +175,7 @@ describe('场景 1：首次同步后自动补全，再推同样内容', () => {
     const first = applyBatch(handle.sqlite, batch(recordPayload()), 'dev1')
     expect(first.appliedCount).toBe(1)
 
-    const afterResolve = applyResolvedMetadata(handle.db, handle.deviceId, RECORD_ID, URL, resolvedSuccess())
+    const afterResolve = applyResolvedMetadata(handle.db, RECORD_ID, URL, resolvedSuccess())
     expect(afterResolve?.metadata?.title).toBe('banmu123/BrewPhase')
     expect(afterResolve?.metadata?.repositoryStars).toBe(12)
 
@@ -187,7 +187,7 @@ describe('场景 1：首次同步后自动补全，再推同样内容', () => {
 
   it('Resolver 不写 records 的同步列（这是假冲突的根因）', () => {
     applyBatch(handle.sqlite, batch(recordPayload()), 'dev1')
-    applyResolvedMetadata(handle.db, handle.deviceId, RECORD_ID, URL, resolvedSuccess())
+    applyResolvedMetadata(handle.db, RECORD_ID, URL, resolvedSuccess())
 
     const row = rawRecord()
     expect(row.summary).toBe('')
@@ -202,8 +202,8 @@ describe('场景 1：首次同步后自动补全，再推同样内容', () => {
 describe('场景 2：元数据刷新失败', () => {
   it('不假冲突、已保存元数据不丢、状态保留', () => {
     applyBatch(handle.sqlite, batch(recordPayload()), 'dev1')
-    applyResolvedMetadata(handle.db, handle.deviceId, RECORD_ID, URL, resolvedSuccess())
-    const failed = applyResolvedMetadata(handle.db, handle.deviceId, RECORD_ID, URL, resolvedFailure())
+    applyResolvedMetadata(handle.db, RECORD_ID, URL, resolvedSuccess())
+    const failed = applyResolvedMetadata(handle.db, RECORD_ID, URL, resolvedFailure())
 
     expect(failed?.metadata?.status).toBe('ok')
     expect(failed?.metadata?.thumbnailUrl).toBe('https://opengraph.githubassets.com/1/banmu123/BrewPhase')
@@ -219,7 +219,7 @@ describe('场景 2：元数据刷新失败', () => {
 describe('场景 3：iOS 修改用户字段', () => {
   it('正确接收 iOS 的新备注，本地派生元数据不被清空，基线更新', () => {
     applyBatch(handle.sqlite, batch(recordPayload()), 'dev1')
-    applyResolvedMetadata(handle.db, handle.deviceId, RECORD_ID, URL, resolvedSuccess())
+    applyResolvedMetadata(handle.db, RECORD_ID, URL, resolvedSuccess())
 
     const edited = recordPayload({ note: 'iOS 上写的新备注', title: 'my note' })
     const outcome = applyBatch(handle.sqlite, batch(edited), 'dev1')
@@ -235,7 +235,7 @@ describe('场景 3：iOS 修改用户字段', () => {
 
   it('iOS 改了 URL → 旧本地元数据整行作废', () => {
     applyBatch(handle.sqlite, batch(recordPayload()), 'dev1')
-    applyResolvedMetadata(handle.db, handle.deviceId, RECORD_ID, URL, resolvedSuccess())
+    applyResolvedMetadata(handle.db, RECORD_ID, URL, resolvedSuccess())
 
     const nextUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
     applyBatch(
@@ -258,7 +258,7 @@ describe('场景 3：iOS 修改用户字段', () => {
 describe('场景 4：iOS 删除记录', () => {
   it('只有本地派生元数据变化时，删除按正常协议执行（不制造假冲突）', () => {
     applyBatch(handle.sqlite, batch(recordPayload()), 'dev1')
-    applyResolvedMetadata(handle.db, handle.deviceId, RECORD_ID, URL, resolvedSuccess())
+    applyResolvedMetadata(handle.db, RECORD_ID, URL, resolvedSuccess())
 
     const iosFingerprint = recordFingerprint(recordPayload())
     const outcome = applyBatch(handle.sqlite, deleteBatch(iosFingerprint), 'dev1')
@@ -271,7 +271,7 @@ describe('场景 4：iOS 删除记录', () => {
 
   it('桌面用户真的改过记录 → 仍然保留删除冲突保护', () => {
     applyBatch(handle.sqlite, batch(recordPayload()), 'dev1')
-    applyResolvedMetadata(handle.db, handle.deviceId, RECORD_ID, URL, resolvedSuccess())
+    applyResolvedMetadata(handle.db, RECORD_ID, URL, resolvedSuccess())
     updateRecord(handle.db, handle.deviceId, RECORD_ID, draftFrom(RECORD_ID, { note: '桌面用户写的备注' }))
 
     const iosFingerprint = recordFingerprint(recordPayload())
@@ -285,7 +285,7 @@ describe('场景 4：iOS 删除记录', () => {
 describe('场景 5：Desktop 用户主动修改', () => {
   it('用户改标题 → iOS 再推原内容必须走冲突，不能静默覆盖', () => {
     applyBatch(handle.sqlite, batch(recordPayload()), 'dev1')
-    applyResolvedMetadata(handle.db, handle.deviceId, RECORD_ID, URL, resolvedSuccess())
+    applyResolvedMetadata(handle.db, RECORD_ID, URL, resolvedSuccess())
     updateRecord(handle.db, handle.deviceId, RECORD_ID, draftFrom(RECORD_ID, { title: '我的标题' }))
 
     const outcome = applyBatch(handle.sqlite, batch(recordPayload()), 'dev1')
@@ -302,7 +302,7 @@ describe('场景 6：重复同步与幂等', () => {
     applyBatch(handle.sqlite, batch(recordPayload()), 'dev1')
     updateRecord(handle.db, handle.deviceId, RECORD_ID, draftFrom(RECORD_ID, { tagIds: [tag.id] }))
     // 用户改过标签后再同步会冲突？——不会：tagIds 不在 record 指纹里（关系表独立）
-    applyResolvedMetadata(handle.db, handle.deviceId, RECORD_ID, URL, resolvedSuccess())
+    applyResolvedMetadata(handle.db, RECORD_ID, URL, resolvedSuccess())
 
     for (let round = 0; round < 3; round += 1) {
       const outcome = applyBatch(handle.sqlite, batch(recordPayload()), 'dev1')

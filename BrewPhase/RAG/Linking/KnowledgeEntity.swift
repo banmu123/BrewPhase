@@ -26,27 +26,6 @@ enum EntityType: String, Codable, CaseIterable, Sendable {
     case water
     case troubleshooting
     case maintenance
-
-    /// 展示名用的本地化键。中文文案走 `L()`，英文走资源表。
-    var label: String {
-        switch self {
-        case .topic: return L("主题")
-        case .origin: return L("产地")
-        case .region: return L("产区")
-        case .variety: return L("品种")
-        case .varietyGroup: return L("品种谱系")
-        case .process: return L("处理法")
-        case .roast: return L("烘焙度")
-        case .brewMethod: return L("冲煮方式")
-        case .brewFamily: return L("冲煮家族")
-        case .sensory: return L("风味")
-        case .grinder: return L("磨豆机")
-        case .equipment: return L("设备")
-        case .water: return L("水质")
-        case .troubleshooting: return L("故障")
-        case .maintenance: return L("维护")
-        }
-    }
 }
 
 /// 知识的适用范围（规格 §十三）。
@@ -76,20 +55,6 @@ enum EntityScope: String, Codable, CaseIterable, Sendable {
         case .roast: return 50
         case .brewMethod: return 45
         case .generic: return 10
-        }
-    }
-
-    var label: String {
-        switch self {
-        case .generic: return L("通用")
-        case .country: return L("国家级")
-        case .region: return L("产区级")
-        case .variety: return L("品种级")
-        case .process: return L("处理法级")
-        case .roast: return L("烘焙级")
-        case .brewMethod: return L("冲煮方式级")
-        case .equipmentBrand: return L("品牌级")
-        case .equipmentModel: return L("型号级")
         }
     }
 }

@@ -1,4 +1,4 @@
-import { randomBytes, randomInt } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { sha256, constantTimeEquals, randomToken } from './auth'
 import type { Database } from 'better-sqlite3'
 
@@ -47,12 +47,6 @@ export class PairingService {
     this.codeHash = sha256(code)
     this.issuedAt = now
     return { code, expiresAt: now + PAIRING_TTL_MS }
-  }
-
-  /** 作废当前码并换新的（用户怀疑泄露时一键换）。 */
-  rotate(): PairingPayload {
-    this.codeHash = null
-    return this.issue()
   }
 
   private cooldownRemaining(source: string, now: number): number | null {
@@ -141,9 +135,4 @@ export class PairingService {
 function sanitizeDeviceName(name: unknown): string {
   const value = typeof name === 'string' ? name.trim() : ''
   return (value.length > 0 ? value : 'iPhone').slice(0, 64)
-}
-
-/** 测试辅助：六位数字码（仅单测使用，运行时走高熵码）。 */
-export function sixDigitCode(): string {
-  return String(randomInt(0, 1_000_000)).padStart(6, '0')
 }

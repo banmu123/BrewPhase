@@ -21,11 +21,11 @@ import {
  * - 请求体限幅：JSON 批 8MB、媒体块 256KB，超限直接 413。
  * - 路由面固定六条：status / pair / sync manifest / sync apply / media 三件套。
  *   不存在任何「远程下发 SQL」或命令执行面。
- * - TLS 是下一跳（协议已留 certificateFingerprint 字段）；本版以一次性码 +
+ * - TLS 是下一跳（后续版本再评估）；本版以一次性码 +
  *   每设备独立 token + 时间戳/nonce/HMAC 防护，威胁模型与 BrewPing 相同。
  */
 
-const PROTOCOL_VERSION = 1
+import { SYNC_PROTOCOL_VERSION } from '../../shared/contracts/version'
 const MAX_JSON_BODY = 8 * 1024 * 1024
 const MAX_CHUNK_BODY = CHUNK_SIZE + 64 * 1024
 
@@ -167,13 +167,13 @@ export class SyncServer {
       const source = request.socket.remoteAddress ?? null
 
       if (route === 'GET /api/status') {
-        return this.json(response, 200, { service: 'brewphase-sync', protocolVersion: PROTOCOL_VERSION })
+        return this.json(response, 200, { service: 'brewphase-sync', protocolVersion: SYNC_PROTOCOL_VERSION })
       }
 
       if (route === 'POST /api/pair') {
         const bodyResult = await this.readBody(request, MAX_JSON_BODY)
         if (!bodyResult.ok) return this.json(response, bodyResult.status, { error: bodyResult.error })
-        // 字段名与 iOS 客户端、QR 深链、contracts 的 pairRequestSchema 对齐：
+        // 字段名与 iOS 客户端、QR 深链对齐（协议真相见 docs/SYNC_PROTOCOL.md §1）：
         // `pairingCode` 是主字段；`code` 仅作为旧客户端兜底。
         const payload = JSON.parse(bodyResult.body.toString('utf8') || '{}') as {
           pairingCode?: string
@@ -193,7 +193,7 @@ export class SyncServer {
           deviceId: outcome.deviceId,
           desktopDeviceId: this.desktopDeviceId,
           desktopDeviceName: this.desktopDeviceName,
-          protocolVersion: PROTOCOL_VERSION
+          protocolVersion: SYNC_PROTOCOL_VERSION
         })
       }
 
@@ -204,21 +204,11 @@ export class SyncServer {
       }
 
       if (route === 'GET /api/sync/manifest') {
-        const counts: Record<string, number> = {}
-        for (const [type, table] of Object.entries({
-          bean: 'beans', brew: 'brews', tasting: 'tastings', phaseRule: 'phase_rules',
-          phaseReminder: 'phase_reminders', record: 'records', recordTag: 'record_tags',
-          canvas: 'canvases', canvasNode: 'canvas_nodes'
-        })) {
-          counts[type] = Number(
-            (this.sqlite.prepare(`select count(*) as n from ${table}`).get() as { n: number } | undefined)?.n ?? 0
-          )
-        }
+        // iOS 只用它做连通性/版本探针（结果整个丢弃），不给逐表 COUNT。
         this.touchDevice(device.id)
         return this.json(response, 200, {
-          protocolVersion: PROTOCOL_VERSION,
-          desktopDeviceId: this.desktopDeviceId,
-          entityCounts: counts
+          protocolVersion: SYNC_PROTOCOL_VERSION,
+          desktopDeviceId: this.desktopDeviceId
         })
       }
 

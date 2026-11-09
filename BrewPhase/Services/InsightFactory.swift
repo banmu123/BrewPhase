@@ -83,7 +83,3 @@ enum InsightFactory {
         }
     }
 }
-
-extension BeanSnapshot {
-    var isFinished: Bool { status == .finished || remainingG <= 0 }
-}

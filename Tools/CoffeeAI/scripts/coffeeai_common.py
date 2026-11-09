@@ -9,7 +9,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import sys
 from datetime import date
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -442,8 +441,6 @@ def load_jsonl(paths):
 
 def norm_text(s: str) -> str:
     return re.sub(r"\s+", "", (s or "")).lower()
-
-
 def message_texts(messages) -> str:
     parts = []
     for m in messages:
@@ -494,6 +491,36 @@ def corpus_sha256(paths) -> str:
     for path in paths:
         h.update(Path(path).read_bytes())
     return h.hexdigest()
+
+
+# ---------------------------------------------------------------- 极简 YAML 序列化
+# make_train_config.py（生成配置）与 run_train.py（写出 effective/smoke 配置）共用；
+# 输出格式与 run_train.parse_simple_yaml 严格互逆（扁平键 + 一层嵌套 dict）。
+
+def yaml_value(v):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if v is None:
+        return "null"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, str):
+        return json.dumps(v, ensure_ascii=False)
+    if isinstance(v, list):
+        return "[" + ", ".join(yaml_value(x) for x in v) + "]"
+    raise TypeError(f"unsupported: {type(v)}")
+
+
+def dump_yaml(cfg):
+    lines = []
+    for k, v in cfg.items():
+        if isinstance(v, dict):
+            lines.append(f"{k}:")
+            for k2, v2 in v.items():
+                lines.append(f"  {k2}: {yaml_value(v2)}")
+        else:
+            lines.append(f"{k}: {yaml_value(v)}")
+    return "\n".join(lines) + "\n"
 
 
 # ---------------------------------------------------------------- 结构检查
@@ -646,8 +673,3 @@ def near_duplicate_pairs(records, threshold=0.92, max_pairs=3000):
             if r >= threshold:
                 pairs.append((ida, idb, r))
     return pairs
-
-
-def fail(msg, code=1):
-    print(f"[CoffeeAI] 错误: {msg}", file=sys.stderr)
-    sys.exit(code)

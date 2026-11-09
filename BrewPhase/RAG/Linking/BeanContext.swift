@@ -34,13 +34,6 @@ enum BeanContextField: String, CaseIterable, Sendable {
 /// 品种是从豆名与备注里**尽力识别**出来的关联，识别不到就是没有。
 struct BeanContext: Equatable, Sendable {
 
-    /// 规格 §七 的示意：`origin.country` / `origin.region` / `process[]` / `roastLevel`。
-    /// 这里用实体 id 承载，比裸字符串更严——字符串没法参与层级 fallback。
-    struct OriginRef: Equatable, Sendable {
-        let country: KnowledgeEntity?
-        let regions: [KnowledgeEntity]
-    }
-
     let beanID: UUID
     let beanName: String
     let rawOrigin: String
@@ -54,13 +47,6 @@ struct BeanContext: Equatable, Sendable {
     let daysSinceOpen: Int?
     /// 全部命中，已按（命中方式 → 适用范围 → 写法长度 → id）确定性排序。
     let resolutions: [EntityResolution]
-
-    var origin: OriginRef {
-        OriginRef(
-            country: resolutions.first { $0.entity.type == .origin }?.entity,
-            regions: resolutions.filter { $0.entity.type == .region }.map(\.entity)
-        )
-    }
 
     var isEmpty: Bool { resolutions.isEmpty }
 
@@ -78,16 +64,5 @@ struct BeanContext: Equatable, Sendable {
         if methodText == nil { missing.append(.method) }
         if daysSinceRoast == nil { missing.append(.freshness) }
         return missing
-    }
-
-    func resolutions(ofType type: EntityType) -> [EntityResolution] {
-        resolutions.filter { $0.entity.type == type }
-    }
-
-    /// 某个关系方向下的实体 id。用于给检索层拼元数据过滤条件。
-    func entityIDs(for relation: RelationType) -> [String] {
-        resolutions
-            .filter { RelationType.forEntityType($0.entity.type) == relation }
-            .map(\.id)
     }
 }

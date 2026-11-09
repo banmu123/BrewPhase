@@ -19,12 +19,13 @@ will use QLoRA, otherwise it will use regular LoRA"）。
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
-COFFEEAI = Path(__file__).resolve().parents[1]
-REPO_ROOT = COFFEEAI.parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from coffeeai_common import COFFEEAI_ROOT, REPO_ROOT, dump_yaml  # noqa: E402
+
+COFFEEAI = COFFEEAI_ROOT
 
 PROFILES = {
     # 16GB Apple Silicon + Qwen3-4B 4bit QLoRA 的保守起点：
@@ -94,32 +95,6 @@ OFFICIAL_FIELDS = {
     "grad_checkpoint", "lora_parameters", "lr_schedule", "hf_dataset",
     "prompt_feature", "completion_feature", "text_feature", "chat_feature",
 }
-
-
-def yaml_value(v):
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if v is None:
-        return "null"
-    if isinstance(v, (int, float)):
-        return repr(v)
-    if isinstance(v, str):
-        return json.dumps(v, ensure_ascii=False)
-    if isinstance(v, list):
-        return "[" + ", ".join(yaml_value(x) for x in v) + "]"
-    raise TypeError(f"unsupported: {type(v)}")
-
-
-def dump_yaml(cfg):
-    lines = []
-    for k, v in cfg.items():
-        if isinstance(v, dict):
-            lines.append(f"{k}:")
-            for k2, v2 in v.items():
-                lines.append(f"  {k2}: {yaml_value(v2)}")
-        else:
-            lines.append(f"{k}: {yaml_value(v)}")
-    return "\n".join(lines) + "\n"
 
 
 def build_config(args):

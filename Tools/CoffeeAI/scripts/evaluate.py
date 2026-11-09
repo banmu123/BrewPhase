@@ -28,7 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import env_check  # noqa: E402
-from coffeeai_common import COFFEEAI_ROOT as COFFEEAI  # noqa: E402
+from coffeeai_common import COFFEEAI_ROOT as COFFEEAI, REPO_ROOT  # noqa: E402
 
 REVIEW_DIMENSIONS = [
     "知识准确性：回答与可靠咖啡资料是否一致，有无事实错误",
@@ -108,7 +108,7 @@ def main(argv=None):
 
     qpath = Path(args.questions)
     if not qpath.is_absolute():
-        qpath = COFFEEAI.parents[1] / qpath
+        qpath = REPO_ROOT / qpath
     if not qpath.is_file():
         print(f"[CoffeeAI] 错误: 测试集不存在: {qpath}（先运行 split_dataset.py）", file=sys.stderr)
         sys.exit(1)
@@ -131,7 +131,7 @@ def main(argv=None):
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out = Path(args.out) if args.out else COFFEEAI / "runs" / f"eval_{ts}"
     if not out.is_absolute():
-        out = COFFEEAI.parents[1] / out
+        out = REPO_ROOT / out
     out.mkdir(parents=True, exist_ok=True)
 
     exe = sys.executable

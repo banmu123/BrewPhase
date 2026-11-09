@@ -169,8 +169,6 @@ struct LinkMetadata: Equatable, Sendable {
     var authorName: String?
     var siteName: String?
     var thumbnailURL: URL?
-    var iconURL: URL?
-    var canonicalURL: URL?
     var contentKind: LinkContentKind?
     var status: LinkMetadataStatus
     var failure: LinkFailure?

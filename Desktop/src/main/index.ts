@@ -37,7 +37,6 @@ const metadataQueue = new ResolveQueue({
     if (!handle) return
     await resolveRecordMetadata(
       handle.db,
-      handle.deviceId,
       job.recordId,
       false,
       job.urlString,

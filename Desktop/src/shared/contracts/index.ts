@@ -37,7 +37,6 @@ export interface RendererApi {
     updateBrew: (id: string, draft: BrewDraft) => Promise<Brew>
     deleteBrew: (id: string) => Promise<void>
     listTastings: (beanId: string | null) => Promise<Tasting[]>
-    createTasting: (draft: TastingDraft) => Promise<Tasting>
     listPhaseRules: () => Promise<PhaseRule[]>
   }
   records: {
@@ -48,7 +47,6 @@ export interface RendererApi {
     remove: (id: string) => Promise<void>
     listTags: () => Promise<RecordTag[]>
     createTag: (name: string) => Promise<RecordTag>
-    deleteTag: (id: string) => Promise<void>
     importImage: () => Promise<ImportImageResult | null>
     /**
      * 抓取并写入链接元数据（main process 安全网络层）。

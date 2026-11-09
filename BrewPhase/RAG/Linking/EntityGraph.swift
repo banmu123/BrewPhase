@@ -18,8 +18,6 @@ struct EntityGraph: Sendable {
     private let byID: [String: KnowledgeEntity]
     private let canonicalIndex: [String: [String]]
     private let aliasIndex: [String: [String]]
-    /// 子 → 父的反向索引，用于祖先查询。
-    private let childIndex: [String: [String]]
 
     static let empty = EntityGraph(entities: [])
 
@@ -45,7 +43,6 @@ struct EntityGraph: Sendable {
 
         var canonical: [String: [String]] = [:]
         var alias: [String: [String]] = [:]
-        var children: [String: [String]] = [:]
 
         for entity in entities {
             let key = EntityGraph.normalised(entity.canonicalName)
@@ -57,14 +54,10 @@ struct EntityGraph: Sendable {
                 guard !aliasKey.isEmpty else { continue }
                 alias[aliasKey, default: []].append(entity.id)
             }
-            if let parent = entity.parentId {
-                children[parent, default: []].append(entity.id)
-            }
         }
 
         self.canonicalIndex = canonical
         self.aliasIndex = alias
-        self.childIndex = children.mapValues { $0.sorted() }
     }
 
     init(json: [String: Any]?) {
@@ -75,10 +68,6 @@ struct EntityGraph: Sendable {
     // MARK: - 查询
 
     func entity(withID id: String) -> KnowledgeEntity? { byID[id] }
-
-    func entities(ofType type: EntityType) -> [KnowledgeEntity] {
-        entities.filter { $0.type == type }
-    }
 
     /// 文本 → 实体（规格 §九）。
     ///
@@ -146,17 +135,6 @@ struct EntityGraph: Sendable {
             depth += 1
         }
         return result
-    }
-
-    /// 后代（不含自己）。
-    func descendants(of id: String) -> [KnowledgeEntity] {
-        (childIndex[id] ?? []).compactMap { byID[$0] }
-    }
-
-    /// 从根到自己的路径（含自己）。
-    func path(of id: String) -> [KnowledgeEntity] {
-        guard let entity = byID[id] else { return [] }
-        return ancestors(of: id).reversed() + [entity]
     }
 
     /// 归一化：全角转半角 + 转小写 + 去分隔符与空白。

@@ -1,12 +1,19 @@
 import { hostname } from 'node:os'
-import { promises as fs } from 'node:fs'
-import { join } from 'node:path'
 import QRCode from 'qrcode'
 import type { Database } from 'better-sqlite3'
 import { SyncServer } from './server'
 import { lanAddresses } from './network-address'
 import { wipeSyncedData } from './wipe'
-import type { WipeResult } from '../../shared/contracts'
+import {
+  localFingerprint as fingerprintOf,
+  setBaseline,
+  TABLE_FOR_ENTITY,
+  toColumns,
+  updateRow,
+  type EntityType
+} from './snapshot-importer'
+import { SYNC_PROTOCOL_VERSION } from '../../shared/contracts/version'
+import type { SyncConflictItem, SyncStatus, WipeResult } from '../../shared/contracts'
 
 /**
  * 同步服务门面：Electron Main 进程持有，renderer 只能通过白名单 IPC 触达。
@@ -17,33 +24,8 @@ import type { WipeResult } from '../../shared/contracts'
  */
 
 export const SYNC_PORT = 47821
-export const SYNC_PROTOCOL_VERSION = 1
-
-/** 冲突裁决按实体名找表；record_tag_links 是复合主键关系表，删除走专用分支。 */
-const TABLE_FOR_CONFLICT: Record<string, string | null> = {
-  bean: 'beans', brew: 'brews', tasting: 'tastings', phaseRule: 'phase_rules',
-  phaseReminder: 'phase_reminders', record: 'records', recordTag: 'record_tags',
-  recordTagLink: null, canvas: 'canvases', canvasNode: 'canvas_nodes', canvasNote: 'canvas_notes', canvasStroke: 'canvas_strokes'
-}
 
 type Row = Record<string, unknown>
-
-export type SyncStatus = {
-  enabled: boolean
-  running: boolean
-  port: number | null
-  addresses: string[]
-  desktopDeviceId: string
-  desktopDeviceName: string
-  pairing: { qrText: string; qrDataUrl: string; expiresAt: number } | null
-  devices: Array<{
-    id: string
-    name: string
-    pairedAt: number
-    lastSyncAt: number | null
-  }>
-  conflicts: number
-}
 
 export class SyncService {
   private server: SyncServer | null = null
@@ -180,16 +162,7 @@ export class SyncService {
   }
 
   /** 冲突列表（含摘要与操作类型），供设置页展示。 */
-  conflicts(): Array<{
-    id: string
-    entityType: string
-    entityId: string
-    localFingerprint: string
-    remoteFingerprint: string
-    remoteOperation: 'upsert' | 'delete'
-    createdAt: number
-    remoteSummary: string
-  }> {
+  conflicts(): Array<SyncConflictItem> {
     const rows = this.sqlite
       .prepare('select * from sync_conflicts order by created_at desc limit 100')
       .all() as Array<Row>
@@ -225,7 +198,7 @@ export class SyncService {
 
     if (resolution === 'remote') {
       if (isDelete) {
-        const name = TABLE_FOR_CONFLICT[entityType]
+        const name = TABLE_FOR_ENTITY[entityType]
         if (name) {
           this.sqlite.prepare(`delete from ${name} where id = ?`).run(entityId)
           this.sqlite
@@ -258,53 +231,15 @@ export class SyncService {
   }
 
   private applySingle(entityType: EntityType, id: string, payload: Record<string, unknown>): void {
-    const name = TABLE_FOR_CONFLICT[entityType]
+    const name = TABLE_FOR_ENTITY[entityType]
     if (!name) return
-    const columns: string[] = []
-    const values: unknown[] = []
-    for (const [key, value] of Object.entries(payload)) {
-      const column = key
-      .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
-      .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
-      .toLowerCase()
-      columns.push(`${column} = ?`)
-      values.push(typeof value === 'boolean' ? (value ? 1 : 0) : value)
-    }
-    if (columns.length === 0) return
-    this.sqlite.prepare(`update ${name} set ${columns.join(', ')} where id = ?`).run(...values, id)
+    updateRow(this.sqlite, name, id, toColumns(payload))
     // 接受远端后，本地行内容 === 远端指纹，写基线防再次冲突。
     const row = this.sqlite.prepare(`select * from ${name} where id = ?`).get(id) as Row | undefined
     if (row) {
       const fp = fingerprintOf(entityType, row)
-      if (fp) {
-        this.sqlite
-          .prepare(
-            `insert into sync_baseline (entity_type, entity_id, fingerprint, synced_at)
-             values (?, ?, ?, ?)
-             on conflict (entity_type, entity_id) do update set fingerprint = excluded.fingerprint, synced_at = excluded.synced_at`
-          )
-          .run(entityType, id, fp, Date.now())
-      }
+      if (fp) setBaseline(this.sqlite, entityType, id, fp)
     }
-  }
-
-  private localFingerprintFor(entityType: EntityType, id: string): string | null {
-    const name = TABLE_FOR_CONFLICT[entityType]
-    if (!name) return null
-    const row = this.sqlite.prepare(`select * from ${name} where id = ?`).get(id) as Row | undefined
-    if (!row) return null
-    return fingerprintOf(entityType, row)
-  }
-
-  async backupDatabase(): Promise<string> {
-    const source = String(
-      (this.sqlite.prepare("select value from local_state where key = 'db.path'").get() as Row | undefined)?.value ??
-        ''
-    )
-    if (!source) return ''
-    const backupPath = `${source}.before-sync-${Date.now()}`
-    await fs.copyFile(source, backupPath)
-    return backupPath
   }
 
   status(): SyncStatus {
@@ -351,6 +286,3 @@ function summarize(remotePayload: string): string {
     return '(无法解析)'
   }
 }
-
-// fingerprintOf 在 snapshot-importer 内部——这里重新导出复用。
-import { localFingerprint as fingerprintOf, type EntityType } from './snapshot-importer'

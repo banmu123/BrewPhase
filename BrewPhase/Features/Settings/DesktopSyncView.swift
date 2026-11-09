@@ -107,10 +107,10 @@ struct DesktopSyncView: View {
         localCounts = nil
         switch outcome {
         case .wiped:
-            unpairNote = wipe ? "已解除配对，Mac 上的同步内容已清空。" : "已解除配对。"
+            unpairNote = wipe ? L("已解除配对，Mac 上的同步内容已清空。") : L("已解除配对。")
         case .localOnly(let reason):
             // 说清「断开成功、清空失败」：这两件事的结果不一样，不能合并成一句。
-            unpairNote = "已解除配对，但 Mac 上的内容没能清空：\(reason)"
+            unpairNote = L("已解除配对，但 Mac 上的内容没能清空：%@", reason)
         }
     }
 
@@ -141,16 +141,16 @@ struct DesktopSyncView: View {
         switch manager.phase {
         case .done(let applied, let skipped, let conflicts, let failed):
             VStack(alignment: .leading, spacing: 4) {
-                Text("同步完成：已新增/更新 \(applied) · 内容一致 \(skipped) · 冲突 \(conflicts) · 失败 \(failed)")
+                Text(L("同步完成：已新增/更新 %@ · 内容一致 %@ · 冲突 %@ · 失败 %@", String(applied), String(skipped), String(conflicts), String(failed)))
                     .font(TypeScale.caption)
                     .foregroundStyle(Palette.inkSoft)
                 if conflicts > 0 {
-                    Text("有 \(conflicts) 条冲突停在桌面端的设置页等你裁决。")
+                    Text(L("有 %@ 条冲突停在桌面端的设置页等你裁决。", String(conflicts)))
                         .font(TypeScale.caption)
                         .foregroundStyle(Palette.priority)
                 }
                 if let media = manager.lastMediaStats, media.images + media.videos + media.failed > 0 {
-                    Text("媒体文件：图片 \(media.images) · 视频 \(media.videos) · 失败 \(media.failed)")
+                    Text(L("媒体文件：图片 %@ · 视频 %@ · 失败 %@", String(media.images), String(media.videos), String(media.failed)))
                         .font(TypeScale.caption)
                         .foregroundStyle(Palette.inkSoft)
                 }
@@ -161,7 +161,7 @@ struct DesktopSyncView: View {
                             .foregroundStyle(Palette.priority)
                     }
                     if manager.lastFailedReasons.count > 4 {
-                        Text("…等 \(manager.lastFailedReasons.count) 条失败")
+                        Text(L("…等 %@ 条失败", String(manager.lastFailedReasons.count)))
                             .font(TypeScale.caption)
                             .foregroundStyle(Palette.inkFaint)
                     }
@@ -170,11 +170,11 @@ struct DesktopSyncView: View {
         case .failed(let message):
             Text(message).font(TypeScale.caption).foregroundStyle(Palette.priority)
         case .sendingData(let step):
-            Text("\(SyncManager.stageLabel(for: step))（第 \(step)/10 步）…")
+            Text(L("%@（第 %@/10 步）…", SyncManager.stageLabel(for: step), String(step)))
                 .font(TypeScale.caption)
                 .foregroundStyle(Palette.inkSoft)
         case .sendingMedia(let done, let total):
-            Text("正在传输图片和视频 \(done)/\(total)…")
+            Text(L("正在传输图片和视频 %@/%@…", String(done), String(total)))
                 .font(TypeScale.caption)
                 .foregroundStyle(Palette.inkSoft)
         case .preparing:
@@ -198,7 +198,7 @@ struct DesktopSyncView: View {
 
     private func handleScanned(_ raw: String) {
         guard let link = SyncPairingLink.parse(raw) else {
-            pairingError = "这不是 BrewPhase 的配对二维码"
+            pairingError = L("这不是 BrewPhase 的配对二维码")
             return
         }
         pairingError = nil

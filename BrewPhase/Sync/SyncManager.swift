@@ -395,11 +395,11 @@ enum SyncError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .pairingCodeExpired: return "配对码已过期，请在桌面端重新生成"
+        case .pairingCodeExpired: return L("配对码已过期，请在桌面端重新生成")
         case .desktopUnreachable(let tried):
-            return "无法连接桌面端（已尝试 \(tried.joined(separator: "、"))）。请确认 iPhone 与 Mac 在同一 Wi-Fi，桌面端同步已启用，且 Mac 防火墙允许 BrewPhase。"
-        case .protocolMismatch: return "桌面端版本不兼容，请把两端都更新到最新版"
-        case .keychainWriteFailed: return "配对凭据保存失败，请重试；若反复出现请检查系统设置"
+            return L("无法连接桌面端（已尝试 %@）。请确认 iPhone 与 Mac 在同一 Wi-Fi，桌面端同步已启用，且 Mac 防火墙允许 BrewPhase。", tried.joined(separator: L("、")))
+        case .protocolMismatch: return L("桌面端版本不兼容，请把两端都更新到最新版")
+        case .keychainWriteFailed: return L("配对凭据保存失败，请重试；若反复出现请检查系统设置")
         }
     }
 }

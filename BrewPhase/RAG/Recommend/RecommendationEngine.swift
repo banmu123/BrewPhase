@@ -191,18 +191,4 @@ final class RecommendationEngine {
 
         return InsightFormatter.similarHistory(hits: hits, query: trimmed, beans: beans)
     }
-
-    // MARK: 能力状态（协议 §36）
-
-    func capability(settings: RAGSettings, languageCode: String) async -> IntelligenceCapability {
-        let resolution = await coordinator.resolution(settings: settings, languageCode: languageCode)
-        return IntelligenceCapability(
-            structuredQueryAvailable: true,
-            semanticSearchAvailable: true,
-            semanticBackend: resolution.provider.backend,
-            semanticModelIdentifier: resolution.provider.modelIdentifier,
-            knowledgeBaseAvailable: !KnowledgeBase.payload.documents.isEmpty,
-            recommendationAvailable: true
-        )
-    }
 }

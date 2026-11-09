@@ -175,9 +175,10 @@ final class Bean {
 
     var currentDayAfterRoast: Int? { dayAfterRoast(on: Date()) }
 
-    var isFinished: Bool {
-        status == .finished || remainingG <= 0
-    }
+    /// 喝完与否的唯一判据：声明过 finished，或剩余量归零。
+    /// 规则本体在下方 `BeanSnapshot.isFinished`——引擎侧读的是快照，两处必须
+    /// 永远一致，所以这里只做转发，不写第二份公式。
+    var isFinished: Bool { snapshot.isFinished }
 
     /// What the engine actually needs. Passing a value type in keeps
     /// PhaseEngine pure and unit-testable without a SwiftData store.
@@ -270,4 +271,9 @@ final class Bean {
     var brewSamples: [BrewSample] {
         (brews ?? []).map { BrewSample(date: $0.date, coffeeG: $0.coffeeG, waterG: $0.waterG) }
     }
+}
+
+extension BeanSnapshot {
+    /// 「这包豆喝完了吗」的唯一判据。`Bean.isFinished` 与引擎侧都转发到这里。
+    var isFinished: Bool { status == .finished || remainingG <= 0 }
 }

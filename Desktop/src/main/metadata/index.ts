@@ -33,7 +33,6 @@ export function recordIdsToResolve(outcome: {
  */
 export async function resolveRecordMetadata(
   db: Db,
-  deviceId: string,
   id: string,
   force: boolean,
   expectedUrl?: string,
@@ -49,7 +48,7 @@ export async function resolveRecordMetadata(
   if (!parsed.valid) {
     // 防御：非法 URL 不抓取，但也不能留在 pending（UI 已阻止保存，这里兜底）。
     if (record.metadataStatus === 'pending') {
-      return applyResolvedMetadata(db, deviceId, id, record.urlString, {
+      return applyResolvedMetadata(db, id, record.urlString, {
         ...emptyMetadata('generic', ''),
         errorMessage: '不是有效的网页地址'
       })
@@ -60,5 +59,5 @@ export async function resolveRecordMetadata(
   // 请求开始时锁定 URL：写入时会核对它，期间被改过就丢弃结果（§第三轮 3）。
   const lockedUrl = record.urlString
   const resolved = await resolveMetadataDeduped(lockedUrl, fetchText)
-  return applyResolvedMetadata(db, deviceId, id, lockedUrl, resolved)
+  return applyResolvedMetadata(db, id, lockedUrl, resolved)
 }

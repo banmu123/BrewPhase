@@ -269,7 +269,6 @@ enum DocumentBuilder {
             content: lines.joined(separator: "\n"),
             metadata: DocumentMetadata(
                 beanID: bean?.id,
-                tastingID: tasting.id,
                 docDate: tasting.date,
                 dayAfterRoast: tasting.resolvedDayAfterRoast,
                 score: tasting.score > 0 ? tasting.score : nil,

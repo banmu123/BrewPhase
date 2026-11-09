@@ -14,6 +14,7 @@
 "%@ 开封" = "opened %@";
 "%@ 打了 %@ 分。" = "%@ scored %@.";
 "%@ 提供播放" = "Playback by %@";
+"%@ 文件无法读取：%@" = "Couldn't read %@ file: %@";
 "%@ 星" = "%@ stars";
 "%@ 本次 %@，你的较好记录在 %@–%@" = "%@: this cup %@, your better brews %@–%@";
 "%@ 条" = "%@ entries";
@@ -42,6 +43,7 @@
 "%@（%@ 次）" = "%@ (%@)";
 "%@（%@）" = "%@ (%@)";
 "%@（平均 %@ 分）" = "%@ (avg %@)";
+"%@（第 %@/10 步）…" = "%@ (step %@/10)…";
 "%@：%@" = "%@: %@";
 "%@：%@（%@）" = "%@: %@ (%@)";
 "%@：平均 %@ 分（%@ 次）" = "%@: %@ on average over %@ brews";
@@ -63,6 +65,7 @@
 "Onibus Coffee 中目黑" = "Onibus Coffee Nakameguro";
 "· 这次冲煮早于你最后一次盘点，保存不会改变库存" = "· this brew predates your last stock count, so saving will not change your stock";
 "· 这次用掉的比剩下的还多" = "· that is more than you have left";
+"…等 %@ 条失败" = "…and %@ more failures";
 "、" = ", ";
 "。" = ". ";
 "「%@」" = "“%@”";
@@ -120,13 +123,11 @@
 "中烘" = "Medium";
 "中烘两头都搭，手冲和加奶都稳。" = "Medium roasts go either way: filter or milk, both hold up.";
 "为什么留下它" = "Why you kept it";
-"主题" = "Topic";
 "也可以换到浏览器看" = "Or watch it in a browser";
 "二楼靠窗，能看到电车经过。点了一杯浅烘的肯尼亚，凉下来之后更像红茶。" = "A window seat upstairs, trains passing below. Ordered a light-roast Kenya; as it cooled it read more like black tea.";
 "互联网上的第一条推文。" = "The first post on the internet.";
 "互联网上的第一条视频。" = "The first video on the internet.";
 "产区" = "Origin";
-"产区级" = "Region level";
 "产地" = "Country";
 "人生" = "Life";
 "今天" = "Today";
@@ -158,7 +159,6 @@
 "你是 BrewPhase 里的助手，帮用户看懂他自己的咖啡记录。用户是喝手冲的人，不是工程师。" = "You are the assistant inside BrewPhase, helping the user make sense of their own coffee records. They brew pour-over; they are not an engineer.";
 "你有问题，直接问" = "Ask whatever is on your mind";
 "你用%@平均打了 %@ 分（%@ 次）。" = "Your %@ averages %@ over %@ brews.";
-"你的最佳参数" = "Your best parameters";
 "你的记录" = "Your records";
 "你的记录里没有相关内容，上面只有知识库里的通用说法，不代表你的实际情况。" = "Nothing in your records covers this, so the above is general background from the knowledge base rather than your own situation.";
 "你的话" = "In your words";
@@ -202,7 +202,6 @@
 "养豆期" = "Resting";
 "内容暂时读不到" = "Content unavailable";
 "内容由 %@ 提供" = "Content from %@";
-"内置知识库" = "Built-in knowledge base";
 "再记一杯" = "Log another";
 "再记录几杯，这里会开始出现你的个人规律。" = "A few more cups and your own patterns will start to show up here.";
 "写一句再保存吧" = "Write a line before saving";
@@ -211,9 +210,7 @@
 "冲得偏慢" = "Running slow";
 "冲煮" = "Brews";
 "冲煮参数" = "Brew recipe";
-"冲煮家族" = "Brew family";
 "冲煮方式" = "Brew method";
-"冲煮方式级" = "Brew-method level";
 "冲煮时长" = "Brew time";
 "冲煮时间还没填" = "The brew time is not filled in yet";
 "冲煮记录" = "Brews";
@@ -269,7 +266,6 @@
 "厌氧日晒" = "Anaerobic natural";
 "去豆仓挑一包，冲完记下参数和味道，这里就会长起来。" = "Pick a bag from the cellar, brew it and note how it tasted — this is where it fills in.";
 "参数" = "Recipe";
-"参数偏离" = "Parameter drift";
 "参数偏离你的较好记录" = "Parameters away from your better brews";
 "参考记录还只有 %@ 次，判定只是方向性的。" = "Only %@ reference brews so far — this reading is directional.";
 "发展时间" = "Development time";
@@ -291,6 +287,7 @@
 "只属于这块画布，不会改动记录本身。" = "Belongs to this canvas only; the record is untouched.";
 "只改一件事" = "one change only";
 "只是方向" = "directional";
+"只解除配对" = "Unpair only";
 "只读到了一部分信息，标题和封面可以自己填。" = "Only part of the page could be read — add the title and cover yourself.";
 "可以不填" = "optional";
 "可以以后再补" = "You can add these later";
@@ -305,6 +302,7 @@
 "可能过萃" = "Possibly over-extracted";
 "司令官 C40" = "Comandante C40";
 "同一个做法至少要冲过 %@ 次才能比较；现在有 %@ 次带评分的记录。" = "A method needs at least %@ scored brews before they can be compared; there are %@ so far.";
+"同步完成：已新增/更新 %@ · 内容一致 %@ · 冲突 %@ · 失败 %@" = "Sync finished: %@ added/updated · %@ unchanged · %@ conflicts · %@ failed";
 "名称" = "Name";
 "向量模型" = "Embedding model";
 "含图片 · 可在另一台设备恢复" = "Includes images · restores on another device";
@@ -313,15 +311,9 @@
 "味觉细项" = "Taste detail";
 "味道淡了，收进柜子当纪念。" = "The flavour has faded; retiring the bag to the shelf.";
 "咖啡" = "Coffee";
-"咖啡与健康" = "Coffee and health";
 "咖啡变成了少数几件每天都会做的事之一。它不解决问题，但它让一天有个开头。" = "Coffee became one of the few things I do every day. It solves nothing, but it starts the day.";
-"咖啡基础" = "Coffee basics";
 "咖啡知识" = "Coffee knowledge";
-"品牌级" = "Brand level";
 "品种" = "Variety";
-"品种级" = "Variety level";
-"品种谱系" = "Variety group";
-"品鉴" = "Tasting";
 "哔哩哔哩" = "Bilibili";
 "哥伦比亚 · 慧兰" = "Colombia · Huila";
 "哪包豆" = "Which bag";
@@ -333,7 +325,6 @@
 "回答只用这台设备上的记录和 BrewPhase 自带的知识条目。不联网，不上传，也没有账号。" = "Answers use only the records on this device and the knowledge notes that ship with BrewPhase. No network, no upload, no account.";
 "回答的语言要和上面这些说明一致。" = "Answer in the same language as these instructions.";
 "回答直接给结论，三到五句话。不要复述资料原文，也不要解释你是怎样检索的。" = "Lead with the conclusion, in three to five sentences. Do not restate the source text, and do not explain how you searched.";
-"国家级" = "Country level";
 "图片" = "Photos";
 "在 BrewPhase Desktop 的「更多 → 设备同步」里启用同步并出示二维码。" = "Enable sync in BrewPhase Desktop under More → Device sync, then show the QR code.";
 "在哪里买的" = "Where you bought it";
@@ -341,13 +332,11 @@
 "在本机运行模型生成，回答更自然，但需要你先把 Ollama 跑起来" = "Generated by a model running on this machine: more natural, but you have to start Ollama first";
 "在浏览器打开" = "Open in browser";
 "地址" = "Address";
-"型号级" = "Model level";
 "埃塞俄比亚 · Guji" = "Ethiopia · Guji";
 "基于默认风味窗口估算" = "estimated from the default window";
 "填上烘焙日期就能看到阶段" = "Add a roast date to see its phase";
 "填上烘焙日期，就能看到它现在处在哪个阶段" = "Add the roast date and you will see which phase it is in";
 "处理法" = "Process";
-"处理法级" = "Process level";
 "处理法：%@" = "Process: %@";
 "备份" = "Backup";
 "备份内容与校验信息不一致，可能已损坏。为安全起见没有做任何修改。" = "The contents do not match the checksums, so the file may be damaged. Nothing was changed.";
@@ -375,6 +364,7 @@
 "好的" = "OK";
 "如果资料不足以回答，就直接说找不到，并说清缺什么。不要用常识补一个听起来合理的答案。" = "If the material is not enough, say plainly that it cannot be found and what is missing. Do not fill the gap with general knowledge and make it sound plausible.";
 "如果问题持续存在，请先确认设备存储空间正常。" = "If this keeps happening, check that your device has enough free space.";
+"媒体文件：图片 %@ · 视频 %@ · 失败 %@" = "Media: %@ images · %@ videos · %@ failed";
 "它主动告诉你现在最值得关注什么" = "It tells you what matters now, without being asked";
 "完全匹配" = "Exact match";
 "完成" = "Done";
@@ -395,6 +385,8 @@
 "封面是示例生成的；视频本体不在示例里，详情页会如实说。" = "The cover is generated for the sample set; the video file itself is not included, and the detail page will say so.";
 "将删除全部示例豆及其冲煮与风味记录。你自己的记录不受影响。" = "Deletes every sample bag along with its brews and tasting notes. Your own records are untouched.";
 "将加入 7 包演示豆（含冲煮与风味记录）。你自己的记录不受影响，之后关闭开关即可整批移除。" = "Adds 7 sample bags with brews and tasting notes. Your own records are untouched; turn the switch off later to remove them all.";
+"将同步的内容" = "What will sync";
+"将把这台 iPhone 上的咖啡记录、冲煮、品鉴、画布和相关媒体复制到这台电脑。原始 iPhone 数据不会被删除；电脑上已有的不同数据不会被覆盖，冲突会停下来等你裁决。" = "This copies this iPhone's coffee records, brews, tastings, canvases and their media to this computer. Nothing on the iPhone is deleted; different data already on the computer isn't overwritten — conflicts stop and wait for your decision.";
 "少一点" = "a bit less";
 "少一点粉" = "a little less coffee";
 "少萃一点：苦和干涩会退下去。" = "Extract a little less: bitterness and dryness should recede.";
@@ -410,7 +402,6 @@
 "已在画布" = "On canvas";
 "已填入上次的参数" = "Filled in from your last brew";
 "已复制链接" = "Link copied";
-"已应用 %@ · 一致 %@ · 冲突 %@ · 失败 %@" = "Applied %@ · unchanged %@ · conflicts %@ · failed %@";
 "已恢复 %@ 包豆子、%@ 条冲煮记录、%@ 条风味记录，以及 %@ 条记录、%@ 块画布。" = "Restored %@ bags, %@ brews, %@ tastings, %@ records and %@ canvases.";
 "已清理 %@ 个文件" = "Removed %@ files";
 "已经喝完了" = "This bag is finished";
@@ -421,8 +412,12 @@
 "已经进入窗口" = "already in the window";
 "已自定义" = "Customised";
 "已自定义 %@ 项" = "%@ customised";
+"已解除配对。" = "Unpaired.";
+"已解除配对，Mac 上的同步内容已清空。" = "Unpaired. Synced content on the Mac has been cleared.";
+"已解除配对，但 Mac 上的内容没能清空：%@" = "Unpaired, but the Mac's synced content couldn't be cleared: %@";
 "已过窗口 %@ 天" = "%@ days past the window";
 "已过黄金风味期但还剩不少" = "Past the peak window with plenty left";
+"已连接桌面端" = "Desktop connected";
 "已选择" = "Selected";
 "已配对桌面端" = "Paired desktop";
 "巴拿马 · Boquete" = "Panama · Boquete";
@@ -443,6 +438,7 @@
 "开启本地智能" = "Turn on local intelligence";
 "开始冲煮" = "Brew now";
 "开始重建" = "Start rebuild";
+"开始首次同步" = "Start first sync";
 "开封后第 %@ 天" = "day %@ after opening";
 "开封日期" = "Opened";
 "开封日期是 %@，已经开封 %@ 天。" = "Opened on %@; it has been open %@ days.";
@@ -471,7 +467,6 @@
 "意式/奶咖" = "espresso";
 "意式拼配" = "Espresso blend";
 "意式浓缩" = "Espresso";
-"感官" = "Sensory";
 "慢一点" = "a bit slower";
 "慢一点，少一点，把一件事做完。" = "Slower, fewer things, finished properly.";
 "我在你的记录和 BrewPhase 知识库里都没有找到和这个问题相关的内容。可以换个说法再问一次，或者先补上这包豆子的烘焙日期、开封日期这类信息。" = "I could not find anything in your records or in the BrewPhase knowledge base that answers this. Try wording it differently, or fill in the bag's roast and opening dates first.";
@@ -513,7 +508,6 @@
 "换了向量模型或界面语言，索引已重建。" = "The embedding model or interface language changed, so the index was rebuilt.";
 "换城市之后" = "After moving cities";
 "换语言不用重启，也不用改系统设置。选「跟随系统」就跟着手机走。" = "No restart and no digging into system settings — pick “Follow System” and it tracks the phone.";
-"排气 %@–%@ · 窗口 %@–%@ · 衰退 %@" = "Rest %@–%@ · Window %@–%@ · Decline %@";
 "排气 %@–%@ 天 · 窗口 %@–%@ 天 · %@" = "Rest %@–%@ days · Window %@–%@ days · %@";
 "排气 %@–%@ 天 · 窗口第 %@–%@ 天 · 第 %@ 天开始衰减" = "Rest %@–%@ days · window days %@–%@ · declining from day %@";
 "排气开始" = "Rest starts";
@@ -537,8 +531,6 @@
 "收起播放器" = "Close player";
 "收起风味" = "Hide flavours";
 "放大画布" = "Zoom in";
-"故障" = "Troubleshooting";
-"故障排查" = "Troubleshooting";
 "数据" = "Data";
 "数据只存在这台设备上，没有账号，没有服务器。" = "Your data stays on this device. No account, no server.";
 "数据已恢复，但提醒没有重新排程。下次打开 App 会再试一次。" = "Your data was restored, but reminders were not rescheduled. The app will try again the next time it opens.";
@@ -553,6 +545,7 @@
 "新记录会从这里开始" = "New brews start from these";
 "新鲜度" = "Freshness";
 "无法打开本地数据" = "Cannot open your local data";
+"无法连接桌面端（已尝试 %@）。请确认 iPhone 与 Mac 在同一 Wi-Fi，桌面端同步已启用，且 Mac 防火墙允许 BrewPhase。" = "Couldn't reach the desktop (tried %@). Make sure the iPhone and Mac are on the same Wi-Fi, sync is enabled on the desktop, and the Mac firewall allows BrewPhase.";
 "日期" = "Date";
 "时间" = "Time";
 "时间 %@–%@" = "Time %@–%@";
@@ -577,6 +570,7 @@
 "最近这一杯在你自己的记录里没有明显异常。" = "The latest cup shows nothing unusual against your own records.";
 "最近这一杯更接近「%@」（%@）。" = "The latest cup is closer to \"%@\" (%@).";
 "最高 %@ 分，出现在 %@。" = "The best was %@, on %@.";
+"有 %@ 条冲突停在桌面端的设置页等你裁决。" = "%@ conflicts are waiting on the desktop for your decision.";
 "有 %@ 条资料没能算出向量，这次检索里没有它们。" = "%@ items could not be embedded and are missing from this search.";
 "有些内容暂时读不到。" = "Some content can't be loaded right now.";
 "有哪些豆子" = "Inventory";
@@ -601,7 +595,6 @@
 "本次 %@，你的较好记录在 %@（慢 %@）" = "This cup %@; your better brews %@ — slower by %@";
 "本次将沿用上次参数" = "This brew starts from those parameters";
 "本次表现" = "This cup";
-"术语" = "Terminology";
 "来源" = "Source";
 "来自 BrewPhase 知识库" = "From the BrewPhase knowledge base";
 "来自你的记录" = "From your records";
@@ -620,17 +613,25 @@
 "标题" = "Title";
 "桃" = "Peach";
 "桌面同步" = "Desktop sync";
+"桌面端版本不兼容，请把两端都更新到最新版" = "The desktop version is incompatible — update both ends to the latest version";
 "检索" = "Retrieval";
 "检索模型 · 取条数 · 重建索引" = "Model · passage count · index rebuild";
 "检索范围：%@" = "Search scope: %@";
 "模型用合成数据训练，结果只是估算，不能当成真实规律。" = "The model was trained on synthetic data. This is only an estimate, not a real pattern.";
 "橙花" = "Orange Blossom";
-"正在传输媒体 %@/%@…" = "Transferring media %@/%@…";
+"正在传输图片和视频 %@/%@…" = "Transferring photos and videos %@/%@…";
 "正在关联知识…" = "Linking knowledge…";
 "正在养豆" = "Resting";
+"正在准备数据…" = "Preparing data…";
 "正在准备文件…" = "Preparing the files…";
 "正在同步…" = "Syncing…";
-"正在同步数据（第 %@ 批）…" = "Syncing data (batch %@)…";
+"正在同步冲煮" = "Syncing brews";
+"正在同步品鉴" = "Syncing tastings";
+"正在同步收藏记录与标签" = "Syncing saved records and tags";
+"正在同步数据" = "Syncing data";
+"正在同步画布" = "Syncing canvases";
+"正在同步豆子" = "Syncing beans";
+"正在同步阶段规则与提醒" = "Syncing phase rules and reminders";
 "正在恢复…" = "Restoring…";
 "正在打包…" = "Packing…";
 "正在找相关知识与记录…" = "Looking for related knowledge and records…";
@@ -639,6 +640,7 @@
 "正在获取网页信息…" = "Reading the page…";
 "正在讨论：%@" = "Discussing: %@";
 "正在读取画布" = "Loading canvas";
+"正在连接桌面端…" = "Connecting to the desktop…";
 "正在重建…" = "Rebuilding…";
 "正在重新获取…" = "Fetching again…";
 "正在问「%@」" = "Asking about %@";
@@ -667,7 +669,6 @@
 "水温 %@–%@°C" = "Water %@–%@°C";
 "水温约 %@°C" = "about %@°C";
 "水温还没填" = "The water temperature is not filled in yet";
-"水质" = "Water";
 "水量" = "Water";
 "水量 %@" = "%@ water";
 "水量不变、多加一点粉，浓度和口感都会厚起来。" = "Same water, a little more coffee: stronger and fuller.";
@@ -711,8 +712,8 @@
 "添加记录到画布" = "Add records to the canvas";
 "添加豆子" = "Add bean";
 "添加风味" = "Add flavours";
-"清洁维护" = "Cleaning and care";
 "清理 %@ 个无用的图片" = "Clean up %@ unused images";
+"清空会删掉 Mac 上从这台手机同步过去的记录、标签、画布与媒体文件；豆子、冲煮、品鉴会保留。清空不可恢复。" = "Clearing deletes the records, tags, canvases and media synced from this iPhone; beans, brews and tastings stay. This cannot be undone.";
 "清除搜索" = "Clear search";
 "渠道" = "Channel";
 "滤杯与秤" = "Dripper and scale";
@@ -732,7 +733,6 @@
 "烘焙日期在未来，请检查一下" = "The roast date is in the future — worth a check";
 "烘焙日期是 %@，今天是烘焙后第 %@ 天。" = "Roasted on %@; today is day %@ after roast.";
 "烘焙日期还没选，风味阶段要靠它来算" = "No roast date yet; the phase is worked out from it";
-"烘焙级" = "Roast level";
 "焦糖" = "Caramel";
 "照常喝" = "As usual";
 "照片" = "Photo";
@@ -773,10 +773,8 @@
 "目前「%@」有 %@ 次带评分的记录，还差 %@ 次才能形成稳定的个人基线。" = "\"%@\" has %@ scored brews so far; %@ more and a stable personal baseline forms.";
 "目前数据还不足以建立个人基线。" = "There is not enough data yet to build a personal baseline.";
 "目前最平衡的一杯" = "The most balanced cup so far";
-"相似冲煮" = "Similar brews";
 "相似经历" = "Similar experiences";
 "相关的记录" = "Related records";
-"相关知识" = "Related knowledge";
 "相册" = "Library";
 "看出来的问题" = "What stands out";
 "看完想到了什么" = "What it made you think";
@@ -837,7 +835,6 @@
 "给这段视频起个名字" = "Name this video";
 "继续会用它替换这台设备上的全部记录。现有数据不会保留，也无法撤销。" = "Continuing replaces every record on this device with this backup. Current data will not be kept, and this cannot be undone.";
 "继续记几杯，BrewPhase 会用你自己的数据给出建议。" = "Keep logging a few more cups; BrewPhase will advise from your own data.";
-"维护" = "Maintenance";
 "编辑" = "Edit";
 "编辑冲煮" = "Edit brew";
 "编辑画布" = "Edit canvas";
@@ -887,6 +884,7 @@
 "规格 %@，目前剩 %@。" = "%@ bag, %@ left.";
 "规范匹配" = "Canonical match";
 "视频" = "Video";
+"解除并清空 Mac 上的同步内容" = "Unpair and clear synced content on the Mac";
 "解除配对" = "Unpair";
 "让水流快一点，回到你自己的区间。" = "Speed the flow back up into your own range.";
 "记一杯" = "Log a cup";
@@ -899,8 +897,8 @@
 "记录于" = "Recorded";
 "记录到的风味：%@。" = "Flavours recorded: %@.";
 "记录开封日期和剩余量" = "Track the open date and how much is left";
+"记录数据无法读取，媒体清单不完整" = "Record data unreadable; the media list is incomplete";
 "设备" = "Device";
-"设备指引" = "Equipment guidance";
 "设置" = "Settings";
 "证据不足" = "Not enough evidence";
 "证据较足" = "Solid evidence";
@@ -921,6 +919,7 @@
 "豆仓里还没有豆子。先加一包，喝过几次之后这里就会有话说了。" = "No bags in the cellar yet. Add one and brew it a few times, and this page will have something to say.";
 "豆名" = "Name";
 "豆子" = "Beans";
+"豆子数据无法读取，媒体清单不完整" = "Bean data unreadable; the media list is incomplete";
 "豆子清单" = "Bean list";
 "购买日期" = "Bought";
 "购买日期是 %@。" = "Bought on %@.";
@@ -988,7 +987,6 @@
 "这包豆有 %@ 次带评分的冲煮记录。" = "This bag has %@ scored brews.";
 "这包豆的历史还不够给出做法建议" = "Not enough history on this bag for a method suggestion";
 "这包豆的历史还不够给出最佳参数" = "Not enough history on this bag for best parameters";
-"这包豆的状态" = "This bag's status";
 "这包豆目前只有 %@ 次带评分的记录，还形不成区间。" = "This bag has only %@ scored brews so far — not enough to form a range.";
 "这包豆目前有 %@ 次带评分的记录。" = "This bag currently has %@ scored brews.";
 "这包豆自己还没有足够的记录，这次按你全部豆子的历史统计。" = "This bag does not have enough records of its own yet, so the statistics cover every bag.";
@@ -1038,10 +1036,10 @@
 "选择一张图片" = "Choose a photo";
 "选择一段视频" = "Choose a video";
 "选用的向量模型在这台设备上不可用，已退到%@。" = "The chosen embedding model is not available on this device; fell back to %@.";
-"通用" = "Generic";
 "那一天" = "that day";
 "都在本机" = "All local";
 "都是默认值" = "All defaults";
+"配对凭据保存失败，请重试；若反复出现请检查系统设置" = "Couldn't save pairing credentials — try again; if it keeps happening, check system settings";
 "配对码已过期，请在桌面端重新生成" = "Pairing code expired — generate a new one on the desktop";
 "酸" = "Acidity";
 "酸 %@" = "acidity %@";

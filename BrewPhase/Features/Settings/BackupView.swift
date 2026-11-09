@@ -407,9 +407,7 @@ struct BackupView: View {
     }
 
     private func byteText(_ bytes: Int) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: Int64(bytes))
+        Fmt.bytes(Int64(bytes))
     }
 
     // MARK: - Sheet model

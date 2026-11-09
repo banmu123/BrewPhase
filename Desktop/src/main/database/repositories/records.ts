@@ -102,7 +102,7 @@ export function createRecord(db: Db, deviceId: string, draft: RecordDraft): Reco
       })
       .run()
     // 抓取状态属于 Desktop 单方派生数据，写独立表（不进同步指纹）
-    seedLocalMetadata(scoped, id, draft.carrier, draft.urlString, draft.provider)
+    prepareLocalMetadata(scoped, id)
     replaceTags(scoped, id, draft.tagIds)
     recordChange(scoped, { deviceId, entityType: 'record', entityId: id, operation: 'create' })
   })
@@ -146,14 +146,9 @@ export function updateRecord(db: Db, deviceId: string, id: string, draft: Record
       })
       .where(eq(records.id, id))
       .run()
-    if (draft.carrier !== 'link') {
-      // 不再是链接 → 本地派生元数据整体失效
-      scoped.delete(recordMetadata).where(eq(recordMetadata.recordId, id)).run()
-    } else if (urlChanged) {
-      // 旧 URL 的封面/摘要/作者/统计一律作废（§URL 变更生命周期）
-      scoped.delete(recordMetadata).where(eq(recordMetadata.recordId, id)).run()
-      seedLocalMetadata(scoped, id, draft.carrier, draft.urlString, draft.provider)
-    }
+    // 非 link → 派生行失效；URL 变了 → 旧封面/摘要/统计作废并按新 URL 重新
+    // 播种（§URL 变更生命周期）。prepareLocalMetadata 自己读刚更新的行做比对。
+    prepareLocalMetadata(scoped, id)
     replaceTags(scoped, id, draft.tagIds)
     recordChange(scoped, { deviceId, entityType: 'record', entityId: id, operation: 'update' })
   })
@@ -178,7 +173,6 @@ const METADATA_HAS_CONTENT: readonly string[] = ['ok', 'resolved', 'partial']
 
 export function applyResolvedMetadata(
   db: Db,
-  deviceId: string,
   id: string,
   expectedUrl: string,
   resolved: ResolvedLinkMetadata
@@ -230,15 +224,14 @@ export function applyResolvedMetadata(
       .run()
     written = true
     // 注意：这里**不写 change_log**——records 行没有变化，同步指纹也不该变。
-    void deviceId
   })
 
   return written ? getRecord(db, id) : null
 }
 
 /**
- * 同步落库之后（或启动恢复）调用：保证 link 记录有对应的本地派生元数据行，
- * 并告诉调用方**这次是否需要真的去抓**。
+ * 本地派生元数据行的唯一播种/恢复入口（新建、URL 变更、同步落库、启动恢复共用）：
+ * 保证 link 记录有对应的 `record_metadata` 行，并告诉调用方**这次是否需要真的去抓**。
  *
  * - 非 link / 没有 URL → 删掉派生行，返回 null；
  * - 没有行、或行的 url_string 与记录不一致（URL 变了）→ 重建为 pending，需要抓；
@@ -262,6 +255,11 @@ export function prepareLocalMetadata(
   const existing = db.select().from(recordMetadata).where(eq(recordMetadata.recordId, id)).get()
   if (existing && existing.urlString === urlString) {
     return { urlString, needsFetch: existing.status === 'pending' }
+  }
+  if (existing) {
+    // URL 变了：旧 URL 的封面/摘要/统计一律作废——upsert 只覆盖种子列，
+    // 不清掉就会让新链接顶着旧封面（§URL 变更生命周期）。
+    db.delete(recordMetadata).where(eq(recordMetadata.recordId, id)).run()
   }
 
   const status = parseLink(urlString).valid ? 'pending' : 'failed'
@@ -297,35 +295,6 @@ export function pendingMetadataJobs(db: Db): Array<{ recordId: string; urlString
     .all()
 }
 
-/**
- * 新链接的初始抓取状态落 record_metadata：非链接载体没有这回事；
- * URL 非法直接 failed（没人会去解析它，pending 会永远挂着）。
- */
-function seedLocalMetadata(
-  db: Db,
-  recordId: string,
-  carrier: string,
-  urlString: string,
-  provider: string
-): void {
-  if (carrier !== 'link' || !urlString.trim()) return
-  const status = parseLink(urlString).valid ? 'pending' : 'failed'
-  db.insert(recordMetadata)
-    .values({
-      recordId,
-      urlString,
-      provider,
-      status,
-      errorMessage: status === 'failed' ? '不是有效的网页地址' : null,
-      fetchedAt: 0
-    })
-    .onConflictDoUpdate({
-      target: recordMetadata.recordId,
-      set: { urlString, provider, status, errorMessage: status === 'failed' ? '不是有效的网页地址' : null }
-    })
-    .run()
-}
-
 /** 删记录：外键 ON DELETE CASCADE 会带走标签关系与引用它的画布节点。 */
 export function deleteRecord(db: Db, deviceId: string, id: string): void {
   db.transaction((tx) => {
@@ -357,14 +326,6 @@ export function createTag(db: Db, deviceId: string, name: string): RecordTag {
     recordChange(scoped, { deviceId, entityType: 'recordTag', entityId: id, operation: 'create' })
   })
   return { id, name: trimmed, createdAt: at }
-}
-
-export function deleteTag(db: Db, deviceId: string, id: string): void {
-  db.transaction((tx) => {
-    const scoped = tx as unknown as Db
-    scoped.delete(recordTags).where(eq(recordTags.id, id)).run()
-    recordChange(scoped, { deviceId, entityType: 'recordTag', entityId: id, operation: 'delete' })
-  })
 }
 
 function replaceTags(db: Db, recordId: string, tagIds: string[]): void {

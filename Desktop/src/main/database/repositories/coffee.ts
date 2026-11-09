@@ -134,10 +134,6 @@ export function listBrews(db: Db, beanId: string | null): Brew[] {
   return rows.map(toBrew)
 }
 
-export function listBrewsForBean(db: Db, beanId: string): Brew[] {
-  return listBrews(db, beanId)
-}
-
 /**
  * 记一杯。
  *
@@ -324,35 +320,6 @@ export function listTastings(db: Db, beanId: string | null): Tasting[] {
     .orderBy(desc(tastings.date))
     .all()
   return rows.map(toTasting)
-}
-
-export function createTasting(db: Db, deviceId: string, draft: TastingDraft): Tasting {
-  const bean = getBean(db, draft.beanId)
-  if (!bean) throw new Error('bean not found')
-  const id = crypto.randomUUID()
-  const at = Date.now()
-
-  db.transaction((tx) => {
-    const scoped = tx as unknown as Db
-    scoped
-      .insert(tastings)
-      .values({
-        id,
-        beanId: draft.beanId,
-        brewId: draft.brewId,
-        date: draft.date,
-        dayAfterRoast: draft.dayAfterRoast,
-        flavorTagsRaw: joinTags(draft.flavorTags),
-        score: draft.score,
-        notes: draft.notes,
-        source: draft.source,
-        createdAt: at
-      })
-      .run()
-    recordChange(scoped, { deviceId, entityType: 'tasting', entityId: id, operation: 'create' })
-  })
-
-  return toTasting(db.select().from(tastings).where(eq(tastings.id, id)).get()!)
 }
 
 // MARK: - Phase rules

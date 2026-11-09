@@ -25,7 +25,6 @@ const api: RendererApi = {
     updateBrew: (id, draft) => invoke(IPC.brewUpdate, { id, draft }),
     deleteBrew: (id) => invoke(IPC.brewDelete, { id }),
     listTastings: (beanId) => invoke(IPC.tastingsList, { beanId }),
-    createTasting: (draft) => invoke(IPC.tastingCreate, draft),
     listPhaseRules: () => invoke(IPC.phaseRulesList)
   },
   records: {
@@ -36,7 +35,6 @@ const api: RendererApi = {
     remove: (id) => invoke(IPC.recordDelete, { id }),
     listTags: () => invoke(IPC.tagsList),
     createTag: (name) => invoke(IPC.tagCreate, { name }),
-    deleteTag: (id) => invoke(IPC.tagDelete, { id }),
     importImage: () => invoke(IPC.recordImportImage),
     resolveMetadata: (id, force = false) => invoke(IPC.recordResolveMetadata, { id, force }),
     // `version` 只进查询串：主进程按 pathname 取文件名，不解析 query。

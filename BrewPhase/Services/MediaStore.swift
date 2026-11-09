@@ -24,8 +24,6 @@ final class MediaStore: @unchecked Sendable {
         try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
     }
 
-    var directoryURL: URL { directory }
-
     func url(for name: String) -> URL {
         directory.appendingPathComponent(name)
     }
@@ -93,36 +91,5 @@ final class MediaStore: @unchecked Sendable {
         guard let duration = try? await asset.load(.duration) else { return nil }
         let seconds = CMTimeGetSeconds(duration)
         return seconds.isFinite && seconds > 0 ? seconds : nil
-    }
-
-    // MARK: - 体积与清理
-
-    func totalBytes() -> Int64 {
-        let contents = (try? fileManager.contentsOfDirectory(
-            at: directory, includingPropertiesForKeys: [.fileSizeKey]
-        )) ?? []
-        return contents.reduce(into: Int64(0)) { total, url in
-            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            total += Int64(size)
-        }
-    }
-
-    /// 没有被任何记录引用的文件。与 `ImageStore.orphanedFiles` 同一个思路。
-    func orphanedFiles(referenced: Set<String>) -> [URL] {
-        let contents = (try? fileManager.contentsOfDirectory(at: directory,
-                                                            includingPropertiesForKeys: nil)) ?? []
-        return contents.filter { !referenced.contains($0.lastPathComponent) }
-    }
-
-    @discardableResult
-    func clearOrphans(referenced: Set<String>) -> Int {
-        let orphans = orphanedFiles(referenced: referenced)
-        for url in orphans {
-            try? fileManager.removeItem(at: url)
-        }
-        if !orphans.isEmpty {
-            AppLog.images.info("cleared \(orphans.count) orphaned video files")
-        }
-        return orphans.count
     }
 }

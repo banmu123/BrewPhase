@@ -9,6 +9,7 @@ struct MoreView: View {
 
     @Environment(\.modelContext) private var context
     @Query private var beans: [Bean]
+    @Query private var records: [Record]
     @Query private var rules: [PhaseRule]
 
     @AppStorage(PrefKey.defaultMethod) private var defaultMethod: String = "V60"
@@ -299,7 +300,7 @@ struct MoreView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     navRow(title: "图片",
                             detail: .alreadyLocalized(
-                                L("%@ 个文件 · %@", String(imageCount), formattedBytes(imageBytes))
+                                L("%@ 个文件 · %@", String(imageCount), Fmt.bytes(imageBytes))
                             ),
                             showsChevron: false)
 
@@ -490,25 +491,26 @@ struct MoreView: View {
         await NotificationManager.shared.refreshAll(beans: all, book: book, context: context)
     }
 
+    /// 图片目录里真正被引用的文件名：豆子图片 + 记录的两类图片
+    /// （链接预览图、图片记录的正文图 .jpg）。引用集合漏掉记录图片会把
+    /// 它们当垃圾删掉（与 BackupRestorer 恢复后的清孤儿同一口径）。
+    private func referencedImageNames() -> Set<String> {
+        let recordImages = records.flatMap { record -> [String?] in
+            [record.previewPath, (record.mediaPath?.hasSuffix(".jpg") ?? false) ? record.mediaPath : nil]
+        }
+        return Set(beans.compactMap(\.imagePath) + recordImages.compactMap { $0 })
+    }
+
     private func refreshImageStats() {
         imageCount = ImageStore.shared.fileCount()
         imageBytes = ImageStore.shared.totalBytes()
-        let referenced = Set(beans.compactMap(\.imagePath))
-        orphanCount = ImageStore.shared.orphanedFiles(referenced: referenced).count
+        orphanCount = ImageStore.shared.orphanedFiles(referenced: referencedImageNames()).count
     }
 
     private func cleanUpImages() {
-        let referenced = Set(beans.compactMap(\.imagePath))
-        let removed = ImageStore.shared.clearOrphans(referenced: referenced)
+        let removed = ImageStore.shared.clearOrphans(referenced: referencedImageNames())
         cleanupMessage = removed > 0 ? L("已清理 %@ 个文件", String(removed)) : nil
         refreshImageStats()
-    }
-
-    private func formattedBytes(_ bytes: Int64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useKB, .useMB]
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: bytes)
     }
 }
 

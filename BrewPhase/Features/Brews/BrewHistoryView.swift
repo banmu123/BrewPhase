@@ -167,7 +167,7 @@ struct BrewHistoryView: View {
         let scored = brews.filter { $0.score > 0 }
         guard !scored.isEmpty else { return "—" }
         let total = scored.reduce(0) { $0 + $1.score }
-        return String(format: "%.1f", Double(total) / Double(scored.count))
+        return Fmt.number(Double(total) / Double(scored.count))
     }
 
     private var mostUsedMethod: String {

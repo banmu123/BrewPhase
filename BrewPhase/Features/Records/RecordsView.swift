@@ -468,29 +468,11 @@ struct RecordsView: View {
     }
 
     /// 与豆子删除同一个次序：**先让数据库删成功，再动磁盘上的文件**。
+    /// 次序契约本身收在 `RecordRemoval`（列表页与详情页共用）。
     private func delete(_ record: Record) {
-        let media = record.mediaPath
-        let preview = record.previewPath
-        let carrier = record.carrier
-        // 先清掉画布里引用它的节点：节点只存引用，记录的删除必须连带回收，
-        // 否则画布上会留下点开一片空白的卡片。与记录同一次 save 提交。
-        CanvasNodeStore.deleteNodes(referencing: record.id, context: context)
-        context.delete(record)
-        do {
-            try context.save()
-        } catch {
-            AppLog.store.error("record delete failed: \(error.localizedDescription, privacy: .public)")
-            context.rollback()
-            return
-        }
+        guard RecordRemoval.perform(record, in: context) else { return }
         planner.remove(id: record.id)
         dataSource?.remove(id: record.id)
-        if carrier == .video {
-            MediaStore.shared.delete(media)
-        } else {
-            ImageStore.shared.delete(media)
-        }
-        ImageStore.shared.delete(preview)
     }
 }
 
@@ -1088,10 +1070,29 @@ struct RecordDetailView: View {
     }
 
     private func delete() {
+        if RecordRemoval.perform(record, in: context) { dismiss() }
+    }
+}
+
+/// 删除一条记录的唯一实现，列表页与详情页共用。
+///
+/// 两处各写一份时，这个次序契约（Canvas Phase 1 引入、ecbc4c2 修补过）就得
+/// 靠人肉保持同步。收拢后只有一处要说清：
+///
+/// * 画布引用与记录在**同一次 save** 里提交——节点只存引用，记录删掉时
+///   必须连带回收，否则画布上会留下点开一片空白的卡片；
+/// * 落库失败就 rollback，什么都不删，调用方也不该继续动 UI；
+/// * 成功后才按载体清磁盘文件（先库后盘）。
+private enum RecordRemoval {
+
+    /// - Returns: 是否真的删掉了（save 失败时为 false）。
+    @discardableResult
+    static func perform(_ record: Record, in context: ModelContext) -> Bool {
+        // SwiftData 里 delete + save 之后属性可能已失效，文件名先取下来。
         let media = record.mediaPath
         let preview = record.previewPath
         let carrier = record.carrier
-        // 画布节点只存引用：记录删掉，引用必须一起回收。
+
         CanvasNodeStore.deleteNodes(referencing: record.id, context: context)
         context.delete(record)
         do {
@@ -1099,14 +1100,15 @@ struct RecordDetailView: View {
         } catch {
             AppLog.store.error("record delete failed: \(error.localizedDescription, privacy: .public)")
             context.rollback()
-            return
+            return false
         }
+
         if carrier == .video {
             MediaStore.shared.delete(media)
         } else {
             ImageStore.shared.delete(media)
         }
         ImageStore.shared.delete(preview)
-        dismiss()
+        return true
     }
 }

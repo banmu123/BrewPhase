@@ -853,16 +853,6 @@ textarea {
   position: relative;
 }
 
-.record-tile[data-carrier='link'] .record-tile__media,
-.record-tile[data-carrier='video'] .record-tile__media {
-  aspect-ratio: 16 / 9;
-}
-
-.record-tile[data-carrier='text'] .record-tile__media {
-  aspect-ratio: auto;
-  min-height: 0;
-}
-
 /* ===== 平台差异化预览（Records）：同一卡片系统，平台各自的内容结构 ===== */
 
 .preview-media {

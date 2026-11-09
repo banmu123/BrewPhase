@@ -33,7 +33,7 @@ from coffeeai_common import (  # noqa: E402
     check_messages, check_meta, corpus_sha256, expand_globs, load_jsonl,
     load_registry, load_source_exceptions, message_texts,
     messages_fingerprint, near_duplicate_pairs, source_admission_issues,
-    reviewed_record_sha256,
+    reviewed_record_sha256, text_similarity,
 )
 
 
@@ -323,7 +323,6 @@ def check_splits_dir(d, sim_threshold=0.92):
         for j in range(i + 1, len(names)):
             a, b = names[i], names[j]
             ta, tb = splits[a]["texts"], splits[b]["texts"]
-            from coffeeai_common import text_similarity
             hit = []
             for ida, txta in ta.items():
                 for idb, txtb in tb.items():

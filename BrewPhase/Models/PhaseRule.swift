@@ -64,11 +64,4 @@ final class PhaseRule {
         enabled = newValue.enabled
         updatedAt = Date()
     }
-
-    /// A one-line description of the window, for the rules editor.
-    var summary: String {
-        L("排气 %@–%@ · 窗口 %@–%@ · 衰退 %@",
-          String(restMinDays), String(restMaxDays),
-          String(peakStartDay), String(peakEndDay), String(declineStartDay))
-    }
 }

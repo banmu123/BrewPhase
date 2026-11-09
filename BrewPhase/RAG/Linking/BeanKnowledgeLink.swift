@@ -39,7 +39,6 @@ struct KnowledgeEvidence: Identifiable, Equatable, Sendable {
     let documentID: String
     let title: String
     let body: String
-    let category: String
     /// 人类可读出处，界面署名用。
     let source: String
     /// 溯源 id（对应 `knowledge/SOURCE_REGISTRY.json`）。
@@ -52,15 +51,6 @@ struct KnowledgeEvidence: Identifiable, Equatable, Sendable {
     let relevance: Double
 
     var id: String { documentID }
-
-    var scopeLabel: String? {
-        scope.flatMap { EntityScope(rawValue: $0)?.label }
-    }
-
-    /// 是否真的「与这包豆子有关」（而不是通用兜底）。
-    var isBeanSpecific: Bool { !matchedEntities.isEmpty }
-
-    var categoryLabel: String { KnowledgeBase.categoryLabel(category) }
 }
 
 /// 一包豆子的完整知识上下文（规格 §十四）。
@@ -96,12 +86,7 @@ struct BeanKnowledgeContext: Equatable, Sendable {
         return out.sorted { ($0.relevance, $1.documentID) > ($1.relevance, $0.documentID) }
     }
 
-    var totalLinkCount: Int { directLinks.count + relatedLinks.count }
     var totalKnowledgeCount: Int { allKnowledge.count }
-
-    /// 这包豆子有没有「专属」知识。没有时界面必须说「暂时没有该产区的具体资料」，
-    /// 而不是把通用知识包装成个性化结论（规格 §五十/§四十九）。
-    var hasBeanSpecificKnowledge: Bool { !directKnowledge.isEmpty }
 
     var isEmpty: Bool { directLinks.isEmpty && relatedLinks.isEmpty && allKnowledge.isEmpty }
 

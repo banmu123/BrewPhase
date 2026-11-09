@@ -5,7 +5,6 @@ import type { DatabaseHandle } from '../database/client'
 import {
   createBean,
   createBrew,
-  createTasting,
   deleteBean,
   deleteBrew,
   listBeans,
@@ -20,7 +19,6 @@ import {
   createRecord,
   createTag,
   deleteRecord,
-  deleteTag,
   getRecord,
   listRecords,
   listTags,
@@ -123,7 +121,6 @@ export function registerIpc(params: {
   })
 
   handle(IPC.tastingsList, (input) => listTastings(db.db, (input as { beanId: string | null }).beanId))
-  handle(IPC.tastingCreate, (input) => createTasting(db.db, db.deviceId, input as never))
 
   handle(IPC.phaseRulesList, () => listPhaseRules(db.db))
 
@@ -143,14 +140,10 @@ export function registerIpc(params: {
   handle(IPC.recordImportImage, () => importImageFromDialog())
   handle(IPC.recordResolveMetadata, (input) => {
     const value = input as { id: string; force: boolean }
-    return resolveRecordMetadata(db.db, db.deviceId, value.id, value.force)
+    return resolveRecordMetadata(db.db, value.id, value.force)
   })
   handle(IPC.tagsList, () => listTags(db.db))
   handle(IPC.tagCreate, (input) => createTag(db.db, db.deviceId, (input as { name: string }).name))
-  handle(IPC.tagDelete, (input) => {
-    deleteTag(db.db, db.deviceId, (input as { id: string }).id)
-    return null
-  })
 
   // MARK: - Canvas
 

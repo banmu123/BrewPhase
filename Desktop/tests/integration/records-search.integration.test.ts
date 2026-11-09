@@ -91,7 +91,7 @@ afterEach(() => {
 describe('本地派生元数据参与搜索', () => {
   it('自动抓取的标题能被搜到（records.title 仍然是空）', () => {
     const record = makeRecord()
-    applyResolvedMetadata(handle.db, handle.deviceId, record.id, URL, metadata())
+    applyResolvedMetadata(handle.db, record.id, URL, metadata())
     const hits = search('banmu123/BrewPhase')
     expect(hits.map((item) => item.id)).toEqual([record.id])
     // 命中不改变用户数据：记录标题依旧为空，展示靠 metadata
@@ -101,13 +101,13 @@ describe('本地派生元数据参与搜索', () => {
 
   it('自动抓取的描述能被搜到', () => {
     const record = makeRecord()
-    applyResolvedMetadata(handle.db, handle.deviceId, record.id, URL, metadata())
+    applyResolvedMetadata(handle.db, record.id, URL, metadata())
     expect(search('coffee studio').map((item) => item.id)).toEqual([record.id])
   })
 
   it('自动抓取的作者能被搜到', () => {
     const record = makeRecord()
-    applyResolvedMetadata(handle.db, handle.deviceId, record.id, URL, metadata())
+    applyResolvedMetadata(handle.db, record.id, URL, metadata())
     expect(search('fixture-author').map((item) => item.id)).toEqual([record.id])
   })
 
@@ -155,7 +155,7 @@ describe('本地派生元数据参与搜索', () => {
         title: `分页记录 ${index}`
       })
       // 每条都带一条派生元数据，确保 EXISTS 子查询每条都命中
-      applyResolvedMetadata(handle.db, handle.deviceId, record.id, record.urlString, metadata({
+      applyResolvedMetadata(handle.db, record.id, record.urlString, metadata({
         title: `分页记录 ${index}`,
         canonicalUrl: record.urlString
       }))
@@ -173,7 +173,7 @@ describe('本地派生元数据参与搜索', () => {
 
   it('搜索派生元数据不写 change_log、不影响记录本身', () => {
     const record = makeRecord()
-    applyResolvedMetadata(handle.db, handle.deviceId, record.id, URL, metadata())
+    applyResolvedMetadata(handle.db, record.id, URL, metadata())
     const before = (handle.sqlite.prepare('select count(*) n from change_log').get() as { n: number }).n
     search('coffee studio')
     const after = (handle.sqlite.prepare('select count(*) n from change_log').get() as { n: number }).n
@@ -189,7 +189,7 @@ describe('本地派生元数据参与搜索', () => {
 
   it('用户把 URL 改成新链接后，旧标题立刻搜不到（元数据已作废）', () => {
     const record = makeRecord()
-    applyResolvedMetadata(handle.db, handle.deviceId, record.id, URL, metadata())
+    applyResolvedMetadata(handle.db, record.id, URL, metadata())
     expect(search('coffee studio')).toHaveLength(1)
 
     updateRecord(handle.db, handle.deviceId, record.id, draft({

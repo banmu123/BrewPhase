@@ -62,20 +62,4 @@ enum AnswerComposer {
     static func chain(settings: RAGSettings) -> [LLMProvider] {
         [ExtractiveLLMProvider()]
     }
-
-    /// 按引擎种类取 provider。V1 的链上只有抽取式，所以这里只被将来挂回 LLM 层
-    /// 时用到；保留它是为了那时不必重新想一遍映射关系。
-    static func provider(for engine: AnswerEngine, settings: RAGSettings) -> LLMProvider? {
-        switch engine {
-        case .onDeviceSummary:
-            return ExtractiveLLMProvider()
-        case .appleIntelligence:
-            return FoundationModelLLMProvider.isAvailable ? FoundationModelLLMProvider() : nil
-        case .ollama:
-            guard let client = OllamaClient(baseURLString: settings.ollamaBaseURL) else { return nil }
-            let model = settings.ollamaChatModel.trimmed
-            guard !model.isEmpty else { return nil }
-            return OllamaLLMProvider(client: client, model: model)
-        }
-    }
 }

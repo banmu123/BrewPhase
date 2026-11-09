@@ -303,19 +303,6 @@ final class InsightsTests: XCTestCase {
         XCTAssertTrue(insight.evidence.isEmpty)
     }
 
-    // MARK: - 能力状态（协议 §36）
-
-    func testCapabilityReportsWhatIsActuallyAvailable() async {
-        let capability = await engine.capability(settings: .standard, languageCode: "zh-Hans")
-
-        XCTAssertTrue(capability.structuredQueryAvailable, "结构化查询是纯本地代码，恒可用")
-        XCTAssertTrue(capability.recommendationAvailable, "推荐是纯本地代码，恒可用")
-        XCTAssertTrue(capability.knowledgeBaseAvailable, "随包知识库必须能加载")
-        // 语义检索的可用性取决于 provider，但 backend 名字必须如实报告。
-        XCTAssertEqual(capability.semanticBackend, .onDevice)
-        XCTAssertFalse(capability.semanticModelIdentifier.isEmpty)
-    }
-
     // MARK: - 性能（协议 §45 要求报告）
 
     /// 演示数据规模（6 包豆 + 全部记录 + 16 条知识库）的首次同步与一次语义检索。

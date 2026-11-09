@@ -38,8 +38,6 @@ export type RecordPreview = {
   meta: string | null
   /** 摘要：记录 summary 优先，本地派生 description 补空 */
   description: string | null
-  /** 来源站点名：记录 sourceName 优先，本地派生补空 */
-  sourceName: string | null
   detailUrl: string | null
 }
 
@@ -130,9 +128,8 @@ export function buildPreview(item: RecordItem, mediaUrl: (name: string) => strin
       videoId: null,
       author,
       body: null,
-      meta: pick(item.sourceName, local?.sourceName) || null,
+      meta: null,
       description: summary || null,
-      sourceName: pick(item.sourceName, local?.sourceName) || null,
       detailUrl: null
     }
   }
@@ -153,7 +150,6 @@ export function buildPreview(item: RecordItem, mediaUrl: (name: string) => strin
       body: item.note || null,
       meta: null,
       description: null,
-      sourceName: null,
       detailUrl: null
     }
   }
@@ -175,7 +171,6 @@ export function buildPreview(item: RecordItem, mediaUrl: (name: string) => strin
     body: null,
     meta: platform.label,
     description: summary || null,
-    sourceName: pick(item.sourceName, local?.sourceName) || null,
     detailUrl,
     kind: 'platform-card'
   }
@@ -221,18 +216,15 @@ export function buildPreview(item: RecordItem, mediaUrl: (name: string) => strin
         kind: remoteImage ? 'remote-image' : 'text',
         videoId: null,
         body: pick(item.summary, local?.description, item.note) || null,
-        title: item.title.trim() || (summary ? '' : '社交动态'),
-        meta: author ? `X · ${author}` : 'X'
+        title: item.title.trim() || (summary ? '' : '社交动态')
       }
     }
     default: {
-      const host = hostOf(detailUrl)
       return {
         ...base,
         kind: remoteImage ? 'remote-image' : 'platform-card',
         videoId: null,
-        meta: host ?? platform.label,
-        author: pick(item.sourceName, local?.sourceName, author) || null
+        meta: hostOf(detailUrl) ?? platform.label
       }
     }
   }

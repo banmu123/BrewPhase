@@ -24,6 +24,17 @@ enum Fmt {
         value.rounded() == value ? "\(Int(value))g" : String(format: "%.1fg", value)
     }
 
+    // MARK: - File sizes
+
+    /// `412 KB`, `1.5 GB` — 文件/磁盘占用（`ByteCountFormatter` file 风格，
+    /// 单位自适应）。图片缓存行与备份文件列表共用；单位自适应是为了
+    /// 图片库超过 1 GB 时不会出现 `1536 MB` 这种读法。
+    static func bytes(_ value: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: value)
+    }
+
     // MARK: - Bare numbers
 
     /// `92`, `16.7`, `4.8` — a number with no unit attached.

@@ -52,6 +52,27 @@ function playbackOf(node: CanvasNodeWithRecord): 'local' | 'embed' | null {
   return null
 }
 
+/** 全部内容的世界坐标矩形（节点 + 便签 + 笔迹逐点）：装窗计算的唯一输入。 */
+function contentRects(
+  nodes: CanvasNodeWithRecord[],
+  notes: CanvasNote[],
+  strokes: CanvasStroke[]
+): Array<{ x: number; y: number; width: number; height: number }> {
+  const rects: Array<{ x: number; y: number; width: number; height: number }> = []
+  for (const node of nodes) {
+    rects.push({ x: node.positionX, y: node.positionY, width: node.width, height: node.height })
+  }
+  for (const note of notes) {
+    rects.push({ x: note.positionX, y: note.positionY, width: note.width, height: note.height })
+  }
+  for (const stroke of strokes) {
+    for (let i = 0; i < stroke.points.length; i += 2) {
+      rects.push({ x: stroke.points[i], y: stroke.points[i + 1], width: 0, height: 0 })
+    }
+  }
+  return rects
+}
+
 export function CanvasPage() {
   // ===== 视图层级 =====
   const [view, setView] = useState<'gallery' | 'workspace'>('gallery')
@@ -304,35 +325,7 @@ export function CanvasPage() {
   }, [])
 
   const fitAll = useCallback(() => {
-    const xs: number[] = []
-    const ys: number[] = []
-    for (const node of nodes) {
-      xs.push(node.positionX, node.positionX + node.width)
-      ys.push(node.positionY, node.positionY + node.height)
-    }
-    for (const note of notes) {
-      xs.push(note.positionX, note.positionX + note.width)
-      ys.push(note.positionY, note.positionY + note.height)
-    }
-    for (const stroke of strokes) {
-      for (let i = 0; i < stroke.points.length; i += 2) {
-        xs.push(stroke.points[i])
-        ys.push(stroke.points[i + 1])
-      }
-    }
-    const rects: Array<{ x: number; y: number; width: number; height: number }> = []
-    for (const node of nodes) {
-      rects.push({ x: node.positionX, y: node.positionY, width: node.width, height: node.height })
-    }
-    for (const note of notes) {
-      rects.push({ x: note.positionX, y: note.positionY, width: note.width, height: note.height })
-    }
-    for (const stroke of strokes) {
-      for (let i = 0; i < stroke.points.length; i += 2) {
-        rects.push({ x: stroke.points[i], y: stroke.points[i + 1], width: 0, height: 0 })
-      }
-    }
-    setViewport(fitViewport(rects, size, 80, CANVAS_LIMITS))
+    setViewport(fitViewport(contentRects(nodes, notes, strokes), size, 80, CANVAS_LIMITS))
     fitMeta.current = {
       didFit: true,
       width: size.width,
@@ -357,19 +350,7 @@ export function CanvasPage() {
     }
     const sizeChanged = meta.width !== size.width || meta.height !== size.height
     if (!meta.didFit || (!meta.userAdjusted && sizeChanged)) {
-      const rects: Array<{ x: number; y: number; width: number; height: number }> = []
-      for (const node of nodes) {
-        rects.push({ x: node.positionX, y: node.positionY, width: node.width, height: node.height })
-      }
-      for (const note of notes) {
-        rects.push({ x: note.positionX, y: note.positionY, width: note.width, height: note.height })
-      }
-      for (const stroke of strokes) {
-        for (let i = 0; i < stroke.points.length; i += 2) {
-          rects.push({ x: stroke.points[i], y: stroke.points[i + 1], width: 0, height: 0 })
-        }
-      }
-      setViewport(fitViewport(rects, size, 80, CANVAS_LIMITS))
+      setViewport(fitViewport(contentRects(nodes, notes, strokes), size, 80, CANVAS_LIMITS))
       fitMeta.current = { didFit: true, width: size.width, height: size.height, userAdjusted: meta.userAdjusted }
     }
   }, [view, activeId, size, nodes, notes, strokes])
@@ -1436,14 +1417,17 @@ function NodePlaySurface(props: {
 }) {
   const { node, viewport, wrapElement } = props
   const [, forceTick] = useState(0)
+  // 窗口/容器尺寸变化 → 重取 getBoundingClientRect（fixed 坐标随布局走）。
+  // handler 在 effect 内定义一次：add 与 remove 必须是同一个引用。
   useEffect(() => {
     if (!wrapElement) return
-    const observer = new ResizeObserver(() => forceTick((tick) => tick + 1))
+    const bump = () => forceTick((tick) => tick + 1)
+    const observer = new ResizeObserver(bump)
     observer.observe(wrapElement)
-    window.addEventListener('resize', observerDischarge(forceTick))
+    window.addEventListener('resize', bump)
     return () => {
       observer.disconnect()
-      window.removeEventListener('resize', observerDischarge(forceTick))
+      window.removeEventListener('resize', bump)
     }
   }, [wrapElement])
   const rect = wrapElement?.getBoundingClientRect()
@@ -1507,11 +1491,6 @@ function NodePlaySurface(props: {
       </button>
     </div>
   )
-}
-
-/** ResizeObserver 需要稳定的回调引用：包一层固定函数。 */
-function observerDischarge(tick: (fn: (n: number) => number) => void) {
-  return () => tick((n) => n + 1)
 }
 
 // MARK: - Gallery 对话框
@@ -1820,7 +1799,6 @@ function CanvasNodeShape(props: {
   )
   const colors = themeColors()
   const radius = 14
-  const stroke = props.selected ? colors.sage : colors.hairline
 
   return (
     <Group
@@ -1847,20 +1825,29 @@ function CanvasNodeShape(props: {
       <Rect width={node.width} height={node.height} fill="rgba(255,255,255,0.001)" />
 
       {node.recordCarrier === 'image' && (
-        <ImageCardBody node={node} image={image} colors={colors} radius={radius} stroke={stroke} selected={props.selected} />
-      )}
-      {node.recordCarrier === 'video' && (
-        <VideoCardBody
+        <MediaCover
           node={node}
           image={image}
-          isPlaying={isPlaying}
-          canPlay={playback !== null}
           colors={colors}
           radius={radius}
-          stroke={stroke}
           selected={props.selected}
-          onTogglePlay={props.onTogglePlay}
+          missingSymbol="▣"
+          fallbackTitle="未命名记录"
         />
+      )}
+      {node.recordCarrier === 'video' && (
+        <>
+          <MediaCover
+            node={node}
+            image={image}
+            colors={colors}
+            radius={radius}
+            selected={props.selected}
+            missingSymbol="▶"
+            fallbackTitle="未命名视频"
+          />
+          {playback !== null && !isPlaying && <PlayBadge onTogglePlay={props.onTogglePlay} node={node} />}
+        </>
       )}
       {node.recordCarrier === 'link' && (
         <LinkCardBody
@@ -1870,14 +1857,13 @@ function CanvasNodeShape(props: {
           canPlay={playback === 'embed'}
           colors={colors}
           radius={radius}
-          stroke={stroke}
           selected={props.selected}
           onTogglePlay={props.onTogglePlay}
           onOpenSource={() => window.open(node.recordURLString, '_blank')}
         />
       )}
       {node.recordCarrier === 'text' && (
-        <TextCardBody node={node} colors={colors} radius={radius} stroke={stroke} selected={props.selected} />
+        <TextCardBody node={node} colors={colors} radius={radius} selected={props.selected} />
       )}
 
       {props.selected && (
@@ -1914,144 +1900,75 @@ function CanvasNodeShape(props: {
   )
 }
 
-/** 图片卡：整卡封面 + 底部渐变标题（对标 iOS imageCard + mediaCaption）。 */
-function ImageCardBody(props: {
+/**
+ * 媒体卡封面（图片卡与视频卡共用）：整卡裁剪图 + 底部渐变标题区
+ * （白字标题 + 斜体画布备注，iOS mediaCaption）；图片缺失落 MissingMediaBody。
+ */
+function MediaCover(props: {
   node: CanvasNodeWithRecord
   image: HTMLImageElement | null
   colors: ReturnType<typeof themeColors>
   radius: number
-  stroke: string
   selected: boolean
+  /** 图片缺失占位符：图片卡 ▣ / 视频卡 ▶ */
+  missingSymbol: string
+  /** 标题缺失时的兜底文案（区分图片/视频） */
+  fallbackTitle: string
 }) {
   const { node, image, colors } = props
+  if (!image) {
+    return <MissingMediaBody node={node} symbol={props.missingSymbol} colors={colors} radius={props.radius} />
+  }
   return (
-    <>
-      {image ? (
-        <Group clipFunc={(ctx) => roundedRectPath(ctx, 0, 0, node.width, node.height, props.radius)}>
-          <KonvaImage
-            image={image}
-            width={node.width}
-            height={node.height}
-            crop={coverCrop(image, node.width, node.height)}
-            listening={false}
-          />
-          {/* 渐变标题区：透明 → 墨色，白字标题 + 斜体画布备注（iOS mediaCaption） */}
-          <Rect
-            y={node.height - captionHeight(node)}
-            width={node.width}
-            height={captionHeight(node)}
-            fillLinearGradientStartPoint={{ x: 0, y: 0 }}
-            fillLinearGradientEndPoint={{ x: 0, y: captionHeight(node) }}
-            fillLinearGradientColorStops={[0, 'rgba(20,24,18,0)', 1, 'rgba(20,24,18,0.72)']}
-            listening={false}
-          />
-          <Text
-            x={12}
-            y={node.height - captionHeight(node) + 10}
-            width={node.width - 24}
-            text={node.recordTitle || '未命名记录'}
-            fontSize={12.5}
-            fontStyle="600"
-            fontFamily={KONVA_FONT}
-            fill="#ffffff"
-            wrap="word"
-            ellipsis
-            height={20}
-            listening={false}
-          />
-          {node.annotation && (
-            <Text
-              x={12}
-              y={node.height - captionHeight(node) + 32}
-              width={node.width - 24}
-              text={`❝ ${node.annotation}`}
-              fontSize={10}
-              fontStyle="italic"
-              fontFamily={KONVA_FONT}
-              fill="rgba(255,255,255,0.85)"
-              wrap="word"
-              ellipsis
-              height={captionHeight(node) - 38}
-              listening={false}
-            />
-          )}
-        </Group>
-      ) : (
-        <MissingMediaBody node={node} symbol="▣" colors={colors} radius={props.radius} stroke={props.stroke} selected={props.selected} />
+    <Group clipFunc={(ctx) => roundedRectPath(ctx, 0, 0, node.width, node.height, props.radius)}>
+      <KonvaImage
+        image={image}
+        width={node.width}
+        height={node.height}
+        crop={coverCrop(image, node.width, node.height)}
+        listening={false}
+      />
+      {/* 渐变标题区：透明 → 墨色 */}
+      <Rect
+        y={node.height - captionHeight(node)}
+        width={node.width}
+        height={captionHeight(node)}
+        fillLinearGradientStartPoint={{ x: 0, y: 0 }}
+        fillLinearGradientEndPoint={{ x: 0, y: captionHeight(node) }}
+        fillLinearGradientColorStops={[0, 'rgba(20,24,18,0)', 1, 'rgba(20,24,18,0.72)']}
+        listening={false}
+      />
+      <Text
+        x={12}
+        y={node.height - captionHeight(node) + 10}
+        width={node.width - 24}
+        text={node.recordTitle || props.fallbackTitle}
+        fontSize={12.5}
+        fontStyle="600"
+        fontFamily={KONVA_FONT}
+        fill="#ffffff"
+        wrap="word"
+        ellipsis
+        height={20}
+        listening={false}
+      />
+      {node.annotation && (
+        <Text
+          x={12}
+          y={node.height - captionHeight(node) + 32}
+          width={node.width - 24}
+          text={`❝ ${node.annotation}`}
+          fontSize={10}
+          fontStyle="italic"
+          fontFamily={KONVA_FONT}
+          fill="rgba(255,255,255,0.85)"
+          wrap="word"
+          ellipsis
+          height={captionHeight(node) - 38}
+          listening={false}
+        />
       )}
-    </>
-  )
-}
-
-/** 视频卡：poster + 中央独立播放按钮；播放中交给 NodePlaySurface（iOS videoCard）。 */
-function VideoCardBody(props: {
-  node: CanvasNodeWithRecord
-  image: HTMLImageElement | null
-  isPlaying: boolean
-  canPlay: boolean
-  colors: ReturnType<typeof themeColors>
-  radius: number
-  stroke: string
-  selected: boolean
-  onTogglePlay: () => void
-}) {
-  const { node, image, colors } = props
-  return (
-    <>
-      {image ? (
-        <Group clipFunc={(ctx) => roundedRectPath(ctx, 0, 0, node.width, node.height, props.radius)}>
-          <KonvaImage
-            image={image}
-            width={node.width}
-            height={node.height}
-            crop={coverCrop(image, node.width, node.height)}
-            listening={false}
-          />
-          <Rect
-            y={node.height - captionHeight(node)}
-            width={node.width}
-            height={captionHeight(node)}
-            fillLinearGradientStartPoint={{ x: 0, y: 0 }}
-            fillLinearGradientEndPoint={{ x: 0, y: captionHeight(node) }}
-            fillLinearGradientColorStops={[0, 'rgba(20,24,18,0)', 1, 'rgba(20,24,18,0.72)']}
-            listening={false}
-          />
-          <Text
-            x={12}
-            y={node.height - captionHeight(node) + 10}
-            width={node.width - 24}
-            text={node.recordTitle || '未命名视频'}
-            fontSize={12.5}
-            fontStyle="600"
-            fontFamily={KONVA_FONT}
-            fill="#ffffff"
-            wrap="word"
-            ellipsis
-            height={20}
-            listening={false}
-          />
-          {node.annotation && (
-            <Text
-              x={12}
-              y={node.height - captionHeight(node) + 32}
-              width={node.width - 24}
-              text={`❝ ${node.annotation}`}
-              fontSize={10}
-              fontStyle="italic"
-              fontFamily={KONVA_FONT}
-              fill="rgba(255,255,255,0.85)"
-              wrap="word"
-              ellipsis
-              height={captionHeight(node) - 38}
-              listening={false}
-            />
-          )}
-        </Group>
-      ) : (
-        <MissingMediaBody node={node} symbol="▶" colors={colors} radius={props.radius} stroke={props.stroke} selected={props.selected} />
-      )}
-      {props.canPlay && !props.isPlaying && <PlayBadge onTogglePlay={props.onTogglePlay} node={node} />}
-    </>
+    </Group>
   )
 }
 
@@ -2063,7 +1980,6 @@ function LinkCardBody(props: {
   canPlay: boolean
   colors: ReturnType<typeof themeColors>
   radius: number
-  stroke: string
   selected: boolean
   onTogglePlay: () => void
   onOpenSource: () => void
@@ -2161,7 +2077,6 @@ function TextCardBody(props: {
   node: CanvasNodeWithRecord
   colors: ReturnType<typeof themeColors>
   radius: number
-  stroke: string
   selected: boolean
 }) {
   const { node, colors } = props
@@ -2237,8 +2152,6 @@ function MissingMediaBody(props: {
   symbol: string
   colors: ReturnType<typeof themeColors>
   radius: number
-  stroke: string
-  selected: boolean
 }) {
   const { node, colors } = props
   return (

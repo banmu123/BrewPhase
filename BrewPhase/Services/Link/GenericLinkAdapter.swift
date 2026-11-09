@@ -39,8 +39,6 @@ struct GenericLinkAdapter: LinkProviderAdapter {
             metadata.summary = preview.summary
             metadata.siteName = preview.siteName
             metadata.thumbnailURL = preview.imageURL
-            metadata.iconURL = preview.iconURL
-            metadata.canonicalURL = preview.canonicalURL
             if let type = preview.ogType?.lowercased(), type.contains("article") {
                 metadata.contentKind = .article
             }

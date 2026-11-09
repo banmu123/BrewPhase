@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { beanDraftSchema, brewDraftSchema, tastingDraftSchema } from '../entities/coffee'
+import { beanDraftSchema, brewDraftSchema } from '../entities/coffee'
 import { recordDraftSchema, recordQuerySchema } from '../entities/records'
 import { canvasNodeMoveSchema, canvasNodeResizeSchema, canvasNoteSchema, canvasStrokeSchema } from '../entities/canvas'
 
@@ -25,7 +25,6 @@ export const IPC = {
   brewDelete: 'coffee:brew:delete',
 
   tastingsList: 'coffee:tastings:list',
-  tastingCreate: 'coffee:tasting:create',
 
   phaseRulesList: 'coffee:phase-rules:list',
 
@@ -46,7 +45,6 @@ export const IPC = {
   syncResolveConflict: 'sync:resolve-conflict',
   tagsList: 'records:tags:list',
   tagCreate: 'records:tag:create',
-  tagDelete: 'records:tag:delete',
 
   canvasesList: 'canvas:list',
   canvasCreate: 'canvas:create',
@@ -80,7 +78,6 @@ export const ipcRequestSchemas = {
   [IPC.brewDelete]: z.object({ id: z.string().uuid() }),
 
   [IPC.tastingsList]: z.object({ beanId: z.string().uuid().nullable().default(null) }),
-  [IPC.tastingCreate]: tastingDraftSchema,
 
   [IPC.phaseRulesList]: z.void(),
 
@@ -102,7 +99,6 @@ export const ipcRequestSchemas = {
   [IPC.syncResolveConflict]: z.object({ id: z.string().min(1), resolution: z.enum(['local', 'remote']) }),
   [IPC.tagsList]: z.void(),
   [IPC.tagCreate]: z.object({ name: z.string().min(1).max(40) }),
-  [IPC.tagDelete]: z.object({ id: z.string().uuid() }),
 
   [IPC.canvasesList]: z.void(),
   [IPC.canvasCreate]: z.object({ name: z.string().min(1).max(120), note: z.string().max(2_000).default('') }),

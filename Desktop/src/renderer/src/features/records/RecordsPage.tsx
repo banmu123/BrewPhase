@@ -281,7 +281,6 @@ export function RecordsPage() {
                       .slice(0, 2)
                       .map((id) => tagName.get(id))
                       .filter((name): name is string => Boolean(name))}
-                    data-carrier={item.carrier}
                     onClick={() => {
                       setSelectedId(item.id)
                       setPanelOpen(true)
@@ -419,7 +418,6 @@ function RecordTile(props: {
   )
 }
 
-/** 详情侧栏的平台元信息行：仓库统计 / 视频来源 / 网页域名，如实展示。 */
 /** 表单里的本地识别状态行：已识别什么平台、内容 ID 是否取到。 */
 function ParsedLinkStatus(props: { parsed: ReturnType<typeof parseLink> | null }) {
   const { parsed } = props

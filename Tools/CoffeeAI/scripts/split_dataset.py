@@ -25,12 +25,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from coffeeai_common import (  # noqa: E402
-    COFFEEAI_ROOT, DEFAULT_CORPUS_GLOB, DEFAULT_META_GLOB, REPO_ROOT,
+    DEFAULT_CORPUS_GLOB, DEFAULT_META_GLOB, REPO_ROOT,
     LICENSES_ALLOW_TRAIN, REVIEW_APPROVED, corpus_sha256, expand_globs,
-    load_jsonl, load_registry, message_texts, near_duplicate_pairs,
-    text_similarity,
+    load_jsonl, near_duplicate_pairs,
 )
-from validate_data import validate  # noqa: E402
+from validate_data import check_splits_dir, validate  # noqa: E402
 
 
 class DSU:
@@ -277,8 +276,6 @@ def main(argv=None):
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     # ---- 自检：跨集合泄漏复核
-    self_issues = []
-    from validate_data import check_splits_dir
     s_issues, _ = check_splits_dir(out, args.sim_threshold)
     self_issues = [i for i in s_issues if i["level"] == "error"]
     if self_issues:

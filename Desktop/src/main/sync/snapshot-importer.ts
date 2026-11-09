@@ -204,7 +204,11 @@ function readLink(
     .get(recordId, tagId) as { record_id: string; tag_id: string } | undefined
 }
 
-const TABLES: Record<Exclude<EntityType, 'recordTagLink'>, string> = {
+/**
+ * entityType → SQLite 表名的**唯一**清单。recordTagLink 是复合主键关系表，
+ * 没有独立行表，走专用分支（null）。sync-service 的冲突裁决也用这份映射。
+ */
+export const TABLE_FOR_ENTITY: Record<EntityType, string | null> = {
   bean: 'beans',
   brew: 'brews',
   tasting: 'tastings',
@@ -212,25 +216,17 @@ const TABLES: Record<Exclude<EntityType, 'recordTagLink'>, string> = {
   phaseReminder: 'phase_reminders',
   record: 'records',
   recordTag: 'record_tags',
+  recordTagLink: null,
   canvas: 'canvases',
   canvasNode: 'canvas_nodes',
   canvasNote: 'canvas_notes',
   canvasStroke: 'canvas_strokes'
 }
 
-const TEXT_COLUMNS = new Set([
-  'name', 'roaster', 'origin', 'process', 'roast_level', 'channel', 'image_path',
-  'flavor_tags_raw', 'notes', 'status', 'method', 'grinder', 'grind_size',
-  'source', 'kind', 'carrier', 'title', 'note', 'url_string', 'canonical_url',
-  'provider', 'content_kind', 'platform_content_id', 'source_name', 'author_name',
-  'summary', 'preview_path', 'media_path', 'thumbnail_url_string', 'metadata_status',
-  'repository_language', 'repository_license', 'canvas_id', 'record_id', 'bean_id',
-  'brew_id', 'tag_id', 'annotation'
-])
 const BOOL_COLUMNS = new Set(['enabled', 'is_sample'])
 
 /** payload → 列值。字段名用 iOS 侧的 camelCase，映射到 snake_case 列。 */
-function toColumns(payload: Record<string, unknown>): Record<string, unknown> {
+export function toColumns(payload: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(payload)) {
     const column = key
@@ -277,14 +273,15 @@ function reconcileRecordMetadata(sqlite: Database, recordId: string): void {
     .run(recordId, recordId, recordId)
 }
 
-function updateRow(sqlite: Database, table: string, id: string, columns: Record<string, unknown>): void {
+export function updateRow(sqlite: Database, table: string, id: string, columns: Record<string, unknown>): void {
   const assignments = Object.keys(columns)
     .map((name) => `${name} = ?`)
     .join(', ')
   sqlite.prepare(`update ${table} set ${assignments} where id = ?`).run(...Object.values(columns), id)
 }
 
-function setBaseline(sqlite: Database, type: EntityType, id: string, fp: string): void {
+/** 桌面接受远端内容后把基线推进到该指纹（冲突裁决「接受手机版本」也走这里）。 */
+export function setBaseline(sqlite: Database, type: EntityType, id: string, fp: string): void {
   sqlite
     .prepare(
       `insert into sync_baseline (entity_type, entity_id, fingerprint, synced_at) values (?, ?, ?, ?)
@@ -393,7 +390,7 @@ export function applyBatch(sqlite: Database, batch: SyncBatch, sourceDeviceId: s
         applyTagLinkOperation(sqlite, operation, sourceDeviceId, mark)
         continue
       }
-      const table = TABLES[operation.entityType]
+      const table = TABLE_FOR_ENTITY[operation.entityType]
       if (!table) {
         mark({ entityType: operation.entityType, id: '*', status: 'failed', reason: `unknown entity type ${operation.entityType}` })
         continue

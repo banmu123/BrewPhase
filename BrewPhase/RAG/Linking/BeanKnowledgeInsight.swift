@@ -31,29 +31,6 @@ enum EvidenceAuthority: String, CaseIterable, Sendable {
 /// 会改动一个已经被 227 项测试钉住的类型，收益不抵风险。
 struct InsightResult: Identifiable, Equatable, Sendable {
 
-    /// 规格 §二十八 的类型清单。
-    enum Kind: String, CaseIterable, Sendable {
-        case beanStatus = "bean_status"
-        case bestBrew = "best_brew"
-        case similarBrew = "similar_brew"
-        case parameterDeviation = "parameter_deviation"
-        case knowledge
-        case troubleshooting
-        case equipmentGuidance = "equipment_guidance"
-
-        var label: String {
-            switch self {
-            case .beanStatus: return L("这包豆的状态")
-            case .bestBrew: return L("你的最佳参数")
-            case .similarBrew: return L("相似冲煮")
-            case .parameterDeviation: return L("参数偏离")
-            case .knowledge: return L("相关知识")
-            case .troubleshooting: return L("故障排查")
-            case .equipmentGuidance: return L("设备指引")
-            }
-        }
-    }
-
     /// 一行证据，带归属。
     struct EvidenceRow: Identifiable, Equatable, Sendable {
         let authority: EvidenceAuthority
@@ -64,7 +41,6 @@ struct InsightResult: Identifiable, Equatable, Sendable {
     }
 
     let id: UUID
-    let kind: Kind
     let title: String
     let summary: String
     let facts: [String]
@@ -169,7 +145,6 @@ enum BeanKnowledgeInsight {
 
         return InsightResult(
             id: UUID(),
-            kind: .knowledge,
             title: L("关于这包豆"),
             summary: summary,
             facts: facts,
@@ -252,7 +227,6 @@ enum BeanKnowledgeInsight {
 
         return InsightResult(
             id: UUID(),
-            kind: .knowledge,
             title: L("与本杯相关"),
             summary: summary,
             facts: linked.knowledge.recommendedKnowledge.map(\.title),

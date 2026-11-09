@@ -329,7 +329,6 @@ describe('链接元数据持久化（Phase 3.1：独立表，不进同步指纹�
     )
     const updated = recordsRepo.applyResolvedMetadata(
       handle.db,
-      handle.deviceId,
       withTitle.id,
       META_URL,
       resolvedMeta()
@@ -344,7 +343,6 @@ describe('链接元数据持久化（Phase 3.1：独立表，不进同步指纹�
     const emptyTitle = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft())
     const filled = recordsRepo.applyResolvedMetadata(
       handle.db,
-      handle.deviceId,
       emptyTitle.id,
       META_URL,
       resolvedMeta()
@@ -356,10 +354,9 @@ describe('链接元数据持久化（Phase 3.1：独立表，不进同步指纹�
 
   it('刷新失败：保留上一次成功的数据与 ok 状态', () => {
     const created = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft())
-    recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, META_URL, resolvedMeta())
+    recordsRepo.applyResolvedMetadata(handle.db, created.id, META_URL, resolvedMeta())
     const failed = recordsRepo.applyResolvedMetadata(
       handle.db,
-      handle.deviceId,
       created.id,
       META_URL,
       resolvedMeta({ status: 'failed', thumbnailUrl: null, repositoryStars: null, description: null })
@@ -371,7 +368,7 @@ describe('链接元数据持久化（Phase 3.1：独立表，不进同步指纹�
 
   it('URL 修改：旧派生元数据整行作废并按新 URL 重建，用户标题保留', () => {
     const created = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft({ title: '旧标题' }))
-    recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, META_URL, resolvedMeta())
+    recordsRepo.applyResolvedMetadata(handle.db, created.id, META_URL, resolvedMeta())
 
     const updated = recordsRepo.updateRecord(handle.db, handle.deviceId, created.id, {
       ...linkDraft({ title: '旧标题' }),
@@ -392,7 +389,7 @@ describe('链接元数据持久化（Phase 3.1：独立表，不进同步指纹�
 
   it('URL 未变时更新不清元数据', () => {
     const created = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft())
-    recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, META_URL, resolvedMeta())
+    recordsRepo.applyResolvedMetadata(handle.db, created.id, META_URL, resolvedMeta())
     const updated = recordsRepo.updateRecord(handle.db, handle.deviceId, created.id, {
       ...linkDraft({ title: '改个标题' })
     })
@@ -471,7 +468,7 @@ describe('元数据异步写入竞态（§第三轮 3 / 5）', () => {
     })
 
     // GitHub 的结果此刻才回来 → 必须被丢弃
-    const applied = recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, expectedUrl, GitHub())
+    const applied = recordsRepo.applyResolvedMetadata(handle.db, created.id, expectedUrl, GitHub())
     expect(applied).toBeNull()
 
     const fresh = recordsRepo.getRecord(handle.db, created.id)
@@ -491,7 +488,7 @@ describe('元数据异步写入竞态（§第三轮 3 / 5）', () => {
     const expectedUrl = created.urlString
     recordsRepo.deleteRecord(handle.db, handle.deviceId, created.id)
 
-    const applied = recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, expectedUrl, GitHub())
+    const applied = recordsRepo.applyResolvedMetadata(handle.db, created.id, expectedUrl, GitHub())
     expect(applied).toBeNull()
     expect(recordsRepo.getRecord(handle.db, created.id)).toBeNull()
   })
@@ -539,16 +536,15 @@ describe('metadataStatus 语义（Phase 3.1：状态在独立表，不碰同步�
   it('本次成功 → ok', () => {
     const created = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft())
     expect(metaStatusOf(created.id)).toBe('pending')
-    recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, META_URL, resolvedMeta())
+    recordsRepo.applyResolvedMetadata(handle.db, created.id, META_URL, resolvedMeta())
     expect(metaStatusOf(created.id)).toBe('ok')
   })
 
   it('成功后再失败 → 保持 ok（不降级、不清数据）', () => {
     const created = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft())
-    recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, META_URL, resolvedMeta())
+    recordsRepo.applyResolvedMetadata(handle.db, created.id, META_URL, resolvedMeta())
     recordsRepo.applyResolvedMetadata(
       handle.db,
-      handle.deviceId,
       created.id,
       META_URL,
       resolvedMeta({ status: 'failed', thumbnailUrl: null, repositoryStars: null })
@@ -560,7 +556,6 @@ describe('metadataStatus 语义（Phase 3.1：状态在独立表，不碰同步�
     const created = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft())
     recordsRepo.applyResolvedMetadata(
       handle.db,
-      handle.deviceId,
       created.id,
       META_URL,
       resolvedMeta({ status: 'failed', thumbnailUrl: null, title: null, description: null })
@@ -574,7 +569,7 @@ describe('metadataStatus 语义（Phase 3.1：状态在独立表，不碰同步�
     handle.sqlite
       .prepare("update records set metadata_status = 'resolved' where id = ?")
       .run(created.id)
-    recordsRepo.applyResolvedMetadata(handle.db, handle.deviceId, created.id, META_URL, resolvedMeta())
+    recordsRepo.applyResolvedMetadata(handle.db, created.id, META_URL, resolvedMeta())
     expect(rawRecordRow(created.id).metadata_status).toBe('resolved')
     expect(metaStatusOf(created.id)).toBe('ok')
   })
@@ -592,7 +587,6 @@ describe('元数据写入的载体约束（§第四轮 四 / Phase 3.1）', () =
 
     const applied = recordsRepo.applyResolvedMetadata(
       handle.db,
-      handle.deviceId,
       created.id,
       expectedUrl,
       resolvedMeta()
@@ -611,7 +605,6 @@ describe('元数据写入的载体约束（§第四轮 四 / Phase 3.1）', () =
     const created = recordsRepo.createRecord(handle.db, handle.deviceId, linkDraft())
     const applied = recordsRepo.applyResolvedMetadata(
       handle.db,
-      handle.deviceId,
       created.id,
       META_URL,
       resolvedMeta()

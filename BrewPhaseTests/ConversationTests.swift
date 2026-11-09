@@ -357,7 +357,8 @@ final class ConversationTests: XCTestCase {
         XCTAssertEqual(untouched.effectiveRetrievalQuery, standalone)
     }
 
-    /// 继承来的实体**不是硬过滤条件**（不然水质/新鲜度那几篇没有 entityIds 的知识会被筛掉）。
+    /// 继承来的实体**只供检索扩写**，收窄范围靠 `beanID`——过滤层已经没有
+    /// 实体维度，这个错误在类型上不可能再犯。
     func testInheritedEntitiesNeverBecomeHardFilters() throws {
         var conversation = ConversationContext.empty
         conversation.focusBeanID = guji.id
@@ -369,7 +370,6 @@ final class ConversationTests: XCTestCase {
         )
 
         XCTAssertFalse(planned.inheritedEntityIDs.isEmpty, "实体该继承，供扩写用")
-        XCTAssertTrue(planned.filter.entityIDs.isEmpty, "但不能变成过滤条件")
         XCTAssertEqual(planned.filter.beanID, guji.id, "收窄范围靠豆子 id")
     }
 

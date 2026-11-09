@@ -198,10 +198,9 @@ enum PriorityEngine {
 }
 
 private extension BeanSnapshot {
-    /// A finished bag is never "today's suggestion".
-    var isFinishedForRecommendation: Bool {
-        status == .finished || remainingG <= 0
-    }
+    /// A finished bag is never "today's suggestion". 判据本体是
+    /// `BeanSnapshot.isFinished`（Models/Bean.swift 唯一公式），这里只转发。
+    var isFinishedForRecommendation: Bool { isFinished }
 }
 
 // MARK: - Insight construction

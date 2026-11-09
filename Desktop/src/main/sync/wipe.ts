@@ -15,7 +15,7 @@ import { mediaFilePath } from '../media/store'
  * 里凡是属于这些实体的行，留着只会让下一次同步对着不存在的数据做裁决。
  */
 
-/** 同步侧的实体类型（与 SyncService 的 TABLE_FOR_CONFLICT 保持同一套名字）。 */
+/** 同步侧的实体类型（与 snapshot-importer 的 TABLE_FOR_ENTITY 保持同一套名字）。 */
 const SYNC_ENTITY_TYPES = ['record', 'recordTag', 'recordTagLink', 'canvas', 'canvasNode'] as const
 
 const inClause = (values: readonly string[]): string => values.map(() => '?').join(', ')

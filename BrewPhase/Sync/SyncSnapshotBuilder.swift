@@ -290,7 +290,7 @@ struct SyncSnapshotBuilder {
                 url = ImageStore.shared.url(for: name, thumbnail: name.contains("_thumb"))
             }
             guard let digest = Self.fileSHA256(at: url) else {
-                result.errors.append("\(mediaType) 文件无法读取：\(name)")
+                result.errors.append(L("%@ 文件无法读取：%@", mediaType, name))
                 return
             }
             result.entries.append(

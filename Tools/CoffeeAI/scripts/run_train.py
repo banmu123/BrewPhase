@@ -30,11 +30,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import env_check  # noqa: E402
-from coffeeai_common import KNOWN_DEPLOYMENT_PURPOSES  # noqa: E402
+from coffeeai_common import COFFEEAI_ROOT, REPO_ROOT, dump_yaml, KNOWN_DEPLOYMENT_PURPOSES  # noqa: E402
 from validate_data import check_splits_dir, check_training_admission  # noqa: E402
 
-COFFEEAI = Path(__file__).resolve().parents[1]
-REPO_ROOT = COFFEEAI.parent.parent
+COFFEEAI = COFFEEAI_ROOT
 DEFAULT_CONFIG = "Tools/CoffeeAI/configs/m2_16gb_qwen3_4b_qlora.yaml"
 
 
@@ -98,31 +97,6 @@ def _scalar(v, key=None):
     except ValueError:
         pass
     return v
-
-
-def dump_yaml(cfg):
-    lines = []
-    for k, v in cfg.items():
-        if isinstance(v, dict):
-            lines.append(f"{k}:")
-            for k2, v2 in v.items():
-                lines.append(f"  {k2}: {_fmt(v2)}")
-        else:
-            lines.append(f"{k}: {_fmt(v)}")
-    return "\n".join(lines) + "\n"
-
-
-def _fmt(v):
-    import json as _json
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if v is None:
-        return "null"
-    if isinstance(v, (int, float)):
-        return repr(v)
-    if isinstance(v, list):
-        return "[" + ", ".join(_fmt(x) for x in v) + "]"
-    return _json.dumps(v, ensure_ascii=False)
 
 
 # ---------------------------------------------------------------- 模型定位
