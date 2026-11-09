@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { selectThumbnailItems } from '../../src/renderer/src/features/canvas/canvas-thumbnail-model'
+import {
+  previewFileFor,
+  selectThumbnailItems
+} from '../../src/renderer/src/features/canvas/canvas-thumbnail-model'
 import type { CanvasNodeWithRecord } from '../../src/shared/contracts'
 
 /** 复刻 iOS CanvasThumbnailDataTests 的验收口径：选点确定性、包围盒、载体覆盖。 */
@@ -26,6 +29,7 @@ function node(partial: Partial<CanvasNodeWithRecord> & { id: string; recordCarri
     recordProvider: 'generic',
     recordPlatformContentID: null,
     recordURLString: '',
+    recordUpdatedAt: 1_000,
     ...rest,
     id
   } as CanvasNodeWithRecord
@@ -85,5 +89,21 @@ describe('selectThumbnailItems（对标 iOS CanvasThumbnailData.make）', () => 
 
   it('空画布返回 null（Gallery 显示品牌封面）', () => {
     expect(selectThumbnailItems([])).toBeNull()
+  })
+})
+
+describe('previewFileFor（按载体选预览文件）', () => {
+  it('image：优先 previewPath，缺省回退 mediaPath', () => {
+    expect(previewFileFor('image', 'thumb.jpg', 'full.jpg')).toBe('thumb.jpg')
+    expect(previewFileFor('image', null, 'full.jpg')).toBe('full.jpg')
+  })
+  it('video / link：只用 previewPath，绝不把视频本体当图片', () => {
+    expect(previewFileFor('video', 'cover.jpg', 'movie.mov')).toBe('cover.jpg')
+    expect(previewFileFor('video', null, 'movie.mov')).toBeNull()
+    expect(previewFileFor('link', 'shot.jpg', null)).toBe('shot.jpg')
+    expect(previewFileFor('link', null, null)).toBeNull()
+  })
+  it('text：不加载图片', () => {
+    expect(previewFileFor('text', 'x.jpg', 'y.jpg')).toBeNull()
   })
 })

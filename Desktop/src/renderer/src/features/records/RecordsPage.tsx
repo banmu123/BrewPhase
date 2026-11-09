@@ -41,21 +41,52 @@ export function RecordsPage() {
 
   /** 详情浮层按需出现：点卡片打开，✕ 关闭；不再常驻右侧挤压内容区。 */
   const [panelOpen, setPanelOpen] = useState(false)
-  const selected = items.find((item) => item.id === selectedId) ?? null
+  /**
+   * 跨页跳转 pinned 的记录：目标可能在当前搜索/筛选之外、甚至不在最近 100 条里。
+   * 用 `api.records.get(id)` 取完整详情，与列表数据解耦；删除则给提示。
+   */
+  const [pinnedRecord, setPinnedRecord] = useState<RecordItem | null>(null)
+  const selected = items.find((item) => item.id === selectedId) ?? pinnedRecord
 
-  // 画布双击节点跳转过来：等列表加载完成后选中并打开详情，然后清掉待办。
+  // 画布双击节点跳转过来：按 ID 直接取记录详情（不依赖列表数据），然后清掉待办。
+  // consume 放在 fetch 成功之后：StrictMode 下 effect 会双跑，先消费会取消第一次
+  // 的取数且第二次拿不到待办 ID——跳转就静默丢失了。
   const openRecordId = useAppStore((state) => state.openRecordId)
   const consumeOpenRecord = useAppStore((state) => state.consumeOpenRecord)
   useEffect(() => {
-    if (!openRecordId || items.length === 0) return
-    if (!items.some((item) => item.id === openRecordId)) {
-      consumeOpenRecord()
-      return
+    if (!openRecordId) return
+    const id = openRecordId
+    let alive = true
+    api.records
+      .get(id)
+      .then((record) => {
+        if (!alive) return
+        consumeOpenRecord()
+        if (!record) {
+          setError('要打开的记录已经被删除。')
+          return
+        }
+        setPinnedRecord(record)
+        setSelectedId(id)
+        setPanelOpen(true)
+      })
+      .catch((cause: Error) => {
+        if (alive) {
+          consumeOpenRecord()
+          setError(`没能打开记录：${cause.message}`)
+        }
+      })
+    return () => {
+      alive = false
     }
-    setSelectedId(openRecordId)
-    setPanelOpen(true)
-    consumeOpenRecord()
-  }, [openRecordId, items, consumeOpenRecord])
+  }, [openRecordId, consumeOpenRecord])
+
+  // 列表刷新后 pinned 记录若已回到列表中，解除 pinned（数据以列表为准）。
+  useEffect(() => {
+    if (pinnedRecord && items.some((item) => item.id === pinnedRecord.id)) {
+      setPinnedRecord(null)
+    }
+  }, [items, pinnedRecord])
 
   /**
    * 媒体版本：只用来给 `bpmedia://` 加 `?v=`。

@@ -60,3 +60,35 @@ export function contentBounds(rects: Rect[]): Rect | null {
   const maxY = Math.max(...rects.map((rect) => rect.y + rect.height))
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
+
+/**
+ * 「缩放到适合内容」的唯一计算：自动装窗与手动 Fit All 共用同一份公式，
+ * 不允许两处各写一份迟早漂移的实现。
+ *
+ * @param rects  全部内容的世界矩形（节点 + 便签；笔迹由调用方展平成点矩形）
+ * @param size   画布容器的 CSS 尺寸
+ * @param pad    内容四周留白（世界单位）
+ * @param limits 缩放上下限
+ */
+export function fitViewport(
+  rects: Rect[],
+  size: { width: number; height: number },
+  pad: number,
+  limits: { minScale: number; maxScale: number }
+): { scale: number; offsetX: number; offsetY: number } {
+  const bounds = contentBounds(
+    rects.map((rect) => ({ x: rect.x - pad, y: rect.y - pad, width: rect.width + pad * 2, height: rect.height + pad * 2 }))
+  )
+  if (!bounds || size.width <= 0 || size.height <= 0) {
+    return { scale: 1, offsetX: 0, offsetY: 0 }
+  }
+  const scale = Math.min(
+    limits.maxScale,
+    Math.max(limits.minScale, Math.min(size.width / bounds.width, size.height / bounds.height))
+  )
+  return {
+    scale,
+    offsetX: -bounds.x * scale + (size.width - bounds.width * scale) / 2,
+    offsetY: -bounds.y * scale + (size.height - bounds.height * scale) / 2
+  }
+}

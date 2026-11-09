@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import Database from 'better-sqlite3'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { _electron as electronLauncher } from '@playwright/test'
@@ -36,7 +36,33 @@ function seed(fixture: Fixture): void {
   )
   r.run('a1a1a1a1-1111-4111-8111-000000000001', 'text', '文字节点', '这是文字正文，用于卡片预览。', '', 'generic', null, null, null, now, now)
   r.run('a1a1a1a1-1111-4111-8111-000000000002', 'image', '图片节点', '', '', 'generic', null, 'mock-a.jpg', null, now, now)
-  r.run('a1a1a1a1-1111-4111-8111-000000000003', 'video', '视频节点', '', '', 'generic', null, 'mock-v.mov', 'mock-cover.jpg', now, now)
+  r.run('a1a1a1a1-1111-4111-8111-000000000003', 'video', '视频节点', '', '', 'generic', null, 'sample-video.mp4', 'mock-cover.jpg', now, now)
+  r.run(
+    'a1a1a1a1-1111-4111-8111-000000000005',
+    'link',
+    'Bilibili 演示',
+    '',
+    'https://www.bilibili.com/video/BV1GJ411x7h7',
+    'bilibili',
+    'BV1GJ411x7h7',
+    null,
+    null,
+    now,
+    now
+  )
+  r.run(
+    'a1a1a1a1-1111-4111-8111-000000000006',
+    'video',
+    'YouTube 视频',
+    '',
+    'https://www.youtube.com/watch?v=aaaaaaaaaaa',
+    'youtube',
+    'aaaaaaaaaaa',
+    null,
+    'mock-cover.jpg',
+    now,
+    now
+  )
   r.run(
     'a1a1a1a1-1111-4111-8111-000000000004',
     'link',
@@ -60,6 +86,8 @@ function seed(fixture: Fixture): void {
   for (const name of ['mock-a.jpg', 'mock-link.jpg', 'mock-cover.jpg']) {
     writeFileSync(join(userData, 'media', name), Buffer.from(PNG, 'base64'))
   }
+  // 真实可播放的视频 fixture（ffmpeg 生成，2 秒 320×180）
+  copyFileSync(join(__dirname, '..', 'fixtures', 'sample-video.mp4'), join(userData, 'media', 'sample-video.mp4'))
   db.close()
 }
 
@@ -80,6 +108,7 @@ async function launch(fixture: Fixture) {
 
 function countNodes(dbPath: string): Array<{
   record_id: string
+  title: string
   position_x: number
   position_y: number
   width: number
@@ -87,10 +116,21 @@ function countNodes(dbPath: string): Array<{
 }> {
   const db = new Database(dbPath, { readonly: true })
   const rows = db
-    .prepare('select record_id, position_x, position_y, width, height from canvas_nodes order by created_at')
-    .all() as Array<{ record_id: string; position_x: number; position_y: number; width: number; height: number }>
+    .prepare(
+      `select n.record_id, r.title, n.position_x, n.position_y, n.width, n.height
+       from canvas_nodes n join records r on r.id = n.record_id
+       order by n.created_at`
+    )
+    .all() as Array<{ record_id: string; title: string; position_x: number; position_y: number; width: number; height: number }>
   db.close()
   return rows
+}
+
+/** 按源记录标题定位节点序号（countNodes 按 created_at 排序）。 */
+function nodeIndexByTitle(rows: Array<{ title: string }>, title: string): number {
+  const index = rows.findIndex((row) => row.title === title)
+  if (index < 0) throw new Error(`node with title "${title}" not found`)
+  return index
 }
 
 
@@ -122,6 +162,34 @@ async function waitForViewportStable(page: import('@playwright/test').Page): Pro
     if (next && next === last) return
     last = next
   }
+}
+
+
+/** 点击节点选中并等 inspector 出现；Konva click 合成在 E2E 下偶发失效，带重试。 */
+async function selectNodeAt(
+  page: import('@playwright/test').Page,
+  dbPath: string,
+  index: number
+): Promise<void> {
+  await expect(async () => {
+    const rows = countNodes(dbPath)
+    // 节点左上角内侧：可播放节点的中心是 PlayBadge（点击=播放而非选中），
+    // 左上 18px 内是标题/封面区，任何载体都能安全命中选中。
+    const corner = await worldToScreen(page, { x: rows[index].position_x + 18, y: rows[index].position_y + 18 })
+    await page.mouse.click(corner.x, corner.y)
+    await page.waitForTimeout(300)
+    await expect(page.locator('.node-panel')).toBeVisible({ timeout: 400 })
+  }).toPass({ timeout: 15_000 })
+}
+
+/** 按源记录标题选中节点（面板标题可断言，避免顺序歧义）。 */
+async function selectNodeByTitle(
+  page: import('@playwright/test').Page,
+  dbPath: string,
+  title: string
+): Promise<void> {
+  await selectNodeAt(page, dbPath, nodeIndexByTitle(countNodes(dbPath), title))
+  await expect(page.locator('.node-panel')).toContainText(title)
 }
 
 /** 从画布容器的 data-viewport 读真实视口（scale,offsetX,offsetY）。 */
@@ -275,45 +343,140 @@ test('画布：链接节点的 Embed 播放（iframe 只由内容 ID 拼白名�
   await page.route('https://www.youtube.com/**', (route) =>
     route.fulfill({ status: 200, body: stub, contentType: 'text/html' })
   )
+  await page.route('https://player.bilibili.com/**', (route) =>
+    route.fulfill({ status: 200, body: stub, contentType: 'text/html' })
+  )
 
   await page.getByRole('button', { name: 'Canvas', exact: true }).click()
   await page.locator('.gallery-card__open').click()
   await expect(page.locator('.canvas-topbar')).toBeVisible()
 
-  // 只加链接节点（单节点 Fit 后必在视口中心）
+  // 只加两条链接节点：YouTube（stub 验证 iframe 加载）+ Bilibili（URL 构造）
   await page.getByRole('button', { name: '添加一条记录' }).click()
-  await expect(page.locator('.add-card', { hasText: 'Coffee Brewing Basics' })).toBeVisible({ timeout: 10_000 })
-  await page.locator('.add-card', { hasText: 'Coffee Brewing Basics' }).click()
-  await expect(page.locator('.picker-join')).toHaveText('加入 1 项')
+  await expect(page.locator('.add-card').first()).toBeVisible({ timeout: 10_000 })
+  for (const title of ['Coffee Brewing Basics', 'Bilibili 演示']) {
+    await page.locator('.add-card', { hasText: title }).click()
+    await page.waitForTimeout(200)
+  }
   await page.locator('.picker-join').click()
-  await page.waitForTimeout(600)
+  await page.waitForTimeout(700)
   await page.locator('.picker-panel').getByRole('button', { name: '关闭面板' }).click()
+  await page.getByRole('button', { name: '适配全部内容' }).click()
+  await waitForViewportStable(page)
+
+  /**
+   * Embed 配对验证（顺序无关）：面板显示哪个标题，iframe src 就必须是那条
+   * 记录的 embedURL 产物。两条各验一次——src 只能由内容 ID 拼（安全边界），
+   * 绝不是记录里的 watch URL。
+   */
+  const EXPECTED_SRC: Record<string, string> = {
+    'Coffee Brewing Basics': 'https://www.youtube.com/embed/dQw4w9WgXcQ?rel=0&playsinline=1',
+    'Bilibili 演示': 'https://player.bilibili.com/player.html?bvid=BV1GJ411x7h7&page=1&high_quality=1&danmaku=0'
+  }
+  for (const title of ['Coffee Brewing Basics', 'Bilibili 演示']) {
+    await selectNodeByTitle(page, fixture.dbPath, title)
+    await page.locator('.node-panel').getByRole('button', { name: '▶ 播放' }).click()
+    const surface = page.locator('.node-play-surface iframe')
+    await expect(surface).toHaveCount(1)
+    expect(await surface.getAttribute('src')).toBe(EXPECTED_SRC[title])
+    await page.keyboard.press('Escape')
+    await expect(page.locator('.node-play-surface')).toHaveCount(0)
+  }
+  // YouTube iframe 真的加载了 stub 内容（CSP frame-src 放行验证）
+  await selectNodeByTitle(page, fixture.dbPath, 'Coffee Brewing Basics')
+  await page.locator('.node-panel').getByRole('button', { name: '▶ 播放' }).click()
+  await expect(page.frameLocator('.node-play-surface iframe').locator('body')).toContainText('stub embed', {
+    timeout: 10_000
+  })
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.node-play-surface')).toHaveCount(0)
+
+  await app.close()
+  rmSync(fixture.userData, { recursive: true, force: true })
+})
+
+test('画布：本地视频真实播放、生命周期单实例与播放器定位', async () => {
+  test.setTimeout(120_000)
+  const fixture: Fixture = { userData: mkdtempSync(join(tmpdir(), 'bp-canvas-3-')), dbPath: '' }
+  fixture.dbPath = join(fixture.userData, 'brewphase.db')
+  seed(fixture)
+  const { app, page } = await launch(fixture)
+
+  await page.getByRole('button', { name: 'Canvas', exact: true }).click()
+  await page.locator('.gallery-card__open').click()
+  await expect(page.locator('.canvas-topbar')).toBeVisible()
+
+  // 加入两个可播放节点：本地视频 + YouTube 在线视频（生命周期验证用）
+  await page.getByRole('button', { name: '添加一条记录' }).click()
+  await expect(page.locator('.add-card').first()).toBeVisible({ timeout: 10_000 })
+  for (const title of ['视频节点', 'YouTube 视频']) {
+    await page.locator('.add-card', { hasText: title }).click()
+    await page.waitForTimeout(200)
+  }
+  await page.locator('.picker-join').click()
+  await page.waitForTimeout(700)
+  await page.locator('.picker-panel').getByRole('button', { name: '关闭面板' }).click()
+  await waitForViewportStable(page)
   await page.getByRole('button', { name: '适配全部内容' }).click()
   await page.waitForTimeout(400)
 
-  // 选中节点（坐标点击）→ inspector 面板的「▶ 播放」按钮（HTML 层，稳定路径）。
-  // 节点上同心 PlayBadge 的坐标点击是用户路径，Konva click 合成在 E2E 下偶发
-  // 失效（环境级 Konva 10 问题），验收走面板入口。
-  const node0 = countNodes(fixture.dbPath)[0]
-  const badge = await worldToScreen(page, { x: node0.position_x + node0.width / 2, y: node0.position_y + node0.height / 2 })
-  await page.mouse.click(badge.x, badge.y)
-  await page.waitForTimeout(400)
-  await expect(page.locator('.node-panel')).toBeVisible({ timeout: 10_000 })
-  await page.locator('.node-panel').getByRole('button', { name: '▶ 播放' }).click()
-  await page.waitForTimeout(400)
-  await expect(page.locator('.node-play-surface')).toHaveCount(1)
+  async function playNode(title: string): Promise<void> {
+    await selectNodeByTitle(page, fixture.dbPath, title)
+    await page.locator('.node-panel').getByRole('button', { name: '▶ 播放' }).click()
+    await page.waitForTimeout(400)
+  }
 
-  const surface = page.locator('.node-play-surface iframe')
-  await expect(surface).toHaveCount(1)
-  const src = await surface.getAttribute('src')
-  // 安全断言：src 只能是 embedURL 的产物（youtube embed 域 + 内容 ID），绝不是记录里的 watch URL
-  expect(src).toBe('https://www.youtube.com/embed/dQw4w9WgXcQ?rel=0&playsinline=1')
-  // iframe 真的加载了 stub 内容（CSP frame-src 放行验证）
-  const frame = page.frameLocator('.node-play-surface iframe')
-  await expect(frame.locator('body')).toContainText('stub embed', { timeout: 10_000 })
+  // 1) 本地视频真实播放：<video> 加载 bpmedia 媒体并开始播放
+  await playNode('视频节点')
+  const video = page.locator('.node-play-surface video')
+  await expect(video).toHaveCount(1)
+  await expect
+    .poll(async () => page.evaluate(() => {
+      const element = document.querySelector('.node-play-surface video') as HTMLVideoElement | null
+      return element ? { paused: element.paused, time: element.currentTime, ready: element.readyState } : null
+    }), { timeout: 10_000 })
+    .toEqual(expect.objectContaining({ paused: false, ready: expect.any(Number) } as never))
 
-  // Esc 停止播放（播放面卸载）
+  // 2) 播放器与节点矩形重合（窗口坐标换算唯一入口验证）
+  const rows = countNodes(fixture.dbPath)
+  const localRow = rows.find((row) => row.title === '视频节点')!
+  const nodeRect = await worldToScreen(page, { x: localRow.position_x, y: localRow.position_y })
+  const surfaceBox = await page.locator('.node-play-surface').boundingBox()
+  expect(surfaceBox).not.toBeNull()
+  expect(Math.abs((surfaceBox?.x ?? 0) - nodeRect.x)).toBeLessThanOrEqual(2)
+  expect(Math.abs((surfaceBox?.y ?? 0) - nodeRect.y)).toBeLessThanOrEqual(2)
+  expect(Math.abs((surfaceBox?.width ?? 0) - localRow.width * (await readViewport(page)).scale)).toBeLessThanOrEqual(2)
+
+  // 3) 单实例：切到第二个节点播放，第一个播放面被替换
+  await playNode('YouTube 视频')
+  await expect(page.locator('.node-play-surface iframe')).toHaveCount(1)
+  await expect(page.locator('.node-play-surface video')).toHaveCount(0)
+  const embedSrc = await page.locator('.node-play-surface iframe').getAttribute('src')
+  expect(embedSrc).toBe('https://www.youtube.com/embed/aaaaaaaaaaa?rel=0&playsinline=1')
+
+  // 4) Escape 停止播放
   await page.keyboard.press('Escape')
+  await expect(page.locator('.node-play-surface')).toHaveCount(0)
+
+  // 5) 重新播放本地视频 → 返回 Gallery 停止
+  await playNode('视频节点')
+  await expect(page.locator('.node-play-surface video')).toHaveCount(1)
+  await page.locator('.canvas-back').click()
+  await expect(page.locator('.gallery-grid')).toBeVisible()
+  await expect(page.locator('.node-play-surface')).toHaveCount(0)
+
+  // 6) 再进画布播放 → 切画布停止
+  await page.locator('.gallery-card__open').click()
+  await expect(page.locator('.canvas-topbar')).toBeVisible()
+  await waitForViewportStable(page)
+  await playNode('视频节点')
+  await expect(page.locator('.node-play-surface video')).toHaveCount(1)
+  // 切到第二块画布（先建一块）
+  await page.locator('.switcher-trigger').click()
+  await page.locator('.switcher-pop').getByRole('button', { name: '新建' }).click()
+  await page.locator('.dialog input').fill('第二块')
+  await page.locator('.dialog').getByRole('button', { name: '确认' }).click()
+  await expect(page.locator('.canvas-topbar')).toBeVisible()
   await expect(page.locator('.node-play-surface')).toHaveCount(0)
 
   await app.close()

@@ -55,7 +55,8 @@ export function listNodes(db: Db, canvasId: string): CanvasNodeWithRecord[] {
       summary: records.summary,
       provider: records.provider,
       platformContentID: records.platformContentId,
-      urlString: records.urlString
+      urlString: records.urlString,
+      recordUpdatedAt: records.updatedAt
     })
     .from(canvasNodes)
     .innerJoin(records, eq(records.id, canvasNodes.recordId))
@@ -74,7 +75,8 @@ export function listNodes(db: Db, canvasId: string): CanvasNodeWithRecord[] {
     recordSummary: row.summary,
     recordProvider: row.provider,
     recordPlatformContentID: row.platformContentID,
-    recordURLString: row.urlString
+    recordURLString: row.urlString,
+    recordUpdatedAt: row.recordUpdatedAt
   }))
 }
 

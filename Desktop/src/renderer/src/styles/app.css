@@ -2743,3 +2743,16 @@ body.canvas-focus .canvas-topbar {
   align-items: center;
   -webkit-app-region: no-drag;
 }
+
+/* 画布加载中：与空状态同级的中性提示，不覆盖上一屏有效内容 */
+.canvas-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-callout);
+  color: var(--ink-faint);
+  pointer-events: none;
+  z-index: 4;
+}

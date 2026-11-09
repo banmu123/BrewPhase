@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type React from 'react'
 import { Group, Image as KonvaImage, Layer, Line, Rect, Shape, Stage, Text } from 'react-konva'
 import type { KonvaEventObject } from 'konva/lib/Node'
 import type { Context } from 'konva/lib/Context'
@@ -13,7 +14,8 @@ import type {
 } from '@shared/contracts'
 import { screenToWorld, zoomAt, CANVAS_LIMITS } from '@shared/contracts'
 import { embedURL } from '@shared/link-embed'
-import { nextNodeOrigin } from '@shared/domain/placement'
+import { nextNodeOrigin, fitViewport } from '@shared/domain/placement'
+import { previewFileFor } from './canvas-thumbnail-model'
 import { api, formatDate } from '../../shared/api'
 import { useAppStore } from '../../app/store'
 import { refreshThemeColors, themeColors } from '../../shared/tokens'
@@ -95,6 +97,7 @@ export function CanvasPage() {
   const [pickerRecords, setPickerRecords] = useState<RecordItem[]>([])
   const [pickerHasMore, setPickerHasMore] = useState(false)
   const [pickerLoading, setPickerLoading] = useState(false)
+  const [pickerLoadingMore, setPickerLoadingMore] = useState(false)
   const [pickerSearch, setPickerSearch] = useState('')
   const [pickerCarrier, setPickerCarrier] = useState<'all' | 'image' | 'video' | 'link' | 'text'>('all')
   /** 多选跨筛选保留：iOS 同款（picked: [Record]，换载体不清）。 */
@@ -113,6 +116,8 @@ export function CanvasPage() {
   const spaceRef = useRef(false)
   const saveTimer = useRef(0)
   const pickerSeq = useRef(0)
+  /** 内容加载请求序号：只有最新一次请求可以更新页面（防跨画布竞态）。 */
+  const loadSeq = useRef(0)
   const pickerQueryRef = useRef<{ search: string; carrier: 'all' | 'image' | 'video' | 'link' | 'text'; offset: number }>({
     search: '',
     carrier: 'all',
@@ -152,20 +157,29 @@ export function CanvasPage() {
     }
   }, [])
 
-  /** 内容加载：失败保留上一份（不把「读不到」画成空画布），状态可重试。 */
+  /**
+   * 内容加载。请求序号防竞态：快速切换画布时，旧画布的响应返回更晚也**必须**
+   * 被丢弃，不能覆盖新画布的数据（用户会把旧内容当成放错位置的数据）。
+   *
+   * silent（同画布重试/写后刷新）：失败保留上一份有效内容，不把「读不到」画成
+   * 空画布；跨画布的切换由 activeId effect 先清空再加载。
+   */
   const loadContent = useCallback(async (canvasId: string, silent = false) => {
-    if (!silent) setLoadState((current) => (current === 'ready' ? 'ready' : 'loading'))
+    const seq = ++loadSeq.current
+    if (!silent) setLoadState('loading')
     try {
       const [nextNodes, nextNotes, nextStrokes] = await Promise.all([
         api.canvas.nodes(canvasId),
         api.canvas.notes(canvasId),
         api.canvas.strokes(canvasId)
       ])
+      if (seq !== loadSeq.current) return // 过期响应：丢弃
       setNodes(nextNodes)
       setNotes(nextNotes)
       setStrokes(nextStrokes)
       setLoadState('ready')
     } catch (cause) {
+      if (seq !== loadSeq.current) return // 过期响应的错误：同样丢弃
       setError((cause as Error).message)
       setLoadState('error')
     }
@@ -176,19 +190,28 @@ export function CanvasPage() {
     refreshThemeColors()
   }, [loadCanvases])
 
-  // 进入工作区：读内容、清选中、停播放。
+  // 进入工作区 / 切换画布：清一切上一块画布的痕迹（内容、选中、播放、视角、
+  // Picker 会话），再读新内容。旧内容哪怕多显示一帧，都会被当成「放错位置的数据」。
   useEffect(() => {
     setPlayingNodeId(null)
     setSelectedNodeId(null)
     setSelectedNoteId(null)
     setSidePanel(null)
     setContextMenu(null)
+    setPickedItems(new Map())
+    setEditingNoteId(null)
+    fitMeta.current = { didFit: false, width: 0, height: 0, userAdjusted: false }
+    setViewport({ scale: 1, offsetX: 0, offsetY: 0 })
     if (!activeId) {
       setNodes([])
       setNotes([])
       setStrokes([])
+      setLoadState('loading')
       return
     }
+    setNodes([])
+    setNotes([])
+    setStrokes([])
     setLoadState('loading')
     void loadContent(activeId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -217,6 +240,7 @@ export function CanvasPage() {
     const query = pickerQueryRef.current
     const seq = ++pickerSeq.current
     if (page === 'first') setPickerLoading(true)
+    else setPickerLoadingMore(true)
     try {
       const rows = await api.records.list({
         search: query.search,
@@ -237,7 +261,9 @@ export function CanvasPage() {
     } catch (cause) {
       if (seq === pickerSeq.current) setPickerError((cause as Error).message)
     } finally {
-      if (seq === pickerSeq.current) setPickerLoading(false)
+      if (seq !== pickerSeq.current) return // 过期响应：状态交给最新请求
+      setPickerLoading(false)
+      setPickerLoadingMore(false)
     }
   }, [])
 
@@ -251,9 +277,13 @@ export function CanvasPage() {
     return () => window.clearTimeout(timer)
   }, [pickerSearch, pickerCarrier, sidePanel, loadPickerPage])
 
-  // 面板打开时载入第一页。
+  // 面板打开时载入第一页；面板一旦离开 picker（关闭/切 Inspector），未提交的
+  // 多选立即清空——iOS 同款取消语义，不会残留到下一次打开。
   useEffect(() => {
-    if (sidePanel !== 'picker') return
+    if (sidePanel !== 'picker') {
+      setPickedItems(new Map())
+      return
+    }
     if (pickerRecords.length === 0 && !pickerHasMore) {
       pickerQueryRef.current = { search: pickerSearch.trim(), carrier: pickerCarrier, offset: 0 }
       void loadPickerPage('first')
@@ -290,24 +320,19 @@ export function CanvasPage() {
         ys.push(stroke.points[i + 1])
       }
     }
-    if (xs.length === 0) {
-      setViewport({ scale: 1, offsetX: 0, offsetY: 0 })
-      return
+    const rects: Array<{ x: number; y: number; width: number; height: number }> = []
+    for (const node of nodes) {
+      rects.push({ x: node.positionX, y: node.positionY, width: node.width, height: node.height })
     }
-    const pad = 80
-    const minX = Math.min(...xs) - pad
-    const minY = Math.min(...ys) - pad
-    const width = Math.max(1, Math.max(...xs) + pad - minX)
-    const height = Math.max(1, Math.max(...ys) + pad - minY)
-    const scale = Math.min(
-      CANVAS_LIMITS.maxScale,
-      Math.max(CANVAS_LIMITS.minScale, Math.min(size.width / width, size.height / height))
-    )
-    setViewport({
-      scale,
-      offsetX: -minX * scale + (size.width - width * scale) / 2,
-      offsetY: -minY * scale + (size.height - height * scale) / 2
-    })
+    for (const note of notes) {
+      rects.push({ x: note.positionX, y: note.positionY, width: note.width, height: note.height })
+    }
+    for (const stroke of strokes) {
+      for (let i = 0; i < stroke.points.length; i += 2) {
+        rects.push({ x: stroke.points[i], y: stroke.points[i + 1], width: 0, height: 0 })
+      }
+    }
+    setViewport(fitViewport(rects, size, 80, CANVAS_LIMITS))
     fitMeta.current = {
       didFit: true,
       width: size.width,
@@ -332,36 +357,19 @@ export function CanvasPage() {
     }
     const sizeChanged = meta.width !== size.width || meta.height !== size.height
     if (!meta.didFit || (!meta.userAdjusted && sizeChanged)) {
-      const pad = 80
-      const xs: number[] = []
-      const ys: number[] = []
+      const rects: Array<{ x: number; y: number; width: number; height: number }> = []
       for (const node of nodes) {
-        xs.push(node.positionX, node.positionX + node.width)
-        ys.push(node.positionY, node.positionY + node.height)
+        rects.push({ x: node.positionX, y: node.positionY, width: node.width, height: node.height })
       }
       for (const note of notes) {
-        xs.push(note.positionX, note.positionX + note.width)
-        ys.push(note.positionY, note.positionY + note.height)
+        rects.push({ x: note.positionX, y: note.positionY, width: note.width, height: note.height })
       }
       for (const stroke of strokes) {
         for (let i = 0; i < stroke.points.length; i += 2) {
-          xs.push(stroke.points[i])
-          ys.push(stroke.points[i + 1])
+          rects.push({ x: stroke.points[i], y: stroke.points[i + 1], width: 0, height: 0 })
         }
       }
-      const minX = Math.min(...xs) - pad
-      const minY = Math.min(...ys) - pad
-      const contentWidth = Math.max(1, Math.max(...xs) + pad - minX)
-      const contentHeight = Math.max(1, Math.max(...ys) + pad - minY)
-      const scale = Math.min(
-        CANVAS_LIMITS.maxScale,
-        Math.max(CANVAS_LIMITS.minScale, Math.min(size.width / contentWidth, size.height / contentHeight))
-      )
-      setViewport({
-        scale,
-        offsetX: -minX * scale + (size.width - contentWidth * scale) / 2,
-        offsetY: -minY * scale + (size.height - contentHeight * scale) / 2
-      })
+      setViewport(fitViewport(rects, size, 80, CANVAS_LIMITS))
       fitMeta.current = { didFit: true, width: size.width, height: size.height, userAdjusted: meta.userAdjusted }
     }
   }, [view, activeId, size, nodes, notes, strokes])
@@ -413,75 +421,113 @@ export function CanvasPage() {
   const createNote = useCallback(async (): Promise<void> => {
     if (!active) return
     const center = screenToWorld({ x: size.width / 2, y: size.height / 2 }, viewport)
-    const note = await withSave(() => api.canvas.createNote(active.id, center.x - 110, center.y - 90))
-    setNotes((current) => [...current, note])
-    setSelectedNoteId(note.id)
-    setEditingNoteId(note.id)
-  }, [active, size, viewport, withSave])
+    try {
+      const note = await withSave(() => api.canvas.createNote(active.id, center.x - 110, center.y - 90))
+      setNotes((current) => [...current, note])
+      setSelectedNoteId(note.id)
+      setEditingNoteId(note.id)
+    } catch {
+      await loadContent(active.id, true) // 失败恢复：以数据库为准
+    }
+  }, [active, size, viewport, withSave, loadContent])
 
   const updateNote = useCallback(
     async (note: CanvasNote): Promise<void> => {
+      const previous = notes.find((item) => item.id === note.id)
       setNotes((current) => current.map((item) => (item.id === note.id ? note : item)))
-      await withSave(() => api.canvas.updateNote(note))
+      try {
+        await withSave(() => api.canvas.updateNote(note))
+      } catch {
+        if (previous) setNotes((current) => current.map((item) => (item.id === previous.id ? previous : item)))
+        else if (active) await loadContent(active.id, true)
+      }
     },
-    [withSave]
+    [withSave, notes, active, loadContent]
   )
 
   const removeNote = useCallback(
     async (id: string): Promise<void> => {
+      const previous = notes.find((note) => note.id === id)
       setNotes((current) => current.filter((note) => note.id !== id))
       setSelectedNoteId(null)
       setEditingNoteId(null)
-      await withSave(() => api.canvas.removeNote(id))
+      try {
+        await withSave(() => api.canvas.removeNote(id))
+      } catch {
+        // 失败恢复：便签还在库里，把它放回来——界面不能显示「已删除」的假象
+        if (previous) setNotes((current) => [...current, previous].sort((a, b) => a.createdAt - b.createdAt))
+        else if (active) await loadContent(active.id, true)
+      }
     },
-    [withSave]
+    [withSave, notes, active, loadContent]
   )
 
   const removeNodeById = useCallback(
     async (nodeId: string): Promise<void> => {
+      const previous = nodes.find((node) => node.id === nodeId)
       setNodes((current) => current.filter((node) => node.id !== nodeId))
       if (selectedNodeId === nodeId) setSelectedNodeId(null)
       if (playingNodeId === nodeId) setPlayingNodeId(null)
-      await withSave(() => api.canvas.removeNode(nodeId))
+      try {
+        await withSave(() => api.canvas.removeNode(nodeId))
+      } catch {
+        // 失败恢复：节点还在库里，放回原位——不允许「看起来删了、其实没删」
+        if (previous) setNodes((current) => [...current, previous])
+        else if (active) await loadContent(active.id, true)
+      }
     },
-    [selectedNodeId, playingNodeId, withSave]
+    [nodes, selectedNodeId, playingNodeId, withSave, active, loadContent]
   )
 
   const saveAnnotation = useCallback(async (): Promise<void> => {
     if (!annotationDraft) return
     const { id, value } = annotationDraft
+    const previousAnnotation = nodes.find((node) => node.id === id)?.annotation ?? ''
     setNodes((current) => current.map((node) => (node.id === id ? { ...node, annotation: value.trim() } : node)))
     setAnnotationDraft(null)
-    await withSave(() => api.canvas.annotateNode(id, value))
-  }, [annotationDraft, withSave])
+    try {
+      await withSave(() => api.canvas.annotateNode(id, value))
+    } catch {
+      // 失败恢复：备注没存进去，回滚显示——不允许「看起来保存了、库里没有」
+      setNodes((current) => current.map((node) => (node.id === id ? { ...node, annotation: previousAnnotation } : node)))
+    }
+  }, [annotationDraft, nodes, withSave])
 
   const addImage = useCallback(async (): Promise<void> => {
     if (!active) return
-    const imported = await api.records.importImage()
-    if (!imported) return
-    const created = await api.records.create({
-      carrier: 'image',
-      title: imported.fileName.replace(/\.[a-z0-9]+$/i, ''),
-      note: '',
-      urlString: '',
-      canonicalURL: null,
-      platformContentID: null,
-      provider: 'generic',
-      sourceName: '',
-      authorName: '',
-      summary: '',
-      mediaPath: imported.fileName,
-      previewPath: imported.previewName,
-      tagIds: []
-    })
-    const center = screenToWorld({ x: size.width / 2, y: size.height / 2 }, viewport)
-    const node = await withSave(() => api.canvas.addNode(active.id, created.id))
-    await api.canvas.moveNode(node.id, center.x - node.width / 2, center.y - node.height / 2)
-    await loadContent(active.id, true)
+    try {
+      const imported = await api.records.importImage()
+      if (!imported) return
+      const created = await api.records.create({
+        carrier: 'image',
+        title: imported.fileName.replace(/\.[a-z0-9]+$/i, ''),
+        note: '',
+        urlString: '',
+        canonicalURL: null,
+        platformContentID: null,
+        provider: 'generic',
+        sourceName: '',
+        authorName: '',
+        summary: '',
+        mediaPath: imported.fileName,
+        previewPath: imported.previewName,
+        tagIds: []
+      })
+      const center = screenToWorld({ x: size.width / 2, y: size.height / 2 }, viewport)
+      const node = await withSave(() => api.canvas.addNode(active.id, created.id))
+      await api.canvas.moveNode(node.id, center.x - node.width / 2, center.y - node.height / 2)
+      await loadContent(active.id, true)
+    } catch {
+      await loadContent(active.id, true) // 任一步失败：以数据库为准恢复
+    }
   }, [active, size, viewport, withSave, loadContent])
 
-  /** 批量加入：后端 origin 天然不重叠（每次 addNode 的 occupied 含新节点）；
-   *  视口外的再由前端扫描搬进当前视野。 */
+  /**
+   * 批量加入。两个可靠性要点：
+   * 1. **最终坐标进 occupied**——节点被搬进视野后，occupied 必须存 moveNode
+   *    之后的坐标，否则同批次后续节点仍按它原来的位置避让，会叠在它上面；
+   * 2. **部分失败明确告知**——某一条失败不代表整批回滚，已成功的内容要列出。
+   */
   const addPicked = useCallback(async (): Promise<void> => {
     if (!active || pickedItems.size === 0) return
     const batch: Array<{ x: number; y: number; width: number; height: number }> = nodes.map((node) => ({
@@ -492,9 +538,13 @@ export function CanvasPage() {
     }))
     const viewLeft = -viewport.offsetX / viewport.scale
     const viewTop = -viewport.offsetY / viewport.scale
-    try {
-      for (const record of pickedItems.values()) {
+    const succeeded: string[] = []
+    let lastError: string | null = null
+    for (const record of pickedItems.values()) {
+      try {
         const node = await withSave(() => api.canvas.addNode(active.id, record.id))
+        let finalX = node.positionX
+        let finalY = node.positionY
         const inside =
           node.positionX + node.width > viewLeft &&
           node.positionX < viewLeft + size.width / viewport.scale &&
@@ -509,14 +559,32 @@ export function CanvasPage() {
             startY: Math.round(viewTop)
           })
           await api.canvas.moveNode(node.id, origin.x, origin.y)
+          finalX = origin.x
+          finalY = origin.y
         }
-        batch.push({ x: node.positionX, y: node.positionY, width: node.width, height: node.height })
+        batch.push({ x: finalX, y: finalY, width: node.width, height: node.height })
+        succeeded.push(record.title || '未命名记录')
+      } catch (cause) {
+        lastError = (cause as Error).message
+        break // 连续失败大概率是同一原因：停止本批，已成功的保留
       }
-      setPickedItems(new Map())
+    }
+    if (succeeded.length > 0) {
+      setPickedItems((current) => {
+        const next = new Map(current)
+        for (const record of pickedItems.values()) {
+          if (succeeded.includes(record.title || '未命名记录')) next.delete(record.id)
+        }
+        return next
+      })
       await loadContent(active.id, true)
-    } catch (cause) {
-      setPickerError((cause as Error).message)
-      await loadContent(active.id, true)
+    }
+    if (lastError) {
+      const skipped = pickedItems.size - succeeded.length
+      setPickerError(
+        `已加入 ${succeeded.length} 项${succeeded.length ? `（${succeeded.join('、')}）` : ''}；` +
+          `${skipped} 项加入失败：${lastError}`
+      )
     }
   }, [active, pickedItems, nodes, viewport, size, withSave, loadContent])
 
@@ -555,15 +623,25 @@ export function CanvasPage() {
     setDraft(null)
     if (!stroke || stroke.points.length < 4) return
     setStrokes((current) => [...current, stroke])
-    await withSave(() => api.canvas.saveStroke(stroke))
+    try {
+      await withSave(() => api.canvas.saveStroke(stroke))
+    } catch {
+      setStrokes((current) => current.filter((item) => item.id !== stroke.id)) // 笔迹没存进去，回滚
+    }
   }, [draft, withSave])
 
   const eraseStroke = useCallback(
     async (id: string) => {
+      const previous = strokes.find((stroke) => stroke.id === id)
       setStrokes((current) => current.filter((stroke) => stroke.id !== id))
-      await withSave(() => api.canvas.removeStroke(id))
+      try {
+        await withSave(() => api.canvas.removeStroke(id))
+      } catch {
+        if (previous) setStrokes((current) => [...current, previous].sort((a, b) => a.createdAt - b.createdAt))
+        else if (active) await loadContent(active.id, true)
+      }
     },
-    [withSave]
+    [withSave, strokes, active, loadContent]
   )
 
   // MARK: - Dialog 确认执行
@@ -916,10 +994,20 @@ export function CanvasPage() {
                       setContextMenu({ nodeId: node.id, x, y })
                     }}
                     onMoved={async (positionX, positionY) => {
+                      const previous = { x: node.positionX, y: node.positionY }
                       setNodes((current) =>
                         current.map((item) => (item.id === node.id ? { ...item, positionX, positionY } : item))
                       )
-                      await withSave(() => api.canvas.moveNode(node.id, positionX, positionY))
+                      try {
+                        await withSave(() => api.canvas.moveNode(node.id, positionX, positionY))
+                      } catch {
+                        // 失败回滚：节点回到拖动前的世界坐标（保存状态已由 withSave 标 error）
+                        setNodes((current) =>
+                          current.map((item) =>
+                            item.id === node.id ? { ...item, positionX: previous.x, positionY: previous.y } : item
+                          )
+                        )
+                      }
                     }}
                     onLiveResize={(width, height) => {
                       setNodes((current) =>
@@ -927,7 +1015,16 @@ export function CanvasPage() {
                       )
                     }}
                     onResized={async (width, height) => {
-                      await withSave(() => api.canvas.resizeNode(node.id, width, height))
+                      const previous = { width: node.width, height: node.height }
+                      try {
+                        await withSave(() => api.canvas.resizeNode(node.id, width, height))
+                      } catch {
+                        setNodes((current) =>
+                          current.map((item) =>
+                            item.id === node.id ? { ...item, width: previous.width, height: previous.height } : item
+                          )
+                        )
+                      }
                     }}
                   />
                 ))}
@@ -947,10 +1044,19 @@ export function CanvasPage() {
                       setEditingNoteId(note.id)
                     }}
                     onMoved={async (positionX, positionY) => {
+                      const previous = { x: note.positionX, y: note.positionY }
                       setNotes((current) =>
                         current.map((item) => (item.id === note.id ? { ...item, positionX, positionY } : item))
                       )
-                      await withSave(() => api.canvas.updateNote({ ...note, positionX, positionY }))
+                      try {
+                        await withSave(() => api.canvas.updateNote({ ...note, positionX, positionY }))
+                      } catch {
+                        setNotes((current) =>
+                          current.map((item) =>
+                            item.id === note.id ? { ...item, positionX: previous.x, positionY: previous.y } : item
+                          )
+                        )
+                      }
                     }}
                   />
                 ))}
@@ -958,6 +1064,10 @@ export function CanvasPage() {
             </Stage>
           ) : (
             <div className="canvas-empty">还没有画布。返回集合新建一块开始。</div>
+          )}
+
+          {active && loadState === 'loading' && nodes.length === 0 && (
+            <div className="canvas-loading">正在读取画布…</div>
           )}
 
           {active && loadState === 'error' && (
@@ -1059,7 +1169,7 @@ export function CanvasPage() {
                 className="picker-list"
                 onScroll={(event) => {
                   const element = event.currentTarget
-                  if (!pickerHasMore || pickerLoading) return
+                  if (!pickerHasMore || pickerLoading || pickerLoadingMore) return
                   if (element.scrollHeight - element.scrollTop - element.clientHeight < 80) {
                     void loadPickerPage('more')
                   }
@@ -1068,7 +1178,6 @@ export function CanvasPage() {
                 {pickerRecords.map((record) => {
                   const already = addedRecordIds.has(record.id)
                   const isOn = pickedItems.has(record.id)
-                  const thumb = record.previewPath ?? record.mediaPath
                   return (
                     <button
                       key={record.id}
@@ -1085,11 +1194,22 @@ export function CanvasPage() {
                         })
                       }}
                     >
-                      {thumb ? (
-                        <img className="add-card__thumb" src={api.records.mediaUrl(thumb)} alt="" loading="lazy" />
-                      ) : (
+                      {record.carrier === 'text' ? (
                         <span className="add-card__thumb add-card__thumb--text">
                           {(record.title || record.summary || record.note || record.carrier).slice(0, 2)}
+                        </span>
+                      ) : previewFileFor(record.carrier, record.previewPath, record.mediaPath) ? (
+                        <img
+                          className="add-card__thumb"
+                          src={api.records.mediaUrl(
+                            previewFileFor(record.carrier, record.previewPath, record.mediaPath)!
+                          )}
+                          alt=""
+                          loading="lazy"
+                        />
+                      ) : (
+                        <span className="add-card__thumb add-card__thumb--text">
+                          {record.carrier === 'video' ? '▶' : '↗'}
                         </span>
                       )}
                       <span className="add-card__body">
@@ -1107,6 +1227,7 @@ export function CanvasPage() {
                   )
                 })}
                 {pickerLoading && <div className="empty">正在读取…</div>}
+                {pickerLoadingMore && <div className="empty">正在加载更多…</div>}
                 {!pickerLoading && pickerRecords.length === 0 && (
                   <div className="empty">
                     没有匹配的记录。
@@ -1148,9 +1269,11 @@ export function CanvasPage() {
                   {playbackOf(selectedNode) && (
                     <button
                       className="button button--primary"
-                      onClick={() => setPlayingNodeId(selectedNode.id)}
+                      onClick={() =>
+                        setPlayingNodeId((current) => (current === selectedNode.id ? null : selectedNode.id))
+                      }
                     >
-                      ▶ 播放
+                      {playingNodeId === selectedNode.id ? '⏸ 停止播放' : '▶ 播放'}
                     </button>
                   )}
 
@@ -1266,6 +1389,7 @@ export function CanvasPage() {
                 <NodePlaySurface
                   node={node}
                   viewport={viewport}
+                  wrapElement={wrapElement}
                   onStop={() => setPlayingNodeId(null)}
                 />
               )
@@ -1296,19 +1420,78 @@ export function CanvasPage() {
 
 // MARK: - 播放面
 
-/** 节点内播放：fixed 定位在节点的屏幕矩形上，视口变化时跟随（React 状态驱动）。 */
+/**
+ * 节点内播放：fixed 定位在节点的**窗口矩形**上。
+ *
+ * 坐标换算唯一入口：Stage 内坐标（世界 × scale + offset）必须再加画布容器的
+ * 窗口偏移——fixed 的参照系是窗口视口，直接用 Stage 坐标会整体偏移一个顶栏。
+ * 尺寸严格等于节点的屏幕矩形（iOS 节点内嵌语义）：缩小时播放器跟着小，
+ * 不额外放大遮挡相邻节点；窗口尺寸变化由 ResizeObserver 驱动重渲染。
+ */
 function NodePlaySurface(props: {
   node: CanvasNodeWithRecord
   viewport: CanvasViewport
+  wrapElement: HTMLDivElement | null
   onStop: () => void
 }) {
-  const { node, viewport } = props
-  const left = node.positionX * viewport.scale + viewport.offsetX
-  const top = node.positionY * viewport.scale + viewport.offsetY
-  const width = Math.max(240, node.width * viewport.scale)
-  const height = Math.max(160, node.height * viewport.scale)
+  const { node, viewport, wrapElement } = props
+  const [, forceTick] = useState(0)
+  useEffect(() => {
+    if (!wrapElement) return
+    const observer = new ResizeObserver(() => forceTick((tick) => tick + 1))
+    observer.observe(wrapElement)
+    window.addEventListener('resize', observerDischarge(forceTick))
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', observerDischarge(forceTick))
+    }
+  }, [wrapElement])
+  const rect = wrapElement?.getBoundingClientRect()
+  const left = (rect?.left ?? 0) + node.positionX * viewport.scale + viewport.offsetX
+  const top = (rect?.top ?? 0) + node.positionY * viewport.scale + viewport.offsetY
+  const width = node.width * viewport.scale
+  const height = node.height * viewport.scale
   const embed = embedURL(node.recordProvider, node.recordPlatformContentID)
-  const useLocal = node.recordCarrier === 'video' && !!node.recordMediaPath
+  const wantsLocal = node.recordCarrier === 'video' && !!node.recordMediaPath
+  // 本地文件加载失败 → 回退 Embed；两者都不可用 → 错误 + 打开来源。
+  const [localFailed, setLocalFailed] = useState(false)
+  const useLocal = wantsLocal && !localFailed
+  useEffect(() => {
+    setLocalFailed(false)
+  }, [node.recordMediaPath])
+
+  let body: React.ReactNode
+  if (useLocal) {
+    body = (
+      <video
+        key={node.recordMediaPath ?? 'local'}
+        src={api.records.mediaUrl(node.recordMediaPath!)}
+        controls
+        autoPlay
+        onError={() => setLocalFailed(true)}
+      />
+    )
+  } else if (embed) {
+    body = (
+      <iframe
+        src={embed}
+        title="视频播放"
+        allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+        allowFullScreen
+      />
+    )
+  } else {
+    body = (
+      <div className="node-play-surface__error">
+        <span>视频加载失败。</span>
+        {node.recordURLString && (
+          <button className="button" onClick={() => window.open(node.recordURLString, '_blank')}>
+            在浏览器打开
+          </button>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div
@@ -1318,30 +1501,17 @@ function NodePlaySurface(props: {
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
     >
-      {useLocal ? (
-        <video src={api.records.mediaUrl(node.recordMediaPath!)} controls autoPlay />
-      ) : embed ? (
-        <iframe
-          src={embed}
-          title="视频播放"
-          allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-          allowFullScreen
-        />
-      ) : (
-        <div className="node-play-surface__error">
-          视频加载失败。
-          {node.recordURLString && (
-            <button className="button" onClick={() => window.open(node.recordURLString, '_blank')}>
-              在浏览器打开
-            </button>
-          )}
-        </div>
-      )}
+      {body}
       <button className="node-play-surface__stop" aria-label="停止播放" title="停止播放 (Esc)" onClick={props.onStop}>
         ⏸
       </button>
     </div>
   )
+}
+
+/** ResizeObserver 需要稳定的回调引用：包一层固定函数。 */
+function observerDischarge(tick: (fn: (n: number) => number) => void) {
+  return () => tick((n) => n + 1)
 }
 
 // MARK: - Gallery 对话框
@@ -1642,15 +1812,11 @@ function CanvasNodeShape(props: {
 }) {
   const { node, isPlaying } = props
   const playback = playbackOf(node)
-  // 图片节点用缩略图（previewPath 优先）；播放中封面不需要再加载。
+  // 按载体选预览文件（视频本体绝不当图片）；播放中封面不需要再加载。
   const image = useLocalImage(
     isPlaying && playback
       ? null
-      : node.recordCarrier === 'image'
-        ? node.recordPreviewPath ?? node.recordMediaPath
-        : node.recordCarrier === 'link' || node.recordCarrier === 'video'
-          ? node.recordPreviewPath
-          : null
+      : previewFileFor(node.recordCarrier, node.recordPreviewPath, node.recordMediaPath)
   )
   const colors = themeColors()
   const radius = 14
@@ -1762,20 +1928,26 @@ function ImageCardBody(props: {
     <>
       {image ? (
         <Group clipFunc={(ctx) => roundedRectPath(ctx, 0, 0, node.width, node.height, props.radius)}>
-          <KonvaImage image={image} width={node.width} height={node.height} listening={false} />
-          {/* 渐变标题区：透明 → 墨色，白字（iOS LinearGradient 同语义） */}
-          <Rect
-            y={node.height - 56}
+          <KonvaImage
+            image={image}
             width={node.width}
-            height={56}
+            height={node.height}
+            crop={coverCrop(image, node.width, node.height)}
+            listening={false}
+          />
+          {/* 渐变标题区：透明 → 墨色，白字标题 + 斜体画布备注（iOS mediaCaption） */}
+          <Rect
+            y={node.height - captionHeight(node)}
+            width={node.width}
+            height={captionHeight(node)}
             fillLinearGradientStartPoint={{ x: 0, y: 0 }}
-            fillLinearGradientEndPoint={{ x: 0, y: 56 }}
+            fillLinearGradientEndPoint={{ x: 0, y: captionHeight(node) }}
             fillLinearGradientColorStops={[0, 'rgba(20,24,18,0)', 1, 'rgba(20,24,18,0.72)']}
             listening={false}
           />
           <Text
             x={12}
-            y={node.height - 46}
+            y={node.height - captionHeight(node) + 10}
             width={node.width - 24}
             text={node.recordTitle || '未命名记录'}
             fontSize={12.5}
@@ -1784,9 +1956,25 @@ function ImageCardBody(props: {
             fill="#ffffff"
             wrap="word"
             ellipsis
-            height={34}
+            height={20}
             listening={false}
           />
+          {node.annotation && (
+            <Text
+              x={12}
+              y={node.height - captionHeight(node) + 32}
+              width={node.width - 24}
+              text={`❝ ${node.annotation}`}
+              fontSize={10}
+              fontStyle="italic"
+              fontFamily={KONVA_FONT}
+              fill="rgba(255,255,255,0.85)"
+              wrap="word"
+              ellipsis
+              height={captionHeight(node) - 38}
+              listening={false}
+            />
+          )}
         </Group>
       ) : (
         <MissingMediaBody node={node} symbol="▣" colors={colors} radius={props.radius} stroke={props.stroke} selected={props.selected} />
@@ -1812,19 +2000,25 @@ function VideoCardBody(props: {
     <>
       {image ? (
         <Group clipFunc={(ctx) => roundedRectPath(ctx, 0, 0, node.width, node.height, props.radius)}>
-          <KonvaImage image={image} width={node.width} height={node.height} listening={false} />
-          <Rect
-            y={node.height - 56}
+          <KonvaImage
+            image={image}
             width={node.width}
-            height={56}
+            height={node.height}
+            crop={coverCrop(image, node.width, node.height)}
+            listening={false}
+          />
+          <Rect
+            y={node.height - captionHeight(node)}
+            width={node.width}
+            height={captionHeight(node)}
             fillLinearGradientStartPoint={{ x: 0, y: 0 }}
-            fillLinearGradientEndPoint={{ x: 0, y: 56 }}
+            fillLinearGradientEndPoint={{ x: 0, y: captionHeight(node) }}
             fillLinearGradientColorStops={[0, 'rgba(20,24,18,0)', 1, 'rgba(20,24,18,0.72)']}
             listening={false}
           />
           <Text
             x={12}
-            y={node.height - 46}
+            y={node.height - captionHeight(node) + 10}
             width={node.width - 24}
             text={node.recordTitle || '未命名视频'}
             fontSize={12.5}
@@ -1833,9 +2027,25 @@ function VideoCardBody(props: {
             fill="#ffffff"
             wrap="word"
             ellipsis
-            height={34}
+            height={20}
             listening={false}
           />
+          {node.annotation && (
+            <Text
+              x={12}
+              y={node.height - captionHeight(node) + 32}
+              width={node.width - 24}
+              text={`❝ ${node.annotation}`}
+              fontSize={10}
+              fontStyle="italic"
+              fontFamily={KONVA_FONT}
+              fill="rgba(255,255,255,0.85)"
+              wrap="word"
+              ellipsis
+              height={captionHeight(node) - 38}
+              listening={false}
+            />
+          )}
         </Group>
       ) : (
         <MissingMediaBody node={node} symbol="▶" colors={colors} radius={props.radius} stroke={props.stroke} selected={props.selected} />
@@ -2143,6 +2353,35 @@ function providerHostOf(node: CanvasNodeWithRecord): string {
   } catch {
     return ''
   }
+}
+
+/**
+ * Cover crop（对标 iOS `scaledToFill().clipped()`）：保持图片原始比例等比放大
+ * 到盖满节点，居中裁掉超出部分。crop 是源图上的取样矩形，width/height 是
+ * 节点尺寸——两者比例一致，视觉上无拉伸。
+ */
+function coverCrop(
+  image: HTMLImageElement | null,
+  width: number,
+  height: number
+): { x: number; y: number; width: number; height: number } | undefined {
+  if (!image || !image.naturalWidth || !image.naturalHeight) return undefined
+  const scale = Math.max(width / image.naturalWidth, height / image.naturalHeight)
+  const cropWidth = width / scale
+  const cropHeight = height / scale
+  return {
+    x: (image.naturalWidth - cropWidth) / 2,
+    y: (image.naturalHeight - cropHeight) / 2,
+    width: cropWidth,
+    height: cropHeight
+  }
+}
+
+/** 媒体卡底部渐变标题区的高度：标题一行 + 备注两行的安全高度。 */
+function captionHeight(node: CanvasNodeWithRecord): number {
+  const base = 46
+  const annotation = node.annotation ? 26 : 0
+  return Math.min(node.height * 0.6, base + annotation)
 }
 
 function roundedRectPath(ctx: Context, x: number, y: number, width: number, height: number, radius: number): void {

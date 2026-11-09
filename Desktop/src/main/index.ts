@@ -170,12 +170,15 @@ function applyCsp(target: Electron.Session, dev: string | null): void {
   const frameSrc = `frame-src ${EMBED_FRAME_ORIGINS.join(' ')}`
   // img-src 的 https: 是远程缩略图（og:image、i.ytimg.com）的加载通道；
   // 失败由组件落平台 fallback，不放宽 connect-src/script-src 等其他指令。
+  // media-src bpmedia: 是画布节点内嵌视频（<video>）的加载通道——没有它
+  // media 请求会回退 default-src 被拦，video 只会静默 onError。
   const policy = dev
     ? [
         "default-src 'self'",
         "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' bpmedia: data: https: blob:",
+        "media-src 'self' bpmedia:",
         "font-src 'self' data:",
         frameSrc,
         "connect-src 'self' ws: http://localhost:* http://127.0.0.1:*"
@@ -185,6 +188,7 @@ function applyCsp(target: Electron.Session, dev: string | null): void {
         "script-src 'self'",
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' bpmedia: data: https:",
+        "media-src 'self' bpmedia:",
         "font-src 'self' data:",
         frameSrc,
         "connect-src 'self'"

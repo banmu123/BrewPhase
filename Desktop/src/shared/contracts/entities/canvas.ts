@@ -78,6 +78,8 @@ export type CanvasNodeWithRecord = CanvasNode & {
   recordPlatformContentID: string | null
   /** 「打开原始来源」用它；空串表示没有来源链接。 */
   recordURLString: string
+  /** 源记录的更新时间：缩略图缓存失效与列表刷新依赖它。 */
+  recordUpdatedAt: number
 }
 
 /**

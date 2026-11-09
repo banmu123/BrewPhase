@@ -18,11 +18,27 @@ export type ThumbnailItem = {
   title: string
   previewPath: string | null
   frame: { x: number; y: number; width: number; height: number }
+  /** 源记录更新时间：与画布 updatedAt 一起构成缓存失效依据。 */
+  recordUpdatedAt: number
+}
+
+/**
+ * 按载体选择预览文件（视频文件不能当图片加载）：
+ * - image：优先 previewPath，缺省回退 mediaPath；
+ * - video / link：只用 previewPath（视频本体不是图片）；
+ * - text：不加载图片。
+ */
+export function previewFileFor(carrier: string, previewPath: string | null, mediaPath: string | null): string | null {
+  if (carrier === 'text') return null
+  if (carrier === 'image') return previewPath ?? mediaPath
+  return previewPath
 }
 
 export type ThumbnailSelection = {
   items: ThumbnailItem[]
   bounds: { minX: number; minY: number; width: number; height: number }
+  /** 源记录最新更新时间：缓存失效要用（媒体/预览变化时画布 updatedAt 不变）。 */
+  maxRecordUpdatedAt: number
 }
 
 export function selectThumbnailItems(
@@ -54,8 +70,9 @@ export function selectThumbnailItems(
     id: node.id,
     carrier: node.recordCarrier,
     title: node.recordTitle,
-    previewPath: node.recordPreviewPath ?? node.recordMediaPath,
-    frame: { x: node.positionX, y: node.positionY, width: node.width, height: node.height }
+    previewPath: previewFileFor(node.recordCarrier, node.recordPreviewPath, node.recordMediaPath),
+    frame: { x: node.positionX, y: node.positionY, width: node.width, height: node.height },
+    recordUpdatedAt: node.recordUpdatedAt
   })
 
   // 四种载体各先来一个：一眼看出这块画布装了什么。
@@ -98,5 +115,6 @@ export function selectThumbnailItems(
     used.add(chosen.id)
   }
 
-  return { items: selected.map(toThumb), bounds }
+  const maxRecordUpdatedAt = nodes.reduce((max, node) => Math.max(max, node.recordUpdatedAt), 0)
+  return { items: selected.map(toThumb), bounds, maxRecordUpdatedAt }
 }
