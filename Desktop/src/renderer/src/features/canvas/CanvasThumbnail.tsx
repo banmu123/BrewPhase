@@ -34,7 +34,9 @@ const THUMB_PADDING = 10
 export function CanvasThumbnail(props: { canvas: Canvas; height?: number }) {
   const { canvas } = props
   const { t } = useI18n()
-  const height = props.height ?? 132
+  // 132px 在 300–370px 宽的卡片里过于扁平（≈2.4:1），缩略图里的节点小到看不清；
+  // 168px 接近 16:9，仍完整保持「等比装入包围盒」的算法。
+  const height = props.height ?? 168
   const [data, setData] = useState<ThumbData | null>(() => {
     const hit = cache.get(canvas.id)
     return hit && hit.canvasUpdatedAt === canvas.updatedAt ? hit.data : null

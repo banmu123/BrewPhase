@@ -76,9 +76,7 @@ function GeneralSection({ info }: { info: AppInfo | null }) {
 
   return (
     <div className="settings-section">
-      <h2 className="detail-title" style={{ marginTop: 0 }}>
-        {t.settings.general.title}
-      </h2>
+      <h2 className="settings-section__title">{t.settings.general.title}</h2>
 
       <section className="settings-subsection">
         <h2 className="settings-subsection__title">{t.settings.general.language}</h2>
@@ -227,9 +225,8 @@ function SyncSection() {
 
   return (
     <div className="settings-section">
-      <h2 className="detail-title" style={{ marginTop: 0 }}>
-        {t.sync.headline}
-      </h2>
+      <h2 className="settings-section__title">{t.settings.nav.sync}</h2>
+      <p className="settings-lead">{t.sync.headline}</p>
 
       <div className="row" style={{ gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
         <button
@@ -502,13 +499,12 @@ function McpSection() {
 
   return (
     <div className="settings-section">
-      <h2 className="detail-title" style={{ marginTop: 0 }}>
-        {t.mcp.headline}
-      </h2>
+      <h2 className="settings-section__title">{t.settings.nav.mcp}</h2>
+      <p className="settings-lead">{t.mcp.headline}</p>
       <p className="note" style={{ marginBottom: 8 }}>
         {t.mcp.intro}
       </p>
-      <div className="note mono" style={{ fontSize: 10, marginBottom: 14 }}>
+      <div className="settings-code mono" style={{ marginBottom: 14 }}>
         {status?.running
           ? t.mcp.bridge.running(status.socketPath ?? '—')
           : t.mcp.bridge.stopped}
@@ -560,8 +556,8 @@ function McpSection() {
           <span className="overline" style={{ marginTop: 0 }}>
             {t.mcp.create.title}
           </span>
-          <div className="field-row" style={{ gap: 10, alignItems: 'flex-end', marginTop: 8 }}>
-            <div className="field" style={{ flex: '1 1 180px' }}>
+          <div className="settings-form-row">
+            <div className="field">
               <label htmlFor="mcp-client-name">{t.mcp.create.name}</label>
               <input
                 id="mcp-client-name"
@@ -581,14 +577,10 @@ function McpSection() {
           </div>
           <div className="note" style={{ marginTop: 10 }}>
             {MCP_SCOPE_GROUPS.map((group) => (
-              <div
-                key={group.group}
-                className="row"
-                style={{ gap: 12, flexWrap: 'wrap', marginBottom: 6 }}
-              >
-                <span style={{ minWidth: 40 }}>{t.mcp.create.scopeGroup[group.group]}</span>
+              <div key={group.group} className="scope-group">
+                <span className="scope-group__label">{t.mcp.create.scopeGroup[group.group]}</span>
                 {group.scopes.map((scope) => (
-                  <label key={scope} className="row" style={{ gap: 4, cursor: 'pointer' }}>
+                  <label key={scope} className="scope-option">
                     <input
                       type="checkbox"
                       checked={scopes.includes(scope)}

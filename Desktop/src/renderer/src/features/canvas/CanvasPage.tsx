@@ -21,6 +21,7 @@ import { useI18n } from '../../i18n'
 import { useAppStore } from '../../app/store'
 import { refreshThemeColors, themeColors } from '../../shared/tokens'
 import { CanvasThumbnail } from './CanvasThumbnail'
+import { EraserIcon, NoteIcon, PanIcon, PenIcon, SelectIcon } from '../../shared/icons'
 
 /**
  * Canvas 空间的两级结构（对标 iOS CanvasListView → CanvasWorkspaceView）：
@@ -686,7 +687,7 @@ export function CanvasPage() {
           </div>
         </header>
 
-        <div className="page-body">
+        <div className="page-body page-body--gutter">
           {error && <div className="error">{error}</div>}
           {galleryLoading ? (
             <div className="empty">{t.canvas.gallery.loading}</div>
@@ -1105,7 +1106,7 @@ export function CanvasPage() {
               title={t.canvas.zoom.out}
               onClick={() => { markUserAdjusted(); setViewport((current) => zoomAt(current, current.scale / 1.15, { x: size.width / 2, y: size.height / 2 })) }}
             >
-              －
+              −
             </button>
             <button
               className="button"
@@ -1113,7 +1114,7 @@ export function CanvasPage() {
               title={t.canvas.zoom.in}
               onClick={() => { markUserAdjusted(); setViewport((current) => zoomAt(current, current.scale * 1.15, { x: size.width / 2, y: size.height / 2 })) }}
             >
-              ＋
+              +
             </button>
             <button className="button" aria-label={t.canvas.zoom.fit} title={t.canvas.zoom.fitTitle} onClick={() => fitAll()}>
               {t.canvas.zoom.fitLabel}
@@ -1595,12 +1596,14 @@ function StudioToolbar(props: {
   onAddRecord: () => void
 }) {
   const { t } = useI18n()
-  const items: Array<{ key: StudioTool; hint: string; glyph: string }> = [
-    { key: 'select', hint: t.canvas.tools.selectHint, glyph: '◇' },
-    { key: 'hand', hint: t.canvas.tools.handHint, glyph: '✋' },
-    { key: 'pen', hint: t.canvas.tools.penHint, glyph: '✎' },
-    { key: 'eraser', hint: t.canvas.tools.eraserHint, glyph: '⌫' },
-    { key: 'note', hint: t.canvas.tools.noteHint, glyph: '▤' }
+  // 图标与导航栏同一套线性 SVG（不再用 ✋ 这类彩色 emoji：字重、基线、
+  // 选中态都由 currentColor 统一控制）。
+  const items: Array<{ key: StudioTool; hint: string; icon: React.ReactNode }> = [
+    { key: 'select', hint: t.canvas.tools.selectHint, icon: <SelectIcon size={18} /> },
+    { key: 'hand', hint: t.canvas.tools.handHint, icon: <PanIcon size={18} /> },
+    { key: 'pen', hint: t.canvas.tools.penHint, icon: <PenIcon size={18} /> },
+    { key: 'eraser', hint: t.canvas.tools.eraserHint, icon: <EraserIcon size={18} /> },
+    { key: 'note', hint: t.canvas.tools.noteHint, icon: <NoteIcon size={18} /> }
   ]
   return (
     <div className="studio-toolbar">
@@ -1613,7 +1616,7 @@ function StudioToolbar(props: {
           aria-label={item.hint}
           onClick={() => props.onTool(item.key)}
         >
-          {item.glyph}
+          {item.icon}
         </button>
       ))}
       {props.tool === 'pen' && (

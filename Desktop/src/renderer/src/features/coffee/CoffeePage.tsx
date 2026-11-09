@@ -41,6 +41,16 @@ export function CoffeePage() {
     void loadBeans()
   }, [loadBeans])
 
+  // Esc 关闭豆子详情：与 ✕ 同一语义。
+  useEffect(() => {
+    if (!panelOpen) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && !event.defaultPrevented) setPanelOpen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [panelOpen])
+
   const loadBeanDetails = useCallback(async (beanId: string) => {
     try {
       const [nextBrews, nextTastings] = await Promise.all([
@@ -122,7 +132,9 @@ export function CoffeePage() {
                         setCreatingBean(false)
                       }}
                     >
-                      <span className="shelf-card__name">{bean.name || t.coffee.unnamedBean}</span>
+                      <span className="shelf-card__name" title={bean.name || t.coffee.unnamedBean}>
+                        {bean.name || t.coffee.unnamedBean}
+                      </span>
                       <span className="shelf-card__meta">{bean.roaster || t.coffee.noRoaster}</span>
                       <span className="shelf-card__stock mono">
                         {bean.remainingG.toFixed(0)} / {bean.weightG.toFixed(0)}g

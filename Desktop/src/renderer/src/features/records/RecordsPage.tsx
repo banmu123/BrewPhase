@@ -155,6 +155,20 @@ export function RecordsPage() {
   // 后台元数据补全完成（成功/失败）后自动刷新：不需要用户切页才看到结果
   useEffect(() => api.records.onMetadataUpdated(() => void load()), [load])
 
+  // Esc 关闭详情浮层：与右上角 ✕ 同一语义。
+  // 播放器放大时 Esc 归播放器（退出放大，不销毁播放器），所以这一层必须让位——
+  // 两个监听都挂在 window 上，注册顺序决定谁先跑，只能显式判断。
+  useEffect(() => {
+    if (!panelOpen) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      if (document.querySelector('.link-player--zoomed')) return
+      setPanelOpen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [panelOpen])
+
   // MCP / 其他主进程写入后的领域通知：页面没有发起请求，收到事件再取一次
   useEffect(
     () =>
@@ -715,7 +729,11 @@ function RecordInspector(props: {
       </div>
       <div className="field">
         <label>{t.records.inspector.note}</label>
-        <textarea value={note} onChange={(event) => setNote(event.target.value)} style={{ minHeight: 90 }} />
+        <textarea
+        className="detail-note-input"
+        value={note}
+        onChange={(event) => setNote(event.target.value)}
+      />
       </div>
       <div className="field">
         <label>{t.records.inspector.tags}</label>

@@ -18,7 +18,9 @@
   /* Text */
   --ink: #30372f;
   --ink-soft: #747a71;
-  --ink-faint: #9a9f97;
+  /* 11px 的辅助信息（来源、日期、路径）原先在 paper 上只有 2.6:1，
+     读起来发虚；略微压暗到 3.2:1，仍明显轻于正文。 */
+  --ink-faint: #8b9187;
 
   /* Brand：roast 与 sage 只做点缀，不做大面积填充 */
   --espresso: #30372f; /* 关键动作（主按钮）用深墨绿，不用重咖啡棕 */
@@ -144,6 +146,17 @@ select {
   transition:
     border-color 0.15s ease,
     box-shadow 0.15s ease;
+}
+
+/* 单行控件与按钮同高（35px）：搜索框、筛选器与旁边的 .button 基线一致 */
+input:not([type='checkbox']):not([type='radio']),
+select {
+  min-height: 35px;
+}
+
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: var(--espresso);
 }
 
 input::placeholder,
@@ -432,7 +445,9 @@ textarea {
 /* ---------- Button ---------- */
 
 .button {
-  border: 1px solid var(--hairline);
+  /* hairline 在 paper 上几乎看不见，次要按钮会退化成纯文字；
+     用 hairline-strong 只给按钮，卡片/分割线仍保持更轻的一档。 */
+  border: 1px solid var(--hairline-strong);
   background: var(--card);
   color: var(--ink);
   border-radius: var(--radius-small);
@@ -605,35 +620,6 @@ textarea {
   white-space: nowrap;
 }
 
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.chip {
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--ink-soft);
-  border-radius: 999px;
-  padding: 4px 12px;
-  font-size: var(--fs-caption);
-  transition:
-    background 0.15s ease,
-    color 0.15s ease;
-}
-
-.chip:hover {
-  background: var(--well);
-  color: var(--ink);
-}
-
-.chip[data-active='true'] {
-  background: var(--cream);
-  color: var(--espresso);
-  font-weight: 500;
-}
-
 /* ---------- 结构 ---------- */
 
 .hairline {
@@ -643,7 +629,7 @@ textarea {
 }
 
 .empty {
-  padding: 36px 12px;
+  padding: 22px 12px;
   color: var(--ink-faint);
   font-size: var(--fs-caption);
   line-height: 1.8;
@@ -731,7 +717,8 @@ textarea {
 
 .brew-row {
   display: grid;
-  grid-template-columns: 84px 1fr 1fr 60px 40px;
+  /* 84px 装不下「2026年11月6日」，日期会被拆成两行；96px 正好容纳中日韩日期 */
+  grid-template-columns: 96px 1fr 1fr 60px 40px;
   gap: 12px;
   align-items: center;
   padding: 11px 0;
@@ -742,6 +729,7 @@ textarea {
 .brew-row__date {
   color: var(--ink-faint);
   font-size: var(--fs-caption);
+  white-space: nowrap;
 }
 
 .phase-track {
@@ -785,7 +773,7 @@ textarea {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 20px 36px 48px;
+  padding: 20px 28px 48px;
 }
 
 .record-toolbar {
@@ -1237,9 +1225,23 @@ textarea {
   font-size: var(--fs-micro);
   color: var(--ink-faint);
   display: flex;
-  gap: 8px;
+  gap: 4px 8px;
   align-items: center;
+  /* 整项换行，不在词中间断开：以前英文会断成「James / Hoffmann」「Nov 9, / 2026」，
+     强行单行又会把来源压成「YouT…」。折中是：每项自身不换行，放不下就整项到下一行。 */
+  flex-wrap: wrap;
+}
+
+.record-tile__meta > * {
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.record-tile__meta > .tag {
+  flex: 0 0 auto;
 }
 
 /* 详情浮层：按需从右侧浮现，不挤压主内容区（Records 与 Coffee 共用） */
@@ -1476,14 +1478,6 @@ textarea {
 
 /* ---------- 画布页 ---------- */
 
-.canvas-wrap {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-  background: var(--paper);
-}
-
 .canvas-hud {
   position: absolute;
   z-index: 6;
@@ -1572,7 +1566,7 @@ textarea {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 20px 36px 48px;
+  padding: 20px 28px 48px;
 }
 
 .coffee-section {
@@ -1715,7 +1709,7 @@ textarea {
   display: grid;
   grid-template-columns: 192px minmax(0, 1fr);
   gap: 28px;
-  padding: 6px 36px 0;
+  padding: 6px 28px 0;
 }
 
 .settings-nav {
@@ -1767,10 +1761,81 @@ textarea {
   border-top: 1px solid var(--hairline);
 }
 
+/* 每个分类只有一处「页面标题」（settings-section__title），分组一律用更小的一档，
+   避免「常规设置」与「语言」两个 17px 标题叠在一起分不清层级。 */
+.settings-section__title {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  margin: 0 0 18px;
+}
+
+/* 分类标题下的一句导语：比正文略大、比标题轻，避免整句被当成标题 */
+.settings-lead {
+  font-size: var(--fs-body);
+  line-height: 1.6;
+  color: var(--ink);
+  margin: -8px 0 14px;
+  max-width: 64ch;
+}
+
 .settings-subsection__title {
-  font-size: var(--fs-title);
+  font-size: 15px;
   font-weight: 600;
   margin: 0 0 6px;
+}
+
+/* 行内表单（名称 + 创建按钮）：输入框定宽、按钮按内容宽度，不跟着栅格拉满 */
+.settings-form-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.settings-form-row .field {
+  flex: 0 1 280px;
+  margin-bottom: 0;
+}
+
+/* Scope 勾选：分组名定宽，四行的复选框才不会左右错位 */
+.scope-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.scope-group + .scope-group {
+  margin-top: 6px;
+}
+
+.scope-group__label {
+  /* 定宽而不是 min-width：英文「Records」比「Tags」宽，min-width 会让复选框错开几像素 */
+  flex: 0 0 64px;
+  color: var(--ink-soft);
+}
+
+.scope-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+/* 本机连接信息里的路径行：等宽、可断行、不撑破面板 */
+.settings-code {
+  font-size: 11px;
+  line-height: 1.9;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+/* 详情浮层里的备注编辑框：90px 会把第三行切一半，给到 5 行 */
+.detail-note-input {
+  min-height: 132px;
 }
 
 /* 应用信息等键值列表 */
@@ -2289,236 +2354,12 @@ body.canvas-focus .canvas-topbar {
   background: #000;
 }
 
-/* ---------- Canvas Switcher / Dialog / Add to Canvas / 光标 ---------- */
-
-.switcher-wrap { position: relative; }
-
-.switcher-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  border: 0;
-  background: transparent;
-  border-radius: var(--radius-small);
-  color: var(--ink);
-  font-size: var(--fs-title);
-  font-weight: 600;
-  -webkit-app-region: no-drag;
-  transition: background 0.16s ease;
-}
-
-.switcher-trigger:hover,
-.switcher-trigger[data-open='true'] { background: var(--well); }
-
-.switcher-trigger__arrow { font-size: 10px; color: var(--ink-faint); }
-
-.pop-backdrop { position: fixed; inset: 0; z-index: 40; }
-
-.switcher-pop {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  width: 320px;
-  z-index: 45;
-  padding: 14px;
-  background: var(--card);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-large);
-  box-shadow: var(--shadow-panel);
-}
-
-.switcher-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-height: 320px;
-  overflow: auto;
-}
-
-.switcher-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  border-radius: var(--radius-small);
-  padding: 4px;
-}
-
-.switcher-item[data-active='true'] { background: var(--well-deep); }
-
-.switcher-item__main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  text-align: left;
-  border: 0;
-  background: transparent;
-  padding: 6px 8px;
-  border-radius: var(--radius-small);
-}
-
-.switcher-item__main:hover { background: var(--well); }
-
-.switcher-item__name {
-  font-size: var(--fs-body);
-  font-weight: 500;
-  color: var(--ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.switcher-item__meta { font-size: var(--fs-micro); color: var(--ink-faint); }
-
-.switcher-item__more {
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  justify-content: center;
-  display: inline-flex;
-  align-items: center;
-  border: 0;
-  background: transparent;
-  border-radius: var(--radius-small);
-  color: var(--ink-faint);
-}
-
-.switcher-item__more:hover { background: var(--well); color: var(--ink); }
-
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  background: rgba(48, 55, 47, 0.28);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.dialog {
-  width: 380px;
-  padding: 18px;
-  background: var(--card);
-  border-radius: var(--radius-large);
-  box-shadow: var(--shadow-panel);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.add-panel {
-  position: fixed;
-  top: 64px;
-  right: 14px;
-  bottom: 14px;
-  width: 380px;
-  z-index: 55;
-  overflow: auto;
-  background: var(--card);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-large);
-  box-shadow: var(--shadow-panel);
-  padding: 16px 16px 20px;
-  animation: float-panel-in 0.18s ease;
-}
-
-.node-panel {
-  position: fixed;
-  top: 64px;
-  right: 14px;
-  width: 300px;
-  max-height: calc(100vh - 78px);
-  z-index: 55;
-  overflow: auto;
-  background: var(--card);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-large);
-  box-shadow: var(--shadow-panel);
-  padding: 16px;
-  animation: float-panel-in 0.18s ease;
-}
-
-.add-list { display: flex; flex-direction: column; gap: 8px; }
-
-.add-card {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  text-align: left;
-  padding: 8px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-small);
-  background: var(--card);
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-
-.add-card:hover {
-  background: var(--well);
-  border-color: var(--hairline-strong);
-  box-shadow: none;
-}
-
-.add-card__thumb {
-  width: 52px;
-  height: 44px;
-  flex: 0 0 52px;
-  border-radius: 8px;
-  border: 1px solid var(--hairline);
-  object-fit: cover;
-  background: var(--well);
-  display: block;
-}
-
-.add-card__thumb--text {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink-soft);
-}
-
-.add-card__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-
-.add-card__title {
-  font-size: var(--fs-callout);
-  font-weight: 500;
-  color: var(--ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.add-card__meta { font-size: var(--fs-micro); color: var(--ink-faint); }
-.add-card__action { font-size: var(--fs-caption); color: var(--ink-faint); }
-
-.canvas-cursor--hand { cursor: grab; }
-.canvas-cursor--hand:active { cursor: grabbing; }
-.canvas-cursor--pen { cursor: crosshair; }
-.canvas-cursor--eraser { cursor: cell; }
-
-.video-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 120;
-  background: rgba(24, 28, 24, 0.92);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-}
-
-.video-overlay video {
-  width: min(1080px, 92vw);
-  max-height: 78vh;
-  border-radius: var(--radius-large);
-  background: #000;
-}
-
 /* ---------- Canvas Gallery（对标 iOS CanvasListView + CanvasThumbnailPreview） ---------- */
+
+/* Gallery 的 page-body 需要左右留白：卡片不能贴着侧栏与窗口边缘 */
+.page-body--gutter {
+  padding: 0 28px;
+}
 
 .gallery-grid {
   flex: 1;
