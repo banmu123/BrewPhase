@@ -85,7 +85,9 @@ test('英文界面下模块页面完整可用（导航与页面标题）', async
   await expect(page.getByRole('heading', { name: 'Coffee' })).toBeVisible()
 
   await page.getByRole('button', { name: 'Canvas', exact: true }).click()
-  await expect(page.locator('.gallery-grid')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Canvas' })).toBeVisible()
+  // 集合页在没有画布时用空状态代替 .gallery-grid：断言页头按钮，避免依赖真实库数据
+  await expect(page.getByRole('button', { name: 'New canvas' })).toBeVisible()
 
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()

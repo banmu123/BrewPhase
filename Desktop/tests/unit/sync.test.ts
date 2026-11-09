@@ -1356,6 +1356,158 @@ describe('同步事件广播（sync:changed 的触发点）', () => {
     expect(changes).toBe(1)
   })
 
+  it('wipe：咖啡数据一并清空（豆子/冲煮/品鉴/提醒），阶段规则与设备保留', async () => {
+    db.prepare(`insert into beans (id, name, created_at, updated_at) values ('bp-bean-1', '耶加雪菲', 1, 1)`).run()
+    db.prepare(`insert into brews (id, bean_id, date, created_at) values ('bp-brew-1', 'bp-bean-1', 1, 1)`).run()
+    db.prepare(`insert into tastings (id, bean_id, date, created_at) values ('bp-tasting-1', 'bp-bean-1', 1, 1)`).run()
+    db.prepare(
+      `insert into phase_reminders (id, bean_id, kind, fire_date, created_at) values ('bp-reminder-1', 'bp-bean-1', 'opening', 1, 1)`
+    ).run()
+    db.prepare(`insert into phase_rules (id, roast_level, updated_at) values ('bp-rule-1', 'light', 1)`).run()
+    db.prepare(
+      `insert into sync_baseline (entity_type, entity_id, fingerprint, synced_at) values ('bean', 'bp-bean-1', 'f', 1)`
+    ).run()
+    db.prepare(
+      `insert into change_log (entity_type, entity_id, operation, revision, device_id, created_at) values ('bean', 'bp-bean-1', 'upsert', 1, 'bp_ios_x', 1)`
+    ).run()
+
+    const body = Buffer.from(JSON.stringify({ confirm: 'DELETE_SYNCED_CONTENT' }))
+    const response = await fetch(`${baseUrl}/api/sync/wipe`, { method: 'POST', headers: signed(body), body })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ beans: 1, brews: 1, tastings: 1 })
+
+    const count = (table: string): number =>
+      (db.prepare(`select count(*) as n from ${table}`).get() as { n: number }).n
+    expect(count('beans')).toBe(0)
+    expect(count('brews')).toBe(0)
+    expect(count('tastings')).toBe(0)
+    expect(count('phase_reminders')).toBe(0)
+    // 阶段规则是全局配置不是数据：清空不该碰它
+    expect(count('phase_rules')).toBe(1)
+    // 咖啡的基线与流水一起清：下一次同步不会对着不存在的豆子做裁决
+    const coffeeSyncState = (table: string): number =>
+      (
+        db
+          .prepare(
+            `select count(*) as n from ${table} where entity_type in ('bean','brew','tasting','phaseReminder')`
+          )
+          .get() as { n: number }
+      ).n
+    expect(coffeeSyncState('sync_baseline')).toBe(0)
+    expect(coffeeSyncState('change_log')).toBe(0)
+  })
+
+  // MARK: - 解除配对（撤销设备授权）
+
+  const activeDevices = (): number =>
+    (db.prepare('select count(*) as n from devices where revoked_at is null').get() as { n: number }).n
+
+  function signedFor(body: Buffer, usedToken: string, signature?: string): Record<string, string> {
+    const timestamp = String(Date.now())
+    const nonce = crypto.randomUUID()
+    return {
+      authorization: `Bearer ${usedToken}`,
+      'x-bp-timestamp': timestamp,
+      'x-bp-nonce': nonce,
+      'x-bp-signature': signature ?? expectedSignature(usedToken, timestamp, nonce, sha256(body)),
+      'content-type': 'application/json'
+    }
+  }
+
+  async function unpairWith(usedToken: string, signature?: string): Promise<Response> {
+    const body = Buffer.from(JSON.stringify({}))
+    return fetch(`${baseUrl}/api/unpair`, {
+      method: 'POST',
+      headers: signedFor(body, usedToken, signature),
+      body
+    })
+  }
+
+  /** 再配一台（同一台手机解除配对后重扫二维码的场景）。 */
+  async function pairAgain(): Promise<string> {
+    const { code } = server.pairingPayload()
+    const pair = await fetch(`${baseUrl}/api/pair`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pairingCode: code, deviceName: 'iPhone' })
+    })
+    expect(pair.status).toBe(200)
+    return ((await pair.json()) as { token: string }).token
+  }
+
+  it('unpair：撤销当前设备，token 立即失效，并广播一次', async () => {
+    expect(activeDevices()).toBe(1)
+    expect(changes).toBe(0)
+
+    const response = await unpairWith(token)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ revoked: true })
+    expect(activeDevices()).toBe(0)
+    // 桌面端设置页靠这次广播把设备列表刷新成空
+    expect(changes).toBe(1)
+
+    const manifest = await fetch(`${baseUrl}/api/sync/manifest`, {
+      headers: { authorization: `Bearer ${token}` }
+    })
+    expect(manifest.status).toBe(401)
+  })
+
+  it('unpair：重复调用幂等（上次响应丢失后的重试不该报错）', async () => {
+    expect((await unpairWith(token)).status).toBe(200)
+    expect(changes).toBe(1)
+
+    const retry = await unpairWith(token)
+    expect(retry.status).toBe(200)
+    expect(await retry.json()).toEqual({ revoked: true, already: true })
+    expect(activeDevices()).toBe(0)
+    // 已经撤销过：不再重复广播
+    expect(changes).toBe(1)
+  })
+
+  it('unpair：签名不对不撤销授权', async () => {
+    const response = await unpairWith(token, '0'.repeat(64))
+    expect(response.status).toBe(401)
+    expect(activeDevices()).toBe(1)
+    expect(changes).toBe(0)
+
+    const manifest = await fetch(`${baseUrl}/api/sync/manifest`, {
+      headers: { authorization: `Bearer ${token}` }
+    })
+    expect(manifest.status).toBe(200)
+  })
+
+  it('unpair：无 token / 陌生 token 一律 401', async () => {
+    const body = Buffer.from(JSON.stringify({}))
+    const anonymous = await fetch(`${baseUrl}/api/unpair`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body
+    })
+    expect(anonymous.status).toBe(401)
+    expect((await unpairWith('bp_not_a_real_token')).status).toBe(401)
+    expect(activeDevices()).toBe(1)
+  })
+
+  it('同一台手机重复配对：撤销旧 token 后只剩当前设备，两者互不影响', async () => {
+    const firstToken = token
+    // 手机「解除配对」只清了本地凭据，重扫二维码 → 桌面端此前会留下两条
+    const secondToken = await pairAgain()
+    expect(activeDevices()).toBe(2)
+
+    // 撤销旧的那条：只影响它自己
+    expect((await unpairWith(firstToken)).status).toBe(200)
+    expect(activeDevices()).toBe(1)
+
+    const firstManifest = await fetch(`${baseUrl}/api/sync/manifest`, {
+      headers: { authorization: `Bearer ${firstToken}` }
+    })
+    const secondManifest = await fetch(`${baseUrl}/api/sync/manifest`, {
+      headers: { authorization: `Bearer ${secondToken}` }
+    })
+    expect(firstManifest.status).toBe(401)
+    expect(secondManifest.status).toBe(200)
+  })
+
   it('媒体 finalize 校验失败不广播（残缺文件不该让页面以为可以显示）', async () => {    const content = Buffer.alloc(512, 3)
     await fetch(`${baseUrl}/api/sync/media/chunk?name=${mediaName}&offset=0`, {
       method: 'POST',

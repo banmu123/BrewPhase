@@ -57,6 +57,7 @@
 | `POST /api/sync/media/chunk?name=&offset=` | 256KB 分块追加；offset 必须等于已收字节数（断点续传查询 `GET /api/sync/media/offset`）；同名分块互斥 |
 | `POST /api/sync/media/finalize` | 整文件大小 + SHA-256（流式）校验 → 原子落位；失败清理临时文件 |
 | `POST /api/sync/wipe` | **清空同步实体**（撤销配对时用）。body 必须带 `{"confirm":"DELETE_SYNCED_CONTENT"}`，否则 400；返回 `{records,tags,canvases,mediaFiles}` |
+| `POST /api/unpair` | **撤销这台设备的授权**（解除配对时用）。Bearer + HMAC；成功返回 `{revoked:true}`，重复调用返回 `{revoked:true,already:true}`（幂等，响应丢失后重试不报错）；撤销后该 token 立即失效 |
 
 ## 4. 合并语义（非破坏性）
 
@@ -180,24 +181,34 @@ SyncServer.onChanged → SyncService.onEvent({type:'state-changed'})
 - 元数据补全是**另一条通道** `records:metadata-updated`（`ResolveQueue.onSettled`），
   与同步事件各订阅各的，不要合并成一个：两者的触发时机与失败语义都不同。
 
-## 10. 清空（撤销配对）
+## 10. 清空与撤销授权（解除配对）
 
-`POST /api/sync/wipe` 只清**同步实体**：
+`POST /api/sync/wipe` 清空**同步内容 + 全部咖啡数据**（2026-11-09 起咖啡并入）：
 
 | 清掉 | 保留 |
 | --- | --- |
-| records / record_tags / record_tag_links / record_metadata | beans / brews / tastings |
-| canvases / canvas_nodes / canvas_strokes | phase_rules / phase_reminders |
-| 这些记录引用的媒体文件（连同 `_thumb` 变体） | devices / local_state |
-| sync_baseline（仅同步实体）、sync_conflicts、sync_rejected、change_log（仅同步实体） | 咖啡相关的基线与流水 |
+| records / record_tags / record_tag_links / record_metadata | **phase_rules**（全局配置，删了会被默认值填回来） |
+| canvases / canvas_nodes / canvas_strokes | devices / local_state |
+| **beans / brews / tastings / phase_reminders** | |
+| 记录与豆子引用的媒体文件（连同 `_thumb` 变体） | |
+| sync_baseline / sync_conflicts / sync_rejected / change_log（上述全部实体） | |
 
-理由：豆子、冲煮、品鉴是这台 Mac 自己的数据，手机配不配对都不该动它们。
-这是产品边界，不是实现细节——所以不做「恢复出厂」。
+历史说明：2026-11-09 之前豆子、冲煮、品鉴是保留的，理由是「它们只属于这台 Mac」；
+但咖啡本来就会从 iPhone 同步过来，清空后留着它们只会让用户以为清空失败了。
+现在全部并入清空，**两端确认文案都必须写明「包括 Mac 上自己录入的」**——
+这是不可恢复的批量删除，文案与行为必须一致。
 
 两端都能触发：iPhone「解除配对」选「解除并清空」，或 Mac 设置页「撤销授权」选
-「撤销并清空内容」。iOS 侧顺序是**先清远端、再清本地 Keychain**，反过来的话
-token 已失效、请求发不出去；远端清空失败时本地凭据仍然清掉，并把失败原因
-如实告诉用户（断开成功 ≠ 清空成功，两件事不能合并成一句话）。
+「撤销并清空内容」。iOS 侧顺序固定为**清空（可选）→ 撤销授权 → 清本地 Keychain**：
+撤销授权必须排在清空之后（token 一撤销，wipe 就发不出去）；本地凭据最后一定会清，
+用户要断开就必须能断开。任何一步失败都如实告诉用户——断开成功 ≠ 清空成功 ≠
+授权已撤销，三件事不能合并成一句话。
+
+**撤销授权是独立的一步**（`POST /api/unpair`），不包含在 wipe 里：wipe 只删同步
+内容，授权记录（`devices` 行）保留。以前只有「清空」没有「撤销」，手机端解除配对
+后 Mac 上那条授权仍然有效，下次配对又会新增一条，同一个名字在设置页里越积越多。
+现在 iPhone 解除配对时会把当前设备的 token 置为已撤销，Mac 的设备列表随
+`sync:changed` 立即刷新。
 
 ## 11. 自动推送（任何数据变更后）
 

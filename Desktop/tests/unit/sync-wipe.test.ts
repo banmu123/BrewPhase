@@ -7,12 +7,13 @@ import { migrate } from '../../src/main/database/migrations'
 import { wipeSyncedData } from '../../src/main/sync/wipe'
 
 /**
- * 清空同步实体的边界（撤销配对时用）。
+ * 清空同步内容的边界（撤销配对时用）。
  *
  * 这个函数会真删数据，所以测试的重点不是「删掉了」，而是**删对了范围**：
  * 记录 / 标签 / 画布 / 笔迹 / 媒体 / 同步状态必须走；
- * 豆子 / 冲煮 / 品鉴必须留——它们是这台 Mac 自己的数据，
- * 手机的配对关系没有任何理由动它们。
+ * 2026-11-09 起咖啡数据（豆子 / 冲煮 / 品鉴 / 每支豆子的阶段提醒）一并清空——
+ * 它们本来就会从 iPhone 同步过来，留着只会让人以为清空失败了。
+ * 唯一保留的是 phase_rules：那是全局配置不是数据。
  */
 describe('wipeSyncedData', () => {
   const MEDIA_NAME = 'wipetest-1111-4111-8111-000000000001.jpg'
@@ -35,7 +36,7 @@ describe('wipeSyncedData', () => {
     db.pragma('foreign_keys = ON')
     migrate(db)
 
-    // 咖啡数据（必须留下）
+    // 咖啡数据（并入清空：必须清掉）
     db.prepare('insert into beans (id, name, created_at, updated_at) values (?,?,?,?)')
       .run('bean-1', '耶加雪菲', NOW, NOW)
     db.prepare('insert into brews (id, bean_id, date, created_at) values (?,?,?,?)')
@@ -62,7 +63,7 @@ describe('wipeSyncedData', () => {
        values (?,?,?,?,?)`
     ).run('record-1', 'https://example.com', 'generic', 'ok', NOW)
 
-    // 同步状态（必须清掉同步实体那部分，咖啡那部分留下）
+    // 同步状态（记录与咖啡的基线/流水都要清）
     db.prepare(
       'insert into sync_baseline (entity_type, entity_id, fingerprint, synced_at) values (?,?,?,?)'
     ).run('record', 'record-1', 'fp-record', NOW)
@@ -91,10 +92,22 @@ describe('wipeSyncedData', () => {
     delete process.env.BREWPHASE_USER_DATA_DIR
   })
 
-  it('清掉同步实体，保留咖啡数据', async () => {
+  it('清掉同步内容与咖啡数据，只留阶段规则', async () => {
+    // 阶段规则是全局配置：清空不该碰
+    db.prepare('insert into phase_rules (id, roast_level, updated_at) values (?,?,?)')
+      .run('rule-1', 'light', NOW)
+
     const result = await wipeSyncedData(db)
 
-    expect(result).toEqual({ records: 1, tags: 1, canvases: 1, mediaFiles: 2 })
+    expect(result).toEqual({
+      records: 1,
+      tags: 1,
+      canvases: 1,
+      beans: 1,
+      brews: 1,
+      tastings: 0,
+      mediaFiles: 2
+    })
 
     for (const table of [
       'records',
@@ -104,20 +117,20 @@ describe('wipeSyncedData', () => {
       'canvases',
       'canvas_nodes',
       'canvas_strokes',
-      'sync_conflicts'
+      'sync_conflicts',
+      'beans',
+      'brews',
+      'phase_reminders'
     ]) {
       expect(count(table), `${table} 应该被清空`).toBe(0)
     }
 
-    // 咖啡数据一条都不能少
-    expect(count('beans')).toBe(1)
-    expect(count('brews')).toBe(1)
+    // 唯一保留的全局配置
+    expect(count('phase_rules')).toBe(1)
 
-    // 同步状态只清同步实体那部分
-    const baselines = db.prepare('select entity_type from sync_baseline').all() as Array<{ entity_type: string }>
-    expect(baselines.map((row) => row.entity_type)).toEqual(['bean'])
-    const changes = db.prepare('select entity_type from change_log').all() as Array<{ entity_type: string }>
-    expect(changes.map((row) => row.entity_type)).toEqual(['bean'])
+    // 同步状态：记录与咖啡的基线/流水全部清掉
+    expect(count('sync_baseline')).toBe(0)
+    expect(count('change_log')).toBe(0)
   })
 
   it('媒体文件跟着走（主文件与缩略图）', async () => {
@@ -129,7 +142,15 @@ describe('wipeSyncedData', () => {
   it('空库重复清空是幂等的', async () => {
     await wipeSyncedData(db)
     const second = await wipeSyncedData(db)
-    expect(second).toEqual({ records: 0, tags: 0, canvases: 0, mediaFiles: 0 })
-    expect(count('beans')).toBe(1)
+    expect(second).toEqual({
+      records: 0,
+      tags: 0,
+      canvases: 0,
+      beans: 0,
+      brews: 0,
+      tastings: 0,
+      mediaFiles: 0
+    })
+    expect(count('phase_rules')).toBe(0)
   })
 })

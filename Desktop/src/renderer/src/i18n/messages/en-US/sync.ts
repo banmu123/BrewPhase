@@ -21,12 +21,20 @@ export const sync = {
     lastSync: (when: string) => `Last sync ${when}`,
     revoke: 'Revoke access',
     revokeExplain:
-      'Once revoked, this phone can no longer sync. You can also clear what it synced here: records, tags, canvases and media files are deleted; beans, brews and tastings stay. Clearing cannot be undone.',
+      'Once revoked, this phone can no longer sync. You can also clear what it synced here: records, tags, canvases and media files — plus all coffee data (beans, brews and tastings, including anything entered on the Mac) — are deleted. Clearing cannot be undone.',
     cancel: 'Cancel',
     revokeOnly: 'Revoke only',
     revokeAndWipe: 'Revoke and clear content',
-    wiped: (records: number, tags: number, canvases: number, media: number) =>
-      `Cleared ${records} records, ${tags} tags, ${canvases} canvases and ${media} media files`
+    wiped: (
+      records: number,
+      tags: number,
+      canvases: number,
+      beans: number,
+      brews: number,
+      tastings: number,
+      media: number
+    ) =>
+      `Cleared ${records} records, ${tags} tags, ${canvases} canvases, ${beans} beans (incl. ${brews} brews, ${tastings} tastings) and ${media} media files`
   },
   conflicts: {
     title: 'Conflicts',

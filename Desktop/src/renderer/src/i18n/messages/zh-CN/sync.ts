@@ -20,12 +20,20 @@ export const sync = {
     lastSync: (when: string) => `上次同步 ${when}`,
     revoke: '撤销授权',
     revokeExplain:
-      '撤销后这台手机不能再同步。也可以同时清空它同步过来的内容：记录、标签、画布和媒体文件会被删除；豆子、冲煮、品鉴保留。清空不可恢复。',
+      '撤销后这台手机不能再同步。也可以同时清空它同步过来的内容：记录、标签、画布、媒体文件，以及全部咖啡数据——豆子、冲煮、品鉴（包括在 Mac 上录入的）都会被删除。清空不可恢复。',
     cancel: '取消',
     revokeOnly: '只撤销授权',
     revokeAndWipe: '撤销并清空内容',
-    wiped: (records: number, tags: number, canvases: number, media: number) =>
-      `已清空 ${records} 条记录、${tags} 个标签、${canvases} 块画布、${media} 个媒体文件`
+    wiped: (
+      records: number,
+      tags: number,
+      canvases: number,
+      beans: number,
+      brews: number,
+      tastings: number,
+      media: number
+    ) =>
+      `已清空 ${records} 条记录、${tags} 个标签、${canvases} 块画布、${beans} 包豆子（含 ${brews} 次冲煮、${tastings} 次品鉴）、${media} 个媒体文件`
   },
   conflicts: {
     title: '冲突',

@@ -59,6 +59,8 @@
 "BrewPhase 暂时无法访问已有记录。\n为了避免数据丢失，当前不会保存新的数据。" = "BrewPhase cannot reach your records right now.\nNothing new will be saved, so nothing gets lost.";
 "JSON · CSV 表格（不含图片）" = "JSON · CSV tables (no images)";
 "JSON 备份" = "JSON backup";
+"Mac 上仍保留这台手机的授权：%@。可在 Mac 的「更多 → 设备同步」里撤销。" = "The Mac still keeps this iPhone's authorization: %@. You can revoke it on the Mac under More → Device sync.";
+"Mac 上的同步内容没能清空：%@" = "Couldn't clear the synced content on the Mac: %@";
 "Ollama 本地服务" = "Ollama local service";
 "Ollama 的回答看不懂：%@" = "Ollama's response made no sense: %@";
 "Ollama 返回了 %@：%@" = "Ollama returned %@: %@";
@@ -414,7 +416,6 @@
 "已自定义 %@ 项" = "%@ customised";
 "已解除配对。" = "Unpaired.";
 "已解除配对，Mac 上的同步内容已清空。" = "Unpaired. Synced content on the Mac has been cleared.";
-"已解除配对，但 Mac 上的内容没能清空：%@" = "Unpaired, but the Mac's synced content couldn't be cleared: %@";
 "已过窗口 %@ 天" = "%@ days past the window";
 "已过黄金风味期但还剩不少" = "Past the peak window with plenty left";
 "已连接桌面端" = "Desktop connected";
@@ -713,7 +714,7 @@
 "添加豆子" = "Add bean";
 "添加风味" = "Add flavours";
 "清理 %@ 个无用的图片" = "Clean up %@ unused images";
-"清空会删掉 Mac 上从这台手机同步过去的记录、标签、画布与媒体文件；豆子、冲煮、品鉴会保留。清空不可恢复。" = "Clearing deletes the records, tags, canvases and media synced from this iPhone; beans, brews and tastings stay. This cannot be undone.";
+"清空会删掉 Mac 上从这台手机同步过来的内容：记录、标签、画布、媒体文件，以及全部咖啡数据——豆子、冲煮、品鉴（包括 Mac 上自己录入的）。清空不可恢复。" = "Clearing deletes everything synced from this iPhone — records, tags, canvases and media files — plus all coffee data on the Mac: beans, brews and tastings, including anything entered on the Mac itself. This cannot be undone.";
 "清除搜索" = "Clear search";
 "渠道" = "Channel";
 "滤杯与秤" = "Dripper and scale";

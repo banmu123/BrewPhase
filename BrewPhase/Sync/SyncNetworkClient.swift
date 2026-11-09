@@ -110,7 +110,21 @@ struct SyncNetworkClient {
         let _: [String: String] = try await post("api/sync/media/finalize", bodyData: payload, authenticated: true)
     }
 
-    // MARK: - 清空（撤销配对）
+    // MARK: - 清空 / 解除配对
+
+    /// 让桌面端撤销**这台设备**的授权：token 立即失效，设备从列表里消失。
+    ///
+    /// 与「清空」是两件事：清空删数据，撤销删授权。解除配对必须两件都做，
+    /// 否则 Mac 上会一直留着一条「已配对」记录，下次配对又多一条。
+    func revokeDevice() async throws {
+        struct EmptyBody: Codable {}
+        struct RevokeOutcome: Codable {
+            var revoked: Bool
+            var already: Bool?
+        }
+        let payload = try JSONEncoder().encode(EmptyBody())
+        let _: RevokeOutcome = try await post("api/unpair", bodyData: payload, authenticated: true)
+    }
 
     /// 让桌面端清空「同步实体」：记录 / 标签 / 画布 / 媒体文件。
     ///

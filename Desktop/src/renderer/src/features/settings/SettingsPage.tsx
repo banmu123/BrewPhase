@@ -183,7 +183,17 @@ function SyncSection() {
     try {
       if (wipe) {
         const result = await api.sync.wipeData()
-        setRevokeNote(t.sync.devices.wiped(result.records, result.tags, result.canvases, result.mediaFiles))
+        setRevokeNote(
+          t.sync.devices.wiped(
+            result.records,
+            result.tags,
+            result.canvases,
+            result.beans,
+            result.brews,
+            result.tastings,
+            result.mediaFiles
+          )
+        )
       }
       setStatus(await api.sync.revokeDevice(id))
       setRevokingId(null)

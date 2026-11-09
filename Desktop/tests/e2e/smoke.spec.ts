@@ -44,7 +44,9 @@ test('应用启动、连上本地库、三个模块可切换', async () => {
   await expect(page.getByRole('heading', { name: '记录' })).toBeVisible()
 
   await nav('画布').click()
-  await expect(page.locator('.gallery-grid')).toBeVisible() // Canvas 现在先进集合页（Gallery）
+  // Canvas 现在先进集合页（Gallery）；断言页头按钮而不是 .gallery-grid——
+  // 后者只在「已有画布」时渲染，会随真实库的数据变化而假红。
+  await expect(page.getByRole('button', { name: '新建画布' })).toBeVisible()
 
   await app.close()
 })

@@ -11,8 +11,8 @@ import { migrations } from '../../src/main/database/migrations'
  * 撤销配对时的「清空同步内容」。
  *
  * 这是应用里唯一会成批删数据的入口，所以验收的不是按钮能点，而是两件事：
- * 1. 该走的都走了：记录 / 画布 / 媒体 / 同步状态；
- * 2. 不该动的没动：豆子（这台 Mac 自己的数据）。
+ * 1. 该走的都走了：记录 / 画布 / 媒体 / 同步状态 / 咖啡数据（豆子、冲煮、品鉴、提醒）；
+ * 2. 不该动的没动：阶段规则（全局配置，不是数据）。
  *
  * 数据库直接用真实迁移建，设备也真的插在 devices 里——设置页显示的是
  * 真实 IPC 查询出来的状态，不是造出来的假 UI。
@@ -35,6 +35,18 @@ function seed(): void {
     now,
     now
   )
+  db.prepare(
+    'insert into brews (id, bean_id, date, created_at) values (?,?,?,?)'
+  ).run('brew-unpair-1', 'bean-unpair-1', now, now)
+  db.prepare(
+    'insert into tastings (id, bean_id, date, created_at) values (?,?,?,?)'
+  ).run('tasting-unpair-1', 'bean-unpair-1', now, now)
+  db.prepare(
+    "insert into phase_reminders (id, bean_id, kind, fire_date, created_at) values (?,?,?,?,?)"
+  ).run('reminder-unpair-1', 'bean-unpair-1', 'opening', now + 86_400_000, now)
+  db.prepare(
+    'insert into phase_rules (id, roast_level, updated_at) values (?,?,?)'
+  ).run('rule-unpair-1', 'light', now)
   db.prepare(
     `insert into records (id, carrier, title, note, url_string, provider, is_sample, created_at, updated_at)
      values (?, 'text', '撤销测试记录', '来自手机的一段正文', '', 'generic', 0, ?, ?)`
@@ -59,7 +71,7 @@ test.afterAll(() => {
   rmSync(userData, { recursive: true, force: true })
 })
 
-test('撤销授权并清空：同步实体清零，豆子保留', async () => {
+test('撤销授权并清空：记录与咖啡数据全部清零，阶段规则保留', async () => {
   test.setTimeout(60_000)
   const app = await electronLauncher.launch({
     args: ['.', '--no-sandbox', '--disable-gpu'],
@@ -101,7 +113,11 @@ test('撤销授权并清空：同步实体清零，豆子保留', async () => {
     expect(count('records'), '记录应该被清空').toBe(0)
     expect(count('canvases'), '画布应该被清空').toBe(0)
     expect(count('record_tags')).toBe(0)
-    expect(count('beans'), '豆子必须保留').toBe(1)
+    expect(count('beans'), '豆子应该被清空（2026-11-09 起咖啡并入清空）').toBe(0)
+    expect(count('brews'), '冲煮应该被清空').toBe(0)
+    expect(count('tastings'), '品鉴应该被清空').toBe(0)
+    expect(count('phase_reminders'), '豆子的阶段提醒应该被清空').toBe(0)
+    expect(count('phase_rules'), '阶段规则是全局配置，保留').toBe(1)
   } finally {
     verify.close()
   }
@@ -113,9 +129,9 @@ test('撤销授权并清空：同步实体清零，豆子保留', async () => {
   await expect(page.locator('.record-tile')).toHaveCount(0)
   await expect(page.getByText('还没有记录。先从一条链接、一张图或一段文字开始。')).toBeVisible()
 
-  // 咖啡数据一条都不能少
+  // 咖啡页同样清空（页面订阅了 sync:changed，不需要切页才刷新）
   await page.getByRole('button', { name: '咖啡', exact: true }).click()
-  await expect(page.getByText('耶加雪菲 沃卡').first()).toBeVisible()
+  await expect(page.getByText('还没有豆子。先记一包，冲煮与品鉴会挂到它下面。')).toBeVisible()
 
   await page.screenshot({ path: '/tmp/sync-unpair-wipe.png' })
   await app.close()

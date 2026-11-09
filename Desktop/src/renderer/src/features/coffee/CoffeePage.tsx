@@ -41,6 +41,10 @@ export function CoffeePage() {
     void loadBeans()
   }, [loadBeans])
 
+  // 撤销配对并清空（含咖啡数据）后，主进程会广播 sync:changed：
+  // 打开着的咖啡页必须自己重读，不然用户会以为清空失败了。
+  useEffect(() => api.sync.onChanged(() => void loadBeans()), [loadBeans])
+
   // Esc 关闭豆子详情：与 ✕ 同一语义。
   useEffect(() => {
     if (!panelOpen) return

@@ -19,7 +19,7 @@ import {
  *
  * - 只在用户启用同步时启动；stop 后句柄全部释放。
  * - 请求体限幅：JSON 批 8MB、媒体块 256KB，超限直接 413。
- * - 路由面固定六条：status / pair / sync manifest / sync apply / media 三件套。
+ * - 路由面固定：status / pair / unpair / sync manifest / sync apply / media 三件套。
  *   不存在任何「远程下发 SQL」或命令执行面。
  * - TLS 是下一跳（后续版本再评估）；本版以一次性码 +
  *   每设备独立 token + 时间戳/nonce/HMAC 防护，威胁模型与 BrewPing 相同。
@@ -195,6 +195,29 @@ export class SyncServer {
           desktopDeviceName: this.desktopDeviceName,
           protocolVersion: SYNC_PROTOCOL_VERSION
         })
+      }
+
+      // 解除配对（撤销这台设备的授权）。放在通用 authorize 之前：
+      // 请求重试时 token 已经撤销，仍要能拿到 200（幂等），而不是 401。
+      if (route === 'POST /api/unpair') {
+        const bodyResult = await this.readBody(request, 64 * 1024)
+        if (!bodyResult.ok) return this.json(response, bodyResult.status, { error: bodyResult.error })
+        const header = (request.headers.authorization ?? '').trim()
+        const rawToken = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : ''
+        if (!rawToken) return this.json(response, 401, { error: 'unauthorized' })
+        const row = this.sqlite
+          .prepare('select id, revoked_at from devices where token_hash = ?')
+          .get(sha256(rawToken)) as { id: string; revoked_at: number | null } | undefined
+        if (!row) return this.json(response, 401, { error: 'unauthorized' })
+        if (row.revoked_at !== null) {
+          // 已经撤销过：重试（例如上次响应丢了）不该报错。
+          return this.json(response, 200, { revoked: true, already: true })
+        }
+        const auth = this.verifyWrite(request, rawToken, bodyResult.body)
+        if (!auth.ok) return this.json(response, auth.status, { error: auth.error })
+        this.sqlite.prepare('update devices set revoked_at = ? where id = ?').run(Date.now(), row.id)
+        this.onChanged()
+        return this.json(response, 200, { revoked: true })
       }
 
       // 以下全部要求已配对设备。

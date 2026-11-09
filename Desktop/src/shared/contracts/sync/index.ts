@@ -42,5 +42,8 @@ export type WipeResult = {
   records: number
   tags: number
   canvases: number
+  beans: number
+  brews: number
+  tastings: number
   mediaFiles: number
 }

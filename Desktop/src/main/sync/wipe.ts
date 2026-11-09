@@ -5,18 +5,33 @@ import type { WipeResult } from '../../shared/contracts'
 import { mediaFilePath } from '../media/store'
 
 /**
- * 清空「同步实体」：记录、标签、画布，以及这些记录引用的媒体文件。
+ * 清空「同步内容」：记录、标签、画布、媒体文件，以及**全部咖啡数据**
+ * （豆子 / 冲煮 / 品鉴，连带每支豆子的阶段提醒）。
  *
- * **边界是产品决定，不是实现细节**：豆子 / 冲煮 / 品鉴 / 阶段规则只属于这台
- * Mac，手机配对与否都不该动它们。所以这里不做「恢复出厂」，只撤掉从手机
- * 同步过来的那部分内容。
+ * 2026-11-09 起咖啡并入清空（产品决定）：咖啡本来就会从 iPhone 同步过来，
+ * 「解除配对并清空」如果留着它们，用户会以为清空失败了。代价是 Mac 上
+ * 自己录入的咖啡也会被删——所以两端 UI 都必须把这一点写进确认文案，
+ * 不允许只说「清空同步内容」。
+ *
+ * 阶段规则（phase_rules）是全局配置而不是数据，保留：删了只会被
+ * `seedPhaseRulesIfEmpty` 用默认值填回来。
  *
  * 与删除单条记录一样，数据与状态必须一起走：基线、冲突、拒绝记录、变更流水
  * 里凡是属于这些实体的行，留着只会让下一次同步对着不存在的数据做裁决。
  */
 
-/** 同步侧的实体类型（与 snapshot-importer 的 TABLE_FOR_ENTITY 保持同一套名字）。 */
-const SYNC_ENTITY_TYPES = ['record', 'recordTag', 'recordTagLink', 'canvas', 'canvasNode'] as const
+/** 清空涉及的实体类型（与 snapshot-importer 的 TABLE_FOR_ENTITY 保持同一套名字）。 */
+const SYNC_ENTITY_TYPES = [
+  'record',
+  'recordTag',
+  'recordTagLink',
+  'canvas',
+  'canvasNode',
+  'bean',
+  'brew',
+  'tasting',
+  'phaseReminder'
+] as const
 
 const inClause = (values: readonly string[]): string => values.map(() => '?').join(', ')
 
@@ -31,7 +46,10 @@ export async function wipeSyncedData(sqlite: Database): Promise<WipeResult> {
     const snapshot = {
       records: count('records'),
       tags: count('record_tags'),
-      canvases: count('canvases')
+      canvases: count('canvases'),
+      beans: count('beans'),
+      brews: count('brews'),
+      tastings: count('tastings')
     }
 
     // 1) 同步状态先清：冲突/拒绝/基线都是对着旧数据的裁决结果。
@@ -45,6 +63,7 @@ export async function wipeSyncedData(sqlite: Database): Promise<WipeResult> {
       .run(...SYNC_ENTITY_TYPES)
 
     // 2) 数据：显式按依赖顺序删，不依赖 foreign_keys pragma 当前是否开着。
+    //    咖啡侧同样按依赖删：品鉴 → 冲煮 → 提醒 → 豆子。
     sqlite.prepare('delete from record_metadata').run()
     sqlite.prepare('delete from record_tag_links').run()
     sqlite.prepare('delete from record_tags').run()
@@ -52,6 +71,10 @@ export async function wipeSyncedData(sqlite: Database): Promise<WipeResult> {
     sqlite.prepare('delete from canvas_strokes').run()
     sqlite.prepare('delete from canvases').run()
     sqlite.prepare('delete from records').run()
+    sqlite.prepare('delete from tastings').run()
+    sqlite.prepare('delete from brews').run()
+    sqlite.prepare('delete from phase_reminders').run()
+    sqlite.prepare('delete from beans').run()
 
     return snapshot
   })()

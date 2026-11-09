@@ -171,33 +171,45 @@ final class SyncManager: ObservableObject {
         return response
     }
 
-    /// 解除配对的结果。`localOnly` = 桌面端没清成（连不上/服务未运行），
-    /// 本地凭据仍然清掉了——用户要断开就必须能断开，不能因为对方离线而卡住。
+    /// 解除配对的结果。本机一定已经断开；`incomplete` 里每一条都是已本地化
+    /// 的说明，描述远端还没做完的事（清空失败 / 授权没撤销）——这两件事后果
+    /// 不同，不能合并成一句话，也不能因为远端失败就假装已经断开。
     enum UnpairOutcome: Equatable {
-        case wiped
-        case localOnly(reason: String)
+        case clean
+        case incomplete(notes: [String])
     }
 
-    /// 解除配对。`wipeRemote` 为真时**先**让桌面端清空同步实体，再清本地凭据。
+    /// 解除配对。顺序固定为：清空（可选）→ 撤销授权 → 清本地凭据。
     ///
-    /// 顺序不能反：token 一清就再也发不出这条请求了。
+    /// 撤销授权必须排在清空之后：token 一旦撤销，wipe 就再也发不出去了。
+    /// 两步都是尽力而为，但本地凭据最后一定会清——用户要断开就必须能断开。
     @discardableResult
     func unpair(wipeRemote: Bool) async -> UnpairOutcome {
-        var outcome = UnpairOutcome.wiped
-        if wipeRemote, let device = pairedDevice() {
+        var notes: [String] = []
+        if let device = pairedDevice() {
+            let client = SyncNetworkClient(
+                host: device.host,
+                port: device.port,
+                token: device.token,
+                timeout: 8
+            )
+            if wipeRemote {
+                do {
+                    try await client.wipeSyncedContent()
+                } catch {
+                    notes.append(L("Mac 上的同步内容没能清空：%@", error.localizedDescription))
+                }
+            }
             do {
-                try await SyncNetworkClient(
-                    host: device.host,
-                    port: device.port,
-                    token: device.token,
-                    timeout: 8
-                ).wipeSyncedContent()
+                try await client.revokeDevice()
             } catch {
-                outcome = .localOnly(reason: error.localizedDescription)
+                notes.append(
+                    L("Mac 上仍保留这台手机的授权：%@。可在 Mac 的「更多 → 设备同步」里撤销。", error.localizedDescription)
+                )
             }
         }
         clearLocalCredentials()
-        return outcome
+        return notes.isEmpty ? .clean : .incomplete(notes: notes)
     }
 
     private func clearLocalCredentials() {

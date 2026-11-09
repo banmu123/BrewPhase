@@ -96,21 +96,23 @@ struct DesktopSyncView: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("清空会删掉 Mac 上从这台手机同步过去的记录、标签、画布与媒体文件；豆子、冲煮、品鉴会保留。清空不可恢复。")
+            Text(
+                "清空会删掉 Mac 上从这台手机同步过来的内容：记录、标签、画布、媒体文件，以及全部咖啡数据——豆子、冲煮、品鉴（包括 Mac 上自己录入的）。清空不可恢复。"
+            )
         }
     }
 
-    /// 先让桌面端处置数据，再清本地凭据（顺序见 `SyncManager.unpair`）。
+    /// 先让桌面端处置数据与授权，再清本地凭据（顺序见 `SyncManager.unpair`）。
     private func performUnpair(wipe: Bool) async {
         let outcome = await manager.unpair(wipeRemote: wipe)
         awaitingFirstSync = false
         localCounts = nil
         switch outcome {
-        case .wiped:
+        case .clean:
             unpairNote = wipe ? L("已解除配对，Mac 上的同步内容已清空。") : L("已解除配对。")
-        case .localOnly(let reason):
-            // 说清「断开成功、清空失败」：这两件事的结果不一样，不能合并成一句。
-            unpairNote = L("已解除配对，但 Mac 上的内容没能清空：%@", reason)
+        case .incomplete(let notes):
+            // 逐条说清远端还剩什么没做：断开成功 ≠ 清空成功 ≠ 授权已撤销。
+            unpairNote = notes.joined(separator: "\n")
         }
     }
 

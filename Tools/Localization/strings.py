@@ -1452,11 +1452,14 @@ EN: dict[str, str] = {
     # 解除配对
     "已解除配对。": "Unpaired.",
     "已解除配对，Mac 上的同步内容已清空。": "Unpaired. Synced content on the Mac has been cleared.",
-    "已解除配对，但 Mac 上的内容没能清空：%@": "Unpaired, but the Mac's synced content couldn't be cleared: %@",
+    "Mac 上的同步内容没能清空：%@":
+        "Couldn't clear the synced content on the Mac: %@",
+    "Mac 上仍保留这台手机的授权：%@。可在 Mac 的「更多 → 设备同步」里撤销。":
+        "The Mac still keeps this iPhone's authorization: %@. You can revoke it on the Mac under More → Device sync.",
     "只解除配对": "Unpair only",
     "解除并清空 Mac 上的同步内容": "Unpair and clear synced content on the Mac",
-    "清空会删掉 Mac 上从这台手机同步过去的记录、标签、画布与媒体文件；豆子、冲煮、品鉴会保留。清空不可恢复。":
-        "Clearing deletes the records, tags, canvases and media synced from this iPhone; beans, brews and tastings stay. This cannot be undone.",
+    "清空会删掉 Mac 上从这台手机同步过来的内容：记录、标签、画布、媒体文件，以及全部咖啡数据——豆子、冲煮、品鉴（包括 Mac 上自己录入的）。清空不可恢复。":
+        "Clearing deletes everything synced from this iPhone — records, tags, canvases and media files — plus all coffee data on the Mac: beans, brews and tastings, including anything entered on the Mac itself. This cannot be undone.",
     # 首次同步确认
     "将同步的内容": "What will sync",
     "开始首次同步": "Start first sync",

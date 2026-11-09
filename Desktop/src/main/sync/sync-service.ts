@@ -150,10 +150,10 @@ export class SyncService {
   }
 
   /**
-   * 清空同步实体（记录 / 标签 / 画布 / 媒体）。
+   * 清空同步内容（记录 / 标签 / 画布 / 媒体，2026-11-09 起含全部咖啡数据）。
    *
-   * 撤销配对时按用户选择调用：豆子、冲煮、品鉴、阶段规则都保留——那些只属于
-   * 这台 Mac。清完广播一次状态变化，打开的 Records 页面会自己刷新成空列表。
+   * 撤销配对时按用户选择调用。清完广播一次状态变化：打开的 Records / Coffee
+   * 页面都会自己刷新成空列表。
    */
   async wipeSyncedContent(): Promise<WipeResult> {
     const result = await wipeSyncedData(this.sqlite)
