@@ -337,6 +337,66 @@ export const localState = sqliteTable('local_state', {
   value: text('value').notNull()
 })
 
+// MARK: - MCP 接入（migration 007）
+
+/**
+ * MCP 客户端授权。只存 token 的 SHA-256；明文只在创建响应里出现一次。
+ * `scopes` 是 JSON 数组字符串（如 `["records:read","canvas:write"]`），
+ * 写入前用 `MCP_SCOPES` 校验，未知 scope 直接拒绝。
+ */
+export const mcpClients = sqliteTable(
+  'mcp_clients',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    tokenHash: text('token_hash').notNull(),
+    scopes: text('scopes').notNull().default('[]'),
+    createdAt: integer('created_at').notNull(),
+    lastUsedAt: integer('last_used_at'),
+    revokedAt: integer('revoked_at')
+  },
+  (table) => [uniqueIndex('mcp_clients_token_idx').on(table.tokenHash)]
+)
+
+/**
+ * MCP 写调用审计。**不记**请求参数原文、记录正文、token、文件路径。
+ * 撤销客户端不删除历史（client_id 只是文本引用，无外键）。
+ */
+export const mcpOperationLog = sqliteTable(
+  'mcp_operation_log',
+  {
+    id: text('id').primaryKey(),
+    clientId: text('client_id').notNull(),
+    toolName: text('tool_name').notNull(),
+    entityType: text('entity_type'),
+    entityId: text('entity_id'),
+    success: integer('success', { mode: 'boolean' }).notNull(),
+    errorCode: text('error_code'),
+    idempotencyKey: text('idempotency_key'),
+    createdAt: integer('created_at').notNull()
+  },
+  (table) => [index('mcp_oplog_client_idx').on(table.clientId, table.createdAt)]
+)
+
+/**
+ * 幂等键：(client_id, idempotency_key) 唯一。
+ * 只存请求摘要（sha256 规范化参数）——不存完整私人正文。
+ * 同键同摘要 → 返回原实体；同键不同摘要 → IDEMPOTENCY_KEY_REUSE。
+ */
+export const mcpIdempotency = sqliteTable(
+  'mcp_idempotency',
+  {
+    clientId: text('client_id').notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    requestDigest: text('request_digest').notNull(),
+    toolName: text('tool_name').notNull(),
+    entityType: text('entity_type'),
+    entityId: text('entity_id'),
+    createdAt: integer('created_at').notNull()
+  },
+  (table) => [primaryKey({ columns: [table.clientId, table.idempotencyKey] })]
+)
+
 export const syncBaseline = sqliteTable('sync_baseline', {
   entityType: text('entity_type').notNull(),
   entityId: text('entity_id').notNull(),
@@ -367,11 +427,15 @@ export const schema = {
   canvases,
   canvasNodes,
   canvasStrokes,
+  canvasNotes,
   syncMeta,
   devices,
   syncBaseline,
   syncConflicts,
   changeLog,
-  localState
+  localState,
+  mcpClients,
+  mcpOperationLog,
+  mcpIdempotency
 }
 

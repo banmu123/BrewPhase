@@ -2,6 +2,7 @@ import type { Bean, BeanDraft, Brew, BrewDraft, PhaseRule, Tasting, TastingDraft
 import type { Canvas, CanvasNode, CanvasNodeWithRecord, CanvasNote, CanvasStroke } from './entities/canvas'
 import type { ImportImageResult, RecordDraft, RecordItem, RecordQuery, RecordTag } from './entities/records'
 import type { SyncStatus, SyncConflictItem, WipeResult } from './sync'
+import type { McpBridgeStatus, McpClientCreateInput, McpClientCreated, McpClientInfo } from './mcp'
 import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from './version'
 
 export * from './version'
@@ -9,7 +10,15 @@ export * from './entities/coffee'
 export * from './entities/records'
 export * from './entities/canvas'
 export * from './sync'
+export * from './mcp'
 export * from './validation/ipc'
+
+/**
+ * 应用事件：主进程写入（尤其是 MCP Bridge 的写入）之后广播的领域名。
+ * 页面收到后自己重新取数据——不把内容塞进事件，避免出现第二份状态。
+ */
+export const APP_DOMAINS = ['records', 'coffee', 'canvas'] as const
+export type AppDomain = (typeof APP_DOMAINS)[number]
 
 /**
  * Renderer 能看到的全部能力。**只有这些**——preload 里逐条列出，不透传
@@ -26,6 +35,8 @@ export type AppInfo = {
 export interface RendererApi {
   app: {
     info: () => Promise<AppInfo>
+    /** 主进程写入后的刷新通知（MCP/同步等外部来源）。 */
+    onChanged: (listener: (domain: AppDomain) => void) => () => void
   }
   coffee: {
     listBeans: () => Promise<Bean[]>
@@ -99,6 +110,16 @@ export interface RendererApi {
     strokes: (canvasId: string) => Promise<CanvasStroke[]>
     saveStroke: (stroke: CanvasStroke) => Promise<CanvasStroke>
     removeStroke: (id: string) => Promise<void>
+  }
+  /**
+   * AI 连接（MCP）。token 只在 createClient 的返回值里出现一次，
+   * listClients 永远不会返回 token 或哈希。
+   */
+  mcp: {
+    listClients: () => Promise<McpClientInfo[]>
+    createClient: (input: McpClientCreateInput) => Promise<McpClientCreated>
+    revokeClient: (id: string) => Promise<McpClientInfo>
+    bridgeStatus: () => Promise<McpBridgeStatus>
   }
 }
 

@@ -13,6 +13,9 @@
     "test:watch": "vitest",
     "test:live": "METADATA_LIVE_SMOKE=1 vitest run --config vitest.live.config.ts",
     "e2e": "playwright test",
+    "mcp:build": "vite build --config vite.mcp.config.ts",
+    "mcp:start": "node out/mcp/stdio.mjs",
+    "mcp:dev": "vite build --config vite.mcp.config.ts --watch",
     "db:generate": "drizzle-kit generate",
     "dist": "electron-vite build && electron-builder"
   },
@@ -24,6 +27,7 @@
     ]
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "^2.4.0",
     "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.4",
     "konva": "^10.9.1",
@@ -35,6 +39,7 @@
     "zustand": "^5.1.0"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
     "@playwright/test": "^1.65.0",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.6.6",

@@ -13,7 +13,12 @@ const invoke = (channel: string, payload?: unknown) => ipcRenderer.invoke(channe
 
 const api: RendererApi = {
   app: {
-    info: () => invoke(IPC.appInfo)
+    info: () => invoke(IPC.appInfo),
+    onChanged: (listener) => {
+      const wrapped = (_event: unknown, domain: string) => listener(domain as never)
+      ipcRenderer.on('app:changed', wrapped)
+      return () => ipcRenderer.removeListener('app:changed', wrapped)
+    }
   },
   coffee: {
     listBeans: () => invoke(IPC.beansList),
@@ -78,6 +83,12 @@ const api: RendererApi = {
     strokes: (canvasId) => invoke(IPC.canvasStrokes, { canvasId }),
     saveStroke: (stroke) => invoke(IPC.canvasStrokeSave, stroke),
     removeStroke: (id) => invoke(IPC.canvasStrokeRemove, { id })
+  },
+  mcp: {
+    listClients: () => invoke(IPC.mcpClientsList),
+    createClient: (input) => invoke(IPC.mcpClientCreate, input),
+    revokeClient: (id) => invoke(IPC.mcpClientRevoke, { id }),
+    bridgeStatus: () => invoke(IPC.mcpBridgeStatus)
   }
 }
 

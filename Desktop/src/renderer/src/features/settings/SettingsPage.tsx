@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { AppInfo, SyncConflictItem, SyncStatus } from '@shared/contracts'
-import { SYNC_PROTOCOL_VERSION } from '@shared/contracts'
+import type {
+  AppInfo,
+  McpBridgeStatus,
+  McpClientCreated,
+  McpClientInfo,
+  McpScope,
+  SyncConflictItem,
+  SyncStatus
+} from '@shared/contracts'
+import { MCP_SCOPE_GROUPS, SYNC_PROTOCOL_VERSION } from '@shared/contracts'
 import { api } from '../../shared/api'
 
 /**
@@ -61,6 +69,12 @@ export function SettingsPage({ info }: { info: AppInfo | null }) {
           <section className="settings-group">
             <div className="detail-body">
               <SyncSection />
+            </div>
+          </section>
+
+          <section className="settings-group">
+            <div className="detail-body">
+              <McpSection />
             </div>
           </section>
         </div>
@@ -349,5 +363,283 @@ function SyncSection() {
         </div>
       )}
     </>
+  )
+}
+
+/**
+ * AI 连接（MCP）：创建客户端 → 勾选 scope → 一次性展示 token → 复制配置 → 撤销。
+ *
+ * 诚实性原则：Bridge 是否在跑、socket 在哪、MCP 入口路径是什么，都直接显示
+ * 真实值；明文 token 只在创建成功的那一次出现在这个组件里，关闭即不可再取。
+ */
+function McpSection() {
+  const [clients, setClients] = useState<McpClientInfo[]>([])
+  const [status, setStatus] = useState<McpBridgeStatus | null>(null)
+  const [name, setName] = useState('')
+  const [scopes, setScopes] = useState<McpScope[]>(['records:read', 'coffee:read', 'canvas:read'])
+  const [created, setCreated] = useState<McpClientCreated | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [copyNote, setCopyNote] = useState<string | null>(null)
+  const [revokingId, setRevokingId] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      const [nextClients, nextStatus] = await Promise.all([api.mcp.listClients(), api.mcp.bridgeStatus()])
+      setClients(nextClients)
+      setStatus(nextStatus)
+      setError(null)
+    } catch (loadError) {
+      setError(errorMessage(loadError))
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const toggleScope = (scope: McpScope): void => {
+    setScopes((previous) =>
+      previous.includes(scope) ? previous.filter((item) => item !== scope) : [...previous, scope]
+    )
+  }
+
+  const create = async (): Promise<void> => {
+    if (!name.trim() || scopes.length === 0) return
+    setBusy(true)
+    try {
+      const result = await api.mcp.createClient({ name: name.trim(), scopes })
+      setCreated(result)
+      setName('')
+      setCopyNote(null)
+      await load()
+    } catch (createError) {
+      setError(errorMessage(createError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const revoke = async (id: string): Promise<void> => {
+    setBusy(true)
+    try {
+      await api.mcp.revokeClient(id)
+      setRevokingId(null)
+      await load()
+    } catch (revokeError) {
+      setError(errorMessage(revokeError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const copy = async (text: string, label: string): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopyNote(`已复制${label}`)
+    } catch {
+      setCopyNote('复制失败：请手动选择文本')
+    }
+  }
+
+  return (
+    <>
+      <span className="overline">AI 连接</span>
+      <h2 className="detail-title">让 Codex、WorkBuddy 这类 Agent 读写你的 BrewPhase。</h2>
+      <div className="note" style={{ marginBottom: 14 }}>
+        每个客户端单独授权、单独撤销；权限检查在桌面端主进程完成，Agent 拿不到数据库，
+        也没有删除权限。写入只落在这台 Mac 上（不会自动同步到 iPhone）。
+        <br />
+        <span className="mono" style={{ fontSize: 10 }}>
+          Bridge：{status?.running ? `运行中 · ${status.socketPath ?? ''}` : '未运行'}
+          {status && !status.platformSupported ? '（当前平台 V1 不支持本地 Bridge）' : ''}
+        </span>
+      </div>
+
+      {error && <div className="field-hint field-hint--error">{error}</div>}
+
+      {created ? (
+        <div className="section">
+          <span className="overline">「{created.name}」已创建——token 只显示这一次</span>
+          <div className="note" style={{ margin: '8px 0' }}>
+            <span className="mono" style={{ wordBreak: 'break-all', fontSize: 11 }}>
+              {created.token}
+            </span>
+          </div>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+            <button className="button" onClick={() => void copy(created.token, ' token')}>
+              复制 Token
+            </button>
+            <button
+              className="button"
+              onClick={() => void copy(codexConfig(status, created.token), ' Codex 配置')}
+            >
+              复制 Codex 配置
+            </button>
+            <button
+              className="button"
+              onClick={() => void copy(workbuddyConfig(status, created.token), ' WorkBuddy 配置')}
+            >
+              复制 WorkBuddy 配置
+            </button>
+            <button className="button button--ghost" onClick={() => setCreated(null)}>
+              我已保存，收起
+            </button>
+          </div>
+          {copyNote && <div className="field-hint field-hint__ok">{copyNote}</div>}
+          <pre
+            className="note mono"
+            style={{ fontSize: 10, whiteSpace: 'pre-wrap', background: 'rgba(0,0,0,0.03)', padding: 10 }}
+          >
+            {codexConfig(status, created.token)}
+          </pre>
+        </div>
+      ) : (
+        <div className="section">
+          <span className="overline">新建客户端</span>
+          <div className="field-row" style={{ gap: 10, alignItems: 'flex-end', marginTop: 8 }}>
+            <div className="field" style={{ flex: '1 1 180px' }}>
+              <label htmlFor="mcp-client-name">名称</label>
+              <input
+                id="mcp-client-name"
+                value={name}
+                placeholder="例如 Codex / WorkBuddy"
+                maxLength={80}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </div>
+            <button
+              className="button button--primary"
+              disabled={busy || !name.trim() || scopes.length === 0}
+              onClick={() => void create()}
+            >
+              创建并生成 Token
+            </button>
+          </div>
+          <div className="note" style={{ marginTop: 10 }}>
+            {MCP_SCOPE_GROUPS.map((group) => (
+              <div key={group.label} className="row" style={{ gap: 12, flexWrap: 'wrap', marginBottom: 6 }}>
+                <span style={{ minWidth: 40 }}>{group.label}</span>
+                {group.scopes.map((scope) => (
+                  <label key={scope} className="row" style={{ gap: 4, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={scopes.includes(scope)}
+                      onChange={() => toggleScope(scope)}
+                    />
+                    <span className="mono" style={{ fontSize: 10 }}>
+                      {scope}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="section">
+        <span className="overline">已授权客户端</span>
+        {clients.length === 0 ? (
+          <div className="note" style={{ marginTop: 6 }}>
+            还没有已授权的客户端。
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: 10, marginTop: 8 }}>
+            {clients.map((client) => {
+              const revoked = client.revokedAt !== null
+              return (
+                <div key={client.id} className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600 }}>
+                      {client.name}
+                      {revoked && <span className="note">（已撤销）</span>}
+                    </div>
+                    <div className="mono" style={{ fontSize: 10, opacity: 0.7 }}>
+                      {client.scopes.join(' · ')}
+                    </div>
+                    <div className="note" style={{ fontSize: 10 }}>
+                      最近使用：{client.lastUsedAt ? new Date(client.lastUsedAt).toLocaleString() : '从未'}
+                    </div>
+                  </div>
+                  {!revoked &&
+                    (revokingId === client.id ? (
+                      <button className="button button--danger" disabled={busy} onClick={() => void revoke(client.id)}>
+                        确认撤销
+                      </button>
+                    ) : (
+                      <button className="button button--ghost" onClick={() => setRevokingId(client.id)}>
+                        撤销
+                      </button>
+                    ))}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="section">
+        <span className="overline">本机连接信息</span>
+        <div className="note" style={{ fontSize: 10, lineHeight: 1.9 }}>
+          MCP 入口：<span className="mono">{status?.mcpEntryPath ?? '—'}</span>
+          <br />
+          数据目录：<span className="mono">{status?.userDataDir ?? '—'}</span>
+          <br />
+          启动命令：<span className="mono">node {status?.mcpEntryPath ?? '<out/mcp/stdio.mjs>'}</span>
+          <br />
+          需要先运行 <span className="mono">pnpm mcp:build</span>，并保持 BrewPhase Desktop 打开。
+        </div>
+        {status && (
+          <button
+            className="button"
+            style={{ marginTop: 8 }}
+            onClick={() =>
+              void copy(
+                `node ${status.mcpEntryPath}\nuser-data: ${status.userDataDir}\nbridge: ${status.socketPath ?? 'n/a'} (v${status.protocolVersion})`,
+                '启动信息'
+              )
+            }
+          >
+            复制启动信息
+          </button>
+        )}
+      </div>
+    </>
+  )
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function codexConfig(status: McpBridgeStatus | null, token: string): string {
+  return `[mcp_servers.brewphase]
+command = "node"
+args = ["${status?.mcpEntryPath ?? '<Desktop>/out/mcp/stdio.mjs'}"]
+
+[mcp_servers.brewphase.env]
+BREWPHASE_MCP_TOKEN = "${token}"
+BREWPHASE_MCP_USER_DATA_DIR = "${status?.userDataDir ?? '<BrewPhase userData>'}"`
+}
+
+function workbuddyConfig(status: McpBridgeStatus | null, token: string): string {
+  return JSON.stringify(
+    {
+      mcpServers: {
+        brewphase: {
+          type: 'stdio',
+          command: 'node',
+          args: [status?.mcpEntryPath ?? '<Desktop>/out/mcp/stdio.mjs'],
+          env: {
+            BREWPHASE_MCP_TOKEN: token,
+            BREWPHASE_MCP_USER_DATA_DIR: status?.userDataDir ?? '<BrewPhase userData>'
+          },
+          timeout: 30000
+        }
+      }
+    },
+    null,
+    2
   )
 }

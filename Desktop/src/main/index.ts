@@ -10,6 +10,15 @@ import { pendingMetadataJobs, prepareLocalMetadata } from './database/repositori
 import { recordIdsToResolve, resolveRecordMetadata } from './metadata'
 import { ResolveQueue } from './metadata/resolve-queue'
 import { activeMetadataFixture } from './metadata/metadata-fixture'
+import { ApplicationEvents } from './application/events/application-events'
+import { RecordService } from './application/records/record-service'
+import { CoffeeService } from './application/coffee/coffee-service'
+import { CanvasService } from './application/canvas/canvas-service'
+import { McpClientService } from './application/authorization/permission-service'
+import { BridgeServer } from './mcp-bridge/bridge-server'
+import { BRIDGE_PROTOCOL_VERSION, bridgePaths, platformSupportsBridge } from './mcp-bridge/bridge-contract'
+import type { McpBridgeStatus } from '../shared/contracts/mcp'
+import { APP_VERSION } from '../shared/contracts/version'
 import { EMBED_FRAME_ORIGINS } from '../shared/link-embed'
 
 /**
@@ -21,6 +30,8 @@ import { EMBED_FRAME_ORIGINS } from '../shared/link-embed'
 
 let db: DatabaseHandle | null = null
 let syncService: SyncService | null = null
+let bridgeServer: BridgeServer | null = null
+let quitting = false
 const devServerUrl = process.env.ELECTRON_RENDERER_URL ?? null
 
 /**
@@ -126,7 +137,45 @@ function bootstrap(): void {
     console.error('[sync] restore failed', error)
   })
 
-  registerIpc({ db, devServerUrl, sync: syncService })
+  // Application Service：Renderer IPC 与 MCP Bridge 共用。
+  // Coffee 的 IPC 是纯读取（无业务规则），仍直连 Repository；MCP 侧走
+  // CoffeeService 做只读 DTO 与参数收敛。
+  const events = new ApplicationEvents()
+  events.onChanged((domain) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send('app:changed', domain)
+    }
+  })
+  const records = new RecordService(db.db, db.deviceId, events, scheduleMetadataFor)
+  const coffee = new CoffeeService(db.db)
+  const canvas = new CanvasService(db.db, db.deviceId, events)
+  const clients = new McpClientService(db.db)
+
+  const bridgeStatus = (): McpBridgeStatus => ({
+    running: bridgeServer?.isRunning() ?? false,
+    socketPath: bridgeServer?.socketPath() ?? null,
+    protocolVersion: BRIDGE_PROTOCOL_VERSION,
+    clientCount: clients.count(),
+    userDataDir: app.getPath('userData'),
+    mcpEntryPath: join(app.getAppPath(), 'out', 'mcp', 'stdio.mjs'),
+    platformSupported: platformSupportsBridge()
+  })
+
+  // Local Bridge：Windows 的 Named Pipe ACL 未验证，V1 只在 darwin/linux 启动。
+  if (platformSupportsBridge()) {
+    const server = new BridgeServer(
+      bridgePaths(app.getPath('userData')),
+      { db: db.db, clients, records, coffee, canvas },
+      APP_VERSION
+    )
+    bridgeServer = server
+    void server.start().catch((error) => {
+      console.error('[mcp-bridge] start failed', error)
+      bridgeServer = null
+    })
+  }
+
+  registerIpc({ db, devServerUrl, sync: syncService, services: { records, clients }, bridgeStatus })
   createMainWindow({ devServerUrl })
 
   // 上次运行没跑完的 pending 任务（应用被关掉 / 崩溃）：接着抓，不遗忘
@@ -153,7 +202,17 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  // Bridge 的关闭是异步的（关 socket、删 info 文件）：先拦住这一次 quit，
+  // 清理完再真正退出；第二次进入时 `quitting` 已置位，只关库。
+  if (bridgeServer && !quitting) {
+    quitting = true
+    const server = bridgeServer
+    bridgeServer = null
+    event.preventDefault()
+    void server.stop().finally(() => app.quit())
+    return
+  }
   db?.close()
   db = null
 })

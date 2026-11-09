@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { beanDraftSchema, brewDraftSchema } from '../entities/coffee'
 import { recordDraftSchema, recordQuerySchema } from '../entities/records'
 import { canvasNodeMoveSchema, canvasNodeResizeSchema, canvasNoteSchema, canvasStrokeSchema } from '../entities/canvas'
+import { mcpClientCreateInputSchema } from '../mcp'
 
 /**
  * IPC 的**唯一**契约清单：通道名 + 请求体校验 + 响应形状。
@@ -45,6 +46,11 @@ export const IPC = {
   syncResolveConflict: 'sync:resolve-conflict',
   tagsList: 'records:tags:list',
   tagCreate: 'records:tag:create',
+
+  mcpClientsList: 'mcp:clients:list',
+  mcpClientCreate: 'mcp:client:create',
+  mcpClientRevoke: 'mcp:client:revoke',
+  mcpBridgeStatus: 'mcp:bridge:status',
 
   canvasesList: 'canvas:list',
   canvasCreate: 'canvas:create',
@@ -99,6 +105,11 @@ export const ipcRequestSchemas = {
   [IPC.syncResolveConflict]: z.object({ id: z.string().min(1), resolution: z.enum(['local', 'remote']) }),
   [IPC.tagsList]: z.void(),
   [IPC.tagCreate]: z.object({ name: z.string().min(1).max(40) }),
+
+  [IPC.mcpClientsList]: z.void(),
+  [IPC.mcpClientCreate]: mcpClientCreateInputSchema,
+  [IPC.mcpClientRevoke]: z.object({ id: z.string().min(1) }),
+  [IPC.mcpBridgeStatus]: z.void(),
 
   [IPC.canvasesList]: z.void(),
   [IPC.canvasCreate]: z.object({ name: z.string().min(1).max(120), note: z.string().max(2_000).default('') }),

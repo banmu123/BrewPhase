@@ -238,6 +238,18 @@ export function CanvasPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId])
 
+  // MCP / 其他主进程写入后的领域通知：刷新画布列表；当前画布 silent 重取
+  // （silent 保留上一份有效内容，不把外部写入画成加载态闪烁）。
+  useEffect(
+    () =>
+      api.app.onChanged((domain) => {
+        if (domain !== 'canvas') return
+        void loadCanvases()
+        if (activeId) void loadContent(activeId, true)
+      }),
+    [activeId, loadCanvases, loadContent]
+  )
+
   useEffect(() => {
     if (!wrapElement) return
     const observer = new ResizeObserver(([entry]) => {

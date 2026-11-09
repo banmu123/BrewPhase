@@ -325,13 +325,52 @@ CREATE TABLE IF NOT EXISTS canvas_notes (
 CREATE INDEX IF NOT EXISTS notes_canvas_idx ON canvas_notes (canvas_id);
 `
 
+/** MCP 接入（授权客户端 / 写审计 / 幂等）。token 只存哈希，审计不存正文。 */
+const MCP_ACCESS_SQL = `
+CREATE TABLE IF NOT EXISTS mcp_clients (
+  id TEXT PRIMARY KEY NOT NULL,
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL,
+  scopes TEXT NOT NULL DEFAULT '[]',
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER,
+  revoked_at INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS mcp_clients_token_idx ON mcp_clients (token_hash);
+
+CREATE TABLE IF NOT EXISTS mcp_operation_log (
+  id TEXT PRIMARY KEY NOT NULL,
+  client_id TEXT NOT NULL,
+  tool_name TEXT NOT NULL,
+  entity_type TEXT,
+  entity_id TEXT,
+  success INTEGER NOT NULL,
+  error_code TEXT,
+  idempotency_key TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mcp_oplog_client_idx ON mcp_operation_log (client_id, created_at);
+
+CREATE TABLE IF NOT EXISTS mcp_idempotency (
+  client_id TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  request_digest TEXT NOT NULL,
+  tool_name TEXT NOT NULL,
+  entity_type TEXT,
+  entity_id TEXT,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (client_id, idempotency_key)
+);
+`
+
 export const migrations: Migration[] = [
   { version: 1, name: 'init', sql: INIT_SQL },
   { version: 2, name: 'sync-align-ios', sql: SYNC_ALIGN_SQL },
   { version: 3, name: 'conflict-delete-operation', sql: CONFLICT_DELETE_OP_SQL },
   { version: 4, name: 'rejected-remote-fingerprints', sql: REJECTED_REMOTE_SQL },
   { version: 5, name: 'resolver-metadata-separation', sql: RESOLVER_METADATA_SQL },
-  { version: 6, name: 'canvas-notes', sql: CANVAS_NOTES_SQL }
+  { version: 6, name: 'canvas-notes', sql: CANVAS_NOTES_SQL },
+  { version: 7, name: 'mcp-access', sql: MCP_ACCESS_SQL }
 ]
 
 /**

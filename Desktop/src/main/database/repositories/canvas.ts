@@ -241,7 +241,15 @@ export function listNotes(db: Db, canvasId: string): CanvasNote[] {
 export function createNote(
   db: Db,
   deviceId: string,
-  input: { canvasId: string; positionX: number; positionY: number }
+  input: {
+    canvasId: string
+    positionX: number
+    positionY: number
+    /** 可选：MCP 一次调用就带正文；Renderer 的新建便签不传，走默认空值。 */
+    title?: string
+    body?: string
+    color?: string
+  }
 ): CanvasNote {
   const id = crypto.randomUUID()
   const at = Date.now()
@@ -250,6 +258,9 @@ export function createNote(
       .values({
         id,
         canvasId: input.canvasId,
+        title: input.title ?? '',
+        body: input.body ?? '',
+        color: input.color ?? '#f6f2df',
         positionX: input.positionX,
         positionY: input.positionY,
         createdAt: at,

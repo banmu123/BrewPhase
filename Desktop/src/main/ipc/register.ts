@@ -15,15 +15,9 @@ import {
   updateBean,
   updateBrew
 } from '../database/repositories/coffee'
-import {
-  createRecord,
-  createTag,
-  deleteRecord,
-  getRecord,
-  listRecords,
-  listTags,
-  updateRecord
-} from '../database/repositories/records'
+import type { McpClientService } from '../application/authorization/permission-service'
+import type { RecordService } from '../application/records/record-service'
+import type { McpBridgeStatus } from '../../shared/contracts/mcp'
 import {
   addNode,
   resizeNode,
@@ -61,8 +55,14 @@ export function registerIpc(params: {
   db: DatabaseHandle
   devServerUrl: string | null
   sync: SyncService
+  /** Application Service：Renderer 与 MCP 共用（记录写路径）。 */
+  services: {
+    records: RecordService
+    clients: McpClientService
+  }
+  bridgeStatus: () => McpBridgeStatus
 }): void {
-  const { db, devServerUrl, sync } = params
+  const { db, devServerUrl, sync, services, bridgeStatus } = params
 
   // 首次启动铺默认阶段规则（之后由用户或同步决定，不覆盖）。
   seedPhaseRulesIfEmpty(db.db, DEFAULT_PHASE_RULES)
@@ -126,15 +126,15 @@ export function registerIpc(params: {
 
   // MARK: - Records
 
-  handle(IPC.recordsList, (input) => listRecords(db.db, input as never))
-  handle(IPC.recordGet, (input) => getRecord(db.db, (input as { id: string }).id))
-  handle(IPC.recordCreate, (input) => createRecord(db.db, db.deviceId, input as never))
+  handle(IPC.recordsList, (input) => services.records.list(input as never))
+  handle(IPC.recordGet, (input) => services.records.get((input as { id: string }).id))
+  handle(IPC.recordCreate, (input) => services.records.createFromDraft(input as never))
   handle(IPC.recordUpdate, (input) => {
     const value = input as { id: string; draft: never }
-    return updateRecord(db.db, db.deviceId, value.id, value.draft)
+    return services.records.updateFromDraft(value.id, value.draft)
   })
   handle(IPC.recordDelete, (input) => {
-    deleteRecord(db.db, db.deviceId, (input as { id: string }).id)
+    services.records.delete((input as { id: string }).id)
     return null
   })
   handle(IPC.recordImportImage, () => importImageFromDialog())
@@ -142,8 +142,8 @@ export function registerIpc(params: {
     const value = input as { id: string; force: boolean }
     return resolveRecordMetadata(db.db, value.id, value.force)
   })
-  handle(IPC.tagsList, () => listTags(db.db))
-  handle(IPC.tagCreate, (input) => createTag(db.db, db.deviceId, (input as { name: string }).name))
+  handle(IPC.tagsList, () => services.records.listTags())
+  handle(IPC.tagCreate, (input) => services.records.createTagFromRenderer((input as { name: string }).name))
 
   // MARK: - Canvas
 
@@ -205,6 +205,13 @@ export function registerIpc(params: {
     const value = input as { id: string; resolution: 'local' | 'remote' }
     return sync.resolveConflict(value.id, value.resolution)
   })
+
+  // MARK: - AI 连接（MCP 客户端授权）
+
+  handle(IPC.mcpClientsList, () => services.clients.list())
+  handle(IPC.mcpClientCreate, (input) => services.clients.create(input as never))
+  handle(IPC.mcpClientRevoke, (input) => services.clients.revoke((input as { id: string }).id))
+  handle(IPC.mcpBridgeStatus, () => bridgeStatus())
 
 }
 

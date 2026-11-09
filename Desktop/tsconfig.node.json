@@ -6,5 +6,5 @@
     "types": ["node"],
     "lib": ["ES2022"]
   },
-  "include": ["src/main/**/*.ts", "src/preload/**/*.ts", "src/shared/**/*.ts", "electron.vite.config.ts", "tests/unit/**/*.ts", "tests/integration/**/*.ts", "vitest.config.ts", "playwright.config.ts"]
+  "include": ["src/main/**/*.ts", "src/mcp/**/*.ts", "src/preload/**/*.ts", "src/shared/**/*.ts", "electron.vite.config.ts", "vite.mcp.config.ts", "tests/unit/**/*.ts", "tests/integration/**/*.ts", "vitest.config.ts", "playwright.config.ts"]
 }

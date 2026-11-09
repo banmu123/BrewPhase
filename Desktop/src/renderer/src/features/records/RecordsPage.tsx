@@ -150,6 +150,15 @@ export function RecordsPage() {
   // 后台元数据补全完成（成功/失败）后自动刷新：不需要用户切页才看到结果
   useEffect(() => api.records.onMetadataUpdated(() => void load()), [load])
 
+  // MCP / 其他主进程写入后的领域通知：页面没有发起请求，收到事件再取一次
+  useEffect(
+    () =>
+      api.app.onChanged((domain) => {
+        if (domain === 'records') void load()
+      }),
+    [load]
+  )
+
   const tagName = useMemo(() => new Map(tags.map((tag) => [tag.id, tag.name])), [tags])
 
   // 详情区与播放器共用同一份预览视图：列表看到的和详情看到的永远一致。
