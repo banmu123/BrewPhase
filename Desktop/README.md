@@ -85,9 +85,13 @@ Scope 与工具对应：
 | `canvas:read` | `list_canvases`、`get_canvas` |
 | `canvas:write` | `create_canvas`、`add_record_to_canvas`、`create_canvas_note`、`update_canvas_note`、`annotate_canvas_node` |
 
-### 3. Codex 配置
+### 3. Codex 配置（不需要手改）
 
-写入 Codex 的 `config.toml`（`~/.codex/config.toml`）：
+**推荐做法：同样不用手写。** 设置页创建客户端后点 **「复制 Codex 配置」**，
+得到的就是填好真实路径、token 与数据目录的 `config.toml` 片段，直接追加到
+`~/.codex/config.toml` 即可。
+
+下面的模板仅供理解字段（尖括号部分要替换成本机真实值）：
 
 ```toml
 [mcp_servers.brewphase]
@@ -102,9 +106,15 @@ BREWPHASE_MCP_USER_DATA_DIR = "<设置页「数据目录」显示的值>"
 `args` 与 `BREWPHASE_MCP_USER_DATA_DIR` 两个值可以直接从设置页的
 「复制 Codex 配置」拿到，不要手猜 Electron 的默认 userData 路径。
 
-### 4. WorkBuddy 配置
+### 4. WorkBuddy 配置（不需要手改）
 
-写入 WorkBuddy 的 `mcp.json`：
+**推荐做法：完全不用编辑下面的模板。** 在设置页创建客户端后，点
+**「复制 WorkBuddy 配置」**——它会生成填好真实 `args` 路径、真实 token、
+真实数据目录的完整 JSON，直接粘贴进 WorkBuddy 的 `mcp.json` 即可，不需要替换
+任何占位符。（token 只在创建成功的那一次可见；如果已经点了「收起」，重新创建
+一个客户端即可。）
+
+下面是**手动配置时的模板**（尖括号部分要替换成本机真实值），仅供理解字段：
 
 ```json
 {
@@ -123,6 +133,10 @@ BREWPHASE_MCP_USER_DATA_DIR = "<设置页「数据目录」显示的值>"
 }
 ```
 
+> `type` 与 `timeout` 是可选字段：有些客户端只接受 `command` / `args` / `env`
+> 的最小形态（`{"mcpServers":{"brewphase":{"command":"node","args":["…/out/mcp/stdio.mjs"],"env":{…}}}}`），
+> 把这两行删掉即可，行为不变。
+>
 > WorkBuddy 的执行环境必须能访问本机进程/socket。若它运行在没有本地执行能力的
 > 云端环境，则无法连接本地 Bridge——本项目不会为此把 Bridge 暴露到公网。
 
