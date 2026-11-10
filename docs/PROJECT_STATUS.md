@@ -45,16 +45,16 @@ available.
 |---|---|---|---|---|
 | iPhone app | **Available** | App Store 1.1, `com.brewphase.ios`, free, US storefront, EN + ZH | [App Store](https://apps.apple.com/us/app/brewphase/id6815591631) | iTunes Lookup API `?bundleId=com.brewphase.ios&country=us`, 2026-11-10 |
 | iPhone app, `main` (2.0) | **In development — not published** | Coffee + Records + Canvas + LAN sync in source | Build from source | `BrewPhase.xcodeproj/project.pbxproj`, `BrewPhase/Features/` |
-| macOS Desktop | **Built, not published** | arm64 `.dmg` + `.zip`, Developer ID signed, notarized, stapled; 4 assets in draft release `439332432` | No public download; draft assets require an authorised session | GitHub Releases API, 2026-11-10; `Desktop/release/` is gitignored |
-| Windows Desktop | **In development — no artifact** | NSIS packaging configured in CI | Build from source | `.github/workflows/desktop-release.yml`, `Desktop/electron-builder.yml` |
+| macOS Desktop | **Published (prerelease)** | arm64 `.dmg` + `.zip`, Developer ID signed, notarized, stapled, with `.sha256` sidecars; release `desktop-v0.1.0` published 2026-11-10 | Anonymous download from the Releases page | GitHub Releases API, 2026-11-10; `Desktop/release/` is gitignored |
+| Windows Desktop | **CI artifacts only, unsigned** | NSIS exe produced by run `42761926389` (2026-11-10); never installed on real hardware, not attached to a Release | Build from source; artifacts need an authorised session | Actions run 42761926389; `Desktop/electron-builder.yml` |
 | Linux Desktop | **Not supported yet** | `AppImage` target kept in config; no build, no verification | — | `Desktop/electron-builder.yml` |
 | MCP / AI Action Gateway | **Built, not published** | Ships with the desktop app; 18 tools, 8 scopes | Run from source | `Desktop/docs/MCP_TOOLS.md`, `Desktop/src/mcp/` |
 
-There is **no published GitHub Release**. `GET /repos/banmu123/BrewPhase/releases` returns one
-release, `draft: true`, `prerelease: true`, `published_at: null`, tag
-`untagged-1bd2b9c2896888aff7d5`, 4 assets. A draft is not listed on the public Releases page and
-its assets are not anonymously downloadable. The desktop download page used by the iOS app
-(`https://www.commitbrew.com/brewphase`) returned **HTTP 404** on 2026-11-10.
+There is **one published GitHub Release**: `desktop-v0.1.0` (prerelease, published 2026-11-10,
+tag at commit `f9fee39`), with 4 assets — signed + notarized macOS arm64 `.dmg`/`.zip` and
+`.sha256` sidecars, anonymously downloadable. The iOS app's download entry
+(`AppLinks.desktopDownload`) points at the Releases page; the previously planned
+`commitbrew.com/brewphase` page (HTTP 404) is no longer required for downloads.
 
 ## 2. Supported platforms & minimum requirements
 
@@ -125,9 +125,11 @@ and `workflow_dispatch`. Two build jobs (`macos-latest`, `windows-latest`) run i
 unit tests → build → packaging → artifact upload (14-day retention); a third job creates a **draft**
 `--prerelease` GitHub Release on tag builds. e2e is deliberately not in CI.
 
-- `GET /actions/workflows/412335292/runs` → **total_count: 0**. The workflow has **never run**.
+- First executed 2026-11-10 via `workflow_dispatch` (run `42761926389`): **both jobs green**,
+  unsigned macOS/Windows artifacts produced. The tag-triggered run `42757128255` (fired by the
+  `desktop-v0.1.0` release publishing its tag) failed on tests before the fixes landed on `main`.
 - `GET /actions/secrets` → **total_count: 0**. None of the seven signing/notarisation secrets are
-  configured, so a CI build would produce unsigned packages.
+  configured, so CI packages stay unsigned.
 - There is **no pull-request CI, no test-on-push workflow, and no nightly job**. The README badge
   points to the packaging workflow only.
 - The 97 historical Actions runs in this repository are all `pages build and deployment` (latest
@@ -210,8 +212,9 @@ Signed and notarized do **not** mean published: these artifacts are still in an 
 4. **No `CONTRIBUTING.md`, `SECURITY.md`, PR CI or test-on-push workflow.**
 5. **GitHub Pages is not enabled**, so the privacy policy URL embedded in the app is a 404; the
    policy text is also out of date relative to `main`.
-6. **The desktop download page is not deployed** (`https://www.commitbrew.com/brewphase` → 404),
-   yet two iOS entry points link to it (`BrewPhase/Shared/Utilities/AppLinks.swift`).
+6. **Windows has no Release asset and no signed installer** — CI artifacts exist (run
+   `42761926389`) but are unsigned and have never been installed on real hardware. The iOS
+   download entry now points at the GitHub Releases page (`AppLinks.swift`).
 7. **LAN sync has no TLS** and is one-way (iOS → Desktop). MCP writes stay on the desktop.
 8. **Real-device end-to-end sync validation is incomplete.** Coverage is integration-level (real
    HTTP + real SQLite); the iPhone ↔ Mac pass is still in progress
@@ -238,7 +241,7 @@ Signed and notarized do **not** mean published: these artifacts are still in an 
 | Maintainer | One active maintainer (`banmu123`): reviews PRs, builds and signs packages, handles releases |
 | iOS release | Built and submitted from Xcode / App Store Connect; repository has no iOS release workflow |
 | macOS release (actual) | Built locally, signed with the keychain Developer ID, notarized with `BrewPingNotary`, stapled, then uploaded to a draft GitHub Release through the API |
-| macOS / Windows release (configured) | `desktop-v*` tag → `.github/workflows/desktop-release.yml` → artifacts + draft prerelease. **Never executed; secrets not configured** |
+| macOS / Windows release (configured) | `desktop-v*` tag → `.github/workflows/desktop-release.yml` → artifacts + draft prerelease. First executed 2026-11-10, both jobs green (unsigned); secrets still not configured |
 | Issue / PR process | GitHub Issues / PRs; no templates and no required CI checks yet |
 | Security reports | No `SECURITY.md`; use a private GitHub Security Advisory or an issue |
 | Repository conventions | Localised strings via `L()` + `Tools/Localization/`; no destructive SwiftData schema changes without a migration plan; changes land on `main` |
@@ -250,9 +253,9 @@ These cannot be derived from the source tree. They are deliberately **not** asse
 | Item | Why it cannot be confirmed here | Where to check |
 |---|---|---|
 | App Store availability outside the US storefront; whether 2.0 has been submitted; TestFlight status | Store distribution is managed in App Store Connect, not in git | App Store Connect |
-| Whether the draft release `439332432` should be published, and under which tag | A publishing decision, not a repository fact | GitHub Releases |
+| ~~Draft release `439332432` published?~~ Resolved 2026-11-10: published as `desktop-v0.1.0` (prerelease) | Was a publishing decision; now a repository fact (§1) | GitHub Releases |
 | Whether GitHub Pages will be enabled for `docs/`, and when the privacy policy will be rewritten | Pages config returns 404; policy text is stale | Repository Settings → Pages; `docs/privacy.html` |
-| Deployment date for `https://www.commitbrew.com/brewphase` | External website, not in this repository | Site deployment |
+| Whether a separate `commitbrew.com` download page is still wanted | Optional since 2026-11-10: the iOS download entry points at GitHub Releases | Site deployment |
 | Choice of open-source license | No LICENSE file exists | Maintainer decision |
 | Whether signing secrets will be added to CI, and whether a Windows code-signing certificate exists | `GET /actions/secrets` → 0; certificates are external | Repository Settings → Secrets; Apple Developer / certificate provider |
 | Developer ID certificate expiry and Apple notary credential validity | Keychain / Apple account state, not tracked in git | Local Keychain, Apple Developer account |

@@ -48,16 +48,16 @@ only on `desktop-v*` tags or manual dispatch. This repository has no test-on-eve
 | Platform              | Get it                                                                                                                                            |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **iPhone · iOS 18+**  | **[BrewPhase 1.1 on the App Store](https://apps.apple.com/us/app/brewphase/id6815591631)** — free, US storefront, English + Simplified Chinese    |
-| **macOS · Desktop**   | No public installer. A signed + notarized arm64 build exists in an **unpublished draft** release; until it is published, build from source below. |
-| **Windows · Desktop** | No artifact has been produced. The NSIS packaging path is configured but has never been built or tested on a Windows machine.                     |
+| **macOS · Desktop**   | **[BrewPhase Desktop 0.1.0 — macOS arm64 (prerelease)](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.1.0)** — Developer ID signed, notarized, stapled; Apple Silicon only. |
+| **Windows · Desktop** | Unsigned CI artifacts only ([NSIS exe from the packaging workflow](https://github.com/banmu123/BrewPhase/actions/runs/42761926389)); not in a Release, never installed on real hardware. |
 | **Linux · Desktop**   | No artifact. An `AppImage` target is kept in the config only; it is not built or verified.                                                        |
 | **Source**            | `git clone https://github.com/banmu123/BrewPhase.git`                                                                                             |
 
-The [Releases page](https://github.com/banmu123/BrewPhase/releases) has no published release — a
-draft is invisible to the public and its assets cannot be downloaded anonymously. The download page
-linked from the iOS app (`https://www.commitbrew.com/brewphase`) is not deployed yet. Nothing here
-is a download link we cannot stand behind; the canonical, dated record is
-[docs/PROJECT\_STATUS.md](docs/PROJECT_STATUS.md).
+The [Releases page](https://github.com/banmu123/BrewPhase/releases) carries
+**desktop-v0.1.0** (prerelease, published 2026-11-10): a signed + notarized macOS arm64
+`.dmg`/`.zip` with `.sha256` files, anonymous-downloadable. The download entry inside the iOS app
+points at this same Releases page — there is no external download site to keep in sync. The
+canonical, dated record is [docs/PROJECT\_STATUS.md](docs/PROJECT_STATUS.md).
 
 ## 📸 Screenshots
 

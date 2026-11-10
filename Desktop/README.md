@@ -262,8 +262,9 @@ e2e（Playwright + 真 Electron）需要图形环境，**不进 CI**，发布前
 - [ ] 本地 `pnpm typecheck` / `pnpm test` / `pnpm build` / `pnpm e2e` / `git diff --check` 全绿
 - [ ] 签名与公证 secrets 已配置，CI 日志没有 unsigned warning
 - [ ] 两个平台的安装包都实机安装、启动、退出过
-- [ ] 下载页 `https://www.commitbrew.com/brewphase` 已部署（**当前 HTTP 404**，
-      iOS 首页与设置页两个「下载桌面端」入口都指向它）
+- [x] iOS 的下载入口指向有效页面（2026-11-10 起 = GitHub Releases，
+      `desktop-v0.1.0` 已发布、可匿名下载；定义在
+      `BrewPhase/Shared/Utilities/AppLinks.swift` 的 `desktopDownload`）
 - [ ] `package.json` 版本号与 `desktop-v*` tag 一致
 - [ ] Release 文案写明「暂不支持自动更新」，需要用户手动下载覆盖
 - [ ] 若作为正式版发布，去掉草稿的 prerelease 标记

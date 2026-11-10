@@ -35,13 +35,15 @@ tag 或手动触发时运行。本仓库目前还没有「每次 push 都跑测�
 | 端 | 获取方式 |
 |---|---|
 | **iPhone · iOS 18+** | **[App Store 上的 BrewPhase 1.1](https://apps.apple.com/us/app/brewphase/id6815591631)** —— 免费，美区，中英双语 |
-| **macOS · 桌面端** | 暂无公开安装包。已签名 + 公证的 arm64 构建存在于一个**未发布的草稿** Release 中；在它公开之前，请从源码构建。 |
-| **Windows · 桌面端** | 尚未产出任何安装包。CI 里配置了 NSIS 打包路径，但从未构建，也没在 Windows 实机安装验证过。 |
+| **macOS · 桌面端** | **[BrewPhase Desktop 0.1.0 — macOS arm64（prerelease）](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.1.0)** — Developer ID 签名、已公证、已 staple；仅 Apple Silicon。 |
+| **Windows · 桌面端** | 仅有未签名的 CI 产物（[打包工作流产出的 NSIS exe](https://github.com/banmu123/BrewPhase/actions/runs/42761926389)）；未进 Release，也未在实机安装验证过。 |
 | **Linux · 桌面端** | 无产物。配置里保留了 `AppImage` target，仅此而已，未构建、未验证。 |
 | **源码** | `git clone https://github.com/banmu123/BrewPhase.git` |
 
-[Releases 页面](https://github.com/banmu123/BrewPhase/releases)目前没有任何已发布 Release——草稿对外不可见，附件也无法匿名下载。iOS 里那个下载入口
-（`https://www.commitbrew.com/brewphase`）尚未部署。这里不提供我们无法兑现的下载链接；带日期的权威记录见
+[Releases 页面](https://github.com/banmu123/BrewPhase/releases)已发布
+**desktop-v0.1.0**（prerelease，2026-11-10）：已签名 + 公证的 macOS arm64
+`.dmg`/`.zip` 与 `.sha256` 校验文件，可匿名下载。iOS 应用内的下载入口就指向这个
+Releases 页面——没有需要两边同步的外部下载站。带日期的权威记录见
 [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md)。
 
 ## 📸 截图
