@@ -217,7 +217,7 @@ CI 在 `.github/workflows/desktop-release.yml`。产物落到 `Desktop/release/`
 cd Desktop
 pnpm dist              # electron-vite build + electron-builder（当前平台）
 pnpm exec electron-builder --mac --arm64 --publish never
-pnpm exec electron-builder --win --x64  --publish never   # 可交叉产出 NSIS，但未在 Windows 实机验证
+pnpm exec electron-builder --win --x64  --publish never   # CI 的 windows-latest 已实跑产出；本机需先装好依赖
 ```
 
 文件名模板 `BrewPhase-${version}-${os}-${arch}.${ext}`。mac 出 `dmg + zip`，
