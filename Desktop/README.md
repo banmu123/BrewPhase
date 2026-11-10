@@ -227,8 +227,17 @@ win 出 NSIS `exe`，linux 配置保留 `AppImage`（CI 暂不构建）。
 
 | 触发方式 | 行为 |
 | --- | --- |
-| 手动 `workflow_dispatch` | 跑两个 job，各上传安装包 artifact（保留 14 天），**不发布** |
+| 手动 `workflow_dispatch`，`release_tag` 留空 | 跑两个 job，各上传安装包 artifact（保留 14 天），**不发布** |
+| 手动 `workflow_dispatch`，填 `release_tag` | 同上，再把安装包（含 `.sha256`）上传为**该已有 Release** 的资产；默认只传 Windows 资产，同名覆盖，不改 Release 正文与状态 |
 | push tag `desktop-v*` | 同上，再用 `gh release create` 建**草稿 prerelease** Release，附上 dmg/zip/exe |
+
+手动补发示例：Actions → Desktop Release → Run workflow → `release_tag` 填 `desktop-v0.1.0`，
+`release_assets` 保持 `windows`。Release 必须已存在，否则 `gh release view` 会直接让 job 失败
+（不会悄悄新建 Release）。
+
+> `release_assets` 默认 `windows` 是刻意的安全阀：CI 没有 macOS 签名 / 公证 secrets，
+> 若选 `all`，未签名的 CI dmg/zip 会 `--clobber` 覆盖 Release 里人工签名 + 公证过的
+> macOS 正式包。仅当确实要重发 macOS 资产时才选 `all`，且先确认签名凭据已配置。
 
 | job | runner | 产物 | 覆盖步骤 |
 | --- | --- | --- | --- |
@@ -274,8 +283,9 @@ e2e（Playwright + 真 Electron）需要图形环境，**不进 CI**，发布前
 - 只出 macOS arm64 + Windows x64；Intel Mac 需给 matrix 加一条 `--mac --x64`
   （或把 `mac.target` 改成 `arch: universal`），并重新验证公证。
 - Windows 包**不宣称 MCP 可用**：Named Pipe 权限未在 Windows 验证（见「未实现」）。
-  Windows job 的单测目前只在 macOS 本机全绿，windows-latest runner 尚未实跑；
-  首次触发若因平台差异失败，先看 CI 日志再决定修测试还是修代码。
+  `windows-latest` job 已于 2026-11-10 首次实跑全绿（run `42761926389`，单测按
+  `platformSupportsBridge` 跳过 Windows 专有的 socket 用例）；但该产物仍未在
+  Windows 实机安装、启动、退出验证过。
 - 自动更新未实现；安装包只从 GitHub Releases / 自行分发，没有更新通道。
 - 本机受工具环境影响时，`electron-builder` 下载 Electron/7zip/dmgbuild 资源可能
   撞到 TLS 证书或文件代理限制；CI runner 与本机普通终端不受此限制。

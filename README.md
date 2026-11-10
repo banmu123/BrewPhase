@@ -49,15 +49,18 @@ only on `desktop-v*` tags or manual dispatch. This repository has no test-on-eve
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **iPhone · iOS 18+**  | **[BrewPhase 1.1 on the App Store](https://apps.apple.com/us/app/brewphase/id6815591631)** — free, US storefront, English + Simplified Chinese    |
 | **macOS · Desktop**   | **[BrewPhase Desktop 0.1.0 — macOS arm64 (prerelease)](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.1.0)** — Developer ID signed, notarized, stapled; Apple Silicon only. |
-| **Windows · Desktop** | Unsigned CI artifacts only ([NSIS exe from the packaging workflow](https://github.com/banmu123/BrewPhase/actions/runs/42761926389)); not in a Release, never installed on real hardware. |
+| **Windows · Desktop** | **[BrewPhase Desktop 0.1.0 — Windows x64 (prerelease)](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.1.0)** — NSIS `.exe` + `.sha256`, unsigned (SmartScreen will warn), not yet installed/smoke-tested on a real Windows machine. |
 | **Linux · Desktop**   | No artifact. An `AppImage` target is kept in the config only; it is not built or verified.                                                        |
 | **Source**            | `git clone https://github.com/banmu123/BrewPhase.git`                                                                                             |
 
 The [Releases page](https://github.com/banmu123/BrewPhase/releases) carries
 **desktop-v0.1.0** (prerelease, published 2026-11-10): a signed + notarized macOS arm64
-`.dmg`/`.zip` with `.sha256` files, anonymous-downloadable. The download entry inside the iOS app
-points at this same Releases page — there is no external download site to keep in sync. The
-canonical, dated record is [docs/PROJECT\_STATUS.md](docs/PROJECT_STATUS.md).
+`.dmg`/`.zip` and an unsigned Windows x64 NSIS `.exe`, each with `.sha256` files,
+anonymous-downloadable. The Windows build has no Authenticode signature yet, so Windows Defender
+SmartScreen will warn; MCP V1 is macOS/Linux-only and is not supported in the Windows build. The
+download entry inside the iOS app points at this same Releases page — there is no external download
+site to keep in sync. The canonical, dated record is
+[docs/PROJECT\_STATUS.md](docs/PROJECT_STATUS.md).
 
 ## 📸 Screenshots
 
@@ -213,8 +216,8 @@ replay, not confidentiality. TLS is planned, not shipped.
 |---|---|---|
 | **iOS · App Store** | **Available** — [1.1](https://apps.apple.com/us/app/brewphase/id6815591631) | iPhone only, iOS 18.0+, free, US storefront. Ships the Coffee notebook; no Records / Canvas / sync. |
 | **iOS · `main` (2.0)** | **In development — not published** | Coffee + Records + Canvas + LAN sync exist in source. Not submitted as 2.0. |
-| **macOS · Desktop** | **Built, not published** | arm64 `.dmg` / `.zip`, Developer ID signed + notarized + stapled, sitting in an unpublished draft release. No Intel build. |
-| **Windows · Desktop** | **In development — no artifact** | NSIS packaging configured in CI; never built, never installed or tested on Windows. |
+| **macOS · Desktop** | **Published (prerelease)** | arm64 `.dmg` / `.zip` in `desktop-v0.1.0`, Developer ID signed + notarized + stapled. No Intel build. |
+| **Windows · Desktop** | **Published (prerelease), unsigned** | NSIS x64 `.exe` in `desktop-v0.1.0`, built by the `windows-latest` CI job. No Authenticode certificate, not installed/smoke-tested on real hardware; MCP V1 unsupported. |
 | **Linux · Desktop** | **Not supported yet** | `AppImage` target kept in the config; no build, no verification. |
 | **MCP** | **Built, not published** | Desktop-only. macOS / Linux via Unix socket; Windows Named Pipe permissions unverified, no TCP fallback. |
 
@@ -399,8 +402,10 @@ duplicated here. Playwright e2e needs a graphical session and is **not** part of
 
 **CI today:** [`.github/workflows/desktop-release.yml`](.github/workflows/desktop-release.yml) runs
 typecheck → unit tests → build → packaging on macOS and Windows runners, but only on a
-`desktop-v*` tag or manual dispatch. It uploads installers as artifacts and creates a **draft**
-release; it does not publish anything. There is no pull-request CI yet.
+`desktop-v*` tag or manual dispatch. Installers are always uploaded as artifacts; a tag push also
+creates a **draft** release, and a manual dispatch with `release_tag` uploads the packages as assets
+of an existing release (used to add the Windows build to `desktop-v0.1.0`). There is no
+pull-request CI yet.
 
 **Contributing:** issues and pull requests are welcome, but there is no `CONTRIBUTING.md` and no
 declared license yet (see [License](#-license)). For anything non-trivial, open an issue first so we
@@ -415,9 +420,9 @@ companion, LAN sync, MCP V1, backup/restore, export, bilingual UI, packaging con
 
 **In progress**
 - Real-device end-to-end validation of pairing, media transfer, conflicts and revocation.
-- First actual run of the two-platform packaging workflow; Windows install and smoke test.
-- Deploying the download page, publishing the signed macOS build, and updating the privacy policy
-  for the newer feature set.
+- Windows install and smoke test on real hardware; Authenticode signing for the Windows installer.
+- Updating the privacy policy for the newer feature set; a standalone download page is no longer
+  planned (the iOS app links straight to GitHub Releases).
 - Bonjour auto-discovery, TLS for LAN sync, and Intel Mac builds.
 
 **Planned**

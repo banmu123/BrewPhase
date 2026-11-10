@@ -36,14 +36,16 @@ tag 或手动触发时运行。本仓库目前还没有「每次 push 都跑测�
 |---|---|
 | **iPhone · iOS 18+** | **[App Store 上的 BrewPhase 1.1](https://apps.apple.com/us/app/brewphase/id6815591631)** —— 免费，美区，中英双语 |
 | **macOS · 桌面端** | **[BrewPhase Desktop 0.1.0 — macOS arm64（prerelease）](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.1.0)** — Developer ID 签名、已公证、已 staple；仅 Apple Silicon。 |
-| **Windows · 桌面端** | 仅有未签名的 CI 产物（[打包工作流产出的 NSIS exe](https://github.com/banmu123/BrewPhase/actions/runs/42761926389)）；未进 Release，也未在实机安装验证过。 |
+| **Windows · 桌面端** | **[BrewPhase Desktop 0.1.0 — Windows x64（prerelease）](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.1.0)** — NSIS `.exe` + `.sha256`，未签名（SmartScreen 会拦截提示），尚未在 Windows 实机安装与冒烟验证。 |
 | **Linux · 桌面端** | 无产物。配置里保留了 `AppImage` target，仅此而已，未构建、未验证。 |
 | **源码** | `git clone https://github.com/banmu123/BrewPhase.git` |
 
 [Releases 页面](https://github.com/banmu123/BrewPhase/releases)已发布
 **desktop-v0.1.0**（prerelease，2026-11-10）：已签名 + 公证的 macOS arm64
-`.dmg`/`.zip` 与 `.sha256` 校验文件，可匿名下载。iOS 应用内的下载入口就指向这个
-Releases 页面——没有需要两边同步的外部下载站。带日期的权威记录见
+`.dmg`/`.zip`，以及未签名的 Windows x64 NSIS `.exe`，均附 `.sha256` 校验文件，可匿名下载。
+Windows 包暂无 Authenticode 签名，Windows Defender SmartScreen 会提示风险；MCP V1 仅支持
+macOS / Linux，Windows 构建不含该能力。iOS 应用内的下载入口就指向这个 Releases 页面——没有
+需要两边同步的外部下载站。带日期的权威记录见
 [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md)。
 
 ## 📸 截图
@@ -171,8 +173,8 @@ Records、Canvas、桌面端与 MCP 只存在于 `main` —— 已实现，但**
 |---|---|---|
 | **iOS · App Store** | **已发布 Available** —— [1.1](https://apps.apple.com/us/app/brewphase/id6815591631) | 仅 iPhone，iOS 18.0+，免费，美区；只含 Coffee 笔记本，没有 Records / Canvas / 同步。 |
 | **iOS · `main`（2.0）** | **开发中，未发布** | 源码里已有 Coffee + Records + Canvas + 局域网同步，尚未作为 2.0 提交。 |
-| **macOS · 桌面端** | **已构建，未发布** | arm64 `.dmg` / `.zip`，Developer ID 签名 + 公证 + staple，放在未发布的草稿 Release 里。没有 Intel 构建。 |
-| **Windows · 桌面端** | **开发中，无产物** | CI 里配置了 NSIS 打包，但从未构建，也没在 Windows 上装过、跑过。 |
+| **macOS · 桌面端** | **已发布（prerelease）** | arm64 `.dmg` / `.zip` 在 `desktop-v0.1.0`，Developer ID 签名 + 公证 + staple。没有 Intel 构建。 |
+| **Windows · 桌面端** | **已发布（prerelease），未签名** | NSIS x64 `.exe` 在 `desktop-v0.1.0`，由 `windows-latest` CI job 产出。无 Authenticode 证书，未在实机安装/冒烟验证；不支持 MCP V1。 |
 | **Linux · 桌面端** | **暂不支持** | 配置里保留 `AppImage` target；无构建、无验证。 |
 | **MCP** | **已构建，未发布** | 仅桌面端。macOS / Linux 走 Unix socket；Windows Named Pipe 权限未验证，不提供 TCP 退化。 |
 
@@ -188,7 +190,8 @@ Records、Canvas、桌面端与 MCP 只存在于 `main` —— 已实现，但**
 
 ### 2. 桌面端：从源码运行
 
-目前没有公开安装包，唯一可用路径是自己构建：
+直接下载：见[下载](#-下载)里的 `desktop-v0.1.0`（macOS / Windows 安装包）。
+想改代码或从源码运行，则按下面自己构建：
 
 ```bash
 git clone https://github.com/banmu123/BrewPhase.git
@@ -338,8 +341,9 @@ python3 Tools/Localization/check.py
 Playwright e2e 需要图形会话，**没有进 CI**。
 
 **当前 CI**：[`.github/workflows/desktop-release.yml`](.github/workflows/desktop-release.yml) 在 macOS 与 Windows
-runner 上跑 typecheck → 单测 → build → 打包，但只在推送 `desktop-v*` tag 或手动触发时执行。它把安装包上传为
-artifact，并创建**草稿** Release，不会自动发布。目前还没有 PR 级 CI。
+runner 上跑 typecheck → 单测 → build → 打包，但只在推送 `desktop-v*` tag 或手动触发时执行。安装包始终上传为
+artifact；tag 推送额外创建**草稿** Release，手动触发时填写 `release_tag` 则可把安装包上传为**已有 Release**
+的资产（`desktop-v0.1.0` 的 Windows 包就是这样补发的）。目前还没有 PR 级 CI。
 
 **贡献方式**：欢迎 issue 和 PR，但仓库暂时没有 `CONTRIBUTING.md`，也还没有声明许可证（见[许可](#-许可)）。
 改动较大时建议先开 issue 对齐范围。面向用户的文案必须走 `L()`，并同步两张 `.lproj` 表。
@@ -353,8 +357,8 @@ artifact，并创建**草稿** Release，不会自动发布。目前还没有 PR
 
 **进行中**
 - 配对、媒体传输、冲突裁决与设备撤销的真机端到端验证。
-- 双平台打包工作流的首次实跑；Windows 安装与冒烟测试。
-- 部署下载页、发布已签名的 macOS 构建、更新隐私政策以覆盖新能力。
+- Windows 实机安装与冒烟测试；为 Windows 安装包补 Authenticode 签名。
+- 更新隐私政策以覆盖新能力；独立下载页不再列入计划（iOS 应用内直接指向 GitHub Releases）。
 - Bonjour 自动发现、局域网同步的 TLS、Intel Mac 构建。
 
 **计划中**
