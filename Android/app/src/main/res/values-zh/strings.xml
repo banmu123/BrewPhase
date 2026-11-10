@@ -1,0 +1,315 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">BrewPhase</string>
+
+    <!-- 通知渠道 -->
+    <string name="notification_channel_reminders">咖啡提醒</string>
+    <string name="notification_channel_reminders_desc">养豆完成、风味窗口与饮用优先级提醒</string>
+
+    <string name="reminder_rest_complete_title">%1$s 养豆结束</string>
+    <string name="reminder_rest_complete_body">%1$s 的排气期基本结束，风味开始打开了。</string>
+    <string name="reminder_window_opens_title">%1$s 进入黄金风味期</string>
+    <string name="reminder_window_opens_body">%1$s 现在进入黄金风味期，可以开始喝了。</string>
+    <string name="reminder_window_halfway_title">%1$s 的黄金风味期过半了</string>
+    <string name="reminder_window_halfway_body">%1$s 的黄金风味期已经过半，接下来的风味会慢慢变平。</string>
+    <string name="reminder_window_ending_title">%1$s 的黄金风味期快结束了</string>
+    <string name="reminder_window_ending_body">%1$s 的黄金风味期还剩两天，想喝到最好的状态就趁现在。</string>
+    <string name="reminder_priority_title">%1$s 建议优先喝</string>
+    <string name="reminder_priority_body">%1$s 的黄金风味期比你的消耗速度更短，建议优先喝完。</string>
+
+    <!-- 底部导航 -->
+    <string name="tab_coffee">咖啡</string>
+    <string name="tab_records">记录</string>
+    <string name="tab_canvas">画布</string>
+
+    <!-- 通用 -->
+    <string name="action_save">保存</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_delete">删除</string>
+    <string name="action_edit">编辑</string>
+    <string name="action_done">完成</string>
+    <string name="action_close">关闭</string>
+    <string name="action_add">添加</string>
+    <string name="action_retry">重试</string>
+    <string name="action_back">返回</string>
+    <string name="action_settings">设置</string>
+    <string name="action_confirm">确认</string>
+    <string name="label_empty">—</string>
+    <string name="label_untitled">未命名</string>
+    <string name="error_generic">出了点问题，请再试一次</string>
+    <string name="error_not_found">找不到这条内容</string>
+
+    <!-- 阶段 -->
+    <string name="phase_resting">养豆</string>
+    <string name="phase_opening">打开</string>
+    <string name="phase_peak">黄金期</string>
+    <string name="phase_declining">衰减</string>
+    <string name="phase_resting_full">养豆期</string>
+    <string name="phase_opening_full">风味打开</string>
+    <string name="phase_peak_full">黄金风味期</string>
+    <string name="phase_declining_full">风味衰减</string>
+    <string name="phase_estimate_note">基于默认风味窗口估算</string>
+
+    <!-- 豆仓 -->
+    <string name="coffee_title">豆仓</string>
+    <string name="coffee_add">添加豆子</string>
+    <string name="coffee_empty_title">还没有豆子</string>
+    <string name="coffee_empty_body">记下第一包，风味阶段会自己算出来。</string>
+    <string name="coffee_active_section">在喝</string>
+    <string name="coffee_finished_section">已喝完</string>
+    <string name="coffee_remaining">剩 %1$s g</string>
+    <string name="coffee_last_brew">最近：%1$s</string>
+    <string name="coffee_no_brew">还没有冲煮记录</string>
+    <string name="coffee_brews_count">%1$d 杯</string>
+    <string name="coffee_day">第 %1$d 天</string>
+    <string name="coffee_detail">详情</string>
+
+    <!-- 豆子详情 -->
+    <string name="bean_detail_title">豆子</string>
+    <string name="bean_phase_track">风味阶段</string>
+    <string name="bean_day">烘焙后第 %1$d 天</string>
+    <string name="bean_window_range">黄金期 %1$d–%2$d 天</string>
+    <string name="bean_days_until_peak">还有 %1$d 天进入黄金期</string>
+    <string name="bean_days_until_end">黄金期还剩 %1$d 天</string>
+    <string name="bean_past_window">已过黄金期 %1$d 天</string>
+    <string name="bean_sealed_shift">密封期折算 %1$d 天</string>
+    <string name="bean_stock">库存</string>
+    <string name="bean_stock_remaining">剩余 %1$s g / %2$s g</string>
+    <string name="bean_stock_adjust">调整库存</string>
+    <string name="bean_stock_adjust_title">称一下还剩多少</string>
+    <string name="bean_brews">冲煮记录</string>
+    <string name="bean_tastings">品鉴记录</string>
+    <string name="bean_mark_finished">标记喝完</string>
+    <string name="bean_restore">恢复到在喝</string>
+    <string name="bean_delete">删除豆子</string>
+    <string name="bean_delete_confirm">删除后，这包豆的冲煮与品鉴记录也会一并删除。确定吗？</string>
+    <string name="bean_brew_now">记一杯</string>
+    <string name="bean_ask">就这包豆提问</string>
+    <string name="bean_no_roast_date">填上烘焙日期，就能看到它现在处在哪个阶段</string>
+    <string name="bean_roast_future">烘焙日期在未来，请检查一下</string>
+    <string name="bean_basic_info">基本信息</string>
+    <string name="bean_roast_level">烘焙度</string>
+    <string name="bean_roast_date">烘焙日期</string>
+    <string name="bean_open_date">开封日期</string>
+    <string name="bean_origin">产区</string>
+    <string name="bean_process">处理法</string>
+    <string name="bean_channel">购买渠道</string>
+    <string name="bean_price">价格</string>
+    <string name="bean_notes">备注</string>
+    <string name="bean_latest_brew">最近一杯</string>
+    <string name="bean_tasting_timeline">风味变化</string>
+    <string name="bean_add_tasting">添加品鉴</string>
+    <string name="bean_no_tasting">还没有品鉴记录</string>
+
+    <!-- 编辑器 -->
+    <string name="editor_new_bean">添加豆子</string>
+    <string name="editor_edit_bean">编辑豆子</string>
+    <string name="field_name">名称</string>
+    <string name="field_roaster">烘焙商</string>
+    <string name="field_origin">产区</string>
+    <string name="field_process">处理法</string>
+    <string name="field_roast_level">烘焙度</string>
+    <string name="field_roast_date">烘焙日期</string>
+    <string name="field_purchase_date">购买日期</string>
+    <string name="field_open_date">开封日期</string>
+    <string name="field_weight">总重量</string>
+    <string name="field_remaining">剩余重量</string>
+    <string name="field_price">价格</string>
+    <string name="field_channel">购买渠道</string>
+    <string name="field_flavor_tags">风味标签</string>
+    <string name="field_notes">备注</string>
+    <string name="field_tags_hint">用逗号分隔，例如：花香, 柑橘</string>
+    <string name="pick_date">选择日期</string>
+    <string name="clear_date">清除日期</string>
+
+    <!-- 烘焙度 -->
+    <string name="roast_light">浅烘</string>
+    <string name="roast_medium">中烘</string>
+    <string name="roast_medium_dark">中深烘</string>
+    <string name="roast_dark">深烘</string>
+    <string name="roast_espresso">意式拼配</string>
+
+    <!-- 冲煮 -->
+    <string name="brew_quick">快速记一杯</string>
+    <string name="brew_full">完整冲煮</string>
+    <string name="brew_edit">编辑冲煮</string>
+    <string name="field_method">冲煮方式</string>
+    <string name="field_grinder">磨豆机</string>
+    <string name="field_grind">研磨度</string>
+    <string name="field_water_temp">水温</string>
+    <string name="field_coffee">粉量</string>
+    <string name="field_water">水量</string>
+    <string name="field_time">冲煮时间</string>
+    <string name="field_score">评分</string>
+    <string name="field_taste">感官</string>
+    <string name="taste_acidity">酸</string>
+    <string name="taste_sweetness">甜</string>
+    <string name="taste_bitterness">苦</string>
+    <string name="taste_body">醇厚</string>
+    <string name="taste_aftertaste">余韵</string>
+    <string name="brew_prefill_from_same">沿用这包上次</string>
+    <string name="brew_prefill_from_any">沿用上次</string>
+    <string name="brew_prefill_default">使用默认参数</string>
+    <string name="brew_stock_preview">记下后预计剩 %1$s g</string>
+    <string name="brew_saved">已记下</string>
+    <string name="brew_saved_detail">实际扣除 %1$s g，还剩 %2$s g</string>
+    <string name="brew_delete_confirm">删除后会把当时扣除的粉退回库存。确定吗？</string>
+    <string name="brew_ratio">粉水比</string>
+    <string name="brew_copy_last">复制上次</string>
+    <string name="brew_more">更多参数</string>
+    <string name="brew_no_beans_title">先添加一包豆子</string>
+    <string name="brew_no_beans_body">冲煮记录需要挂在某一包豆上。先去豆仓记一包。</string>
+    <string name="brew_date">日期</string>
+    <string name="brew_time_hint">2:35 / 155 / 2.35</string>
+
+    <!-- 品鉴 -->
+    <string name="tasting_new">添加品鉴</string>
+    <string name="tasting_edit">编辑品鉴</string>
+    <string name="tasting_source_manual">手动记录</string>
+    <string name="tasting_source_brew">冲煮记录</string>
+    <string name="tasting_delete_confirm">删除这条品鉴记录？</string>
+
+    <!-- 记录 -->
+    <string name="records_title">记录</string>
+    <string name="records_search">搜索标题、备注、来源</string>
+    <string name="records_add">添加记录</string>
+    <string name="records_empty_title">还没有记录</string>
+    <string name="records_empty_body">链接、图片、视频、文字，都可以放进来。</string>
+    <string name="records_no_result">没有匹配的记录</string>
+    <string name="records_all">全部</string>
+    <string name="carrier_link">链接</string>
+    <string name="carrier_image">图片</string>
+    <string name="carrier_video">视频</string>
+    <string name="carrier_text">文字</string>
+    <string name="carrier_link_hint">网页、文章、视频平台或 GitHub</string>
+    <string name="carrier_image_hint">从相册选一张照片</string>
+    <string name="carrier_video_hint">从相册选一段视频</string>
+    <string name="carrier_text_hint">随手写一段话</string>
+    <string name="record_field_url">链接</string>
+    <string name="record_field_title">标题</string>
+    <string name="record_field_note">备注</string>
+    <string name="record_field_source">来源</string>
+    <string name="record_tags">标签</string>
+    <string name="record_tag_manage">管理标签</string>
+    <string name="record_tag_new">新建标签</string>
+    <string name="record_tag_name">标签名</string>
+    <string name="record_tag_delete_confirm">删除这个标签？记录不会被删除，只是不再带这个标签。</string>
+    <string name="record_tag_in_use">%1$d 条记录</string>
+    <string name="record_duplicate">这条链接已经记录过了</string>
+    <string name="record_open_original">打开原链接</string>
+    <string name="record_delete_confirm">删除这条记录？它所在的画布节点也会一起消失。</string>
+    <string name="record_pick_image">选择图片</string>
+    <string name="record_pick_video">选择视频</string>
+    <string name="record_detail">记录</string>
+    <string name="record_carrier_label">类型</string>
+    <string name="record_created">创建于 %1$s</string>
+    <string name="record_provider">平台</string>
+    <string name="record_invalid_url">这个地址读不出一个网址</string>
+    <string name="record_media_missing">媒体文件不在了</string>
+    <string name="record_play_external">在外部打开播放</string>
+
+    <!-- 画布 -->
+    <string name="canvas_title">画布</string>
+    <string name="canvas_new">新建画布</string>
+    <string name="canvas_empty_title">还没有画布</string>
+    <string name="canvas_empty_body">把咖啡与记录摆到一块自己的空间里。</string>
+    <string name="canvas_name">名称</string>
+    <string name="canvas_note">说明</string>
+    <string name="canvas_add_record">从记录添加</string>
+    <string name="canvas_remove_node">从画布移除</string>
+    <string name="canvas_annotation">这块画布上的备注</string>
+    <string name="canvas_fit">适应内容</string>
+    <string name="canvas_delete_confirm">删除这块画布？画布上的记录本身不会被删除。</string>
+    <string name="canvas_zoom_hint">双指缩放 · 拖动平移</string>
+    <string name="canvas_node_duplicate">这条记录已经在画布上了</string>
+    <string name="canvas_nodes_count">%1$d 个内容</string>
+    <string name="canvas_pick_record">选择一条记录</string>
+    <string name="canvas_open_record">打开记录</string>
+    <string name="canvas_empty_workspace">画布还是空的。从记录里挑几条放进来。</string>
+    <string name="canvas_rename">重命名</string>
+
+    <!-- 设置 -->
+    <string name="settings_title">设置</string>
+    <string name="settings_defaults">默认冲煮参数</string>
+    <string name="settings_defaults_hint">新建冲煮时会先填这套值。</string>
+    <string name="settings_phase_rules">阶段规则</string>
+    <string name="settings_phase_rules_hint">按烘焙度分别设定风味窗口。改完立刻重算豆子阶段。</string>
+    <string name="settings_reminders">提醒</string>
+    <string name="settings_reminders_hint">只在值得打断你的时候提醒。</string>
+    <string name="settings_language">语言</string>
+    <string name="settings_language_system">跟随系统</string>
+    <string name="settings_language_zh">简体中文</string>
+    <string name="settings_language_en">English</string>
+    <string name="settings_language_restart">Android 13 及以上可即时切换；更低版本请到系统设置中修改。</string>
+    <string name="settings_backup">备份与恢复</string>
+    <string name="settings_export">导出</string>
+    <string name="settings_media">媒体与存储</string>
+    <string name="settings_about">关于</string>
+    <string name="settings_demo">示例数据</string>
+    <string name="settings_demo_load">载入示例数据</string>
+    <string name="settings_demo_clear">删除示例数据</string>
+    <string name="settings_demo_clear_confirm">只删除示例数据，真实记录不受影响。确定吗？</string>
+    <string name="settings_demo_present">当前有示例数据</string>
+    <string name="settings_demo_absent">当前没有示例数据</string>
+    <string name="settings_version">版本</string>
+    <string name="settings_media_usage">媒体占用 %1$s</string>
+    <string name="settings_media_cleanup">清理无引用的媒体</string>
+    <string name="settings_media_cleanup_done">清理了 %1$d 个文件</string>
+    <string name="settings_backup_coming">备份与恢复尚未实现</string>
+    <string name="rule_rest_min">排气期最短</string>
+    <string name="rule_rest_max">排气期最长</string>
+    <string name="rule_peak_start">黄金期开始</string>
+    <string name="rule_peak_end">黄金期结束</string>
+    <string name="rule_decline">开始衰减</string>
+    <string name="rule_reset">恢复默认</string>
+    <string name="rule_days">%1$d 天</string>
+    <string name="rule_preview">预览：养豆 %1$d–%2$d 天，黄金期 %3$d–%4$d 天</string>
+    <string name="reminder_permission_needed">需要通知权限才能提醒</string>
+    <string name="reminder_grant">去授权</string>
+    <string name="reminder_recommended">推荐</string>
+
+    <!-- 问答与洞察 -->
+    <string name="ask_title">问问</string>
+    <string name="ask_placeholder">问一句关于这包豆的事</string>
+    <string name="ask_send">发送</string>
+    <string name="ask_empty">关于你的咖啡记录，问点什么。</string>
+    <string name="ask_no_evidence">你的记录里没有足够的信息来回答这个。</string>
+    <string name="ask_scope_personal">你的记录</string>
+    <string name="ask_scope_knowledge">知识库</string>
+    <string name="insights_title">洞察</string>
+    <string name="insights_today">今天喝哪包</string>
+    <string name="insights_no_data">记录还太少，暂时给不出建议。</string>
+    <string name="insights_latest">最近一杯</string>
+    <string name="insights_change">与上一杯的变化</string>
+    <string name="insights_deviation">参数偏差</string>
+    <string name="insights_best">我的最佳参数</string>
+    <string name="insights_next">下一步最值得调整的一件事</string>
+    <string name="insights_evidence_missing">证据不足</string>
+
+    <!-- 诊断 -->
+    <string name="diagnosis_title">这一杯</string>
+    <string name="diagnosis_empty">这杯还没有足够的参数可以分析。</string>
+    <string name="diagnosis_sour">偏酸：可以再萃取一点</string>
+    <string name="diagnosis_bitter">偏苦：可以少萃取一点</string>
+    <string name="diagnosis_balanced">平衡</string>
+
+    <string name="bean_issue_missing_name">给它起个名字吧</string>
+    <string name="bean_issue_missing_roast">烘焙日期还没选，风味阶段要靠它来算</string>
+    <string name="bean_issue_weight">总克数要大于 0</string>
+    <string name="bean_issue_negative">剩余克数不能是负数</string>
+    <string name="bean_issue_over">剩余量比总克数还多，已把总克数调到 %1$s g</string>
+    <string name="brew_issue_missing_dose">先填粉量吧，这样才能从库存里扣掉</string>
+    <string name="brew_issue_missing_water">水量还没填，粉水比会留空</string>
+    <string name="brew_issue_missing_temp">水温还没填</string>
+    <string name="brew_issue_missing_time">冲煮时间还没填</string>
+    <string name="date_pick">选择日期</string>
+    <string name="date_clear">清除</string>
+    <string name="save_failed">没能保存下来，请再试一次</string>
+    <string name="saved">已保存</string>
+
+    <string name="reminder_name_rest_complete">养豆完成</string>
+    <string name="reminder_name_window_opens">进入黄金风味期</string>
+    <string name="reminder_name_window_halfway">黄金期过半</string>
+    <string name="reminder_name_window_ending">黄金期将尽</string>
+    <string name="reminder_name_priority">建议优先饮用</string>
+</resources>
