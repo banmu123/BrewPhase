@@ -375,6 +375,9 @@ struct RootView: View {
             } else {
                 debugEmpty
             }
+        case .desktopSync, .desktopSyncPairing, .desktopSyncError,
+             .desktopSyncFirstSync, .desktopSyncPaired:
+            NavigationStack { DesktopSyncView() }
         case .quickLog:
             // 从最近冲过的那包进来，和首页「记一杯」走的是同一条路。
             QuickBrewLogView(bean: beans.first { $0.id == recentBrewBeanID } ?? spotlightBean)

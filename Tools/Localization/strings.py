@@ -1609,4 +1609,53 @@ EN: dict[str, str] = {
         "A full backup packs beans, brews, tastings, reminders, phase rules, records and canvases, plus images, into one file. Restore it in one go after switching phones or reinstalling. The file stays wherever you put it — BrewPhase never uploads it.",
     "已恢复 %@ 包豆子、%@ 条冲煮记录、%@ 条风味记录，以及 %@ 条记录、%@ 块画布。":
         "Restored %@ bags, %@ brews, %@ tastings, %@ records and %@ canvases.",
+
+    # MARK: Desktop sync — the connection page
+    # Hero and the unpaired state
+    "让你的个人空间，延伸到桌面。": "Let your personal space extend to the desktop.",
+    "咖啡、记录与画布，在你的设备之间自然延续。":
+        "Coffee, records and canvases carry on across your devices.",
+    "连接你的桌面端": "Connect your desktop",
+    "打开 BrewPhase Desktop，在设备同步中生成配对二维码。":
+        "Open BrewPhase Desktop and generate a pairing code in Settings → Device sync.",
+    "扫描二维码": "Scan QR code",
+    "已读取二维码": "QR code read",
+    "正在验证桌面端信息并保存连接…": "Verifying the desktop and saving the connection…",
+    "无法连接桌面端，请确认两台设备在同一个局域网。":
+        "Cannot reach the desktop. Make sure both devices are on the same local network.",
+    "仅在可信局域网内同步 · iPhone → Desktop":
+        "Sync only on a trusted local network · iPhone → Desktop",
+    "局域网传输使用 HTTP（无 TLS），不要在公共网络使用；当前为 iPhone → Desktop 单向同步，桌面端的修改不会自动回传 iPhone。":
+        "Plain HTTP (no TLS) — trusted LAN only. One-way iPhone → Desktop; desktop edits never flow back.",
+
+    # First sync confirmation
+    "你的桌面空间已准备就绪。": "Your desktop space is ready.",
+    "先确认要带过去的内容，再开始第一次同步。": "Review what comes across before the first sync.",
+    "即将同步的数据": "What will sync",
+    "咖啡豆及相关记录": "Beans and related records",
+    "收藏记录": "Saved records",
+    "标签、阶段规则与画布节点": "Tags, phase rules and canvas nodes",
+    "随内容一起同步": "synced with the content",
+    "相关媒体文件": "Linked media files",
+    "按引用自动传输": "transferred as referenced",
+    "数据范围与冲突处理": "Scope & conflicts",
+
+    # Paired device panel and sync statistics
+    "桌面空间，与你同步。": "Your desktop space, in step.",
+    "这台电脑已经加入你的个人空间。": "This computer is now part of your personal space.",
+    "最近同步": "Last sync",
+    "最近结果": "Last result",
+    "新增/更新": "Added/updated",
+    "内容一致": "Unchanged",
+    "冲突": "Conflicts",
+    "失败": "Failed",
+    "已配对": "Paired",
+    "正在同步": "Syncing",
+    "上次同步失败": "Last sync failed",
+    "已完成": "Completed",
+    "暂无结果": "No result yet",
+    "进行中": "In progress",
+    "已同步 %@ 项": "%@ items synced",
+    "有 %@ 条冲突": "%@ conflicts",
+    "有 %@ 条失败": "%@ failures",
 }

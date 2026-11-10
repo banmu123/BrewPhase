@@ -60,8 +60,45 @@ enum DebugScreen: String, CaseIterable, Identifiable {
     case linkDetail
     /// 全屏播放器本身。它是一个 fullScreenCover，正常只能从详情页点出来。
     case playerFullscreen
+    /// 桌面同步页。模拟器点不进「更多 → 数据 → 桌面同步」，而已配对 /
+    /// 首次确认这两种状态还要求 Keychain 里真的有凭据——只能由启动参数摆放。
+    case desktopSync
+    case desktopSyncPairing
+    case desktopSyncError
+    case desktopSyncFirstSync
+    case desktopSyncPaired
 
     var id: String { rawValue }
+}
+
+extension DebugScreen {
+    /// 需要一份展示用设备信息才能渲染的两种状态。
+    var needsPairedDevice: Bool {
+        self == .desktopSyncFirstSync || self == .desktopSyncPaired
+    }
+
+    /// 首次同步确认本来是「刚配对成功」的瞬时状态，退出页面就没了。
+    var showsFirstSyncConfirmation: Bool {
+        self == .desktopSyncFirstSync
+    }
+}
+
+/// 只为截图提供的**展示用**设备信息。
+///
+/// 本机用 `CODE_SIGNING_ALLOWED=NO` 构建，模拟器上的 `SecItemAdd` 因缺
+/// application-identifier entitlement 会失败，Keychain 写不进占位凭据。
+/// 所以这两种状态改由页面在 View 层读取这里的值：不写 Keychain、不碰
+/// `SyncManager`，也不发起任何网络请求。正常启动时全部为 nil。
+enum SyncInspection {
+    static var placeholderDevice: (host: String, port: Int, deviceId: String, token: String)? {
+        guard let screen = DebugLaunch.screen, screen.needsPairedDevice else { return nil }
+        return ("192.168.1.24", 15721, "inspection-device", "UI-INSPECTION-ONLY")
+    }
+
+    static var deviceName: String? {
+        guard let screen = DebugLaunch.screen, screen.needsPairedDevice else { return nil }
+        return "Studio MacBook Pro"
+    }
 }
 
 enum DebugLaunch {
@@ -237,5 +274,22 @@ enum DebugLaunch {
     static var cardIndex: Int? {
         guard let raw = value(for: "-BrewPhaseCardIndex"), let index = Int(raw) else { return nil }
         return max(0, index)
+    }
+
+    /// 让首次同步确认页能被截图。正常启动时恒为 `false`，不改变配对流程。
+    static var showsSyncFirstSyncConfirmation: Bool {
+        screen?.showsFirstSyncConfirmation == true
+    }
+
+    /// 「正在配对」是扫码后的瞬时状态，模拟器扫不了码，只能预置。
+    static var showsSyncPairing: Bool {
+        screen == .desktopSyncPairing
+    }
+
+    /// 「配对失败」同理；这是展示用文案，业务错误仍由 SyncManager 抛出。
+    static var syncInspectionError: String? {
+        screen == .desktopSyncError
+            ? L("无法连接桌面端，请确认两台设备在同一个局域网。")
+            : nil
     }
 }
