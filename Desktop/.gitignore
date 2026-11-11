@@ -8,3 +8,6 @@ drizzle
 test-results
 playwright-report
 .DS_Store
+
+# Native Messaging Host 构建产物（pnpm host:build 生成）
+resources/native-host

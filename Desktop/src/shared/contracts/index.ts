@@ -10,6 +10,10 @@ import type {
   BookmarkTree,
   ChromeDetection
 } from './bookmarks'
+import type {
+  ChromeCompanionInstallResult,
+  ChromeCompanionStatus
+} from './chrome-bridge'
 import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from './version'
 
 export * from './version'
@@ -20,6 +24,7 @@ export * from './sync'
 export * from './mcp'
 export * from './browser'
 export * from './bookmarks'
+export * from './chrome-bridge'
 export * from './validation/ipc'
 
 /**
@@ -183,6 +188,17 @@ export interface RendererApi {
     bookmarks: () => Promise<BookmarkTree>
     /** 导航、加载、标题、能力位变化时广播整份快照。 */
     onChanged: (listener: (state: BrowserState) => void) => () => void
+  }
+  /**
+   * Chrome Companion：Desktop 侧只提供「状态 / 安装 / 卸载」三个管理动作。
+   * 网页内容从 Native Messaging 进来，不经过 Renderer——这里没有任何
+   * 「代写记录」的通道，扩展也不能借它绕过应用服务。
+   */
+  chrome: {
+    status: () => Promise<ChromeCompanionStatus>
+    /** 幂等：复制 Host、写 host-config、注册 Chrome Native Messaging manifest。 */
+    install: () => Promise<ChromeCompanionInstallResult>
+    uninstall: () => Promise<ChromeCompanionInstallResult>
   }
 }
 

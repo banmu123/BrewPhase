@@ -42,6 +42,7 @@ import { resolveRecordMetadata } from '../metadata'
 import type { SyncService } from '../sync/sync-service'
 import type { BrowserManager } from '../browser/browser-manager'
 import type { BookmarkService } from '../browser/bookmark-service'
+import type { ChromeService } from '../integrations/chrome/chrome-service'
 import { DEFAULT_PHASE_RULES } from '../../shared/domain/phase'
 import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from '../../shared/contracts/version'
 
@@ -67,8 +68,10 @@ export function registerIpc(params: {
   browser: BrowserManager
   /** Chrome 书签导入：检测 / 预览 / 导入 / 读取本地书签树。 */
   bookmarks: BookmarkService
+  /** Chrome Companion：查看本地 IPC 与 Native Host 的安装状态。 */
+  chrome: ChromeService
 }): void {
-  const { db, devServerUrl, sync, services, bridgeStatus, browser, bookmarks } = params
+  const { db, devServerUrl, sync, services, bridgeStatus, browser, bookmarks, chrome } = params
 
   // 首次启动铺默认阶段规则（之后由用户或同步决定，不覆盖）。
   seedPhaseRulesIfEmpty(db.db, DEFAULT_PHASE_RULES)
@@ -234,6 +237,14 @@ export function registerIpc(params: {
   handle(IPC.browserBookmarksTree, () => bookmarks.tree())
   handle(IPC.browserShowStart, () => browser.showStart())
   handle(IPC.browserShowCurrent, () => browser.showCurrentPage())
+
+  // MARK: - Chrome Companion
+  //
+  // 只暴露管理动作：网页内容的写入通道是 Native Messaging → 本地 socket，
+  // Renderer 拿不到、也不需要「代扩展写记录」的能力。
+  handle(IPC.chromeStatus, () => chrome.status())
+  handle(IPC.chromeInstall, () => chrome.install())
+  handle(IPC.chromeUninstall, () => chrome.uninstall())
 
   // MARK: - 内置浏览器
 

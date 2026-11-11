@@ -80,7 +80,6 @@ export const IPC = {
   browserBookmarksTree: 'browser:bookmarks:tree',
   browserShowStart: 'browser:show-start',
   browserShowCurrent: 'browser:show-current',
-
   // 内置浏览器（Phase 1）：只有「壳」的操作，网页渲染在主进程的 WebContentsView。
   browserState: 'browser:state',
   browserOpen: 'browser:open',
@@ -92,7 +91,13 @@ export const IPC = {
   browserReload: 'browser:reload',
   browserStop: 'browser:stop',
   browserSetBounds: 'browser:set-bounds',
-  browserOpenExternal: 'browser:open-external'
+  browserOpenExternal: 'browser:open-external',
+
+  // Chrome Companion：Desktop 侧只暴露「状态 / 安装 / 卸载」三个管理动作。
+  // 网页内容走 Native Messaging → 本地 IPC，不经过 Renderer。
+  chromeStatus: 'chrome:status',
+  chromeInstall: 'chrome:install',
+  chromeUninstall: 'chrome:uninstall'
 } as const
 
 export const ipcRequestSchemas = {
@@ -172,7 +177,12 @@ export const ipcRequestSchemas = {
   [IPC.browserReload]: z.void(),
   [IPC.browserStop]: z.void(),
   [IPC.browserSetBounds]: browserBoundsUpdateSchema,
-  [IPC.browserOpenExternal]: z.object({ url: z.string().max(2_048).optional() }).optional()
+  [IPC.browserOpenExternal]: z.object({ url: z.string().max(2_048).optional() }).optional(),
+
+  // Chrome Companion：三个动作都不带参数，避免 Renderer 传路径 / 扩展 ID。
+  [IPC.chromeStatus]: z.void(),
+  [IPC.chromeInstall]: z.void(),
+  [IPC.chromeUninstall]: z.void()
 } as const
 
 export type IpcChannel = keyof typeof ipcRequestSchemas

@@ -123,6 +123,11 @@ const api: RendererApi = {
       ipcRenderer.on(BROWSER_CHANGED_CHANNEL, wrapped)
       return () => ipcRenderer.removeListener(BROWSER_CHANGED_CHANNEL, wrapped)
     }
+  },
+  chrome: {
+    status: () => invoke(IPC.chromeStatus),
+    install: () => invoke(IPC.chromeInstall),
+    uninstall: () => invoke(IPC.chromeUninstall)
   }
 }
 

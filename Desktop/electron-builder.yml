@@ -15,6 +15,10 @@ asarUnpack:
 artifactName: "BrewPhase-${version}-${os}-${arch}.${ext}"
 
 mac:
+  # Native Messaging Host（Chrome Companion）：只带当前平台的二进制。
+  extraResources:
+    - from: resources/native-host/darwin
+      to: native-host
   category: public.app-category.food-and-drink
   target: [dmg, zip]
   hardenedRuntime: true
@@ -30,6 +34,9 @@ mac:
   # APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID）齐备时，
   # 发布工作流会显式传 -c.mac.notarize=true；未配置时传 false。
 win:
+  extraResources:
+    - from: resources/native-host/win32
+      to: native-host
   target: [nsis]
   icon: build/icon.ico
   # Windows 代码签名同样由 CI 的 CSC_LINK / CSC_KEY_PASSWORD 提供，
@@ -41,6 +48,9 @@ nsis:
   # 本地优先：卸载不删 SQLite / media 里的用户数据
   deleteAppDataOnUninstall: false
 linux:
+  extraResources:
+    - from: resources/native-host/linux
+      to: native-host
   target: [AppImage]
   category: Office
   icon: build/icon.png

@@ -5243,6 +5243,96 @@ body.canvas-focus .canvas-topbar {
   background: rgba(168, 80, 63, 0.06);
 }
 
+/* ---------- 设置 · Chrome Companion ---------- */
+
+.chrome-status {
+  display: flex;
+  flex-direction: column;
+  margin: 12px 0 0;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--card);
+}
+
+.chrome-status__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 14px;
+}
+
+.chrome-status__row + .chrome-status__row {
+  border-top: 1px solid var(--hairline);
+}
+
+.chrome-status__row dt {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.chrome-status__row dd {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+
+.chrome-status__row dd i {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--ink-faint);
+}
+
+.chrome-status__row dd[data-ok='true'] i {
+  background: #7c9070;
+  box-shadow: 0 0 0 3px rgba(124, 144, 112, 0.14);
+}
+
+.chrome-status__row dd[data-ok='false'] i {
+  background: var(--priority);
+}
+
+.chrome-status__id {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+}
+
+.chrome-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--ink-soft);
+}
+
+.chrome-steps li::marker {
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.chrome-path {
+  display: block;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--well);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  word-break: break-all;
+}
+
 .browser-import__error strong {
   display: block;
   margin-bottom: 4px;

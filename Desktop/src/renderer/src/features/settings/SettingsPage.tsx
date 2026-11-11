@@ -5,6 +5,7 @@ import type {
   BookmarkPreview,
   BookmarkPreviewFailure,
   BookmarkRootKind,
+  ChromeCompanionStatus,
   ChromeDetection,
   McpBridgeStatus,
   McpClientCreated,
@@ -22,7 +23,7 @@ import { confirmAction } from '../../shared/ConfirmDialog'
 /**
  * 更多 / Settings。
  *
- * 二级导航 + 内容页（常规 / 设备同步 / AI 连接）：导航只切分类，每个分类
+ * 二级导航 + 内容页（常规 / 设备同步 / 浏览器 / Chrome 扩展 / AI 连接）：导航只切分类，每个分类
  * 独立滚动；内容仍在同一个 SettingsPage 里，页面切换不重建连接状态——
  * 同步的轮询与 MCP 的客户端列表都各自在组件内维护，切走再回来会自己刷新。
  *
@@ -50,6 +51,7 @@ export function SettingsPage({ info }: { info: AppInfo | null }) {
     { key: 'general', label: t.settings.nav.general },
     { key: 'sync', label: t.settings.nav.sync },
     { key: 'browser', label: t.settings.nav.browser },
+    { key: 'chrome', label: t.settings.nav.chrome },
     { key: 'mcp', label: t.settings.nav.mcp }
   ]
 
@@ -81,6 +83,7 @@ export function SettingsPage({ info }: { info: AppInfo | null }) {
             {category === 'general' && <GeneralSection info={info} />}
             {category === 'sync' && <SyncSection />}
             {category === 'browser' && <BrowserSection />}
+            {category === 'chrome' && <ChromeSection />}
             {category === 'mcp' && <McpSection />}
           </div>
         </div>
@@ -366,8 +369,173 @@ function BrowserSection() {
   )
 }
 
-function ImportFailure({ reason }: { reason: BookmarkPreviewFailure }) {
+/**
+ * Chrome Companion：本机服务与 Native Host 的安装状态。
+ *
+ * 这里只有「管理」动作。网页内容从 Native Messaging 直接进主进程，Renderer
+ * 既拿不到，也没有「代扩展写记录」的通道。
+ */
+function ChromeSection() {
   const { t } = useI18n()
+  const [status, setStatus] = useState<ChromeCompanionStatus | null>(null)
+  const [busy, setBusy] = useState<'install' | 'uninstall' | null>(null)
+  const [feedback, setFeedback] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
+
+  const refresh = useCallback(async (): Promise<void> => {
+    try {
+      setStatus(await api.chrome.status())
+    } catch (cause) {
+      console.error('[chrome] status failed', cause)
+    }
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
+
+  async function install(): Promise<void> {
+    setBusy('install')
+    setFeedback(null)
+    try {
+      const outcome = await api.chrome.install()
+      setStatus(outcome.status)
+      setFeedback(
+        outcome.ok
+          ? { tone: 'ok', text: t.settings.chrome.result.installed }
+          : { tone: 'error', text: t.settings.chrome.result.failed(outcome.message ?? '') }
+      )
+    } catch (cause) {
+      setFeedback({ tone: 'error', text: t.settings.chrome.result.failed(String(cause)) })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function uninstall(): Promise<void> {
+    const confirmed = await confirmAction({
+      title: t.settings.chrome.actions.uninstall,
+      description: t.settings.chrome.result.removed,
+      confirmLabel: t.settings.chrome.actions.uninstall,
+      cancelLabel: t.common.cancel,
+      tone: 'danger'
+    })
+    if (!confirmed) return
+
+    setBusy('uninstall')
+    setFeedback(null)
+    try {
+      const outcome = await api.chrome.uninstall()
+      setStatus(outcome.status)
+      setFeedback(
+        outcome.ok
+          ? { tone: 'ok', text: t.settings.chrome.result.removed }
+          : { tone: 'error', text: t.settings.chrome.result.failed(outcome.message ?? '') }
+      )
+    } catch (cause) {
+      setFeedback({ tone: 'error', text: t.settings.chrome.result.failed(String(cause)) })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const bridgeOk = status?.bridgeRunning ?? false
+  const hostOk = status?.hostInstalled ?? false
+
+  return (
+    <div className="settings-section">
+      <h2 className="settings-section__title">{t.settings.chrome.title}</h2>
+      <p className="settings-lead">{t.settings.chrome.lead}</p>
+
+      <section className="settings-subsection">
+        <h2 className="settings-subsection__title">{t.settings.chrome.status.title}</h2>
+        <dl className="chrome-status">
+          <div className="chrome-status__row">
+            <dt>{t.settings.chrome.status.bridge}</dt>
+            <dd data-ok={bridgeOk}>
+              <i aria-hidden="true" />
+              {bridgeOk ? t.settings.chrome.status.running : t.settings.chrome.status.stopped}
+            </dd>
+          </div>
+          <div className="chrome-status__row">
+            <dt>{t.settings.chrome.status.host}</dt>
+            <dd data-ok={hostOk}>
+              <i aria-hidden="true" />
+              {hostOk ? t.settings.chrome.status.installed : t.settings.chrome.status.missing}
+            </dd>
+          </div>
+          <div className="chrome-status__row">
+            <dt>{t.settings.chrome.status.extensionId}</dt>
+            <dd className="mono chrome-status__id">
+              {status?.extensionId ?? t.settings.chrome.status.extensionMissing}
+            </dd>
+          </div>
+          <div className="chrome-status__row">
+            <dt>{t.settings.chrome.status.appVersion}</dt>
+            <dd className="mono">{status?.hostVersion ?? '—'}</dd>
+          </div>
+        </dl>
+        <p className="note">{t.settings.chrome.status.extensionHint}</p>
+
+        <div className="row" style={{ marginTop: 14 }}>
+          <button
+            className="button button--primary"
+            onClick={() => void install()}
+            disabled={busy !== null}
+          >
+            {busy === 'install'
+              ? t.settings.chrome.actions.installing
+              : t.settings.chrome.actions.install}
+          </button>
+          <button className="button button--ghost" onClick={() => void refresh()} disabled={busy !== null}>
+            {t.settings.chrome.actions.recheck}
+          </button>
+          <button
+            className="button button--ghost"
+            onClick={() => void uninstall()}
+            disabled={busy !== null || !hostOk}
+          >
+            {busy === 'uninstall'
+              ? t.settings.chrome.actions.uninstalling
+              : t.settings.chrome.actions.uninstall}
+          </button>
+        </div>
+        {feedback && (
+          <p
+            className="note"
+            style={{ color: feedback.tone === 'error' ? 'var(--priority)' : '#5f7256' }}
+          >
+            {feedback.text}
+          </p>
+        )}
+      </section>
+
+      <section className="settings-subsection">
+        <h2 className="settings-subsection__title">{t.settings.chrome.steps.title}</h2>
+        <ol className="chrome-steps">
+          <li>{t.settings.chrome.steps.open}</li>
+          <li>{t.settings.chrome.steps.devMode}</li>
+          <li>
+            <span>{t.settings.chrome.steps.load}</span>
+            {status?.extensionDir ? (
+              <code className="chrome-path">{status.extensionDir}</code>
+            ) : (
+              <span className="note"> {t.settings.chrome.steps.notBuilt}</span>
+            )}
+          </li>
+          <li>{t.settings.chrome.steps.pin}</li>
+        </ol>
+        <p className="note">{t.settings.chrome.steps.reload}</p>
+      </section>
+
+      <section className="settings-subsection">
+        <h2 className="settings-subsection__title">{t.settings.chrome.security.title}</h2>
+        <p className="note">{t.settings.chrome.security.body}</p>
+      </section>
+    </div>
+  )
+}
+
+function ImportFailure({ reason }: { reason: BookmarkPreviewFailure }) {  const { t } = useI18n()
   return (
     <div className="browser-import__error" role="alert">
       <strong>{t.settings.browser.error.title}</strong>

@@ -1,5 +1,11 @@
 import { inArray } from 'drizzle-orm'
 import type { RecordDraft, RecordItem, RecordQuery, RecordTag } from '../../../shared/contracts'
+import {
+  CHROME_MAX_DESCRIPTION,
+  CHROME_MAX_SELECTED_TEXT,
+  CHROME_MAX_TITLE,
+  type ChromePagePayload
+} from '../../../shared/contracts'
 import { parseLink } from '../../../shared/link-parser'
 import type { Db } from '../../database/client'
 import {
@@ -153,6 +159,46 @@ export class RecordService {
 
   createFromDraft(draft: RecordDraft): RecordItem {
     return createRecord(this.db, this.deviceId, draft)
+  }
+
+  /**
+   * Chrome Companion 的落库入口：**复用同一条 createRecord 链路**。
+   *
+   * 字段归属（第一版不改表结构）：
+   * - `title`   ← 网页标题；
+   * - `note`    ← 用户选中的文字（链接记录的备注位，天然是「我的摘录」）；
+   * - `summary` ← `<meta name="description">` 的纯文本；
+   * - URL 走 `parseLink`，canonical / provider / contentId 与手动新建链接一致。
+   *
+   * 写入来自主进程序列（Native Messaging），Renderer 不会发起，所以要广播
+   * `records` 事件让列表自己刷新——与 MCP 写入的处理一致。
+   */
+  createFromChrome(payload: ChromePagePayload): RecordItem {
+    const parsed = parseLink(payload.url)
+    if (!parsed.valid) {
+      throw new ApplicationError('VALIDATION_ERROR', 'url is not a valid http(s) link')
+    }
+
+    const draft: RecordDraft = {
+      carrier: 'link',
+      title: payload.title.trim().slice(0, CHROME_MAX_TITLE),
+      note: payload.selectedText.trim().slice(0, CHROME_MAX_SELECTED_TEXT),
+      urlString: payload.url,
+      canonicalURL: parsed.canonicalUrl,
+      platformContentID: parsed.contentId,
+      provider: parsed.provider,
+      sourceName: '',
+      authorName: '',
+      summary: payload.description.trim().slice(0, CHROME_MAX_DESCRIPTION),
+      mediaPath: null,
+      previewPath: null,
+      tagIds: []
+    }
+
+    const record = createRecord(this.db, this.deviceId, draft)
+    this.scheduleMetadata([record.id])
+    this.events.emit('records')
+    return record
   }
 
   updateFromDraft(id: string, draft: RecordDraft): RecordItem {

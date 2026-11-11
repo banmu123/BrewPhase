@@ -19,6 +19,7 @@ import { CanvasService } from './application/canvas/canvas-service'
 import { McpClientService } from './application/authorization/permission-service'
 import { BrowserManager } from './browser/browser-manager'
 import { BookmarkService } from './browser/bookmark-service'
+import { ChromeService } from './integrations/chrome/chrome-service'
 import { BridgeServer } from './mcp-bridge/bridge-server'
 import { BRIDGE_PROTOCOL_VERSION, bridgePaths, platformSupportsBridge } from './mcp-bridge/bridge-contract'
 import type { McpBridgeStatus } from '../shared/contracts/mcp'
@@ -35,6 +36,7 @@ import { EMBED_FRAME_ORIGINS } from '../shared/link-embed'
 let db: DatabaseHandle | null = null
 let syncService: SyncService | null = null
 let bridgeServer: BridgeServer | null = null
+let chromeService: ChromeService | null = null
 let browserManager: BrowserManager | null = null
 let quitting = false
 const devServerUrl = process.env.ELECTRON_RENDERER_URL ?? null
@@ -201,6 +203,25 @@ function bootstrap(): void {
 
   const bookmarkService = new BookmarkService(db.db)
 
+  // Chrome Companion：本地 IPC 与 Host 安装状态互相独立。IPC 先起来，
+  // Host 是否安装由用户在设置页决定；已安装时这里会刷新 token。
+  const chromeIntegration = new ChromeService({
+    userDataDir: app.getPath('userData'),
+    appVersion: APP_VERSION,
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath,
+    isPackaged: app.isPackaged,
+    // 生产包可以在构建时注入固定扩展 ID；开发态读 ChromeExtension/extension-id.json。
+    productionExtensionId: process.env.BREWPHASE_CHROME_EXTENSION_ID,
+    // E2E / 便携：不写真实用户目录。
+    hostDirOverride: process.env.BREWPHASE_CHROME_HOST_DIR,
+    records
+  })
+  chromeService = chromeIntegration
+  void chromeIntegration.start().catch((error) => {
+    console.error('[chrome] start failed', error)
+  })
+
   registerIpc({
     db,
     devServerUrl,
@@ -208,7 +229,8 @@ function bootstrap(): void {
     services: { records, clients },
     bridgeStatus,
     browser: browserManager,
-    bookmarks: bookmarkService
+    bookmarks: bookmarkService,
+    chrome: chromeIntegration
   })
 
   const mainWindow = createMainWindow({ devServerUrl })
@@ -246,14 +268,16 @@ app.on('before-quit', (event) => {
   // 退出过程中可能报「对象已销毁」。
   browserManager?.dispose()
   browserManager = null
-  // Bridge 的关闭是异步的（关 socket、删 info 文件）：先拦住这一次 quit，
-  // 清理完再真正退出；第二次进入时 `quitting` 已置位，只关库。
-  if (bridgeServer && !quitting) {
+  // Bridge 与 Chrome 本地 IPC 的关闭都是异步的（关 socket、删 info / pipe 文件）：
+  // 先拦住这一次 quit，清理完再真正退出；第二次进入时 `quitting` 已置位，只关库。
+  if ((bridgeServer || chromeService) && !quitting) {
     quitting = true
     const server = bridgeServer
+    const chrome = chromeService
     bridgeServer = null
+    chromeService = null
     event.preventDefault()
-    void server.stop().finally(() => app.quit())
+    void Promise.all([server?.stop(), chrome?.stop()]).finally(() => app.quit())
     return
   }
   db?.close()

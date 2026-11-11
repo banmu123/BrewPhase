@@ -6,6 +6,7 @@ export const settings = {
     general: '常规',
     sync: '设备同步',
     browser: '浏览器',
+    chrome: 'Chrome 扩展',
     mcp: 'AI 连接'
   },
   general: {
@@ -86,6 +87,50 @@ export const settings = {
       'bookmarks-missing': '这个配置里没有 Bookmarks 文件。',
       unreadable: '读取 Bookmarks 失败。如果 Chrome 正在运行，请退出 Chrome 后重试。',
       corrupt: 'Bookmarks 不是有效的 JSON，可能正在被 Chrome 写入。请退出 Chrome 后重试。'
+    }
+  },
+  chrome: {
+    title: 'Chrome 扩展',
+    subtitle: '在 Chrome 里浏览，把有用的页面带回来',
+    lead: '继续用已经登录的 Chrome 浏览网页。点一下扩展，就能把当前页面和选中的文字保存到 Records——不用退出登录，也不用换浏览器。',
+    status: {
+      title: '连接状态',
+      bridge: 'BrewPhase 本地服务',
+      running: '运行中',
+      stopped: '未运行',
+      host: 'Native Host',
+      installed: '已安装',
+      missing: '未安装',
+      extensionId: '扩展 ID',
+      extensionMissing: '尚未生成',
+      extensionHint: 'Desktop 读不到 Chrome 的已加载扩展列表；请在 chrome://extensions 确认卡片上的 ID 与上面一致。',
+      appVersion: '宿主版本'
+    },
+    actions: {
+      install: '安装 / 修复',
+      recheck: '重新检测',
+      uninstall: '移除集成',
+      installing: '正在安装…',
+      uninstalling: '正在移除…'
+    },
+    result: {
+      installed: 'Native Host 已注册，可以到 Chrome 加载扩展了。',
+      removed: '已移除注册信息与本地 Host。',
+      failed: (message: string) => `操作没有完成：${message}`
+    },
+    steps: {
+      title: '在 Chrome 里加载扩展',
+      open: '打开 chrome://extensions',
+      devMode: '右上角开启「开发者模式」',
+      load: '点「加载已解压的扩展程序」，选择这个目录：',
+      pin: '把 BrewPhase 固定到工具栏。打开任意网页，点扩展图标即可保存。',
+      directory: '扩展目录',
+      notBuilt: '扩展还没有构建。先在 ChromeExtension 目录运行 pnpm build。',
+      reload: '改过扩展代码后，回到 chrome://extensions 点刷新。'
+    },
+    security: {
+      title: '权限与数据边界',
+      body: '扩展只在点击时读取当前标签页的标题、地址、选中文字与页面描述；不读取 Cookie、密码或其他标签页，也不会上传任何内容。'
     }
   }
 }

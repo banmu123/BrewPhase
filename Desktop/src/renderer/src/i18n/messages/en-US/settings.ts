@@ -6,6 +6,7 @@ export const settings = {
     general: 'General',
     sync: 'Device sync',
     browser: 'Browser',
+    chrome: 'Chrome extension',
     mcp: 'AI connections'
   },
   general: {
@@ -89,6 +90,50 @@ export const settings = {
       'bookmarks-missing': 'This profile has no Bookmarks file.',
       unreadable: 'Could not read Bookmarks. If Chrome is running, quit Chrome and try again.',
       corrupt: 'Bookmarks is not valid JSON — Chrome may be writing it. Quit Chrome and try again.'
+    }
+  },
+  chrome: {
+    title: 'Chrome extension',
+    subtitle: 'Browse in Chrome, bring the useful pages back',
+    lead: 'Keep using Chrome with your existing sign-ins. Click the extension once to save the current page and your selected text to Records — no re-login, no switching browsers.',
+    status: {
+      title: 'Connection',
+      bridge: 'BrewPhase local service',
+      running: 'Running',
+      stopped: 'Not running',
+      host: 'Native Host',
+      installed: 'Installed',
+      missing: 'Not installed',
+      extensionId: 'Extension ID',
+      extensionMissing: 'Not generated',
+      extensionHint: 'Desktop cannot read Chrome’s loaded extensions; check that the ID on chrome://extensions matches the one above.',
+      appVersion: 'Host version'
+    },
+    actions: {
+      install: 'Install / repair',
+      recheck: 'Check again',
+      uninstall: 'Remove integration',
+      installing: 'Installing…',
+      uninstalling: 'Removing…'
+    },
+    result: {
+      installed: 'Native Host is registered. You can load the extension in Chrome now.',
+      removed: 'Registration and local host files were removed.',
+      failed: (message: string) => `Could not finish: ${message}`
+    },
+    steps: {
+      title: 'Load the extension in Chrome',
+      open: 'Open chrome://extensions',
+      devMode: 'Turn on Developer mode (top right)',
+      load: 'Choose “Load unpacked” and select this folder:',
+      pin: 'Pin BrewPhase to the toolbar. Open any page and click the icon to save.',
+      directory: 'Extension folder',
+      notBuilt: 'The extension has not been built yet. Run pnpm build in ChromeExtension first.',
+      reload: 'After changing extension code, click reload on chrome://extensions.'
+    },
+    security: {
+      title: 'Permissions and data boundary',
+      body: 'The extension reads the active tab only when you click: title, URL, selected text and page description. It never reads cookies, passwords or other tabs, and never uploads anything.'
     }
   }
 }

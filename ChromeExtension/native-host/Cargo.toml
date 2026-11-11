@@ -1,0 +1,17 @@
+[package]
+name = "brewphase-chrome-host"
+version = "0.1.0"
+edition = "2021"
+description = "BrewPhase Chrome Companion native messaging host"
+
+[[bin]]
+name = "brewphase-chrome-host"
+path = "src/main.rs"
+
+# 只做 stdio 转发，没有第三方依赖；体积压到最小，随 Desktop 安装包分发。
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
