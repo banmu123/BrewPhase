@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { _electron as electron, expect, test } from '@playwright/test'
 import { pinLocale } from './locale'
+import { openSpace } from './nav'
 import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 
@@ -33,7 +34,7 @@ test('MCP：Bridge 随 App 启停、Agent 写入、UI 刷新、撤销即失效',
   const app = await electron.launch({ args: ['.', '--no-sandbox', '--disable-gpu'], env: launchEnv(userData) })
   const page = await app.firstWindow()
   await pinLocale(page)
-  await expect(page.locator('.sidebar__brand')).toHaveText('BREWPHASE')
+  await expect(page.locator('.topbar__brand')).toHaveText('BREWPHASE')
 
   // 1) Bridge 随主进程启动，而且 socket 文件真实存在
   const status = await page.evaluate(async () => window.brewphase.mcp.bridgeStatus())
@@ -92,7 +93,7 @@ test('MCP：Bridge 随 App 启停、Agent 写入、UI 刷新、撤销即失效',
   })
   expect(note.isError).toBeFalsy()
 
-  await page.getByRole('button', { name: '画布', exact: true }).click()
+  await openSpace(page, '画布')
   await expect(page.getByText('E2E 画布').first()).toBeVisible({ timeout: 10_000 })
 
   // 6) 撤销后下一次调用 → UNAUTHORIZED（Main 每请求查库）
@@ -114,7 +115,7 @@ test('MCP：Bridge 随 App 启停、Agent 写入、UI 刷新、撤销即失效',
   const app2 = await electron.launch({ args: ['.', '--no-sandbox', '--disable-gpu'], env: launchEnv(userData) })
   const page2 = await app2.firstWindow()
   await pinLocale(page2)
-  await expect(page2.locator('.sidebar__brand')).toHaveText('BREWPHASE')
+  await expect(page2.locator('.topbar__brand')).toHaveText('BREWPHASE')
   const status2 = await page2.evaluate(async () => window.brewphase.mcp.bridgeStatus())
   expect(status2.running).toBe(true)
   await app2.close()

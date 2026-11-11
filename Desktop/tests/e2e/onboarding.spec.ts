@@ -34,9 +34,9 @@ test.describe('首次启动：干净数据 + 配对引导', () => {
       const page = await app.firstWindow()
       await pinLocale(page)
 
-      // 全新库：Coffee 页必须没有任何豆子，只显示空态。
+      // 全新库：默认落在 Studio 首页，咖啡架必须是空的（引导遮罩盖着，先进不去空间页）。
+      await expect(page.locator('.studio-space--coffee .studio-empty')).toContainText('架子还空着')
       await expect(page.locator('.shelf-card')).toHaveCount(0)
-      await expect(page.locator('.empty').first()).toContainText('还没有豆子')
 
       // 引导只讲配对：三步 + 两个出口，不写功能清单。
       await expect(page.locator('.onboarding__card')).toBeVisible()

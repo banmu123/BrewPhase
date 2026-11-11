@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { pinLocale } from './locale'
+import { openSpace } from './nav'
 import Database from 'better-sqlite3'
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -316,12 +317,12 @@ test('画布：Gallery 导航、多选批量、拖动、双击打开、画布备
   center = nodeScreenCenter(afterDrag, await page.locator('.canvas-wrap').boundingBox(), 0)
   await page.mouse.dblclick(center.x, center.y)
   await page.waitForTimeout(600)
-  // sidebar 的 Records 高亮 + 详情浮层出现
-  await expect(page.locator('.sidebar__item[data-active="true"]')).toHaveText('记录')
+  // 跨页导航落到 Records 页（不再有侧栏高亮可断言，改为页标题 + 详情浮层）
+  await expect(page.getByRole('heading', { name: '记录', exact: true })).toBeVisible({ timeout: 5_000 })
   await expect(page.locator('.float-panel')).toBeVisible({ timeout: 5_000 })
 
   // 8) 回到 Canvas → 重进画布 → 返回 Gallery：空间缩略图出现
-  await page.getByRole('button', { name: '画布', exact: true }).click()
+  await openSpace(page, '画布')
   await page.locator('.gallery-card__open').click()
   await expect(page.locator('.canvas-topbar')).toBeVisible()
   await page.locator('.canvas-back').click()

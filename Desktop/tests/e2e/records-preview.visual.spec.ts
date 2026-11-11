@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { pinLocale } from './locale'
+import { openSpace } from './nav'
 import Database from 'better-sqlite3'
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -113,9 +114,7 @@ test('Records 平台差异化卡片视觉验收', async () => {
   await page.route('https://i.ytimg.com/**', (route) => route.fulfill({ status: 200, body: MOCK_PNG, contentType: 'image/png' }))
 
   await page.waitForLoadState('domcontentloaded')
-  await page.locator('.sidebar__link', { hasText: '记' }).click().catch(async () => {
-    await page.getByText('记录', { exact: true }).first().click()
-  })
+  await openSpace(page, '记录')
   await page.waitForSelector('.record-grid', { timeout: 10_000 })
   await page.waitForTimeout(2500)
 

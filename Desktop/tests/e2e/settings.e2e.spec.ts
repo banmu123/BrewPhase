@@ -32,7 +32,7 @@ test('Settings：二级导航、常规信息与 AI 连接全流程', async () =>
   const app = await electron.launch({ args: ['.', '--no-sandbox', '--disable-gpu'], env: launchEnv(userData) })
   const page = await app.firstWindow()
   await pinLocale(page, 'zh-CN')
-  await expect(page.locator('.sidebar__brand')).toHaveText('BREWPHASE')
+  await expect(page.locator('.topbar__brand')).toHaveText('BREWPHASE')
 
   await page.getByRole('button', { name: '设置', exact: true }).click()
 

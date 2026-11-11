@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { pinLocale } from './locale'
+import { openSpace } from './nav'
 import Database from 'better-sqlite3'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -123,14 +124,14 @@ test('撤销授权并清空：记录与咖啡数据全部清零，阶段规则�
   }
 
   // 记录页跟着变空（撤销时广播了 sync:changed）
-  await page.getByRole('button', { name: '记录', exact: true }).click()
+  await openSpace(page, '记录')
   await expect(page.locator('.record-tile')).toHaveCount(0)
   await page.waitForTimeout(600)
   await expect(page.locator('.record-tile')).toHaveCount(0)
   await expect(page.getByText('还没有记录。先从一条链接、一张图或一段文字开始。')).toBeVisible()
 
   // 咖啡页同样清空（页面订阅了 sync:changed，不需要切页才刷新）
-  await page.getByRole('button', { name: '咖啡', exact: true }).click()
+  await openSpace(page, '咖啡')
   await expect(page.getByText('还没有豆子。先记一包，冲煮与品鉴会挂到它下面。')).toBeVisible()
 
   await page.screenshot({ path: '/tmp/sync-unpair-wipe.png' })

@@ -1,5 +1,6 @@
 import { _electron as electron, expect, test } from '@playwright/test'
 import { pinLocale } from './locale'
+import { openSpace } from './nav'
 
 /**
  * E2E 冒烟：真的把 Electron 拉起来，确认主进程能开库、preload 桥能通、
@@ -27,10 +28,11 @@ test('应用启动、连上本地库、三个模块可切换', async () => {
   const page = await app.firstWindow()
   await pinLocale(page)
 
-  await expect(page.locator('.sidebar__brand')).toHaveText('BREWPHASE')
+  await expect(page.locator('.topbar__brand')).toHaveText('BREWPHASE')
   // `exact` 是必须的：这条用例跑在**真实库**上，豆名列里完全可能出现
   // 「启程咖啡」这种名字，模糊匹配会把豆子按钮一起选中（strict mode 直接失败）。
   const nav = (name: string) => page.getByRole('button', { name, exact: true })
+  // 默认落在 Studio 首页：三个空间是内容入口，不再是全局 Tab。
   await expect(nav('咖啡')).toBeVisible()
   await expect(nav('记录')).toBeVisible()
   await expect(nav('画布')).toBeVisible()
@@ -42,8 +44,10 @@ test('应用启动、连上本地库、三个模块可切换', async () => {
 
   await nav('记录').click()
   await expect(page.getByRole('heading', { name: '记录' })).toBeVisible()
+  // 空间页头留了回 Studio 的轻量入口（没有侧栏之后，这是唯一回去的路）。
+  await expect(page.getByRole('button', { name: '返回 Studio' })).toBeVisible()
 
-  await nav('画布').click()
+  await openSpace(page, '画布')
   // Canvas 现在先进集合页（Gallery）；断言页头按钮而不是 .gallery-grid——
   // 后者只在「已有画布」时渲染，会随真实库的数据变化而假红。
   await expect(page.getByRole('button', { name: '新建画布' })).toBeVisible()

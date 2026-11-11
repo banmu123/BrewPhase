@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { _electron as electron, expect, test } from '@playwright/test'
 import { pinLocale } from './locale'
+import { openSpace } from './nav'
 
 /**
  * 国际化 E2E：语言切换、即时生效、刷新后保留。
@@ -35,13 +36,18 @@ test('语言切换：中文 → English 即时生效，重启后保留', async (
   await page.getByRole('button', { name: 'English', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
   await expect(page.getByText('Manage the app, data and connections')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Records', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Coffee', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Canvas', exact: true })).toBeVisible()
   // 二级导航也切了
   await expect(page.getByRole('button', { name: 'General', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Device sync', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'AI connections', exact: true })).toBeVisible()
+  // 空间入口回 Studio 首页再核对（顶栏不承担空间切换）
+  await page.locator('.topbar__brand').click()
+  await expect(page.getByRole('button', { name: 'Records', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Coffee', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Canvas', exact: true })).toBeVisible()
+  // 顶栏动作也是英文
+  await expect(page.getByRole('button', { name: 'Search records', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Settings', exact: true })).toBeVisible()
   // html lang 同步（屏幕阅读器/排版依赖）
   expect(await page.evaluate(() => document.documentElement.lang)).toBe('en-US')
   // 选择已写入 localStorage
@@ -78,13 +84,13 @@ test('英文界面下模块页面完整可用（导航与页面标题）', async
   const page = await app.firstWindow()
   await pinLocale(page, 'en-US')
 
-  await page.getByRole('button', { name: 'Records', exact: true }).click()
+  await openSpace(page, 'Records')
   await expect(page.getByRole('heading', { name: 'Records' })).toBeVisible()
 
-  await page.getByRole('button', { name: 'Coffee', exact: true }).click()
+  await openSpace(page, 'Coffee')
   await expect(page.getByRole('heading', { name: 'Coffee' })).toBeVisible()
 
-  await page.getByRole('button', { name: 'Canvas', exact: true }).click()
+  await openSpace(page, 'Canvas')
   await expect(page.getByRole('heading', { name: 'Canvas' })).toBeVisible()
   // 集合页在没有画布时用空状态代替 .gallery-grid：断言页头按钮，避免依赖真实库数据
   await expect(page.getByRole('button', { name: 'New canvas' })).toBeVisible()

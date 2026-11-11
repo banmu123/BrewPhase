@@ -1,5 +1,6 @@
 import { test, expect, type ElectronApplication } from '@playwright/test'
 import { pinLocale } from './locale'
+import { openSpace } from './nav'
 import Database from 'better-sqlite3'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -160,9 +161,9 @@ test('手机同步写库后，Records 一直开着也能自动更新', async () 
   expect(new Set(titles).size).toBe(titles.length)
 
   // ── 离开页面后广播不再触发查询：切回来数据仍然正确 ────────────────
-  await page.getByRole('button', { name: '咖啡', exact: true }).click()
+  await openSpace(page, '咖啡')
   await broadcast(app)
-  await page.getByRole('button', { name: '记录', exact: true }).click()
+  await openSpace(page, '记录')
   await expect(page.locator('.record-tile')).toHaveCount(4)
 
   await page.screenshot({ path: '/tmp/records-sync-refresh.png' })
