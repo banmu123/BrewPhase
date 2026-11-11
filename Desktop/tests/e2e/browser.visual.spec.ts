@@ -65,7 +65,6 @@ function launchEnv(userDataDir: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     BREWPHASE_USER_DATA_DIR: userDataDir,
-    ELECTRON_RUN_AS_NODE: '',
     ELECTRON_DISABLE_SECURITY_WARNINGS: '1'
   }
   delete env.BREWPHASE_FORCE_ONBOARDING

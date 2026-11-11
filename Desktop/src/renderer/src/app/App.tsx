@@ -13,6 +13,7 @@ import { hasSeenOnboarding, markOnboardingSeen, Onboarding } from './Onboarding'
 import { SearchPalette } from './SearchPalette'
 import { TopBar } from './TopBar'
 import { useAppStore } from './store'
+import { ConfirmHost } from '../shared/ConfirmDialog'
 
 /**
  * Studio Desk 外壳：一条极简全局顶栏 + 自适应工作区。
@@ -104,6 +105,8 @@ export function App() {
 
       {searchOpen && <SearchPalette onClose={() => setSearchOpen(false)} />}
       {onboardingOpen && <Onboarding onClose={() => setOnboardingOpen(false)} />}
+      {/* 命令式确认框（confirmAction）的宿主：挂在最外层，任何页面都能弹。 */}
+      <ConfirmHost />
       {/* 浏览器浮在最上层，但仍在 Modal（z-index 100）之下：
           未来的「保存到 Records」表单要能盖住它。 */}
       <BrowserPanel />

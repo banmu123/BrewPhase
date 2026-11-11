@@ -82,7 +82,6 @@ test('详情里的播放器：按内容 ID 播放、放大、非法 ID 不出现
     args: ['.', '--no-sandbox', '--disable-gpu'],
     env: {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: '',
       BREWPHASE_USER_DATA_DIR: userData,
       ELECTRON_DISABLE_SECURITY_WARNINGS: '1'
     }

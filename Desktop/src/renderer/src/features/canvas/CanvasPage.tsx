@@ -20,6 +20,8 @@ import { api } from '../../shared/api'
 import { useI18n } from '../../i18n'
 import { useAppStore } from '../../app/store'
 import { refreshThemeColors, themeColors } from '../../shared/tokens'
+import { Modal } from '../../shared/Modal'
+import { ConfirmDialog } from '../../shared/ConfirmDialog'
 import { CanvasThumbnail } from './CanvasThumbnail'
 import { EraserIcon, NoteIcon, PanIcon, PenIcon, SelectIcon } from '../../shared/icons'
 
@@ -1563,48 +1565,51 @@ function CanvasDialog(props: {
 }) {
   const { dialog } = props
   const { t } = useI18n()
-  const isDelete = dialog.kind === 'delete'
-  const title =
-    dialog.kind === 'create'
-      ? t.canvas.dialog.createTitle
-      : dialog.kind === 'rename'
-        ? t.canvas.dialog.renameTitle
-        : t.canvas.dialog.deleteTitle
+
+  // 删除是纯确认：标题说清动作，正文说清后果，动作区靠右。
+  // 走共享确认框，和记录 / 豆子 / 同步冲突的删除保持同一种形状。
+  if (dialog.kind === 'delete') {
+    return (
+      <ConfirmDialog
+        title={t.canvas.dialog.deleteTitle}
+        description={t.canvas.dialog.deleteBody}
+        confirmLabel={t.canvas.dialog.confirmDelete}
+        cancelLabel={t.common.cancel}
+        tone="danger"
+        onConfirm={props.onConfirm}
+        onCancel={props.onCancel}
+      />
+    )
+  }
+
+  const isCreate = dialog.kind === 'create'
   return (
-    <div className="dialog-backdrop" onClick={props.onCancel}>
-      <div className="dialog" role="dialog" aria-label={title} onClick={(event) => event.stopPropagation()}>
-        <strong>{title}</strong>
-        {isDelete ? (
-          <p className="page-sub" style={{ margin: 0 }}>
-            {t.canvas.dialog.deleteBody}
-          </p>
-        ) : (
-          <input
-            value={dialog.value}
-            autoFocus
-            placeholder={t.canvas.dialog.namePlaceholder}
-            onChange={(event) => props.onChange(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') props.onConfirm()
-            }}
-          />
-        )}
-        <div className="row" style={{ justifyContent: 'flex-end' }}>
-          <button className="button" onClick={props.onCancel}>
+    <Modal
+      title={isCreate ? t.canvas.dialog.createTitle : t.canvas.dialog.renameTitle}
+      onClose={props.onCancel}
+      width="sm"
+      footer={
+        <>
+          <button className="button" type="button" onClick={props.onCancel}>
             {t.common.cancel}
           </button>
-          {isDelete ? (
-            <button className="button button--danger" onClick={props.onConfirm}>
-              {t.canvas.dialog.confirmDelete}
-            </button>
-          ) : (
-            <button className="button button--primary" onClick={props.onConfirm}>
-              {t.common.confirm}
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
+          <button className="button button--primary" type="button" onClick={props.onConfirm}>
+            {t.common.confirm}
+          </button>
+        </>
+      }
+    >
+      <input
+        value={dialog.value}
+        autoFocus
+        placeholder={t.canvas.dialog.namePlaceholder}
+        aria-label={t.canvas.dialog.namePlaceholder}
+        onChange={(event) => props.onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') props.onConfirm()
+        }}
+      />
+    </Modal>
   )
 }
 

@@ -27,7 +27,6 @@ function launchEnv(userDataDir: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     BREWPHASE_USER_DATA_DIR: userDataDir,
-    ELECTRON_RUN_AS_NODE: '',
     ELECTRON_DISABLE_SECURITY_WARNINGS: '1'
   }
   delete env.BREWPHASE_FORCE_ONBOARDING
@@ -234,9 +233,11 @@ test.describe('空库：三个创建入口都走既有流程', () => {
     await clickTopmost(page, '.back-link', '返回 Studio')
     await expect(page.locator('.studio-home')).toBeVisible()
 
-    // Canvas：新建画布弹窗（画布弹窗没有 ✕，用它的「取消」退出）。
+    // Canvas：新建画布弹窗（校验它和其它浮窗同一套壳：标题 + ✕ + 底栏）。
     await clickTopmost(page, '.studio-empty--canvas .studio-empty__action', '画布空状态入口')
     await expect(page.locator('.dialog[aria-label="新建画布"]')).toBeVisible()
+    await expect(page.locator('.dialog .dialog__close')).toBeVisible()
+    await expect(page.locator('.dialog .dialog__foot')).toBeVisible()
     await clickTopmost(page, '.dialog .button:not(.button--primary)', '画布弹窗取消')
 
     // 全程没有写入任何记录：空状态的点缀不是数据。

@@ -26,7 +26,6 @@ test('新建链接：本地识别 + 保存不被阻塞', async () => {
     args: ['.', '--no-sandbox', '--disable-gpu'],
     env: {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: '',
       BREWPHASE_USER_DATA_DIR: userData,
       ELECTRON_DISABLE_SECURITY_WARNINGS: '1'
     }

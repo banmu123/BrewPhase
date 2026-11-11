@@ -25,7 +25,8 @@ export const coffee = {
   logBrew: 'Log a brew',
   deleteBrewTitle: 'Delete this brew; stock is restored by the deducted amount',
   deleteBean: 'Delete this bean',
-  confirmDeleteBean: (name: string) => `Delete “${name}”? Its brews and tastings will be deleted too.`,
+  confirmDeleteTitle: (name: string) => `Delete “${name}”?`,
+  confirmDeleteBody: 'Its brews and tastings will be deleted too. This cannot be undone.',
   windowNote: (restMin: number, restMax: number, peakStart: number, peakEnd: number, declineStart: number) =>
     `Rest ${restMin}–${restMax} days · Peak ${peakStart}–${peakEnd} days · Declining from day ${declineStart}`,
   windowNoteHint: 'Estimated from the default window; this is not a best-before conclusion.',

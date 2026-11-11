@@ -78,7 +78,6 @@ test('撤销授权并清空：记录与咖啡数据全部清零，阶段规则�
     args: ['.', '--no-sandbox', '--disable-gpu'],
     env: {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: '',
       BREWPHASE_USER_DATA_DIR: userData,
       ELECTRON_DISABLE_SECURITY_WARNINGS: '1'
     }

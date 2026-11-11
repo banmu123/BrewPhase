@@ -57,7 +57,6 @@ test('同步链接的元数据补全：卡片/详情/搜索/编辑优先级', as
     args: ['.', '--no-sandbox', '--disable-gpu'],
     env: {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: '',
       BREWPHASE_USER_DATA_DIR: userData,
       BREWPHASE_METADATA_FIXTURE: '1',
       ELECTRON_DISABLE_SECURITY_WARNINGS: '1'

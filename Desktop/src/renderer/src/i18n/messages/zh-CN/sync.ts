@@ -43,6 +43,7 @@ export const sync = {
     keepLocal: '保留电脑版本',
     acceptDelete: '接受删除',
     acceptRemote: '接受手机版本',
-    confirmDelete: '确认删除电脑端的这条记录？（手机端已删除）'
+    deleteTitle: '删除电脑端的这条记录？',
+    deleteBody: '手机端已经删除了它。接受后本机这份记录也会消失，无法恢复。'
   }
 }

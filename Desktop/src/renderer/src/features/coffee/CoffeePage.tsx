@@ -3,6 +3,7 @@ import type { Bean, BeanDraft, Brew, BrewDraft, PhaseRule, Tasting } from '@shar
 import { dayAfterRoast, defaultRuleFor, phaseFor } from '@shared/domain/phase'
 import { api, ratioText, toDateInput, toEpoch } from '../../shared/api'
 import { Modal } from '../../shared/Modal'
+import { confirmAction } from '../../shared/ConfirmDialog'
 import { useAppStore } from '../../app/store'
 import { useI18n } from '../../i18n'
 
@@ -324,7 +325,14 @@ export function CoffeePage() {
           <button
             className="button button--danger"
             onClick={async () => {
-              if (!window.confirm(t.coffee.confirmDeleteBean(selected.name))) return
+              const confirmed = await confirmAction({
+                title: t.coffee.confirmDeleteTitle(selected.name),
+                description: t.coffee.confirmDeleteBody,
+                confirmLabel: t.coffee.deleteBean,
+                cancelLabel: t.common.cancel,
+                tone: 'danger'
+              })
+              if (!confirmed) return
               await api.coffee.deleteBean(selected.id)
               setPanelOpen(false)
               setSelectedId(null)
@@ -490,21 +498,17 @@ function BeanForm(props: {
         <input type="number" value={price} onChange={(event) => setPrice(event.target.value)} />
       </div>
       {error && <div className="error">{error}</div>}
-      <div className="row">
-        <button className="button button--primary" type="submit" disabled={busy}>
-          {busy ? t.common.saving : t.common.save}
-        </button>
+      {bean && <div className="note">{t.coffee.stockNote}</div>}
+      <div className="dialog-actions">
         {props.cancelLabel !== '' && (
-          <button className="button button--ghost" type="button" onClick={props.onCancel}>
+          <button className="button" type="button" onClick={props.onCancel}>
             {props.cancelLabel ?? t.common.cancel}
           </button>
         )}
+        <button className="button button--primary" type="submit" disabled={busy}>
+          {busy ? t.common.saving : t.common.save}
+        </button>
       </div>
-      {bean && (
-        <div className="note">
-          {t.coffee.stockNote}
-        </div>
-      )}
     </form>
   )
 }
@@ -599,12 +603,12 @@ function BrewForm(props: {
         <textarea value={notes} onChange={(event) => setNotes(event.target.value)} />
       </div>
       {error && <div className="error">{error}</div>}
-      <div className="row">
+      <div className="dialog-actions">
+        <button className="button" type="button" onClick={props.onCancel}>
+          {t.common.cancel}
+        </button>
         <button className="button button--primary" type="submit" disabled={busy}>
           {busy ? t.common.saving : t.coffee.brew.save}
-        </button>
-        <button className="button button--ghost" type="button" onClick={props.onCancel}>
-          {t.common.cancel}
         </button>
       </div>
     </form>

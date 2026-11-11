@@ -9,6 +9,7 @@ import { Modal } from '../../shared/Modal'
 import { parseLink } from '@shared/link-parser'
 import { useI18n } from '../../i18n'
 import { useBrowserStore } from '../browser/browser-store'
+import { confirmAction } from '../../shared/ConfirmDialog'
 import { LinkPlayer } from './preview/LinkPlayer'
 import { RecordTilePreview } from './preview/RecordTilePreview'
 import { detectPlatform } from './preview/platform'
@@ -607,16 +608,16 @@ function NewRecordForm(props: {
         ))}
       </div>
       {error && <div className="error">{error}</div>}
-      <div className="row">
+      <div className="dialog-actions">
+        <button className="button" type="button" onClick={props.onCancel}>
+          {t.common.cancel}
+        </button>
         <button
           className="button button--primary"
           type="submit"
           disabled={busy || (props.carrier === 'link' && url.trim() !== '' && parsed != null && !parsed.valid)}
         >
           {busy ? t.common.saving : t.common.save}
-        </button>
-        <button className="button button--ghost" type="button" onClick={props.onCancel}>
-          {t.common.cancel}
         </button>
       </div>
     </form>
@@ -868,7 +869,14 @@ function RecordInspector(props: {
         <button
           className="button button--danger"
           onClick={async () => {
-            if (!window.confirm(t.records.inspector.deleteConfirm)) return
+            const confirmed = await confirmAction({
+              title: t.records.inspector.deleteTitle,
+              description: t.records.inspector.deleteBody,
+              confirmLabel: t.common.delete,
+              cancelLabel: t.common.cancel,
+              tone: 'danger'
+            })
+            if (!confirmed) return
             await api.records.remove(item.id)
             props.onDeleted()
           }}

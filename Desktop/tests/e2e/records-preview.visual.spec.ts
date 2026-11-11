@@ -101,7 +101,6 @@ test('Records 平台差异化卡片视觉验收', async () => {
     args: ['.', '--no-sandbox', '--disable-gpu'],
     env: {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: '',
       BREWPHASE_USER_DATA_DIR: appData,
       ELECTRON_DISABLE_SECURITY_WARNINGS: '1'
     }

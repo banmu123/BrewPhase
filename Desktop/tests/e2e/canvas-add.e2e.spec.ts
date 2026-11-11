@@ -98,7 +98,6 @@ async function launch(fixture: Fixture) {
     args: ['.', '--no-sandbox', '--disable-gpu'],
     env: {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: '',
       BREWPHASE_USER_DATA_DIR: fixture.userData,
       ELECTRON_DISABLE_SECURITY_WARNINGS: '1'
     }

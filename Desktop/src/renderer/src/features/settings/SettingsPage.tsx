@@ -12,6 +12,7 @@ import { MCP_SCOPE_GROUPS } from '@shared/contracts'
 import { api } from '../../shared/api'
 import { SUPPORTED_LOCALES, useI18n } from '../../i18n'
 import { useAppStore, type SettingsCategory } from '../../app/store'
+import { confirmAction } from '../../shared/ConfirmDialog'
 
 /**
  * 更多 / Settings。
@@ -418,9 +419,17 @@ function SyncSection() {
                 <button
                   className="button button--primary"
                   onClick={async () => {
-                    const message =
-                      conflict.remoteOperation === 'delete' ? t.sync.conflicts.confirmDelete : undefined
-                    if (message && !window.confirm(message)) return
+                    // 接受「手机端删除」是不可逆的：先确认，再落库。
+                    if (conflict.remoteOperation === 'delete') {
+                      const confirmed = await confirmAction({
+                        title: t.sync.conflicts.deleteTitle,
+                        description: t.sync.conflicts.deleteBody,
+                        confirmLabel: t.sync.conflicts.acceptDelete,
+                        cancelLabel: t.common.cancel,
+                        tone: 'danger'
+                      })
+                      if (!confirmed) return
+                    }
                     setStatus(await api.sync.resolveConflict(conflict.id, 'remote'))
                     setConflicts(await api.sync.conflicts())
                   }}

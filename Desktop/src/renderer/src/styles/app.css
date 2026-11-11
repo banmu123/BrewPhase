@@ -172,11 +172,13 @@ select:hover {
   border-color: var(--ink-faint);
 }
 
+/* 聚焦环用 sage（--focus），和 app 里其它控件一致；
+   原先的 roast 棕在浅绿灰的底色上偏脏，也抢了主按钮的注意力。 */
 input:focus,
 textarea:focus,
 select:focus {
-  border-color: var(--roast);
-  box-shadow: 0 0 0 3px rgba(138, 90, 52, 0.09);
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px rgba(155, 170, 145, 0.16);
 }
 
 textarea {
@@ -631,6 +633,24 @@ textarea {
   border-color: var(--priority);
   background: rgba(168, 80, 63, 0.06);
   box-shadow: none;
+}
+
+/* 只在确认框的底栏用：破坏性动作的主按钮要一眼可辨，
+   红字幽灵按钮放在「取消」旁边分不出哪个是主操作。 */
+.button--danger-solid {
+  background: var(--priority);
+  border-color: var(--priority);
+  color: #ffffff;
+}
+
+.button--danger-solid:hover {
+  background: #b25a48;
+  border-color: #b25a48;
+  box-shadow: var(--shadow-hover);
+}
+
+.button--danger-solid:active {
+  background: #8f4536;
 }
 
 .button:disabled {
@@ -2317,7 +2337,11 @@ body.canvas-focus .canvas-topbar {
   position: fixed;
   inset: 0;
   z-index: 100;
-  background: rgba(48, 55, 47, 0.28);
+  /* 轻磨砂：把底下的内容压成背景，浮层才有"停在一层之上"的感觉。
+     0.22 的遮罩 + 3px 模糊，比单纯压暗更耐看，也不至于看不清内容。 */
+  background: rgba(48, 55, 47, 0.22);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2327,7 +2351,8 @@ body.canvas-focus .canvas-topbar {
 
 .dialog {
   width: min(480px, calc(100vw - 48px));
-  max-height: calc(100vh - 96px);
+  /* 上下各留 36：小窗口里少裁一点内容，长表单就不会动不动出滚动条 */
+  max-height: calc(100vh - 72px);
   background: var(--card);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-large);
@@ -2346,29 +2371,45 @@ body.canvas-focus .canvas-topbar {
   width: min(560px, calc(100vw - 48px));
 }
 
+/* 标题区：对话框的标题是「一句话说清在做什么」，按正文层级读，
+   不再用小号字距的 overline——11px + 0.1em 在中文里既小又散。 */
 .dialog__head {
   flex: none;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  padding: 18px 20px 10px;
+  gap: 16px;
+  padding: 22px 22px 0;
 }
 
-.dialog__head .overline {
+.dialog__title {
   margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.45;
+  color: var(--ink);
+  text-wrap: pretty;
 }
 
 .dialog__close {
   flex: none;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
+  /* 让 ✕ 的视觉中心与标题首行对齐，而不是把标题区撑高。 */
+  margin: -4px -6px 0 0;
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: var(--ink-soft);
-  font-size: 13px;
-  cursor: pointer;
+  color: var(--ink-faint);
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .dialog__close:hover {
@@ -2380,12 +2421,59 @@ body.canvas-focus .canvas-topbar {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 4px 20px 20px;
+  padding: 10px 22px 22px;
+}
+
+/* 说明文字：比正文轻一档，行高放宽到 1.75，长句不挤成一块。 */
+.dialog__note {
+  margin: 0;
+  font-size: var(--fs-callout);
+  line-height: 1.75;
+  color: var(--ink-soft);
+  text-wrap: pretty;
+}
+
+/* 底栏：动作区与正文之间用一条 hairline 分开，按钮靠右收口。 */
+.dialog__foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 22px 18px;
+  border-top: 1px solid var(--hairline);
+  background: var(--paper);
+}
+
+.dialog__foot .button {
+  padding: 8px 16px;
 }
 
 /* 浮窗本身就是卡片：内层表单不再叠一层 panel 边框/背景。 */
 .dialog__body > .stack {
   gap: 10px;
+}
+
+/* 表单自己的动作区：和 `.dialog__foot` 长得一样。
+   负边距把色带出血到浮窗左右与底边，否则看起来只是正文里又多一行按钮。 */
+.dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin: 6px -22px -22px;
+  padding: 14px 22px 18px;
+  border-top: 1px solid var(--hairline);
+  background: var(--paper);
+}
+
+.dialog-actions .button {
+  padding: 8px 16px;
+}
+
+/* 短表单里动作区不在最后一个节点时，不做底部出血，避免留下色块。 */
+.dialog-actions:not(:last-child) {
+  margin-bottom: 0;
 }
 
 @keyframes dialog-fade-in {

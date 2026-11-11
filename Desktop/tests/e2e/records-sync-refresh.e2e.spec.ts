@@ -81,7 +81,6 @@ test('手机同步写库后，Records 一直开着也能自动更新', async () 
     args: ['.', '--no-sandbox', '--disable-gpu'],
     env: {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: '',
       BREWPHASE_USER_DATA_DIR: userData,
       ELECTRON_DISABLE_SECURITY_WARNINGS: '1'
     }

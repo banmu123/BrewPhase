@@ -30,7 +30,8 @@ export const coffee = {
   logBrew: '记一杯',
   deleteBrewTitle: '删除这次冲煮，库存按实扣量退回',
   deleteBean: '删除这包豆子',
-  confirmDeleteBean: (name: string) => `删除「${name}」？它的冲煮与品鉴会一并删除。`,
+  confirmDeleteTitle: (name: string) => `删除「${name}」？`,
+  confirmDeleteBody: '它的冲煮与品鉴会一并删除，删除后无法恢复。',
   windowNote: (restMin: number, restMax: number, peakStart: number, peakEnd: number, declineStart: number) =>
     `养豆 ${restMin}–${restMax} 天 · 黄金 ${peakStart}–${peakEnd} 天 · 第 ${declineStart} 天起衰减`,
   windowNoteHint: '基于默认窗口估算，不是保质期结论。',

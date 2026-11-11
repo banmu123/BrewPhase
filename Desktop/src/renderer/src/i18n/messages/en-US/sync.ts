@@ -45,6 +45,7 @@ export const sync = {
     keepLocal: 'Keep desktop version',
     acceptDelete: 'Accept deletion',
     acceptRemote: 'Accept phone version',
-    confirmDelete: 'Delete this record on the desktop? (already deleted on the phone)'
+    deleteTitle: 'Delete this record on the desktop?',
+    deleteBody: 'It was already deleted on the phone. Accepting removes this copy too — this cannot be undone.'
   }
 }
