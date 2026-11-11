@@ -93,6 +93,15 @@ tastings: { total, average_score } }`。只读聚合，不推导不存在的数�
 
 ## Canvas
 
+> 本节五个写工具（`create_canvas` / `add_record_to_canvas` /
+> `create_canvas_note` / `update_canvas_note` / `annotate_canvas_node`）全部是
+> **Desktop 本地操作**：只改本机 SQLite，响应里的
+> `sync_status: desktop_local_only` 表示不会回传 iPhone。便签与笔迹也只属于
+> Desktop（iOS 无对应同步模型）。客户端授权、`canvas:write` scope、幂等键、
+> `expected_updated_at` 乐观并发与写入审计照常生效；这些边界不因本地写入而改变。
+> 桌面改过的节点在 iPhone 再次同步时会进入冲突队列并保留本地版本，见
+> `docs/SYNC_PROTOCOL.md` §4。
+
 ### `list_canvases` — `canvas:read`
 `{}` → `{ items: [{ id, name, note, created_at, updated_at, node_count, note_count }] }`。
 

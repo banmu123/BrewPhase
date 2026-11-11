@@ -103,6 +103,34 @@
   绝不「整批 200 就全部提交」。
 - 整批一个事务；事务失败整批回滚并报告。
 
+### Canvas 数据所有权（iOS → Desktop 单向，2026-11-11 明确）
+
+**iOS → Desktop 是允许的；Desktop → iOS 永远不允许。** 桌面端 Canvas 是独立的
+本地创作空间，用户在 Desktop 的创作、编辑与整理都不会反向修改 iPhone 数据。
+
+| 类别 | 范围 | 行为 |
+| --- | --- | --- |
+| `ios_source` | iOS 已有的 `canvas` / `canvasNode`（含位置、尺寸、层级、annotation） | `SyncSnapshotBuilder.canvasBatches()` / `nodeBatches()` 推送到 Desktop；本地未改动时 iOS 是唯一事实来源 |
+| `desktop_local` | 新建/改名/删除桌面画布、添加节点、拖动、缩放、zIndex、annotation、便签、笔迹、MCP 写入 | **只改 Desktop 本地 SQLite**；不写 `sync_baseline`、不发起任何向 iPhone 的同步请求 |
+
+- **不需要来源标记列**：`sync_baseline` + 指纹 + `sync_conflicts` + `sync_rejected`
+  已能区分「iOS 来源且未改」「桌面改过」「桌面独有（无基线）」三种状态。不动
+  schema、不加 migration、不影响历史数据，对旧版 iOS 完全兼容。
+- 桌面端改过之后，基线仍是 iOS 上次同步的指纹：iPhone 再推旧内容会命中
+  §4「基线 == 来端指纹 → 冲突，保留本地」；桌面独有实体没有基线，同样落冲突
+  分支，**不会被下一次同步抹掉**。删除请求也不能绕过检查（`expectedFingerprint`
+  对不上 → 删除冲突）。只有用户在设置页显式裁决「接受手机版本」才允许覆盖或
+  删除桌面内容。
+- `canvasNote` / `canvasStroke` 是 **Desktop 本地能力**（iOS 无对应同步模型）：
+  入站批次在 `snapshot-importer.applyBatch` 一律拒绝（`failed`，不写本地表）。
+  `POST /api/sync/apply` 不校验 `entityType` 白名单，所以这条边界在导入器收口。
+- MCP 的 `create_canvas` / `add_record_to_canvas` / `create_canvas_note` /
+  `update_canvas_note` / `annotate_canvas_node` 全部是本地写入，响应带
+  `sync_status: desktop_local_only`；授权、scope、幂等键、`expected_updated_at`
+  与写入审计不受影响，见 `docs/MCP_TOOLS.md`。
+- 回归覆盖：`Desktop/tests/integration/canvas-sync-isolation.test.ts`
+  （首次导入 / 本地修改 / 旧数据 / 双方修改 / 删除保护 / 桌面独有画布 / 清空边界）。
+
 ## 5. 指纹（两端同规则）
 
 `SHA-256(规范串)`；规范串 = 固定字段序 + `\u{1F}` 分隔；字符串原样、`nil` → `~`、
@@ -188,7 +216,7 @@ SyncServer.onChanged → SyncService.onEvent({type:'state-changed'})
 | 清掉 | 保留 |
 | --- | --- |
 | records / record_tags / record_tag_links / record_metadata | **phase_rules**（全局配置，删了会被默认值填回来） |
-| canvases / canvas_nodes / canvas_strokes | devices / local_state |
+| canvases / canvas_nodes / canvas_notes / canvas_strokes | devices / local_state |
 | **beans / brews / tastings / phase_reminders** | |
 | 记录与豆子引用的媒体文件（连同 `_thumb` 变体） | |
 | sync_baseline / sync_conflicts / sync_rejected / change_log（上述全部实体） | |
@@ -197,6 +225,11 @@ SyncServer.onChanged → SyncService.onEvent({type:'state-changed'})
 但咖啡本来就会从 iPhone 同步过来，清空后留着它们只会让用户以为清空失败了。
 现在全部并入清空，**两端确认文案都必须写明「包括 Mac 上自己录入的」**——
 这是不可恢复的批量删除，文案与行为必须一致。
+
+**桌面本地 Canvas 创作同样在清空范围内**（这是既有边界，未改变）：Mac 上自己
+新建的画布、便签、笔迹，以及调整过的节点位置都会随画布一起删除，确认文案
+必须点名，不能只用「画布」概括。`canvas_notes` 是显式删除，不依赖外键级联。
+**「只撤销授权」与「关闭同步服务」都不调用 wipe**，本地 Canvas 保持原样。
 
 两端都能触发：iPhone「解除配对」选「解除并清空」，或 Mac 设置页「撤销授权」选
 「撤销并清空内容」。iOS 侧顺序固定为**清空（可选）→ 撤销授权 → 清本地 Keychain**：

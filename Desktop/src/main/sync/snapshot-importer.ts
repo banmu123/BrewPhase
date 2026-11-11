@@ -23,6 +23,25 @@ import type { Database } from 'better-sqlite3'
  * 指纹 = SHA-256(规范串)。规范串 = 固定字段序 + `\u001f` 分隔：
  * 字符串原样；null → `~`；布尔 → true/false；数字 → 最多 6 位小数、去尾零
  * （两端同规则，避免 1 vs 1.0 / Double 精度表达差异）。
+ *
+ * ## 数据所有权（Canvas 单向边界，2026-11-11 明确）
+ *
+ * **iOS → Desktop 是唯一方向；Desktop 永远不回传 iOS。** 现有 baseline +
+ * fingerprint + sync_rejected 已经能表达全部语义，不需要新增来源标记列：
+ *
+ * - `ios_source`：canvas / canvasNode 由 iOS 推送。首次导入记基线；桌面没动过
+ *   （基线 === 本地指纹）时 iOS 是唯一事实来源，允许覆盖并推进基线。
+ * - `desktop_local`：桌面端对画布/节点的一切编辑（改名、新建、删除、拖动、
+ *   缩放、层级、annotation、便签、笔迹、MCP 写入）只改本地行与 change_log，
+ *   **不写 sync_baseline**。基线仍是 iOS 上次同步的指纹，于是下一次 iOS 推送
+ *   会命中「基线 === 来端指纹 → 冲突，保留本地」；桌面独有实体没有基线，
+ *   同样落到冲突分支，不会被下一次同步抹掉。
+ * - `canvasNote` / `canvasStroke` 只属于 Desktop（iOS 无对应模型）：入站批次
+ *   在 `applyBatch` 一律拒绝，见下方 guard。
+ *
+ * 因此不动 schema、不加 migration、不影响历史数据，对旧版 iOS 完全兼容。
+ * 只有用户在设置页显式裁决「接受手机版本」时才允许覆盖本地内容
+ * （`SyncService.resolveConflict('remote')`），删除同样受这层保护。
  */
 
 export const FIELD_SEPARATOR = '\u001f'
@@ -386,6 +405,22 @@ export function applyBatch(sqlite: Database, batch: SyncBatch, sourceDeviceId: s
 
   const run = sqlite.transaction(() => {
     for (const operation of batch.operations) {
+      // 便签与笔迹是 Desktop 本地创作能力：iOS 没有对应同步模型，`/api/sync/apply`
+      // 也不校验 entityType 白名单，所以边界必须在导入器里显式收口。入站一律
+      // 逐条 failed（可见、可排障），不写本地表、不静默吞掉。iOS 正常批次永远
+      // 不含这两类，改动前后行为一致；将来误发时也不会污染桌面本地数据。
+      if (operation.entityType === 'canvasNote' || operation.entityType === 'canvasStroke') {
+        for (const item of [...operation.upserts, ...operation.deletes]) {
+          mark({
+            entityType: operation.entityType,
+            id: item.id,
+            status: 'failed',
+            reason: 'desktop_local_only: canvas notes/strokes are not synced from iOS'
+          })
+        }
+        continue
+      }
+
       if (operation.entityType === 'recordTagLink') {
         applyTagLinkOperation(sqlite, operation, sourceDeviceId, mark)
         continue
