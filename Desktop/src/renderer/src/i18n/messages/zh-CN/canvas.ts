@@ -41,6 +41,7 @@ export const canvas = {
   },
 
   zoom: {
+    controls: '画布缩放',
     out: '缩小',
     in: '放大',
     fit: '适配全部内容',

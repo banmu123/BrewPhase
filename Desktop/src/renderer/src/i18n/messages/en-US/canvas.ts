@@ -38,6 +38,7 @@ export const canvas = {
   },
 
   zoom: {
+    controls: 'Canvas zoom',
     out: 'Zoom out',
     in: 'Zoom in',
     fit: 'Fit all content',

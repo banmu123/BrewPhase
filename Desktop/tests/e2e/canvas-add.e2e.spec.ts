@@ -260,6 +260,19 @@ test('画布：Gallery 导航、多选批量、拖动、双击打开、画布备
   await expect(page.locator('.canvas-topbar')).toBeVisible()
   await expect(page.locator('.canvas-back')).toBeVisible()
 
+  // 2.1) 缩放控件是单个横排胶囊，中文「适配」等标签不撑破按钮。
+  //      旧实现给每个按钮定宽 40px + 17px 字号，中文会溢出白底，视觉上散成一块块。
+  const hud = page.locator('.canvas-hud')
+  await expect(hud).toBeVisible()
+  expect(await hud.evaluate((el) => getComputedStyle(el).flexDirection)).toBe('row')
+  expect(
+    await hud.evaluate((el) =>
+      Array.from(el.children)
+        .filter((child) => child.scrollWidth > child.clientWidth + 1)
+        .map((child) => String(child.className))
+    )
+  ).toEqual([])
+
   // 3) Picker 多选：选 3 条 → 「加入 3 项」→ 批量落库
   await page.getByRole('button', { name: '添加一条记录' }).click()
   await expect(page.locator('.picker-panel')).toBeVisible()

@@ -23,7 +23,7 @@ import { refreshThemeColors, themeColors } from '../../shared/tokens'
 import { Modal } from '../../shared/Modal'
 import { ConfirmDialog } from '../../shared/ConfirmDialog'
 import { CanvasThumbnail } from './CanvasThumbnail'
-import { EraserIcon, NoteIcon, PanIcon, PenIcon, SelectIcon } from '../../shared/icons'
+import { EraserIcon, FitIcon, MinusIcon, NoteIcon, PanIcon, PenIcon, PlusIcon, SelectIcon } from '../../shared/icons'
 
 /**
  * Canvas 空间的两级结构（对标 iOS CanvasListView → CanvasWorkspaceView）：
@@ -1125,29 +1125,39 @@ export function CanvasPage() {
             onAddRecord={() => setSidePanel((value) => (value === 'picker' ? null : 'picker'))}
           />
 
-          <div className="canvas-hud">
-            <span className="canvas-hud__zoom mono">{formatNumber(Math.round(viewport.scale * 100))}%</span>
+          {/* 缩放控件与底部 Studio 工具栏同一套胶囊语言：一个容器、一条分隔线、
+              步进区（− 读数 +）和视图预设区分开。旧实现是五个各自带白底的方块，
+              固定 40px 宽度装不下「适配」，中文会撑破按钮，看起来像散落的标签。 */}
+          <div className="canvas-hud" role="group" aria-label={t.canvas.zoom.controls}>
             <button
-              className="button"
+              className="canvas-hud__icon"
               aria-label={t.canvas.zoom.out}
               title={t.canvas.zoom.out}
               onClick={() => { markUserAdjusted(); setViewport((current) => zoomAt(current, current.scale / 1.15, { x: size.width / 2, y: size.height / 2 })) }}
             >
-              −
+              <MinusIcon size={16} />
             </button>
+            <span className="canvas-hud__zoom mono">{formatNumber(Math.round(viewport.scale * 100))}%</span>
             <button
-              className="button"
+              className="canvas-hud__icon"
               aria-label={t.canvas.zoom.in}
               title={t.canvas.zoom.in}
               onClick={() => { markUserAdjusted(); setViewport((current) => zoomAt(current, current.scale * 1.15, { x: size.width / 2, y: size.height / 2 })) }}
             >
-              +
+              <PlusIcon size={16} />
             </button>
-            <button className="button" aria-label={t.canvas.zoom.fit} title={t.canvas.zoom.fitTitle} onClick={() => fitAll()}>
+            <span className="canvas-hud__divider" />
+            <button
+              className="canvas-hud__action"
+              aria-label={t.canvas.zoom.fit}
+              title={t.canvas.zoom.fitTitle}
+              onClick={() => fitAll()}
+            >
+              <FitIcon size={15} />
               {t.canvas.zoom.fitLabel}
             </button>
             <button
-              className="button"
+              className="canvas-hud__action mono"
               aria-label={t.canvas.zoom.reset}
               title={t.canvas.zoom.resetTitle}
               onClick={() => { markUserAdjusted(); setViewport((current) => zoomAt(current, 1, { x: size.width / 2, y: size.height / 2 })) }}

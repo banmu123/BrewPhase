@@ -187,3 +187,34 @@ export function ExternalIcon({ size = 20 }: IconProps) {
     </svg>
   )
 }
+
+/** 缩小：一条水平线 */
+export function MinusIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M4.6 10h10.8" />
+    </svg>
+  )
+}
+
+/** 放大：水平线 + 垂直线 */
+export function PlusIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M4.6 10h10.8" />
+      <path d="M10 4.6v10.8" />
+    </svg>
+  )
+}
+
+/** 适配全部内容：四角取景框 */
+export function FitIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M7.4 3.8H4.6a.8.8 0 0 0-.8.8v2.8" />
+      <path d="M12.6 3.8h2.8a.8.8 0 0 1 .8.8v2.8" />
+      <path d="M7.4 16.2H4.6a.8.8 0 0 1-.8-.8v-2.8" />
+      <path d="M12.6 16.2h2.8a.8.8 0 0 0 .8-.8v-2.8" />
+    </svg>
+  )
+}
