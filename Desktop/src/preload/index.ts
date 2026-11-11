@@ -111,6 +111,12 @@ const api: RendererApi = {
     openExternal: async (url) => {
       await invoke(IPC.browserOpenExternal, url ? { url } : {})
     },
+    showStart: () => invoke(IPC.browserShowStart),
+    // 只传 Profile 目录名：preload 不构造路径，主进程也不接受路径。
+    detectChrome: () => invoke(IPC.browserChromeDetect),
+    previewChromeBookmarks: (profileId) => invoke(IPC.browserBookmarksPreview, { profileId }),
+    importChromeBookmarks: (profileId) => invoke(IPC.browserBookmarksImport, { profileId }),
+    bookmarks: () => invoke(IPC.browserBookmarksTree),
     onChanged: (listener) => {
       const wrapped = (_event: unknown, state: BrowserState) => listener(state)
       ipcRenderer.on(BROWSER_CHANGED_CHANNEL, wrapped)

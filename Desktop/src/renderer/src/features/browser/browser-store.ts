@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { BrowserOpenInput, BrowserState } from '@shared/contracts'
+import type { BookmarkTree, BrowserOpenInput, BrowserState } from '@shared/contracts'
 import { api } from '../../shared/api'
 
 /**
@@ -17,6 +17,7 @@ const EMPTY_STATE: BrowserState = {
   visible: false,
   alive: false,
   url: '',
+  startPage: true,
   title: '',
   loading: false,
   progress: 0,
@@ -30,12 +31,16 @@ const EMPTY_STATE: BrowserState = {
 
 type BrowserStore = {
   state: BrowserState
+  /** 本地书签树；`null` 表示还没加载（起始页显示加载态）。 */
+  bookmarks: BookmarkTree | null
   /** 是否已经从主进程取到过一次真实状态。 */
   hydrated: boolean
   hydrate: () => Promise<void>
+  loadBookmarks: () => Promise<void>
   open: (input?: BrowserOpenInput) => Promise<void>
   hide: () => Promise<void>
   close: () => Promise<void>
+  showStart: () => Promise<void>
   navigate: (input: string) => Promise<void>
   back: () => Promise<void>
   forward: () => Promise<void>
@@ -52,6 +57,7 @@ function report(error: unknown): void {
 
 export const useBrowserStore = create<BrowserStore>((set, get) => ({
   state: EMPTY_STATE,
+  bookmarks: null,
   hydrated: false,
 
   hydrate: async () => {
@@ -61,6 +67,24 @@ export const useBrowserStore = create<BrowserStore>((set, get) => ({
     } catch (error) {
       report(error)
       set({ hydrated: true })
+    }
+  },
+
+  loadBookmarks: async () => {
+    try {
+      set({ bookmarks: await api.browser.bookmarks() })
+    } catch (error) {
+      report(error)
+    }
+  },
+
+  showStart: async () => {
+    try {
+      set({ state: await api.browser.showStart() })
+      // 设置页刚导入完可能已经变了：每次回起始页都重新读一次本地树。
+      set({ bookmarks: await api.browser.bookmarks() })
+    } catch (error) {
+      report(error)
     }
   },
 

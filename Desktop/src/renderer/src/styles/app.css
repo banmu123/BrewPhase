@@ -4682,14 +4682,16 @@ body.canvas-focus .canvas-topbar {
   position: absolute;
   inset: 0;
   overflow: auto;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
   padding: 28px 24px;
   background: var(--paper);
 }
 
+/* 内容少时垂直居中，书签多了从上往下排且可滚动（grid 居中会把顶部裁掉）。 */
 .browser-start__inner {
-  width: min(460px, 100%);
+  width: min(560px, 100%);
+  margin: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -4900,6 +4902,297 @@ body.canvas-focus .canvas-topbar {
   white-space: nowrap;
   font-size: 10.5px;
   color: var(--ink-faint);
+}
+
+/* ---------- 起始页 · 导入的书签 ---------- */
+
+.browser-shelves {
+  width: 100%;
+  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  text-align: left;
+}
+
+.browser-shelf {
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+
+.browser-shelf__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 5px;
+}
+
+.browser-shelf__head .overline {
+  margin: 0;
+  font-size: 9.5px;
+  letter-spacing: 0.19em;
+}
+
+.browser-shelf__count {
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.browser-shelf__list,
+.browser-node__children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* 层级靠缩进 + 一根细线表达，不把整棵树拍平。 */
+.browser-node__children {
+  margin: 1px 0 3px 15px;
+  padding-left: 10px;
+  border-left: 1px solid var(--hairline);
+}
+
+.browser-node__row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.14s ease;
+}
+
+.browser-node__row:hover {
+  background: var(--well);
+}
+
+.browser-node__dot {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--well-deep);
+  color: var(--ink-soft);
+  font-size: 9.5px;
+  font-weight: 600;
+}
+
+.browser-node__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-node__host {
+  flex: 0 0 auto;
+  max-width: 38%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--ink-faint);
+}
+
+/* 文件夹：一个朝右的小三角，展开时转 90°。 */
+.browser-node__chevron {
+  flex: 0 0 auto;
+  width: 0;
+  height: 0;
+  margin: 0 5px 0 3px;
+  border-left: 4px solid var(--ink-faint);
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transition: transform 0.15s ease;
+}
+
+.browser-node__row--folder {
+  font-weight: 500;
+}
+
+.browser-node__row--folder[data-open='true'] .browser-node__chevron {
+  transform: rotate(90deg);
+}
+
+.browser-node__count {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 没有书签时的导入入口：一张虚线卡片，而不是一行光秃秃的链接。 */
+.browser-shelves__empty {
+  width: 100%;
+  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 16px 18px;
+  border: 1px dashed var(--hairline-strong);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease;
+}
+
+.browser-shelves__empty:hover {
+  border-color: var(--focus);
+  background: var(--well);
+}
+
+.browser-shelves__empty-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.browser-shelves__empty-hint {
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+.browser-shelves__empty-action {
+  margin-top: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--roast);
+}
+
+/* ---------- 设置 · Chrome 书签导入 ---------- */
+
+.browser-profiles {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.browser-profile {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  gap: 2px 12px;
+  padding: 11px 13px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-small);
+  background: var(--card);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease;
+}
+
+.browser-profile:hover:not(:disabled) {
+  background: var(--well);
+  border-color: var(--hairline-strong);
+}
+
+.browser-profile[data-active='true'] {
+  background: var(--well);
+  border-color: var(--focus);
+}
+
+.browser-profile:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.browser-profile__name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.browser-profile__meta {
+  grid-row: 2;
+  font-size: 10.5px;
+  color: var(--ink-faint);
+}
+
+.browser-profile__state {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  align-self: center;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.browser-profile__state[data-ok='false'] {
+  color: var(--priority);
+}
+
+.browser-import__notice {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-small);
+  background: var(--well);
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.browser-import__error {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(168, 80, 63, 0.26);
+  border-radius: var(--radius-small);
+  background: rgba(168, 80, 63, 0.06);
+}
+
+.browser-import__error strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12.5px;
+  color: var(--priority);
+}
+
+.browser-import__error p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+.browser-import__stats {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.browser-import__stats li {
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: var(--well);
+  font-size: 12px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---------- 错误页 ---------- */

@@ -66,8 +66,13 @@ export type BrowserState = {
   visible: boolean
   /** 网页容器是否已经存在。用于判断「再次打开是复用还是新建」。 */
   alive: boolean
-  /** 当前地址；空字符串表示停在初始页。 */
+  /** 当前地址；空字符串表示还没有打开过页面。 */
   url: string
+  /**
+   * 是否停在起始页。为 true 时网页只是 `setVisible(false)`，WebContentsView
+   * 仍然存在——滚动位置、加载状态与 Session 都不受影响。
+   */
+  startPage: boolean
   title: string
   /** 正在加载（含同一页面内的前进/后退）。 */
   loading: boolean

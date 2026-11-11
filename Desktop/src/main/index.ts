@@ -18,6 +18,7 @@ import { CoffeeService } from './application/coffee/coffee-service'
 import { CanvasService } from './application/canvas/canvas-service'
 import { McpClientService } from './application/authorization/permission-service'
 import { BrowserManager } from './browser/browser-manager'
+import { BookmarkService } from './browser/bookmark-service'
 import { BridgeServer } from './mcp-bridge/bridge-server'
 import { BRIDGE_PROTOCOL_VERSION, bridgePaths, platformSupportsBridge } from './mcp-bridge/bridge-contract'
 import type { McpBridgeStatus } from '../shared/contracts/mcp'
@@ -198,13 +199,16 @@ function bootstrap(): void {
     getWindow: () => BrowserWindow.getAllWindows()[0] ?? null
   })
 
+  const bookmarkService = new BookmarkService(db.db)
+
   registerIpc({
     db,
     devServerUrl,
     sync: syncService,
     services: { records, clients },
     bridgeStatus,
-    browser: browserManager
+    browser: browserManager,
+    bookmarks: bookmarkService
   })
 
   const mainWindow = createMainWindow({ devServerUrl })

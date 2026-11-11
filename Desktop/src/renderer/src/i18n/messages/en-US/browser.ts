@@ -9,6 +9,7 @@ export const browser: typeof BrowserMessages = {
   titlebarHint: 'Drag the title bar to move the window',
   resizeHint: 'Drag an edge or corner to resize',
   toolbar: {
+    start: 'Start page',
     back: 'Back',
     forward: 'Forward',
     reload: 'Reload',
@@ -25,6 +26,18 @@ export const browser: typeof BrowserMessages = {
     resume: 'Resume last visit',
     empty: 'Nothing visited yet.',
     shortcut: 'Search'
+  },
+  /** Bookmarks imported from Chrome (start page + settings import wizard). */
+  bookmarks: {
+    roots: {
+      bookmarkBar: 'Bookmarks bar',
+      other: 'Other bookmarks',
+      synced: 'Mobile bookmarks'
+    },
+    emptyTitle: 'Bring your Chrome bookmarks over',
+    emptyHint: 'Import the bookmarks bar, other bookmarks and folders in Settings → Browser. Their hierarchy is kept.',
+    import: 'Import bookmarks',
+    untitled: 'Untitled bookmark'
   },
   status: {
     loading: 'Loading…',

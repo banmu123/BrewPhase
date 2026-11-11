@@ -8,7 +8,7 @@ import { pinLocale } from './locale'
  * Settings 二级导航与 AI 连接 E2E。
  *
  * 覆盖：
- * 1. 三个设置分类的导航与内容切换；
+ * 1. 四个设置分类的导航与内容切换；
  * 2. 常规页的真实信息（版本、schema、数据目录、语言分段控件）；
  * 3. MCP：UI 创建客户端 → token 一次性展示 → 收起后不可再取 →
  *    配置模板含真实入口路径 → 撤销（两步确认）。
@@ -40,6 +40,7 @@ test('Settings：二级导航、常规信息与 AI 连接全流程', async () =>
   const nav = (name: string) => page.getByRole('button', { name, exact: true })
   await expect(nav('常规')).toBeVisible()
   await expect(nav('设备同步')).toBeVisible()
+  await expect(nav('浏览器')).toBeVisible()
   await expect(nav('AI 连接')).toBeVisible()
   await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible()
   await expect(page.getByText('管理应用、数据与连接')).toBeVisible()

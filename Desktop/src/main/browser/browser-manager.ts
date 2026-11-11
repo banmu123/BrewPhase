@@ -58,6 +58,11 @@ export class BrowserManager {
 
   /** 浮窗是否被用户打开（与 view 是否绘制是两件事）。 */
   private panelVisible = false
+  /**
+   * 是否停在起始页。与 `currentURL` 分开：从网页回到起始页时地址仍然保留，
+   * 网页容器也不销毁，只是让原生层让开，由 React 画书签与最近访问。
+   */
+  private startPage = true
   private currentURL = ''
   private title = ''
   private loading = false
@@ -87,6 +92,7 @@ export class BrowserManager {
       visible: this.panelVisible,
       alive: this.view !== null && !this.view.webContents.isDestroyed(),
       url: this.currentURL,
+      startPage: this.startPage,
       title: this.title,
       loading: this.loading,
       progress: this.progress,
@@ -115,11 +121,29 @@ export class BrowserManager {
     const target = requested || (this.currentURL ? null : this.recent[0]?.url)
 
     if (!target) {
+      this.startPage = true
       this.syncVisibility()
       this.emit()
       return this.state()
     }
     return this.navigate(target)
+  }
+
+  /**
+   * 回到起始页（看导入的书签、最近访问）。
+   *
+   * 只改显示状态：`WebContentsView` 不销毁、`currentURL` 不清空，用户再点
+   * 书签时直接复用同一个网页容器，加载状态、滚动位置、登录态都还在。
+   */
+  showStart(): BrowserState {
+    this.panelVisible = true
+    this.startPage = true
+    this.error = null
+    this.loading = false
+    this.progress = 0
+    this.syncVisibility()
+    this.emit()
+    return this.state()
   }
 
   /** 隐藏：不销毁页面。滚动位置、播放进度、登录态都留着。 */
@@ -142,6 +166,7 @@ export class BrowserManager {
     this.destroyView()
     this.currentURL = ''
     this.title = ''
+    this.startPage = true
     this.loading = false
     this.progress = 0
     this.error = null
@@ -168,6 +193,7 @@ export class BrowserManager {
               ? 'empty address'
               : 'unparseable address'
       }
+      this.startPage = false
       this.loading = false
       this.progress = 0
       this.syncVisibility()
@@ -197,6 +223,7 @@ export class BrowserManager {
     if (!view) return this.state()
 
     // 先乐观地切到「加载中」：原生 view 立刻显示，避免初始页/错误态残留一帧。
+    this.startPage = false
     this.currentURL = normalized
     this.title = ''
     this.loading = true
@@ -396,8 +423,9 @@ export class BrowserManager {
   }
 
   /**
-   * 可见性由三件事共同决定：用户打开了浮窗、有要显示的页面、且当前不是错误态。
-   * 初始页与错误页都由 React 画，此时原生 view 必须让开——它永远在最上层。
+   * 可见性由四件事共同决定：用户打开了浮窗、没停在起始页、有要显示的页面、
+   * 且当前不是错误态。起始页与错误页都由 React 画，此时原生 view 必须让开——
+   * 它永远在最上层，任何 z-index 都盖不住。
    */
   private syncVisibility(): void {
     const view = this.view
@@ -405,7 +433,8 @@ export class BrowserManager {
     // 没有有效矩形时也不要画：此时原生层会以 0×0 出现在左上角，看起来像
     // 一块贴边的白条。等 setBounds 到达后再显示。
     const hasArea = this.bounds !== null && this.bounds.width > 0 && this.bounds.height > 0
-    const shouldShow = this.panelVisible && this.currentURL !== '' && this.error === null && hasArea
+    const shouldShow =
+      this.panelVisible && !this.startPage && this.currentURL !== '' && this.error === null && hasArea
     view.setVisible(shouldShow)
   }
 

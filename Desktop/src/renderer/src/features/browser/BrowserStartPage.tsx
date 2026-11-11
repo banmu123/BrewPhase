@@ -1,35 +1,41 @@
 import { useEffect, useRef, useState } from 'react'
-import type { BrowserVisit } from '@shared/contracts'
+import type { BookmarkItem, BookmarkNode, BookmarkRoot, BookmarkTree, BrowserVisit } from '@shared/contracts'
 import { useI18n } from '../../i18n'
 import { GlobeIcon } from '../../shared/icons'
 
 /**
- * 浏览器初始页：**没有地址时**的欢迎面，不是空白窗口。
+ * 浏览器起始页：**没有打开网页时**的欢迎面，也是书签的落点。
  *
  * 三条约束：
  * 1. 全部由 React 画——此时主进程把 WebContentsView 藏起来了，否则原生层会
  *    盖住这块界面；
- * 2. 不预置任何网站。最近访问只来自真实的 `did-navigate` 记录（local_state
- *    里只有地址、标题、时间），没有就明说「还没有访问记录」；
+ * 2. 最近访问只来自真实的 `did-navigate` 记录；书签只来自用户主动导入的本地
+ *    副本，不预置、不联网；
  * 3. 输入框和地址栏走**同一个** `resolveBrowserInput`，所以这里输入
  *    `example.com`、`咖啡豆` 或 `javascript:` 的行为与工具栏完全一致。
  */
 export function BrowserStartPage(props: {
   recent: BrowserVisit[]
   lastVisit: BrowserVisit | null
+  /** `null` = 还没从主进程取到，先不画书签区，避免闪一下空态。 */
+  bookmarks: BookmarkTree | null
   onSubmit: (value: string) => void
   onOpen: (url: string) => void
+  /** 空态里的导入入口：跳到 设置 → 浏览器。 */
+  onImport: () => void
 }) {
   const { t } = useI18n()
   const [value, setValue] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // 打开浮窗就把光标放进输入框：初始页的唯一主动作就是「输入」。
+  // 打开浮窗就把光标放进输入框：起始页的唯一主动作是「输入」。
   useEffect(() => {
     inputRef.current?.focus()
   }, [])
 
   const recent = props.recent.slice(0, 6)
+  const roots = props.bookmarks?.roots.filter((root) => root.children.length > 0) ?? []
+  const hasBookmarks = roots.length > 0
 
   return (
     <div className="browser-start">
@@ -74,6 +80,21 @@ export function BrowserStartPage(props: {
           </button>
         )}
 
+        {props.bookmarks !== null &&
+          (hasBookmarks ? (
+            <div className="browser-shelves">
+              {roots.map((root) => (
+                <BookmarkShelf key={root.id} root={root} onOpen={props.onOpen} />
+              ))}
+            </div>
+          ) : (
+            <button type="button" className="browser-shelves__empty" onClick={props.onImport}>
+              <span className="browser-shelves__empty-title">{t.browser.bookmarks.emptyTitle}</span>
+              <span className="browser-shelves__empty-hint">{t.browser.bookmarks.emptyHint}</span>
+              <span className="browser-shelves__empty-action">{t.browser.bookmarks.import}</span>
+            </button>
+          ))}
+
         <section className="browser-start__recent" aria-label={t.browser.start.recent}>
           <span className="overline">{t.browser.start.recent}</span>
           {recent.length === 0 ? (
@@ -99,6 +120,105 @@ export function BrowserStartPage(props: {
       </div>
     </div>
   )
+}
+
+/** 一个 Chrome 根（书签栏 / 其他书签 / 移动设备书签）。空根不渲染。 */
+function BookmarkShelf({ root, onOpen }: { root: BookmarkRoot; onOpen: (url: string) => void }) {
+  const { t } = useI18n()
+  return (
+    <section className="browser-shelf">
+      <div className="browser-shelf__head">
+        <span className="overline">{rootTitle(root, t)}</span>
+        <span className="browser-shelf__count">{countBookmarks(root.children)}</span>
+      </div>
+      <ul className="browser-shelf__list">
+        {root.children.map((node) => (
+          <BookmarkNodeRow key={node.id} node={node} onOpen={onOpen} />
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+function BookmarkNodeRow(props: { node: BookmarkNode; onOpen: (url: string) => void }) {
+  return props.node.kind === 'folder' ? (
+    <BookmarkFolderRow folder={props.node} onOpen={props.onOpen} />
+  ) : (
+    <BookmarkLink item={props.node} onOpen={props.onOpen} />
+  )
+}
+
+/**
+ * 文件夹：默认收起，点一下展开。保留层级而不是把整棵树拍平——用户找书签
+ * 靠的就是自己当年分的类。
+ */
+function BookmarkFolderRow(props: {
+  folder: import('@shared/contracts').BookmarkFolder
+  onOpen: (url: string) => void
+}) {
+  const { t } = useI18n()
+  const [open, setOpen] = useState(false)
+  const count = countBookmarks(props.folder.children)
+
+  return (
+    <li className="browser-node">
+      <button
+        type="button"
+        className="browser-node__row browser-node__row--folder"
+        data-open={open}
+        aria-expanded={open}
+        title={props.folder.title}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="browser-node__chevron" aria-hidden="true" />
+        <span className="browser-node__name">{props.folder.title || t.browser.bookmarks.untitled}</span>
+        <span className="browser-node__count">{count}</span>
+      </button>
+      {open && (
+        <ul className="browser-node__children">
+          {props.folder.children.map((child) => (
+            <BookmarkNodeRow key={child.id} node={child} onOpen={props.onOpen} />
+          ))}
+        </ul>
+      )}
+    </li>
+  )
+}
+
+function BookmarkLink(props: { item: BookmarkItem; onOpen: (url: string) => void }) {
+  const { t } = useI18n()
+  const host = hostOf(props.item.url)
+  return (
+    <li className="browser-node">
+      <button
+        type="button"
+        className="browser-node__row"
+        title={`${props.item.title || host}\n${props.item.url}`}
+        onClick={() => props.onOpen(props.item.url)}
+      >
+        <span className="browser-node__dot" aria-hidden="true">
+          {(host.charAt(0) || '·').toUpperCase()}
+        </span>
+        <span className="browser-node__name">{props.item.title || host || t.browser.bookmarks.untitled}</span>
+        <span className="browser-node__host">{host}</span>
+      </button>
+    </li>
+  )
+}
+
+function rootTitle(root: BookmarkRoot, t: ReturnType<typeof useI18n>['t']): string {
+  if (root.kind === 'bookmark_bar') return t.browser.bookmarks.roots.bookmarkBar
+  if (root.kind === 'synced') return t.browser.bookmarks.roots.synced
+  return t.browser.bookmarks.roots.other
+}
+
+function countBookmarks(nodes: readonly BookmarkNode[]): number {
+  let total = 0
+  for (const node of nodes) {
+    if (node.kind === 'bookmark') total += 1
+    else total += countBookmarks(node.children)
+  }
+  return total
 }
 
 function visitTitle(visit: BrowserVisit, fallback: string): string {

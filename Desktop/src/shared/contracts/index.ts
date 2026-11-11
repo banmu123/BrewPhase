@@ -4,6 +4,12 @@ import type { ImportImageResult, RecordDraft, RecordItem, RecordQuery, RecordTag
 import type { SyncStatus, SyncConflictItem, WipeResult } from './sync'
 import type { McpBridgeStatus, McpClientCreateInput, McpClientCreated, McpClientInfo } from './mcp'
 import type { BrowserBounds, BrowserOpenInput, BrowserState } from './browser'
+import type {
+  BookmarkImportResult,
+  BookmarkPreview,
+  BookmarkTree,
+  ChromeDetection
+} from './bookmarks'
 import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from './version'
 
 export * from './version'
@@ -13,6 +19,7 @@ export * from './entities/canvas'
 export * from './sync'
 export * from './mcp'
 export * from './browser'
+export * from './bookmarks'
 export * from './validation/ipc'
 
 /**
@@ -153,6 +160,19 @@ export interface RendererApi {
     setBounds: (bounds: BrowserBounds) => Promise<void>
     /** 用系统默认浏览器打开当前页（用户主动触发，网页不能自己调）。 */
     openExternal: (url?: string) => Promise<void>
+    /**
+     * 回到起始页：只把 WebContentsView 藏起来，**不销毁**。
+     * 当前网页的加载状态、滚动位置与 Session 都保留，再点书签直接继续。
+     */
+    showStart: () => Promise<BrowserState>
+    /** 检测本机 Chrome 与可用 Profile（主进程解析路径，渲染层只拿名称）。 */
+    detectChrome: () => Promise<ChromeDetection>
+    /** 预览某个 Profile 的书签数量；不写库。 */
+    previewChromeBookmarks: (profileId: string) => Promise<BookmarkPreview>
+    /** 用户确认后导入：非破坏性合并进本地书签库。 */
+    importChromeBookmarks: (profileId: string) => Promise<BookmarkImportResult>
+    /** BrewPhase 当前的书签树（本地，不参与设备同步）。 */
+    bookmarks: () => Promise<BookmarkTree>
     /** 导航、加载、标题、能力位变化时广播整份快照。 */
     onChanged: (listener: (state: BrowserState) => void) => () => void
   }

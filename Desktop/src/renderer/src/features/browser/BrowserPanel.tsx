@@ -11,10 +11,12 @@ import {
 } from '@shared/browser-layout'
 import { displayURL } from '@shared/browser-url'
 import { useI18n } from '../../i18n'
+import { useAppStore } from '../../app/store'
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
   ExternalIcon,
+  HomeIcon,
   ReloadIcon,
   StopIcon
 } from '../../shared/icons'
@@ -52,6 +54,7 @@ type ResizeState = DragState & { direction: ResizeDirection }
 export function BrowserPanel() {
   const { t } = useI18n()
   const state = useBrowserStore((store) => store.state)
+  const bookmarks = useBrowserStore((store) => store.bookmarks)
   const store = useBrowserStore
 
   const [bounds, setBounds] = useState<BrowserBounds | null>(null)
@@ -66,6 +69,17 @@ export function BrowserPanel() {
   const rafRef = useRef<number | null>(null)
 
   const { visible, url, error, loading, canGoBack, canGoForward, progress, title } = state
+  /**
+   * 起始页 = 主进程说「停在这一页」，或从没导航过（老状态兜底）。
+   * 错误页优先于起始页：有错误时显示错误，不显示书签。
+   */
+  const showStart = !error && (state.startPage || !url)
+
+  // 每次回到起始页都读一次本地书签树：设置页刚导入完时这里必须看到新数据。
+  useEffect(() => {
+    if (!visible || !showStart) return
+    void store.getState().loadBookmarks()
+  }, [visible, showStart, store])
 
   /**
    * 位置只初始化一次（每次从隐藏变可见）：之后由拖动/缩放接管。
@@ -154,7 +168,6 @@ export function BrowserPanel() {
   if (!visible) return null
 
   const current = bounds ?? defaultBrowserBounds(viewportSize())
-  const showStart = !url && !error
   const showError = error !== null
 
   const startDrag = (event: React.PointerEvent<HTMLElement>): void => {
@@ -278,6 +291,18 @@ export function BrowserPanel() {
       </header>
 
       <div className="browser-panel__toolbar">
+        {/* 起始页：网页还在，只是让开。点书签直接接着浏览，Session 不断。 */}
+        <button
+          type="button"
+          className="browser-panel__nav"
+          aria-label={t.browser.toolbar.start}
+          title={t.browser.toolbar.start}
+          data-active={showStart}
+          disabled={showStart}
+          onClick={() => void store.getState().showStart()}
+        >
+          <HomeIcon size={17} />
+        </button>
         <button
           type="button"
           className="browser-panel__nav"
@@ -360,8 +385,14 @@ export function BrowserPanel() {
           <BrowserStartPage
             recent={state.recent}
             lastVisit={state.lastVisit}
+            bookmarks={bookmarks}
             onSubmit={(value) => void store.getState().navigate(value)}
             onOpen={(target) => void store.getState().open({ url: target })}
+            onImport={() => {
+              // 浮窗是全局的，会盖住设置页：先收起，再切到设置 → 浏览器。
+              void store.getState().hide()
+              useAppStore.getState().openSettings('browser')
+            }}
           />
         )}
         {showError && error && (

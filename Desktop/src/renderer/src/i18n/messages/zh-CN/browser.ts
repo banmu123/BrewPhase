@@ -14,6 +14,7 @@ export const browser = {
   titlebarHint: '拖动标题栏移动浮窗',
   resizeHint: '拖动边缘或四角调整大小',
   toolbar: {
+    start: '起始页',
     back: '后退',
     forward: '前进',
     reload: '刷新',
@@ -30,6 +31,18 @@ export const browser = {
     resume: '继续上次访问',
     empty: '还没有访问记录。',
     shortcut: '搜索'
+  },
+  /** 从 Chrome 导入的书签（起始页展示，设置页导入向导共用）。 */
+  bookmarks: {
+    roots: {
+      bookmarkBar: '书签栏',
+      other: '其他书签',
+      synced: '移动设备书签'
+    },
+    emptyTitle: '把 Chrome 的收藏夹带过来',
+    emptyHint: '在设置 → 浏览器里导入书签栏、其他书签与文件夹，原有层级会一起保留。',
+    import: '去导入书签',
+    untitled: '未命名书签'
   },
   status: {
     loading: '正在加载…',

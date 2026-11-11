@@ -4,6 +4,7 @@ import { recordDraftSchema, recordQuerySchema } from '../entities/records'
 import { canvasNodeMoveSchema, canvasNodeResizeSchema, canvasNoteSchema, canvasStrokeSchema } from '../entities/canvas'
 import { mcpClientCreateInputSchema } from '../mcp'
 import { browserBoundsUpdateSchema, browserNavigateSchema, browserOpenSchema } from '../browser'
+import { chromeProfileRequestSchema } from '../bookmarks'
 
 /**
  * IPC 的**唯一**契约清单：通道名 + 请求体校验 + 响应形状。
@@ -70,6 +71,14 @@ export const IPC = {
   canvasStrokes: 'canvas:strokes',
   canvasStrokeSave: 'canvas:stroke:save',
   canvasStrokeRemove: 'canvas:stroke:remove',
+
+  // 内置浏览器（Phase 2）：Chrome 书签导入。入参只有 Profile 目录名，
+  // 从不接受文件路径——路径解析全部留在主进程。
+  browserChromeDetect: 'browser:chrome:detect',
+  browserBookmarksPreview: 'browser:bookmarks:preview',
+  browserBookmarksImport: 'browser:bookmarks:import',
+  browserBookmarksTree: 'browser:bookmarks:tree',
+  browserShowStart: 'browser:show-start',
 
   // 内置浏览器（Phase 1）：只有「壳」的操作，网页渲染在主进程的 WebContentsView。
   browserState: 'browser:state',
@@ -142,6 +151,13 @@ export const ipcRequestSchemas = {
   [IPC.canvasStrokes]: z.object({ canvasId: z.string().uuid() }),
   [IPC.canvasStrokeSave]: canvasStrokeSchema,
   [IPC.canvasStrokeRemove]: z.object({ id: z.string().uuid() }),
+
+  // 内置浏览器 · Chrome 书签导入
+  [IPC.browserChromeDetect]: z.void(),
+  [IPC.browserBookmarksPreview]: chromeProfileRequestSchema,
+  [IPC.browserBookmarksImport]: chromeProfileRequestSchema,
+  [IPC.browserBookmarksTree]: z.void(),
+  [IPC.browserShowStart]: z.void(),
 
   // 内置浏览器
   [IPC.browserState]: z.void(),

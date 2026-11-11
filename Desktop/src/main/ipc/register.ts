@@ -41,6 +41,7 @@ import { importImageFromDialog } from '../media/store'
 import { resolveRecordMetadata } from '../metadata'
 import type { SyncService } from '../sync/sync-service'
 import type { BrowserManager } from '../browser/browser-manager'
+import type { BookmarkService } from '../browser/bookmark-service'
 import { DEFAULT_PHASE_RULES } from '../../shared/domain/phase'
 import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from '../../shared/contracts/version'
 
@@ -64,8 +65,10 @@ export function registerIpc(params: {
   bridgeStatus: () => McpBridgeStatus
   /** 内置浏览器：网页在主进程绘制，IPC 只表达意图。 */
   browser: BrowserManager
+  /** Chrome 书签导入：检测 / 预览 / 导入 / 读取本地书签树。 */
+  bookmarks: BookmarkService
 }): void {
-  const { db, devServerUrl, sync, services, bridgeStatus, browser } = params
+  const { db, devServerUrl, sync, services, bridgeStatus, browser, bookmarks } = params
 
   // 首次启动铺默认阶段规则（之后由用户或同步决定，不覆盖）。
   seedPhaseRulesIfEmpty(db.db, DEFAULT_PHASE_RULES)
@@ -216,6 +219,20 @@ export function registerIpc(params: {
   handle(IPC.mcpClientCreate, (input) => services.clients.create(input as never))
   handle(IPC.mcpClientRevoke, (input) => services.clients.revoke((input as { id: string }).id))
   handle(IPC.mcpBridgeStatus, () => bridgeStatus())
+
+  // MARK: - 内置浏览器 · Chrome 书签
+
+  // 入参只有 Profile 目录名，且已由正则白名单校验；文件位置由主进程自己解析，
+  // 渲染层无法指定任意路径。检测与预览都不写库，只有用户点「导入」才落盘。
+  handle(IPC.browserChromeDetect, () => bookmarks.detect())
+  handle(IPC.browserBookmarksPreview, (input) =>
+    bookmarks.preview((input as { profileId: string }).profileId)
+  )
+  handle(IPC.browserBookmarksImport, (input) =>
+    bookmarks.import((input as { profileId: string }).profileId)
+  )
+  handle(IPC.browserBookmarksTree, () => bookmarks.tree())
+  handle(IPC.browserShowStart, () => browser.showStart())
 
   // MARK: - 内置浏览器
 

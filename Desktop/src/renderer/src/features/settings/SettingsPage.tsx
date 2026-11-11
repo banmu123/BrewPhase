@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import type {
   AppInfo,
+  BookmarkImportResult,
+  BookmarkPreview,
+  BookmarkPreviewFailure,
+  BookmarkRootKind,
+  ChromeDetection,
   McpBridgeStatus,
   McpClientCreated,
   McpClientInfo,
@@ -41,6 +46,7 @@ export function SettingsPage({ info }: { info: AppInfo | null }) {
   const categories: Array<{ key: SettingsCategory; label: string }> = [
     { key: 'general', label: t.settings.nav.general },
     { key: 'sync', label: t.settings.nav.sync },
+    { key: 'browser', label: t.settings.nav.browser },
     { key: 'mcp', label: t.settings.nav.mcp }
   ]
 
@@ -71,6 +77,7 @@ export function SettingsPage({ info }: { info: AppInfo | null }) {
           <div className="settings-pane">
             {category === 'general' && <GeneralSection info={info} />}
             {category === 'sync' && <SyncSection />}
+            {category === 'browser' && <BrowserSection />}
             {category === 'mcp' && <McpSection />}
           </div>
         </div>
@@ -145,6 +152,231 @@ function GeneralSection({ info }: { info: AppInfo | null }) {
       </section>
     </div>
   )
+}
+
+/**
+ * 浏览器：Chrome 书签导入向导。
+ *
+ * 四步都要求用户显式操作：检测 → 选配置 → 预览 → 确认导入。预览只解析、不写库；
+ * 只有点「导入这些书签」才会合并进本地书签库。文件读取全在主进程，这里只拿
+ * 名称与数量，既看不到也传不了路径。
+ */
+function BrowserSection() {
+  const { t } = useI18n()
+  const [detection, setDetection] = useState<ChromeDetection | null>(null)
+  const [selected, setSelected] = useState<string | null>(null)
+  const [preview, setPreview] = useState<BookmarkPreview | null>(null)
+  const [result, setResult] = useState<BookmarkImportResult | null>(null)
+  const [detecting, setDetecting] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const scan = useCallback(async () => {
+    setDetecting(true)
+    try {
+      const found = await api.browser.detectChrome()
+      setDetection(found)
+      setSelected((current) => {
+        if (current && found.profiles.some((profile) => profile.id === current && profile.bookmarksAvailable)) {
+          return current
+        }
+        return found.profiles.find((profile) => profile.bookmarksAvailable)?.id ?? null
+      })
+    } catch (cause) {
+      console.error('[browser] detect failed', cause)
+      setDetection({ found: false, profiles: [], reason: 'not-installed' })
+    } finally {
+      setDetecting(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void scan()
+  }, [scan])
+
+  async function runPreview(profileId: string): Promise<void> {
+    setBusy(true)
+    setResult(null)
+    try {
+      setPreview(await api.browser.previewChromeBookmarks(profileId))
+    } catch (cause) {
+      console.error('[browser] preview failed', cause)
+      setPreview({ ok: false, reason: 'unreadable' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function runImport(profileId: string): Promise<void> {
+    setBusy(true)
+    try {
+      setResult(await api.browser.importChromeBookmarks(profileId))
+      setPreview(null)
+    } catch (cause) {
+      console.error('[browser] import failed', cause)
+      setResult({ ok: false, reason: 'unreadable' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="settings-section">
+      <h2 className="settings-section__title">{t.settings.browser.title}</h2>
+      <p className="settings-lead">{t.settings.browser.lead}</p>
+
+      <section className="settings-subsection">
+        <div className="row row--between">
+          <h2 className="settings-subsection__title">{t.settings.browser.detect.title}</h2>
+          <button className="button button--ghost" disabled={detecting || busy} onClick={() => void scan()}>
+            {t.settings.browser.detect.rescan}
+          </button>
+        </div>
+
+        {detecting && <p className="note">{t.settings.browser.detect.checking}</p>}
+
+        {!detecting && detection && !detection.found && (
+          <p className="browser-import__notice">
+            {detection.reason === 'no-profiles'
+              ? t.settings.browser.detect.noProfiles
+              : t.settings.browser.detect.notInstalled}
+          </p>
+        )}
+
+        {!detecting && detection?.found && (
+          <>
+            <p className="note">{t.settings.browser.detect.found(detection.profiles.length)}</p>
+            <ul className="browser-profiles">
+              {detection.profiles.map((profile) => (
+                <li key={profile.id}>
+                  <button
+                    type="button"
+                    className="browser-profile"
+                    data-active={selected === profile.id}
+                    disabled={!profile.bookmarksAvailable || busy}
+                    onClick={() => {
+                      setSelected(profile.id)
+                      setPreview(null)
+                      setResult(null)
+                    }}
+                  >
+                    <span className="browser-profile__name">{profile.name}</span>
+                    <span className="browser-profile__meta mono">{profile.id}</span>
+                    <span className="browser-profile__state" data-ok={profile.bookmarksAvailable}>
+                      {profile.bookmarksAvailable
+                        ? t.settings.browser.detect.bookmarksPresent
+                        : t.settings.browser.detect.bookmarksMissing}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className="row" style={{ marginTop: 14 }}>
+              <button
+                className="button button--primary"
+                disabled={!selected || busy}
+                onClick={() => selected && void runPreview(selected)}
+              >
+                {t.settings.browser.preview.action}
+              </button>
+            </div>
+          </>
+        )}
+      </section>
+
+      {preview && (
+        <section className="settings-subsection">
+          <h2 className="settings-subsection__title">{t.settings.browser.preview.title}</h2>
+          {preview.ok ? (
+            <>
+              <p className="note">{t.settings.browser.preview.description(preview.profileName)}</p>
+              <dl className="info-list">
+                {preview.roots
+                  .filter((root) => root.bookmarks > 0 || root.folders > 0)
+                  .map((root) => (
+                    <Fragment key={root.kind}>
+                      <dt>{bookmarkRootLabel(root.kind, t)}</dt>
+                      <dd>{t.settings.browser.preview.rootCount(root.bookmarks, root.folders)}</dd>
+                    </Fragment>
+                  ))}
+                <dt>{t.settings.browser.preview.skipped}</dt>
+                <dd>{t.settings.browser.preview.skippedCount(preview.skipped)}</dd>
+              </dl>
+              <p className="note">{t.settings.browser.preview.skippedHint}</p>
+              {preview.bookmarks === 0 && (
+                <p className="browser-import__notice">{t.settings.browser.preview.empty}</p>
+              )}
+              <div className="row" style={{ marginTop: 14 }}>
+                <button
+                  className="button button--primary"
+                  disabled={busy || preview.bookmarks === 0}
+                  onClick={() => void runImport(preview.profileId)}
+                >
+                  {t.settings.browser.preview.confirm}
+                </button>
+                <button className="button button--ghost" disabled={busy} onClick={() => setPreview(null)}>
+                  {t.settings.browser.preview.cancel}
+                </button>
+              </div>
+            </>
+          ) : (
+            <ImportFailure reason={preview.reason} />
+          )}
+        </section>
+      )}
+
+      {result && (
+        <section className="settings-subsection">
+          <h2 className="settings-subsection__title">{t.settings.browser.result.title}</h2>
+          {result.ok ? (
+            <>
+              <ul className="browser-import__stats">
+                <li>{t.settings.browser.result.added(result.added)}</li>
+                <li>{t.settings.browser.result.updated(result.updated)}</li>
+                <li>{t.settings.browser.result.skipped(result.skipped)}</li>
+              </ul>
+              <p className="note">{t.settings.browser.result.total(result.total)}</p>
+              <div className="row" style={{ marginTop: 14 }}>
+                <button
+                  className="button"
+                  onClick={() => {
+                    setResult(null)
+                    void scan()
+                  }}
+                >
+                  {t.settings.browser.result.again}
+                </button>
+                <button className="button button--ghost" onClick={() => void api.browser.open()}>
+                  {t.settings.browser.result.open}
+                </button>
+              </div>
+            </>
+          ) : (
+            <ImportFailure reason={result.reason} />
+          )}
+        </section>
+      )}
+
+      <p className="note" style={{ marginTop: 26 }}>
+        {t.settings.browser.privacy}
+      </p>
+    </div>
+  )
+}
+
+function ImportFailure({ reason }: { reason: BookmarkPreviewFailure }) {
+  const { t } = useI18n()
+  return (
+    <div className="browser-import__error" role="alert">
+      <strong>{t.settings.browser.error.title}</strong>
+      <p>{t.settings.browser.error[reason]}</p>
+    </div>
+  )
+}
+
+function bookmarkRootLabel(kind: BookmarkRootKind, t: ReturnType<typeof useI18n>['t']): string {
+  if (kind === 'bookmark_bar') return t.browser.bookmarks.roots.bookmarkBar
+  if (kind === 'synced') return t.browser.bookmarks.roots.synced
+  return t.browser.bookmarks.roots.other
 }
 
 /** 设备同步：启用 → 扫码配对 → 设备管理 → 冲突。 */

@@ -188,6 +188,16 @@ export function ExternalIcon({ size = 20 }: IconProps) {
   )
 }
 
+/** 起始页：一栋房子的轮廓 */
+export function HomeIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M3.6 9.4 10 3.6l6.4 5.8" />
+      <path d="M5.2 8.6v7.2a.8.8 0 0 0 .8.8h2.6v-4.4h2.8v4.4H14a.8.8 0 0 0 .8-.8V8.6" />
+    </svg>
+  )
+}
+
 /** 缩小：一条水平线 */
 export function MinusIcon({ size = 20 }: IconProps) {
   return (

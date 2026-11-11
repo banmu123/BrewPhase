@@ -5,6 +5,7 @@ export const settings = {
   nav: {
     general: '常规',
     sync: '设备同步',
+    browser: '浏览器',
     mcp: 'AI 连接'
   },
   general: {
@@ -35,5 +36,56 @@ export const settings = {
       'Windows 上的 MCP Bridge（Named Pipe 权限未验证）',
       '代码签名 / 公证 / 自动更新'
     ]
+  },
+  /** 设置 → 浏览器：Chrome 书签导入向导。 */
+  browser: {
+    title: '浏览器',
+    lead: '把本机 Chrome 的书签导入 BrewPhase，在内置浏览器里继续访问。',
+    privacy:
+      '只读取 Chrome 的 Bookmarks 与 Local State：不读取 Cookie、密码、扩展与浏览历史，不修改 Chrome 文件，也不上传任何数据。',
+    detect: {
+      title: 'Chrome',
+      checking: '正在检测 Chrome…',
+      found: (profiles: number) => `已检测到 Chrome · ${profiles} 个配置`,
+      notInstalled: '没有找到 Google Chrome。安装后回来重新检测即可。',
+      noProfiles: 'Chrome 已安装，但没有找到可用的配置。',
+      rescan: '重新检测',
+      profile: '配置',
+      bookmarksPresent: '有书签文件',
+      bookmarksMissing: '没有书签文件',
+      choose: '选择',
+      chosen: '已选择'
+    },
+    preview: {
+      title: '预览',
+      description: (name: string) => `将导入「${name}」里的书签，文件夹层级会一起保留。`,
+      bookmarks: '书签',
+      folders: '文件夹',
+      rootCount: (bookmarks: number, folders: number) =>
+        `${bookmarks} 条书签${folders > 0 ? ` · ${folders} 个文件夹` : ''}`,
+      skipped: '无法导入',
+      skippedCount: (count: number) => `${count} 条`,
+      skippedHint: '只导入 http 与 https 地址；javascript:、file:、chrome: 等会跳过。',
+      empty: '这个配置里没有可导入的书签。',
+      action: '预览书签',
+      cancel: '取消',
+      confirm: '导入这些书签'
+    },
+    result: {
+      title: '导入完成',
+      added: (count: number) => `新增 ${count} 条`,
+      updated: (count: number) => `更新 ${count} 条`,
+      skipped: (count: number) => `跳过 ${count} 条`,
+      total: (count: number) => `现在共有 ${count} 条书签`,
+      again: '再导入一次',
+      open: '在浏览器中查看'
+    },
+    error: {
+      title: '导入没有完成',
+      'profile-not-found': '找不到这个 Chrome 配置，可能已经被删除。',
+      'bookmarks-missing': '这个配置里没有 Bookmarks 文件。',
+      unreadable: '读取 Bookmarks 失败。如果 Chrome 正在运行，请退出 Chrome 后重试。',
+      corrupt: 'Bookmarks 不是有效的 JSON，可能正在被 Chrome 写入。请退出 Chrome 后重试。'
+    }
   }
 }

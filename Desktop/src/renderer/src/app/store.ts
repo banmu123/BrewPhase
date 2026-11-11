@@ -2,7 +2,7 @@ import { create } from 'zustand'
 
 /** `studio` 是默认首页；三个空间只从首页内容入口进入，不再是全局菜单。 */
 export type ModuleKey = 'studio' | 'coffee' | 'records' | 'canvas' | 'settings'
-export type SettingsCategory = 'general' | 'sync' | 'mcp'
+export type SettingsCategory = 'general' | 'sync' | 'browser' | 'mcp'
 /** 顶栏「快速添加」要打开的表单：由目标页面自己消费，避免复制业务表单。 */
 export type CreateKind = 'bean' | 'text' | 'link' | 'canvas'
 

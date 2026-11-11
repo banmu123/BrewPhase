@@ -9,7 +9,7 @@ import { pinLocale } from './locale'
  *
  *   VISUAL_CHECK=1 npx playwright test tests/e2e/settings.visual.spec.ts
  *
- * 输出 /tmp/settings-<lang>-<page>-<size>.png：中英文 × 三页 × 宽/窄窗口。
+ * 输出 /tmp/settings-<lang>-<page>-<size>.png：中英文 × 四页 × 宽/窄窗口。
  * 检查项（人工）：二级导航激活态、内容滚动、按钮不溢出、Token 换行、
  * 英文长文案不撑坏布局、窄窗口下导航切顶部 Tabs。
  */
@@ -18,10 +18,11 @@ test.skip(!process.env.VISUAL_CHECK, '设置 VISUAL_CHECK=1 才跑视觉验收')
 const PAGES = [
   { key: 'general', zh: '常规', en: 'General' },
   { key: 'sync', zh: '设备同步', en: 'Device sync' },
+  { key: 'browser', zh: '浏览器', en: 'Browser' },
   { key: 'mcp', zh: 'AI 连接', en: 'AI connections' }
 ] as const
 
-test('Settings 视觉验收：中英文 × 三页 × 宽窄窗口', async () => {
+test('Settings 视觉验收：中英文 × 四页 × 宽窄窗口', async () => {
   test.setTimeout(180_000)
   const userData = mkdtempSync(join(tmpdir(), 'brewphase-visual-'))
   const env = { ...process.env, BREWPHASE_USER_DATA_DIR: userData, ELECTRON_DISABLE_SECURITY_WARNINGS: '1' }
