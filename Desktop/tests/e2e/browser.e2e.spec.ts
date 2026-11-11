@@ -335,7 +335,7 @@ test('拖动与缩放：位置跟着手走、四角改尺寸、最小宽高生�
   }
 })
 
-test('关闭后回到 Studio，再打开恢复上次地址，且始终只有一个网页容器', async () => {
+test('关闭后重开停在起始页，点「继续上次访问」仍只复用一个网页容器', async () => {
   const { app, page, dataDir } = await launch()
   try {
     await openBrowserFromTopBar(page)
@@ -350,8 +350,14 @@ test('关闭后回到 Studio，再打开恢复上次地址，且始终只有一�
     // 关闭 = 销毁原生 view（不是单纯隐藏）。
     expect(await browserTargets(app)).toHaveLength(0)
 
-    // 再打开：恢复上次访问，不新建第二个容器。
+    // 再打开：先落在起始页（书签的家），而不是直接跳上次的网页。
     await openBrowserFromTopBar(page)
+    await expect(page.locator('.browser-start')).toBeVisible()
+    await expect(page.locator('.browser-panel__address input')).toHaveValue('')
+    expect(await browserTargets(app)).toHaveLength(0)
+
+    // 起始页上的「继续上次访问」才是恢复入口：只建一个容器。
+    await page.locator('.browser-start__resume').click()
     await expect(page.locator('.browser-panel__address input')).toHaveValue(`${baseURL}/second`, {
       timeout: 15_000
     })

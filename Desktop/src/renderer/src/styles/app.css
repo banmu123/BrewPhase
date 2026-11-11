@@ -4674,6 +4674,8 @@ body.canvas-focus .canvas-topbar {
   overflow: hidden;
   border-radius: 0 0 var(--browser-radius, 10px) var(--browser-radius, 10px);
   background: var(--card);
+  /* 起始页要按「内容区实际高度」切换紧凑版式（见文末 @container）。 */
+  container-type: size;
 }
 
 /* ---------- 起始页 ---------- */
@@ -5120,6 +5122,40 @@ body.canvas-focus .canvas-topbar {
   font-size: 11.5px;
   font-weight: 500;
   color: var(--roast);
+}
+
+/**
+ * 矮浮窗（用户把窗口拖到 400px 上下时很常见）：让欢迎语给书签让位。
+ *
+ * 起始页真正的主角是导入的书签。385px 高的窗里，品牌圆标 + 大标题 + 说明
+ * 会占掉一百多像素，书签区正好被挤到可视区外——打开浏览器看起来「什么都没有」。
+ * 这里按内容区实际高度（容器查询，不是视口高度）收起装饰，书签就能进首屏。
+ */
+@container (max-height: 430px) {
+  .browser-start {
+    padding: 16px 20px;
+  }
+
+  .browser-start__mark {
+    display: none;
+  }
+
+  .browser-start__title {
+    margin-bottom: 8px;
+    font-size: 19px;
+  }
+
+  .browser-start__hint {
+    display: none;
+  }
+
+  .browser-start__resume {
+    margin-top: 10px;
+  }
+
+  .browser-shelves {
+    margin-top: 16px;
+  }
 }
 
 /* ---------- 设置 · Chrome 书签导入 ---------- */

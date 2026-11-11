@@ -110,23 +110,26 @@ export class BrowserManager {
   /**
    * 打开浮窗：
    * - 有 `url` → 导航到它（已打开就在同一个 view 里跳，不新建）；
-   * - 没有 → 恢复上次访问；连历史都没有就停在初始页（url 为空）。
+   * - 没有 → 页还活着就恢复它（不重载），否则停在起始页。
    *
-   * 停在初始页时**不创建网页容器**：那一页完全由 React 画，多开一个
+   * **不再自动打开 `recent[0]`**：起始页是书签的落点，用户导入完点「打开浏览器」
+   * 却直接被带去上次的网页（可能还要重新登录，网络不好时就是一片白），
+   * 会以为书签没导进来。上次地址仍留在起始页的「继续上次访问」里，一键可达。
+   *
+   * 停在起始页时**不创建网页容器**：那一页完全由 React 画，多开一个
    * Chromium 进程只会白占内存。第一次真正导航时才 `ensureView()`。
    */
   open(input?: BrowserOpenInput): BrowserState {
     this.panelVisible = true
     const requested = input?.url?.trim()
-    const target = requested || (this.currentURL ? null : this.recent[0]?.url)
+    if (requested) return this.navigate(requested)
 
-    if (!target) {
-      this.startPage = true
-      this.syncVisibility()
-      this.emit()
-      return this.state()
+    // 只是把浮窗藏起来（hide）时，网页容器还活着：恢复显示，不重新加载。
+    const webContents = this.view?.webContents
+    if (this.currentURL && webContents && !webContents.isDestroyed()) {
+      return this.showCurrentPage()
     }
-    return this.navigate(target)
+    return this.showStart()
   }
 
   /**

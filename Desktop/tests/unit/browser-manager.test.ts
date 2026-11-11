@@ -8,6 +8,7 @@ import { migrate } from '../../src/main/database/migrations'
 import { schema } from '../../src/main/database/schema'
 import type { Db } from '../../src/main/database/client'
 import { BrowserManager } from '../../src/main/browser/browser-manager'
+import { recordBrowserVisit } from '../../src/main/browser/history-store'
 
 /**
  * BrowserManager 的恢复语义。
@@ -274,5 +275,53 @@ describe('BrowserManager 起始页与恢复', () => {
     expect(restored.startPage).toBe(true)
     expect(fake.views).toHaveLength(1)
     expect(fake.loadCalls).toEqual(['https://a.example/'])
+  })
+
+  it('打开浮窗不自动跳上次访问：直接停在起始页（书签可见）', () => {
+    recordBrowserVisit(db, 'https://last.example/', '上次的网页')
+    // recent 在构造时读入，重建一次才能拿到刚写进去的那条。
+    manager.dispose()
+    manager = new BrowserManager({ db, getWindow: () => fake.window as never })
+
+    const opened = manager.open()
+
+    expect(opened.startPage).toBe(true)
+    expect(opened.url).toBe('')
+    // 起始页完全由 React 画：不建容器、不发导航。
+    expect(fake.views).toHaveLength(0)
+    expect(fake.loadCalls).toEqual([])
+    // 上次地址仍在，供起始页的「继续上次访问」使用。
+    expect(opened.lastVisit?.url).toBe('https://last.example/')
+  })
+
+  it('关闭后重开停在起始页，不重新加载上次地址', () => {
+    manager.navigate('https://a.example/')
+    manager.close()
+
+    const reopened = manager.open()
+
+    expect(reopened.startPage).toBe(true)
+    expect(reopened.url).toBe('')
+    expect(fake.loadCalls).toEqual(['https://a.example/'])
+    expect(fake.views[0]!.visible).toBe(false)
+  })
+
+  it('隐藏后重新打开恢复当前网页，不重新加载也不换容器', () => {
+    manager.setBounds({ x: 40, y: 40, width: 900, height: 600 })
+    manager.navigate('https://keep.example/')
+    const view = fake.views[0]!
+    const id = view.webContents.id
+
+    manager.hide()
+    expect(view.visible).toBe(false)
+
+    const reopened = manager.open()
+
+    expect(reopened.startPage).toBe(false)
+    expect(reopened.url).toBe('https://keep.example/')
+    expect(view.visible).toBe(true)
+    expect(fake.views).toHaveLength(1)
+    expect(fake.views[0]!.webContents.id).toBe(id)
+    expect(fake.loadCalls).toEqual(['https://keep.example/'])
   })
 })
