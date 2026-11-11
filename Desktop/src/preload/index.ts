@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/contracts/validation/ipc'
+import { BROWSER_CHANGED_CHANNEL, type BrowserState } from '../shared/contracts/browser'
 import type { RendererApi } from '../shared/contracts'
 
 /**
@@ -89,6 +90,32 @@ const api: RendererApi = {
     createClient: (input) => invoke(IPC.mcpClientCreate, input),
     revokeClient: (id) => invoke(IPC.mcpClientRevoke, { id }),
     bridgeStatus: () => invoke(IPC.mcpBridgeStatus)
+  },
+  /**
+   * 内置浏览器。网页由主进程的 WebContentsView 绘制，这里只有「壳」的操作：
+   * 导航、几何与状态。没有任何读取页面内容、Cookie 或登录凭据的通道。
+   */
+  browser: {
+    state: () => invoke(IPC.browserState),
+    open: (input) => invoke(IPC.browserOpen, input ?? {}),
+    hide: () => invoke(IPC.browserHide),
+    close: () => invoke(IPC.browserClose),
+    navigate: (input) => invoke(IPC.browserNavigate, { input }),
+    back: () => invoke(IPC.browserBack),
+    forward: () => invoke(IPC.browserForward),
+    reload: () => invoke(IPC.browserReload),
+    stop: () => invoke(IPC.browserStop),
+    setBounds: async (bounds) => {
+      await invoke(IPC.browserSetBounds, bounds)
+    },
+    openExternal: async (url) => {
+      await invoke(IPC.browserOpenExternal, url ? { url } : {})
+    },
+    onChanged: (listener) => {
+      const wrapped = (_event: unknown, state: BrowserState) => listener(state)
+      ipcRenderer.on(BROWSER_CHANGED_CHANNEL, wrapped)
+      return () => ipcRenderer.removeListener(BROWSER_CHANGED_CHANNEL, wrapped)
+    }
   }
 }
 

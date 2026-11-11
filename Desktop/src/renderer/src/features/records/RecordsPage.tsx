@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { RecordCarrier, RecordDraft, RecordItem, RecordTag } from '@shared/contracts'
 import { coalesce } from '@shared/coalesce'
+import { canOpenInBrowser } from '@shared/browser-url'
 import { api } from '../../shared/api'
 import { useAppStore } from '../../app/store'
 import { SearchIcon } from '../../shared/icons'
 import { Modal } from '../../shared/Modal'
 import { parseLink } from '@shared/link-parser'
 import { useI18n } from '../../i18n'
+import { useBrowserStore } from '../browser/browser-store'
 import { LinkPlayer } from './preview/LinkPlayer'
 import { RecordTilePreview } from './preview/RecordTilePreview'
 import { detectPlatform } from './preview/platform'
@@ -32,6 +34,8 @@ const CARRIERS: (RecordCarrier | null)[] = [null, 'link', 'image', 'video', 'tex
  */
 export function RecordsPage() {
   const { t, formatDate, formatNumber } = useI18n()
+  /** 浏览器浮窗：链接记录的「在 BrewPhase 中打开」走这个入口。 */
+  const openBrowser = useBrowserStore((store) => store.open)
   const [items, setItems] = useState<RecordItem[]>([])
   const [tags, setTags] = useState<RecordTag[]>([])
   const [search, setSearch] = useState('')
@@ -170,11 +174,14 @@ export function RecordsPage() {
   // 播放器放大时 Esc 归播放器（退出放大，不销毁播放器），所以这一层必须让位——
   // 两个监听都挂在 window 上，注册顺序决定谁先跑，只能显式判断。
   // 新建浮窗打开时 Esc 归浮窗，详情侧栏保持不动。
+  // 浏览器浮窗在最上层：它开着的时候 Esc 归它，否则会「关掉底下的详情、
+  // 却把浏览器留在屏幕上」。
   useEffect(() => {
     if (!panelOpen || creating) return
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape' || event.defaultPrevented) return
       if (document.querySelector('.link-player--zoomed')) return
+      if (document.querySelector('.browser-panel')) return
       setPanelOpen(false)
     }
     window.addEventListener('keydown', onKeyDown)
@@ -352,11 +359,25 @@ export function RecordsPage() {
                   )}
 
                   {selected.carrier === 'link' && selected.urlString && (
-                    <p className="note" style={{ marginBottom: 14 }}>
+                    <div className="detail-link-row">
                       <a className="detail-link" href={selected.urlString} target="_blank" rel="noreferrer">
                         {selected.urlString}
                       </a>
-                    </p>
+                      {/*
+                        * 链接记录的上下文入口：交给**同一个**浏览器浮窗，不新建实例。
+                        * 只在地址能过 http/https 白名单时出现——`javascript:`、`file:`
+                        * 这类记录不该在界面上留一个「打开」的口子。
+                        */}
+                      {canOpenInBrowser(selected.urlString) && (
+                        <button
+                          type="button"
+                          className="button button--ghost detail-link-row__open"
+                          onClick={() => void openBrowser({ url: selected.urlString })}
+                        >
+                          {t.browser.records.openInside}
+                        </button>
+                      )}
+                    </div>
                   )}
 
                   {selected.carrier !== 'link' && selected.summary && (

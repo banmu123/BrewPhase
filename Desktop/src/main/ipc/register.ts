@@ -40,6 +40,7 @@ import {
 import { importImageFromDialog } from '../media/store'
 import { resolveRecordMetadata } from '../metadata'
 import type { SyncService } from '../sync/sync-service'
+import type { BrowserManager } from '../browser/browser-manager'
 import { DEFAULT_PHASE_RULES } from '../../shared/domain/phase'
 import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from '../../shared/contracts/version'
 
@@ -61,8 +62,10 @@ export function registerIpc(params: {
     clients: McpClientService
   }
   bridgeStatus: () => McpBridgeStatus
+  /** 内置浏览器：网页在主进程绘制，IPC 只表达意图。 */
+  browser: BrowserManager
 }): void {
-  const { db, devServerUrl, sync, services, bridgeStatus } = params
+  const { db, devServerUrl, sync, services, bridgeStatus, browser } = params
 
   // 首次启动铺默认阶段规则（之后由用户或同步决定，不覆盖）。
   seedPhaseRulesIfEmpty(db.db, DEFAULT_PHASE_RULES)
@@ -214,6 +217,27 @@ export function registerIpc(params: {
   handle(IPC.mcpClientRevoke, (input) => services.clients.revoke((input as { id: string }).id))
   handle(IPC.mcpBridgeStatus, () => bridgeStatus())
 
+  // MARK: - 内置浏览器
+
+  // 这些 handler 只做「转交」：真实状态由 BrowserManager 持有，所有返回值都是
+  // 同一份快照。参数已经过 zod，`openExternal` 的地址还会再过一次协议白名单。
+  handle(IPC.browserState, () => browser.state())
+  handle(IPC.browserOpen, (input) => browser.open(input as { url?: string } | undefined))
+  handle(IPC.browserHide, () => browser.hide())
+  handle(IPC.browserClose, () => browser.close())
+  handle(IPC.browserNavigate, (input) => browser.navigate((input as { input: string }).input))
+  handle(IPC.browserBack, () => browser.back())
+  handle(IPC.browserForward, () => browser.forward())
+  handle(IPC.browserReload, () => browser.reload())
+  handle(IPC.browserStop, () => browser.stop())
+  handle(IPC.browserSetBounds, (input) => {
+    browser.setBounds(input as { x: number; y: number; width: number; height: number })
+    return null
+  })
+  handle(IPC.browserOpenExternal, (input) => {
+    browser.openExternal((input as { url?: string } | undefined)?.url)
+    return null
+  })
 }
 
 /**

@@ -17,6 +17,7 @@ import { RecordService } from './application/records/record-service'
 import { CoffeeService } from './application/coffee/coffee-service'
 import { CanvasService } from './application/canvas/canvas-service'
 import { McpClientService } from './application/authorization/permission-service'
+import { BrowserManager } from './browser/browser-manager'
 import { BridgeServer } from './mcp-bridge/bridge-server'
 import { BRIDGE_PROTOCOL_VERSION, bridgePaths, platformSupportsBridge } from './mcp-bridge/bridge-contract'
 import type { McpBridgeStatus } from '../shared/contracts/mcp'
@@ -33,6 +34,7 @@ import { EMBED_FRAME_ORIGINS } from '../shared/link-embed'
 let db: DatabaseHandle | null = null
 let syncService: SyncService | null = null
 let bridgeServer: BridgeServer | null = null
+let browserManager: BrowserManager | null = null
 let quitting = false
 const devServerUrl = process.env.ELECTRON_RENDERER_URL ?? null
 
@@ -188,8 +190,28 @@ function bootstrap(): void {
     })
   }
 
-  registerIpc({ db, devServerUrl, sync: syncService, services: { records, clients }, bridgeStatus })
-  createMainWindow({ devServerUrl })
+  // 内置浏览器：先建管理器，再开窗。`getWindow` 是取值函数而不是窗口对象——
+  // macOS 关窗后重新激活会换一个 BrowserWindow 实例，浮窗必须跟着走，
+  // 否则原生视图会挂在一个已经销毁的父节点上。
+  browserManager = new BrowserManager({
+    db: db.db,
+    getWindow: () => BrowserWindow.getAllWindows()[0] ?? null
+  })
+
+  registerIpc({
+    db,
+    devServerUrl,
+    sync: syncService,
+    services: { records, clients },
+    bridgeStatus,
+    browser: browserManager
+  })
+
+  const mainWindow = createMainWindow({ devServerUrl })
+  // 窗口尺寸变化：原生视图不归 CSS 管，必须显式收回来。
+  // 渲染层也会重新上报 bounds，这里是「渲染层还没来得及报」时的兜底。
+  mainWindow.on('resize', () => browserManager?.refit())
+  mainWindow.on('closed', () => browserManager?.dispose())
 
   // 上次运行没跑完的 pending 任务（应用被关掉 / 崩溃）：接着抓，不遗忘
   try {
@@ -216,6 +238,10 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', (event) => {
+  // 浏览器浮窗持有原生 WebContentsView：不主动释放会留下孤儿 webContents，
+  // 退出过程中可能报「对象已销毁」。
+  browserManager?.dispose()
+  browserManager = null
   // Bridge 的关闭是异步的（关 socket、删 info 文件）：先拦住这一次 quit，
   // 清理完再真正退出；第二次进入时 `quitting` 已置位，只关库。
   if (bridgeServer && !quitting) {

@@ -6,6 +6,8 @@ import { CoffeePage } from '../features/coffee/CoffeePage'
 import { RecordsPage } from '../features/records/RecordsPage'
 import { SettingsPage } from '../features/settings/SettingsPage'
 import { StudioHome } from '../features/studio/StudioHome'
+import { BrowserPanel } from '../features/browser/BrowserPanel'
+import { subscribeBrowserState, useBrowserStore } from '../features/browser/browser-store'
 import { useI18n } from '../i18n'
 import { hasSeenOnboarding, markOnboardingSeen, Onboarding } from './Onboarding'
 import { SearchPalette } from './SearchPalette'
@@ -34,6 +36,16 @@ export function App() {
       .info()
       .then(setInfo)
       .catch((cause: Error) => setError(cause.message))
+  }, [])
+
+  /**
+   * 浏览器浮窗是**全局**的：订阅装一次、面板挂在模块切换之外，
+   * 所以在 Coffee / Records / Canvas / Settings 之间走动时它不会消失。
+   */
+  useEffect(() => {
+    const unsubscribe = subscribeBrowserState()
+    void useBrowserStore.getState().hydrate()
+    return unsubscribe
   }, [])
 
   // 首次启动引导（配对指引）：打包版 + 没看过 + 未配对时出现一次。
@@ -92,6 +104,9 @@ export function App() {
 
       {searchOpen && <SearchPalette onClose={() => setSearchOpen(false)} />}
       {onboardingOpen && <Onboarding onClose={() => setOnboardingOpen(false)} />}
+      {/* 浏览器浮在最上层，但仍在 Modal（z-index 100）之下：
+          未来的「保存到 Records」表单要能盖住它。 */}
+      <BrowserPanel />
     </>
   )
 }

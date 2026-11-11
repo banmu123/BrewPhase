@@ -31,18 +31,22 @@ const cache = new Map<string, CacheEntry>()
 
 const THUMB_PADDING = 10
 
-export function CanvasThumbnail(props: { canvas: Canvas; height?: number }) {
+export function CanvasThumbnail(props: { canvas: Canvas; height?: number | 'fluid' }) {
   const { canvas } = props
   const { t } = useI18n()
   // 132px 在 300–370px 宽的卡片里过于扁平（≈2.4:1），缩略图里的节点小到看不清；
   // 168px 接近 16:9，仍完整保持「等比装入包围盒」的算法。
-  const height = props.height ?? 168
+  //
+  // `'fluid'` 用于 Studio Home：高度交给 CSS（`.canvas-deck` 里的 16:10），
+  // 真实高度由 ResizeObserver 量——这样稿纸跟着列宽缩放，不会比旁边两栏高出一截。
+  const height = props.height === 'fluid' ? 168 : (props.height ?? 168)
+  const fluid = props.height === 'fluid'
   const [data, setData] = useState<ThumbData | null>(() => {
     const hit = cache.get(canvas.id)
     return hit && hit.canvasUpdatedAt === canvas.updatedAt ? hit.data : null
   })
   const containerRef = useRef<HTMLDivElement>(null)
-  const [size, setSize] = useState({ width: 0, height })
+  const [size, setSize] = useState({ width: 0, height: fluid ? 0 : height })
 
   // 真实容器尺寸：等比装入的唯一依据（窗口变化自动重算，不重复读节点）。
   useEffect(() => {
@@ -103,7 +107,11 @@ export function CanvasThumbnail(props: { canvas: Canvas; height?: number }) {
 
   if (!data || data.items.length === 0) {
     return (
-      <div ref={containerRef} className="canvas-thumb canvas-thumb--empty" style={{ height }}>
+      <div
+        ref={containerRef}
+        className="canvas-thumb canvas-thumb--empty"
+        style={fluid ? undefined : { height }}
+      >
         <span className="canvas-thumb__brand">◈</span>
         <span className="canvas-thumb__brand-name">{canvas.name || t.canvas.untitledCanvas}</span>
       </div>
@@ -120,7 +128,7 @@ export function CanvasThumbnail(props: { canvas: Canvas; height?: number }) {
   const originY = (containerHeight - data.bounds.height * scale) / 2
 
   return (
-    <div ref={containerRef} className="canvas-thumb" style={{ height }}>
+    <div ref={containerRef} className="canvas-thumb" style={fluid ? undefined : { height }}>
       {data.items.map((item) => {
         const w = Math.max(6, item.frame.width * scale)
         const h = Math.max(5, item.frame.height * scale)

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { BeanIcon, CanvasIcon, RecordsIcon, SearchIcon, SlidersIcon } from '../shared/icons'
+import { BeanIcon, CanvasIcon, GlobeIcon, RecordsIcon, SearchIcon, SlidersIcon } from '../shared/icons'
 import { useI18n } from '../i18n'
+import { useBrowserStore } from '../features/browser/browser-store'
 import { useAppStore, type CreateKind } from './store'
 
 /**
@@ -14,6 +15,8 @@ export function TopBar(props: { onSearch: () => void; isMac: boolean }) {
   const { t } = useI18n()
   const setModule = useAppStore((state) => state.setModule)
   const requestCreate = useAppStore((state) => state.requestCreate)
+  const openBrowser = useBrowserStore((state) => state.open)
+  const browserVisible = useBrowserStore((state) => state.state.visible)
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -64,6 +67,23 @@ export function TopBar(props: { onSearch: () => void; isMac: boolean }) {
         <SearchIcon size={15} />
         <span>{t.studio.search}</span>
         <kbd>{props.isMac ? '⌘K' : 'Ctrl K'}</kbd>
+      </button>
+
+      {/*
+        * 浏览器入口：放在「随时可用」的辅助操作里，紧挨搜索与快速添加。
+        * 不新增侧栏、也不恢复三空间全局导航——它只是把已存在的浮窗叫出来。
+        * 已打开时再点不会新建，只会让它重新可见（主进程只有一个 view）。
+        */}
+      <button
+        type="button"
+        className="topbar__icon"
+        aria-label={t.browser.open}
+        aria-pressed={browserVisible}
+        title={t.browser.label}
+        data-active={browserVisible}
+        onClick={() => void openBrowser()}
+      >
+        <GlobeIcon size={18} />
       </button>
 
       <div className="topbar__menu-anchor" ref={menuRef}>

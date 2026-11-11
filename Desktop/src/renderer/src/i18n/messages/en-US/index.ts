@@ -1,4 +1,5 @@
 import type { Messages } from '../zh-CN'
+import { browser } from './browser'
 import { canvas } from './canvas'
 import { coffee } from './coffee'
 import { common } from './common'
@@ -24,5 +25,6 @@ export const enUS = {
   sync,
   mcp,
   onboarding,
-  studio
+  studio,
+  browser
 } satisfies Messages

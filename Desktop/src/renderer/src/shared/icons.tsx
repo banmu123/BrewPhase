@@ -125,3 +125,65 @@ export function NoteIcon({ size = 20 }: IconProps) {
     </svg>
   )
 }
+
+/* ---------- 内置浏览器：同为 20px 视框、1.6 描边 ---------- */
+
+/** 浏览器：经线 + 纬线的球体 */
+export function GlobeIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <circle cx="10" cy="10" r="6.4" />
+      <path d="M3.6 10h12.8" />
+      <path d="M10 3.6c1.9 2 2.9 4.2 2.9 6.4s-1 4.4-2.9 6.4c-1.9-2-2.9-4.2-2.9-6.4S8.1 5.6 10 3.6Z" />
+    </svg>
+  )
+}
+
+/** 后退：左箭头 */
+export function ArrowLeftIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M15.4 10H4.8M9.4 4.6 4 10l5.4 5.4" />
+    </svg>
+  )
+}
+
+/** 前进：右箭头 */
+export function ArrowRightIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M4.6 10h10.6M10.6 4.6 16 10l-5.4 5.4" />
+    </svg>
+  )
+}
+
+/** 刷新：带缺口的环 + 箭头 */
+export function ReloadIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M16.2 10a6.2 6.2 0 1 1-1.9-4.4" />
+      <path d="M16.4 3.6v3.6h-3.6" />
+    </svg>
+  )
+}
+
+/** 停止：圆内一只方块 */
+export function StopIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <circle cx="10" cy="10" r="6.4" />
+      <rect x="7.9" y="7.9" width="4.2" height="4.2" rx="1" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+/** 外部打开：从方框右上角射出的箭头 */
+export function ExternalIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M11.4 3.8h4.8v4.8" />
+      <path d="M16.2 3.8 9.6 10.4" />
+      <path d="M13.6 12.2v3.4a1.2 1.2 0 0 1-1.2 1.2H4.6a1.2 1.2 0 0 1-1.2-1.2V7.8a1.2 1.2 0 0 1 1.2-1.2h3.4" />
+    </svg>
+  )
+}

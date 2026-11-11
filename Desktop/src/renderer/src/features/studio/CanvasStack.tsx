@@ -28,7 +28,7 @@ export function CanvasStack({ canvases }: { canvases: Canvas[] }) {
       {shown.map((canvas, index) => (
         <article key={canvas.id} className="canvas-deck__card" style={stackStyle(index)}>
           <div className="canvas-deck__preview">
-            <CanvasThumbnail canvas={canvas} height={180} />
+            <CanvasThumbnail canvas={canvas} height="fluid" />
           </div>
           <div className="canvas-deck__meta">
             <strong>{canvas.name || t.studio.canvas.untitled}</strong>

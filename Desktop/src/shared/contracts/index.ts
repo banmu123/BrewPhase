@@ -3,6 +3,7 @@ import type { Canvas, CanvasNode, CanvasNodeWithRecord, CanvasNote, CanvasStroke
 import type { ImportImageResult, RecordDraft, RecordItem, RecordQuery, RecordTag } from './entities/records'
 import type { SyncStatus, SyncConflictItem, WipeResult } from './sync'
 import type { McpBridgeStatus, McpClientCreateInput, McpClientCreated, McpClientInfo } from './mcp'
+import type { BrowserBounds, BrowserOpenInput, BrowserState } from './browser'
 import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from './version'
 
 export * from './version'
@@ -11,6 +12,7 @@ export * from './entities/records'
 export * from './entities/canvas'
 export * from './sync'
 export * from './mcp'
+export * from './browser'
 export * from './validation/ipc'
 
 /**
@@ -126,6 +128,33 @@ export interface RendererApi {
     createClient: (input: McpClientCreateInput) => Promise<McpClientCreated>
     revokeClient: (id: string) => Promise<McpClientInfo>
     bridgeStatus: () => Promise<McpBridgeStatus>
+  }
+  /**
+   * 内置浏览器（Phase 1）。
+   *
+   * 渲染层只操作「壳」：网页本身由主进程的 WebContentsView 绘制，**不在 React
+   * DOM 里**。因此这里没有任何「读页面内容」的能力——只有导航、状态与几何。
+   * 浮窗的显示状态跨空间常驻，不属于某个页面。
+   */
+  browser: {
+    state: () => Promise<BrowserState>
+    /** 打开浮窗：给了 url 就导航，否则恢复上次访问，再没有就停在初始页。 */
+    open: (input?: BrowserOpenInput) => Promise<BrowserState>
+    /** 隐藏但**不销毁**页面：登录态、滚动位置、播放进度都还在。 */
+    hide: () => Promise<BrowserState>
+    /** 关闭：销毁 WebContentsView，但保留持久化 Session 与上次访问地址。 */
+    close: () => Promise<BrowserState>
+    navigate: (input: string) => Promise<BrowserState>
+    back: () => Promise<BrowserState>
+    forward: () => Promise<BrowserState>
+    reload: () => Promise<BrowserState>
+    stop: () => Promise<BrowserState>
+    /** 内容区在窗口里的矩形（CSS px）。原生 View 靠它对齐 React 外框。 */
+    setBounds: (bounds: BrowserBounds) => Promise<void>
+    /** 用系统默认浏览器打开当前页（用户主动触发，网页不能自己调）。 */
+    openExternal: (url?: string) => Promise<void>
+    /** 导航、加载、标题、能力位变化时广播整份快照。 */
+    onChanged: (listener: (state: BrowserState) => void) => () => void
   }
 }
 

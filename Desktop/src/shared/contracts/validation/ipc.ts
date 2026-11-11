@@ -3,6 +3,7 @@ import { beanDraftSchema, brewDraftSchema } from '../entities/coffee'
 import { recordDraftSchema, recordQuerySchema } from '../entities/records'
 import { canvasNodeMoveSchema, canvasNodeResizeSchema, canvasNoteSchema, canvasStrokeSchema } from '../entities/canvas'
 import { mcpClientCreateInputSchema } from '../mcp'
+import { browserBoundsUpdateSchema, browserNavigateSchema, browserOpenSchema } from '../browser'
 
 /**
  * IPC 的**唯一**契约清单：通道名 + 请求体校验 + 响应形状。
@@ -68,7 +69,20 @@ export const IPC = {
   canvasNoteRemove: 'canvas:note:remove',
   canvasStrokes: 'canvas:strokes',
   canvasStrokeSave: 'canvas:stroke:save',
-  canvasStrokeRemove: 'canvas:stroke:remove'
+  canvasStrokeRemove: 'canvas:stroke:remove',
+
+  // 内置浏览器（Phase 1）：只有「壳」的操作，网页渲染在主进程的 WebContentsView。
+  browserState: 'browser:state',
+  browserOpen: 'browser:open',
+  browserHide: 'browser:hide',
+  browserClose: 'browser:close',
+  browserNavigate: 'browser:navigate',
+  browserBack: 'browser:back',
+  browserForward: 'browser:forward',
+  browserReload: 'browser:reload',
+  browserStop: 'browser:stop',
+  browserSetBounds: 'browser:set-bounds',
+  browserOpenExternal: 'browser:open-external'
 } as const
 
 export const ipcRequestSchemas = {
@@ -127,7 +141,20 @@ export const ipcRequestSchemas = {
   [IPC.canvasNoteRemove]: z.object({ id: z.string().uuid() }),
   [IPC.canvasStrokes]: z.object({ canvasId: z.string().uuid() }),
   [IPC.canvasStrokeSave]: canvasStrokeSchema,
-  [IPC.canvasStrokeRemove]: z.object({ id: z.string().uuid() })
+  [IPC.canvasStrokeRemove]: z.object({ id: z.string().uuid() }),
+
+  // 内置浏览器
+  [IPC.browserState]: z.void(),
+  [IPC.browserOpen]: browserOpenSchema,
+  [IPC.browserHide]: z.void(),
+  [IPC.browserClose]: z.void(),
+  [IPC.browserNavigate]: browserNavigateSchema,
+  [IPC.browserBack]: z.void(),
+  [IPC.browserForward]: z.void(),
+  [IPC.browserReload]: z.void(),
+  [IPC.browserStop]: z.void(),
+  [IPC.browserSetBounds]: browserBoundsUpdateSchema,
+  [IPC.browserOpenExternal]: z.object({ url: z.string().max(2_048).optional() }).optional()
 } as const
 
 export type IpcChannel = keyof typeof ipcRequestSchemas

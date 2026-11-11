@@ -134,13 +134,15 @@ test.describe('空库：三个空间各自的空状态', () => {
     await expect(page.locator('.canvas-deck')).toHaveCount(0)
 
     // 舞台高度：空着也要有体量（不是 min-height: 0 的折叠态）。
+    // 空态是「装饰 + 文案」的固定高度（268）；有数据时舞台改由内容撑开，
+    // 所以三个数字在这里只约束空态，不约束卡片。
     const metrics = await stageMetrics(page)
     expect(metrics.coffee).toBeGreaterThanOrEqual(190)
-    expect(metrics.records).toBeGreaterThanOrEqual(320)
-    expect(metrics.canvas).toBeGreaterThanOrEqual(280)
+    expect(metrics.records).toBeGreaterThanOrEqual(250)
+    expect(metrics.canvas).toBeGreaterThanOrEqual(250)
 
-    // 空状态之间高度差不应极端（记录舞台是右列主角）。
-    expect(Math.abs(metrics.records - metrics.canvas)).toBeLessThanOrEqual(220)
+    // 三个空状态共用同一条高度底线，视觉体量一致。
+    expect(Math.abs(metrics.records - metrics.canvas)).toBeLessThanOrEqual(20)
 
     expect(await horizontalOverflow(page)).toBeLessThanOrEqual(1)
 
@@ -365,6 +367,17 @@ test.describe('有数据：Records Deck 是真实记录的叠放', () => {
       await page.mouse.move(box!.x + box!.width * 0.55, box!.y + box!.height * 0.7)
     }
 
+    /*
+     * 先把指针挪到左上角空地，等 :hover 真的解除再读「紧凑姿态」。
+     *
+     * 不能省：Playwright 的虚拟鼠标在没发过 move 之前不会改变 Chromium 的悬停
+     * 状态，那时的 :hover 来自**真实系统光标**的位置——测试机光标正好落在记录
+     * 这栏，页面一加载卡片就是展开姿态，`restFirst` 读到的其实是展开值，
+     * 后面比较「hover 后位移变了不少」就会得到 0.33px 的假失败。
+     */
+    await page.mouse.move(4, 4)
+    await expect.poll(deckHovered, { timeout: 5_000 }).toBe(false)
+
     // 紧凑叠放：第一张与第二张的位移不同（不是完全重合）。
     const restFirst = await poseOf(0)
     const restSecond = await poseOf(1)
@@ -462,8 +475,66 @@ test.describe('有数据：Records Deck 是真实记录的叠放', () => {
       }
 
       const metrics = await stageMetrics(page)
-      // 有数据时舞台仍保留体量，不会因为绝对定位塌成 0。
-      expect(metrics.records, `窗口 ${width}px 的 Records 舞台塌了`).toBeGreaterThanOrEqual(250)
+      // 有数据时舞台由卡片撑开（不再塌成 0，也不硬撑成固定高度）：
+      // 980 宽度下这张卡约 150–190px，下限只用来防「塌成一条缝」。
+      expect(metrics.records, `窗口 ${width}px 的 Records 舞台塌了`).toBeGreaterThanOrEqual(140)
+    }
+
+    await app.close()
+    app = null
+  })
+
+  /**
+   * 三栏**不能有空洞**：标题到内容之间、内容到舞台底部之间都要贴住。
+   *
+   * 这条守的是一次真实的返工——舞台曾经是固定 286px，咖啡（一排骨袋，
+   * 一百多像素高、底部对齐）上方空出 169px，记录（叠放卡、顶部对齐）下方
+   * 空出 160px，三栏看上去完全没对齐。修法是让舞台高度由内容决定。
+   */
+  test('有数据时三栏都不留空洞，底边也接近', async () => {
+    const launched = await launch(dir)
+    app = launched.app
+    const { page } = launched
+
+    for (const width of [1440, 1280, 1100, 980]) {
+      await app.evaluate(({ BrowserWindow }, size) => {
+        const window = BrowserWindow.getAllWindows()[0]
+        window.setSize(size, 900)
+      }, width)
+      await page.waitForTimeout(320)
+
+      const report = await page.evaluate(() => {
+        const desk = document.querySelector('.studio-desk')!.getBoundingClientRect()
+        const read = (space: 'coffee' | 'records' | 'canvas') => {
+          const column = document.querySelector(`.studio-space--${space}`)!
+          const head = column.querySelector('.studio-space__head')!.getBoundingClientRect()
+          const stage = column.querySelector('.studio-space__stage')!.getBoundingClientRect()
+          const stack = column.querySelector('.studio-space__stage')!.firstElementChild as HTMLElement | null
+          const cards = stack ? Array.from(stack.children).map((child) => child.getBoundingClientRect()) : []
+          return {
+            // 标题底部 → 第一张卡顶部（不该出现大段空白）
+            headGap: cards.length ? Math.min(...cards.map((r) => r.top)) - head.bottom : -1,
+            // 卡片群可见下缘（相对桌面顶部）
+            visibleBottom: cards.length ? Math.max(...cards.map((r) => r.bottom)) - desk.top : -1,
+            stageHeight: stage.height,
+            cardCount: cards.length
+          }
+        }
+        return { coffee: read('coffee'), records: read('records'), canvas: read('canvas') }
+      })
+
+      for (const space of ['coffee', 'records', 'canvas'] as const) {
+        const item = report[space]
+        expect(item.cardCount, `${width}px 的 ${space} 没有卡片`).toBeGreaterThan(0)
+        // 标题与内容之间只有常规间距（13px gap + 少量旋转余量），不是空洞。
+        expect(item.headGap, `${width}px 的 ${space} 标题下方空了 ${item.headGap}px`).toBeLessThanOrEqual(30)
+        // 舞台高度跟内容走，不再是一个远超内容的固定框。
+        expect(item.stageHeight, `${width}px 的 ${space} 舞台比内容高出太多`).toBeLessThanOrEqual(item.visibleBottom + 8)
+      }
+
+      // 三栏可见下缘接近：叠放姿态会探出一点，但不应出现一栏明显垂到很低。
+      const bottoms = [report.coffee.visibleBottom, report.records.visibleBottom, report.canvas.visibleBottom]
+      expect(Math.max(...bottoms) - Math.min(...bottoms), `${width}px 三栏底边极差过大`).toBeLessThanOrEqual(40)
     }
 
     await app.close()
