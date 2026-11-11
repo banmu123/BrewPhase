@@ -62,12 +62,12 @@ test('Settings：二级导航、常规信息与 AI 连接全流程', async () =>
   await nav('简体中文').click()
   await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible()
 
-  // —— 设备同步页：启用同步 → 出现「连接新手机」与二维码入口 ——
+  // —— 设备同步页：启用同步 → 出现「连接新设备」与二维码入口 ——
   await nav('设备同步').click()
-  await expect(page.getByText('iPhone 记录的内容，回到电脑就在这里。')).toBeVisible()
+  await expect(page.getByText('在移动设备上记录的内容，回到电脑就在这里。')).toBeVisible()
   await nav('启用局域网同步').click()
   await expect(nav('停用局域网同步')).toBeVisible({ timeout: 10_000 })
-  await expect(nav('连接新手机')).toBeVisible()
+  await expect(nav('连接新设备')).toBeVisible()
 
   // —— AI 连接页：Bridge 状态、创建客户端、token 一次性 ——
   await nav('AI 连接').click()

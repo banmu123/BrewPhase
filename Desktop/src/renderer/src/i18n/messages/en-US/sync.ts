@@ -1,17 +1,17 @@
 /** Device sync (LAN pairing, device revocation, conflict resolution). */
 export const sync = {
   overline: 'Device sync',
-  headline: 'What you record on iPhone lands here on the desktop.',
+  headline: 'What you record on a mobile device lands here on the desktop.',
   enable: 'Enable LAN sync',
   disable: 'Disable LAN sync',
-  pairNew: 'Connect a new phone',
+  pairNew: 'Connect a new device',
   running: (port: number, address: string) => `Running · port ${port} · ${address}`,
   startFailed: 'Service failed to start',
   pairing: {
     alt: 'Pairing QR code',
-    scanHint: 'Scan with BrewPhase for iOS',
+    scanHint: 'Scan with BrewPhase on your mobile device',
     instructions:
-      "Open the camera in iPhone's More → Data → Desktop sync (or the Connect desktop card on the home screen) and scan. The code is valid for two minutes and can be used only once.",
+      'Open BrewPhase on your mobile device and scan from its desktop sync entry (on iOS: More → Data → Desktop sync, or the Connect desktop card on the home screen). The code is valid for two minutes and can be used only once.',
     expiresIn: (clock: string) => `expires in ${clock}`,
     regenerate: 'New code'
   },
@@ -21,7 +21,7 @@ export const sync = {
     lastSync: (when: string) => `Last sync ${when}`,
     revoke: 'Revoke access',
     revokeExplain:
-      'Once revoked, this phone can no longer sync. You can also clear what it synced here: records, tags, canvases and media files — plus all coffee data (beans, brews and tastings, including anything entered on the Mac) — are deleted. Canvases, notes and strokes you created on the Mac, and card positions you adjusted here, are deleted too. Clearing cannot be undone.',
+      'Once revoked, this device can no longer sync. You can also clear what it synced here: records, tags, canvases and media files — plus all coffee data (beans, brews and tastings, including anything entered on the Mac) — are deleted. Canvases, notes and strokes you created on the Mac, and card positions you adjusted here, are deleted too. Clearing cannot be undone.',
     cancel: 'Cancel',
     revokeOnly: 'Revoke only',
     revokeAndWipe: 'Revoke and clear content',
@@ -41,11 +41,11 @@ export const sync = {
     titleWithCount: (n: number) => `Conflicts · ${n}`,
     empty: 'When the same item changed on both sides it stops here for your decision — never silently overwritten.',
     deleteExplain:
-      'The phone deleted this record but the desktop edited it. Keep keeps both copies; accept deletes it on the desktop.',
+      'The mobile device deleted this record but the desktop edited it. Keep keeps both copies; accept deletes it on the desktop.',
     keepLocal: 'Keep desktop version',
     acceptDelete: 'Accept deletion',
-    acceptRemote: 'Accept phone version',
+    acceptRemote: 'Accept mobile version',
     deleteTitle: 'Delete this record on the desktop?',
-    deleteBody: 'It was already deleted on the phone. Accepting removes this copy too — this cannot be undone.'
+    deleteBody: 'It was already deleted on the mobile device. Accepting removes this copy too — this cannot be undone.'
   }
 }

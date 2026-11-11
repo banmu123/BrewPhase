@@ -1,16 +1,17 @@
 /** 设备同步（局域网配对、设备撤销、冲突裁决）。 */
 export const sync = {
   overline: '设备同步',
-  headline: 'iPhone 记录的内容，回到电脑就在这里。',
+  headline: '在移动设备上记录的内容，回到电脑就在这里。',
   enable: '启用局域网同步',
   disable: '停用局域网同步',
-  pairNew: '连接新手机',
+  pairNew: '连接新设备',
   running: (port: number, address: string) => `运行中 · 端口 ${port} · ${address}`,
   startFailed: '服务未能启动',
   pairing: {
     alt: '配对二维码',
-    scanHint: '用 BrewPhase iOS 扫码',
-    instructions: '在 iPhone 的「更多 → 数据 → 桌面同步」或首页的「连接桌面端」卡片里打开相机扫描。配对码两分钟内有效、只能使用一次。',
+    scanHint: '用移动设备上的 BrewPhase 扫码',
+    instructions:
+      '在移动设备上打开 BrewPhase 的「桌面同步」入口（iOS：更多 → 数据 → 桌面同步，或首页「连接桌面端」卡片）扫码。配对码两分钟内有效、只能使用一次。',
     expiresIn: (clock: string) => `${clock} 后失效`,
     regenerate: '换一个码'
   },
@@ -20,7 +21,7 @@ export const sync = {
     lastSync: (when: string) => `上次同步 ${when}`,
     revoke: '撤销授权',
     revokeExplain:
-      '撤销后这台手机不能再同步。也可以同时清空它同步过来的内容：记录、标签、画布、媒体文件，以及全部咖啡数据——豆子、冲煮、品鉴（包括在 Mac 上录入的）都会被删除。Mac 上自己新建的画布、便签、笔迹，以及调整过的卡片位置也一并删除。清空不可恢复。',
+      '撤销后这台设备不能再同步。也可以同时清空它同步过来的内容：记录、标签、画布、媒体文件，以及全部咖啡数据——豆子、冲煮、品鉴（包括在 Mac 上录入的）都会被删除。Mac 上自己新建的画布、便签、笔迹，以及调整过的卡片位置也一并删除。清空不可恢复。',
     cancel: '取消',
     revokeOnly: '只撤销授权',
     revokeAndWipe: '撤销并清空内容',
@@ -39,11 +40,11 @@ export const sync = {
     title: '冲突',
     titleWithCount: (n: number) => `冲突 · ${n}`,
     empty: '同一份数据在两端都被修改时会停在这里等你裁决，绝不静默覆盖。',
-    deleteExplain: '手机端删除了这条记录，但电脑端修改过它。保留则两端各留一份；接受将删除电脑端的这条记录。',
+    deleteExplain: '移动端删除了这条记录，但电脑端修改过它。保留则两端各留一份；接受将删除电脑端的这条记录。',
     keepLocal: '保留电脑版本',
     acceptDelete: '接受删除',
-    acceptRemote: '接受手机版本',
+    acceptRemote: '接受移动端版本',
     deleteTitle: '删除电脑端的这条记录？',
-    deleteBody: '手机端已经删除了它。接受后本机这份记录也会消失，无法恢复。'
+    deleteBody: '移动端已经删除了它。接受后本机这份记录也会消失，无法恢复。'
   }
 }

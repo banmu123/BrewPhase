@@ -278,8 +278,10 @@ function SyncSection() {
         </div>
       )}
 
+      {/* 宽度要让右侧说明有正常阅读宽度：移动设备文案比旧的「iPhone」长，
+          360px 会把中英文都挤成 7～8 行的窄条。 */}
       {status?.pairing && (
-        <div className="panel" style={{ maxWidth: 360, marginBottom: 20 }}>
+        <div className="panel" style={{ maxWidth: 440, marginBottom: 20 }}>
           <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
             <img
               src={status.pairing.qrDataUrl}

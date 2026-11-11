@@ -32,7 +32,7 @@ export const settings = {
     notDoneItems: [
       'Bonjour auto-discovery (direct QR pairing already works)',
       'TLS transport encryption (sync is LAN HTTP with tokens/signatures)',
-      'Two-way sync (currently iPhone → desktop only)',
+      'Two-way sync (currently mobile device → desktop only)',
       'MCP Bridge on Windows (Named Pipe permissions unverified)',
       'Code signing / notarization / auto-update'
     ]

@@ -3,7 +3,7 @@ export const mcp = {
   overline: 'AI 连接',
   headline: '让 Codex、WorkBuddy 这类 Agent 读写你的 BrewPhase。',
   intro:
-    '每个客户端单独授权、单独撤销；权限检查在桌面端主进程完成，Agent 拿不到数据库，也没有删除权限。写入只落在这台 Mac 上（不会自动同步到 iPhone）。',
+    '每个客户端单独授权、单独撤销；权限检查在桌面端主进程完成，Agent 拿不到数据库，也没有删除权限。写入只落在这台 Mac 上（不会自动同步回移动设备）。',
   bridge: {
     running: (socket: string) => `Bridge：运行中 · ${socket}`,
     stopped: 'Bridge：未运行',

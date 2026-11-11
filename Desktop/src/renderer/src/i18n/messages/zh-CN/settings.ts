@@ -31,7 +31,7 @@ export const settings = {
     notDoneItems: [
       'Bonjour 自动发现（二维码直连已可用）',
       'TLS 传输加密（当前同步是局域网 HTTP + token/签名）',
-      '双向同步（现为 iPhone → 电脑单向）',
+      '双向同步（现为移动设备 → 电脑单向）',
       'Windows 上的 MCP Bridge（Named Pipe 权限未验证）',
       '代码签名 / 公证 / 自动更新'
     ]

@@ -3,7 +3,7 @@ export const mcp = {
   overline: 'AI connections',
   headline: 'Let agents like Codex or WorkBuddy read and write your BrewPhase.',
   intro:
-    'Each client is authorized and revoked separately; permission checks run in the desktop main process. Agents get no database access and no delete capability. Writes stay on this Mac (nothing is pushed back to the iPhone automatically).',
+    'Each client is authorized and revoked separately; permission checks run in the desktop main process. Agents get no database access and no delete capability. Writes stay on this Mac (nothing is pushed back to the mobile device automatically).',
   bridge: {
     running: (socket: string) => `Bridge: running · ${socket}`,
     stopped: 'Bridge: not running',

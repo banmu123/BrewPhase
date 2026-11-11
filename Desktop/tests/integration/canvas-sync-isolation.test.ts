@@ -284,7 +284,7 @@ describe('Canvas 同步隔离：iOS → Desktop 单向，Desktop 本地创作不
     expect(conflictRows()).toHaveLength(1)
   })
 
-  it('D 双方同时修改：产生冲突，只有显式「接受手机版本」才覆盖桌面内容', () => {
+  it('D 双方同时修改：产生冲突，只有显式「接受移动端版本」才覆盖桌面内容', () => {
     importIos()
     canvasRepo.setAnnotation(handle.db, handle.deviceId, NODE_ID, '桌面写的备注')
 
