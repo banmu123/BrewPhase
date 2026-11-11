@@ -3077,8 +3077,14 @@ body.canvas-focus .canvas-topbar {
  * 的，只能让结构决定对齐。
  */
 .studio-desk {
+  /*
+   * 三列**等宽**。列宽不等时，同一个 `62%` 会算出三种卡宽（1440 下 231 / 249 /
+   * 217），并排放在一起就能看出大小不一。等宽之后卡宽只有一个来源，
+   * 三个空间的卡片宽高完全相同。
+   */
+  --card-w: clamp(160px, 62%, 300px);
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.08fr) minmax(0, 0.94fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   grid-template-rows: auto auto;
   grid-template-areas:
     'coffee records canvas'
@@ -3549,33 +3555,29 @@ body.canvas-focus .canvas-topbar {
 /* ---------- Coffee Shelf：错开叠放的豆袋 ---------- */
 
 /*
- * 架子按「一排骨袋的宽高比」定高，而不是铺满一个固定框：
- * 卡宽 = 列宽 ÷ 压叠系数（组件按张数算好传进来），卡高 = 卡宽 × 196/132，
- * 于是 `aspect-ratio: 系数 / 1.485` 正好等于那一排骨袋的高度。
- * 这样咖啡这栏既横向铺满、也不在上方留一块空白。
+ * 和 Records 同一套叠放：卡片绝对定位、按 `deck-model` 的固定姿态错开，
+ * 第一张留在文档流里撑高容器。
+ *
+ * 早先这里是「一排 5 包横着铺满整列」——每包被压掉 70%，五包只剩五条竖边，
+ * 既读不出是哪一包，hover 展开时还会顶出列外。叠成一摞之后每包都看得见，
+ * 也与记录、画布两栏的姿态语言一致。
  */
 .coffee-shelf {
+  /* 卡宽继承 `.studio-desk` 上的 `--card-w`（三栏同一个值），不在这里重复定义。 */
+  /* 叠放的扇开量（`DECK_REST` 里最大的 x），由组件按实际张数注入。 */
+  --deck-fan: 68px;
   position: relative;
   width: 100%;
-  aspect-ratio: var(--shelf-ratio, 2.46 / 1.485);
-  display: flex;
-  align-items: flex-end;
-  padding: 6px 10px 0 0;
 }
 
 .coffee-shelf__card {
-  /*
-   * 卡宽由组件按张数算好（`--cw: calc(100% / 压叠系数)`），这里只留一个兜底：
-   * 少给一个值也不会把袋子压成一条。压叠量见下面 nth-child 的负边距。
-   */
-  --cw: calc(100% / 2.46);
-  --spread: 0px;
-  --lift: 0px;
-  --scale: 1;
-  position: relative;
-  flex: 0 0 var(--cw);
-  width: var(--cw);
-  margin-left: calc(var(--cw) * -0.29);
+  position: absolute;
+  top: 4px;
+  /* 横向按**整叠可见宽度**居中，与 Records 同一条公式。 */
+  left: calc((100% - var(--card-w) - var(--deck-fan)) / 2);
+  width: var(--card-w);
+  /* 比例也跟 Records 一致（4:3）：宽高都相同，两栏的卡才是同一个尺寸。 */
+  aspect-ratio: 4 / 3;
   border-radius: 10px;
   background: var(--card);
   /* 1px 的收边让两张同色包装叠在一起时也分得清是两张。 */
@@ -3583,73 +3585,70 @@ body.canvas-focus .canvas-topbar {
     0 0 0 1px rgba(48, 55, 47, 0.05),
     0 1px 2px rgba(48, 55, 47, 0.07),
     0 12px 24px -14px rgba(48, 55, 47, 0.5);
-  transform: translateX(calc(var(--i) * var(--spread))) translateY(calc(var(--i) * 2px + var(--lift)))
-    rotate(var(--r, 0deg)) scale(var(--scale));
-  transform-origin: bottom center;
+  transform: translate(var(--deck-x), var(--deck-y)) rotate(var(--deck-r));
   transition:
-    transform 0.2s cubic-bezier(0.2, 0.75, 0.3, 1),
-    box-shadow 0.2s ease,
-    opacity 0.2s ease;
+    transform 0.24s cubic-bezier(0.2, 0.75, 0.3, 1),
+    box-shadow 0.2s ease;
   will-change: transform;
-  z-index: calc(10 - var(--i));
+  z-index: calc(10 - var(--deck-i));
 }
 
+/*
+ * 第一张留在文档流里撑高容器；它不能用 `left`（相对定位会二次偏移），
+ * 改用同一条公式的左外边距，与绝对定位的兄弟对齐到同一条中轴。
+ */
 .coffee-shelf__card:first-child {
-  margin-left: 0;
+  position: relative;
+  left: auto;
+  margin-left: calc((100% - var(--card-w) - var(--deck-fan)) / 2);
 }
 
-/* 压叠量逐张不同：不然五包会像等距排开的商品卡，而不是随手叠上去的。 */
-.coffee-shelf__card:nth-child(2) {
-  margin-left: calc(var(--cw) * -0.30);
+.coffee-shelf__card:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+  z-index: 30;
 }
 
-.coffee-shelf__card:nth-child(3) {
-  margin-left: calc(var(--cw) * -0.24);
-}
-
-.coffee-shelf__card:nth-child(4) {
-  margin-left: calc(var(--cw) * -0.31);
-}
-
-.coffee-shelf__card:nth-child(5) {
-  margin-left: calc(var(--cw) * -0.26);
-}
-
-/* 展开：整区 hover 时按索引错开（240–320ms），单张 hover 用常规时长。 */
-.coffee-shelf:hover .coffee-shelf__card {
-  --spread: 16px;
-  --lift: -4px;
+/* 整叠展开：hover 与键盘聚焦同一姿态（与 Records 一致）。 */
+.coffee-shelf:hover .coffee-shelf__card,
+.coffee-shelf:focus-within .coffee-shelf__card {
+  transform: translate(var(--deck-x-spread), var(--deck-y-spread)) rotate(var(--deck-r-spread));
   transition-duration: 0.28s;
 }
 
-/* 有一包被指着的时候，其余稍微退后一点——权重让给当前这包。 */
-.coffee-shelf:has(.coffee-shelf__card:hover) .coffee-shelf__card:not(:hover) {
-  opacity: 0.86;
-}
-
 .coffee-shelf .coffee-shelf__card:hover {
-  --lift: -9px;
-  --scale: 1.025;
+  transform: translate(var(--deck-x-spread), var(--deck-y-spread))
+    rotate(var(--deck-r-spread)) translateY(-6px);
   z-index: 30;
   transition-duration: 0.2s;
   box-shadow:
     0 0 0 1px rgba(48, 55, 47, 0.05),
     0 2px 4px rgba(48, 55, 47, 0.08),
-    0 22px 34px -16px rgba(48, 55, 47, 0.55);
+    0 24px 38px -18px rgba(48, 55, 47, 0.55);
 }
 
 .coffee-shelf__face {
-  aspect-ratio: 132 / 196;
+  /* 比例在卡片上（4:3，与 Records 同尺寸），卡面直接铺满。 */
+  width: 100%;
+  height: 100%;
   border-radius: 10px;
   overflow: hidden;
   background: var(--well);
+  /* 包装图是竖幅长图，4:3 的卡面里 cover 会把袋子裁掉一大截：
+     改为等比装入 + 底色，袋子完整、两侧留白（与同一栏的占位块同一姿态）。 */
+  display: grid;
+  place-items: center;
+  padding: 8px;
 }
 
 .coffee-shelf__face img {
   display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 6px;
 }
 
 .coffee-shelf__placeholder {
@@ -3678,7 +3677,7 @@ body.canvas-focus .canvas-topbar {
 
 .coffee-shelf__monogram {
   font-family: var(--serif);
-  font-size: calc(var(--cw) * 0.34);
+  font-size: calc(var(--card-w) * 0.34);
   color: rgba(255, 255, 255, 0.92);
 }
 
@@ -3737,6 +3736,12 @@ body.canvas-focus .canvas-topbar {
  */
 
 .records-deck {
+  /*
+   * 卡宽继承 `.studio-desk` 上的 `--card-w`（三栏同一个值）。
+   * 叠放的扇开量（`DECK_REST` 里最大的 x 位移，由组件按实际张数注入）：
+   * 居中必须把它算进去，只居中第一张时整摞向右下探出 68px，视觉上仍偏右。
+   */
+  --deck-fan: 68px;
   position: relative;
   width: 100%;
 }
@@ -3744,13 +3749,18 @@ body.canvas-focus .canvas-topbar {
 .records-deck__card {
   position: absolute;
   top: 4px;
-  left: 2px;
+  /*
+   * 横向居中按**整叠的可见宽度**算（卡宽 + 扇开量），两侧留白相等；
+   * 用 `left` 而不是 `translateX(-50%)`：transform 已被叠放姿态占满，
+   * 再塞一个 -50% 会和 hover 的每个姿态打架。
+   */
+  left: calc((100% - var(--card-w) - var(--deck-fan)) / 2);
   /*
    * 卡宽 62%：既要放得下展开后的一叠（位移见 deck-model），也要让这一叠的
    * **可见高度**与咖啡架、画布稿纸接近——卡再宽，叠放的下缘就会垂到另外两栏
    * 之外，三栏底部又不齐了。
    */
-  width: clamp(160px, 62%, 300px);
+  width: var(--card-w);
   aspect-ratio: 4 / 3;
   display: flex;
   flex-direction: column;
@@ -3771,9 +3781,16 @@ body.canvas-focus .canvas-topbar {
   z-index: calc(10 - var(--deck-i));
 }
 
-/* 第一张留在文档流里：它撑出容器（= 舞台）的高度，其余四张继续 absolute 叠放。 */
+/*
+ * 第一张留在文档流里：它撑出容器（= 舞台）的高度，其余四张继续 absolute 叠放。
+ * 它不能用 `left` 居中——那是相对定位、会在流内位置之上再偏移一次；
+ * 改用左边距（与兄弟同一条公式）把两者对齐到同一条中轴。
+ */
 .records-deck__card:first-child {
   position: relative;
+  left: auto;
+  margin-left: calc((100% - var(--card-w) - var(--deck-fan)) / 2);
+  margin-right: 0;
 }
 
 .records-deck__card:focus-visible {
@@ -3969,10 +3986,13 @@ body.canvas-focus .canvas-topbar {
 /* ---------- Canvas Deck：摊开的稿纸 ---------- */
 
 .canvas-deck {
-  /* 同 Records：容器不铺满舞台，第一张稿纸留在文档流里撑高。 */
+  /*
+   * 三个空间共用同一套叠放几何：`--card-w`（继承自 `.studio-desk`）定卡宽，
+   * `--deck-fan` 是整叠的扇开量（组件按张数注入），居中按「卡宽 + 扇开量」算。
+   */
+  --deck-fan: 68px;
   position: relative;
   width: 100%;
-  /* 稿纸不跟着列宽无限变宽：超过这个宽度缩略图会被拉成 3:1 的长条。 */
   max-width: 470px;
 }
 
@@ -3991,46 +4011,52 @@ body.canvas-focus .canvas-topbar {
 }
 
 .canvas-deck__card {
-  --spread-x: 30px;
-  --spread-y: 26px;
-  --lift: 0px;
-  --scale: 1;
   position: absolute;
-  top: 0;
-  left: 0;
-  width: calc(100% - 88px);
+  top: 4px;
+  /* 横向按整叠可见宽度居中，与 Coffee / Records 同一条公式。 */
+  left: calc((100% - var(--card-w) - var(--deck-fan)) / 2);
+  width: var(--card-w);
   padding: 7px 7px 9px;
   border-radius: 12px;
   background: var(--card);
   box-shadow:
     0 1px 2px rgba(48, 55, 47, 0.06),
     0 14px 26px -16px rgba(48, 55, 47, 0.5);
-  transform: translate(calc(var(--i) * var(--spread-x)), calc(var(--i) * var(--spread-y) + var(--lift)))
-    rotate(calc(var(--i) * 0.7deg)) scale(var(--scale));
-  transform-origin: top left;
+  transform: translate(var(--deck-x), var(--deck-y)) rotate(var(--deck-r));
   transition:
-    transform 0.2s cubic-bezier(0.2, 0.75, 0.3, 1),
+    transform 0.24s cubic-bezier(0.2, 0.75, 0.3, 1),
     box-shadow 0.2s ease;
   will-change: transform;
-  z-index: calc(10 - var(--i));
+  z-index: calc(10 - var(--deck-i));
 }
 
-/* 第一张稿纸留在文档流里：它撑出容器（= 舞台）的高度，其余几张 absolute 叠放。 */
+/*
+ * 第一张稿纸留在文档流里撑出容器高度；不能用 `left`（相对定位会二次偏移），
+ * 改用同一条公式的左外边距。
+ */
 .canvas-deck__card:first-child {
   position: relative;
+  left: auto;
+  margin-left: calc((100% - var(--card-w) - var(--deck-fan)) / 2);
 }
 
-.canvas-deck:hover .canvas-deck__card {
-  --spread-x: 42px;
-  --spread-y: 34px;
-  --lift: -3px;
+.canvas-deck__card:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+  z-index: 30;
+}
+
+/* 整叠展开：hover 与键盘聚焦同一姿态（与 Coffee / Records 一致）。 */
+.canvas-deck:hover .canvas-deck__card,
+.canvas-deck:focus-within .canvas-deck__card {
+  transform: translate(var(--deck-x-spread), var(--deck-y-spread)) rotate(var(--deck-r-spread));
   transition-duration: 0.28s;
 }
 
 .canvas-deck .canvas-deck__card:hover {
-  --lift: -7px;
-  --scale: 1.02;
-  z-index: 20;
+  transform: translate(var(--deck-x-spread), var(--deck-y-spread))
+    rotate(var(--deck-r-spread)) translateY(-6px);
+  z-index: 30;
   transition-duration: 0.2s;
   box-shadow:
     0 2px 4px rgba(48, 55, 47, 0.07),
@@ -4239,17 +4265,13 @@ body.canvas-focus .canvas-topbar {
 
 /* ---------- 无 hover / 减少动态 ---------- */
 
-/* 触摸屏上没有 hover：信息不该永远藏着，位移也不该在被点时才抖一下。 */
+/* 触摸屏上没有 hover：信息不该永远藏着（叠放的位移是静态布局，保留）。 */
 @media (hover: none) {
   .coffee-shelf__info,
   .records-deck__meta,
   .canvas-deck__meta span {
     opacity: 1;
     transform: none;
-  }
-
-  .coffee-shelf:has(.coffee-shelf__card:hover) .coffee-shelf__card:not(:hover) {
-    opacity: 1;
   }
 }
 
@@ -4258,16 +4280,8 @@ body.canvas-focus .canvas-topbar {
    卡片仍在原位可点，只是不再挪动。 */
 @media (prefers-reduced-motion: reduce) {
   .coffee-shelf:hover .coffee-shelf__card,
-  .coffee-shelf .coffee-shelf__card:hover {
-    --spread: 0px;
-    --lift: 0px;
-    --scale: 1;
-  }
-
-  .coffee-shelf:has(.coffee-shelf__card:hover) .coffee-shelf__card:not(:hover) {
-    opacity: 1;
-  }
-
+  .coffee-shelf:focus-within .coffee-shelf__card,
+  .coffee-shelf .coffee-shelf__card:hover,
   .records-deck:hover .records-deck__card,
   .records-deck:focus-within .records-deck__card,
   .records-deck .records-deck__card:hover {
@@ -4284,11 +4298,9 @@ body.canvas-focus .canvas-topbar {
   }
 
   .canvas-deck:hover .canvas-deck__card,
+  .canvas-deck:focus-within .canvas-deck__card,
   .canvas-deck .canvas-deck__card:hover {
-    --spread-x: 30px;
-    --spread-y: 26px;
-    --lift: 0px;
-    --scale: 1;
+    transform: translate(var(--deck-x), var(--deck-y)) rotate(var(--deck-r));
   }
 
   .studio-space:hover .studio-space__open span {

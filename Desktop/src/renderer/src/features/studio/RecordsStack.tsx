@@ -1,8 +1,9 @@
+import type { CSSProperties } from 'react'
 import type { RecordItem } from '@shared/contracts'
 import { api } from '../../shared/api'
 import { useAppStore } from '../../app/store'
 import { useI18n } from '../../i18n'
-import { deckCard, deckCardStyle, DECK_LIMIT } from './deck-model'
+import { deckCard, deckCardStyle, DECK_REST, SPACE_CARD_LIMIT } from './deck-model'
 import { RecordsEmpty } from './empty-states'
 
 const GLYPHS: Record<string, string> = { text: '¶', link: '↗', video: '▶', image: '▣' }
@@ -24,14 +25,21 @@ const GLYPHS: Record<string, string> = { text: '¶', link: '↗', video: '▶', 
 export function RecordsStack({ items }: { items: RecordItem[] }) {
   const { t } = useI18n()
   const openRecord = useAppStore((state) => state.openRecord)
-  const shown = items.slice(0, DECK_LIMIT).map((item, index) => deckCard(item, index, api.records.mediaUrl))
+  const shown = items.slice(0, SPACE_CARD_LIMIT).map((item, index) => deckCard(item, index, api.records.mediaUrl))
 
   if (shown.length === 0) {
     return <RecordsEmpty />
   }
 
+  /*
+   * 整叠向右下扇开的量 = 实际用到的姿态里最大的 x 位移。
+   * CSS 用它把「卡宽 + 扇开量」整体居中，否则只居中第一张会让整摞偏右。
+   * 按张数取而不是写死 68：只有一两条记录时扇开量更小，居中的位置也不同。
+   */
+  const fan = Math.max(...DECK_REST.slice(0, shown.length).map((pose) => pose.x))
+
   return (
-    <div className="records-deck">
+    <div className="records-deck" style={{ '--deck-fan': `${fan}px` } as CSSProperties}>
       {shown.map((card) => {
         const glyph = GLYPHS[card.item.carrier] ?? '▣'
         const label = card.title || card.body || t.studio.records.untitled

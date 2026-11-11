@@ -315,6 +315,15 @@ test.describe('有数据：Records Deck 是真实记录的叠放', () => {
     // 点最上面那张卡 → 沿用既有跨页路径打开对应记录详情。
     // 叠放卡在 hover 时会展开（位置在动），所以先证明「卡片中心点最上层就是它」，
     // 再派发点击——避开帧节流下 Playwright 的「位置稳定」等待。
+    //
+    // 必须先让指针离开这一叠：没发过 move 之前，页面的 :hover 来自**真实系统
+    // 光标**，它若停在某张后方的卡上，那张卡会拿到 `:hover { z-index: 30 }`，
+    // 反过来盖住第一张，命中测试就会假红。
+    await page.mouse.move(2, 2)
+    await expect
+      .poll(() => page.evaluate(() => document.querySelector('.records-deck')?.matches(':hover') ?? false))
+      .toBe(false)
+
     const firstCard = deck.locator('.records-deck__card').first()
     const cardTopmost = await firstCard.evaluate((element) => {
       const rect = element.getBoundingClientRect()
@@ -475,9 +484,12 @@ test.describe('有数据：Records Deck 是真实记录的叠放', () => {
       }
 
       const metrics = await stageMetrics(page)
-      // 有数据时舞台由卡片撑开（不再塌成 0，也不硬撑成固定高度）：
-      // 980 宽度下这张卡约 150–190px，下限只用来防「塌成一条缝」。
-      expect(metrics.records, `窗口 ${width}px 的 Records 舞台塌了`).toBeGreaterThanOrEqual(140)
+      /*
+       * 有数据时舞台由卡片撑开（不再塌成 0，也不硬撑成固定高度）。
+       * 三列等宽后，980 宽度下记录卡是 183×139（4:3），所以下限放到 120：
+       * 只用来防「塌成一条缝」，不是断言某个设计尺寸。
+       */
+      expect(metrics.records, `窗口 ${width}px 的 Records 舞台塌了`).toBeGreaterThanOrEqual(120)
     }
 
     await app.close()
@@ -532,9 +544,68 @@ test.describe('有数据：Records Deck 是真实记录的叠放', () => {
         expect(item.stageHeight, `${width}px 的 ${space} 舞台比内容高出太多`).toBeLessThanOrEqual(item.visibleBottom + 8)
       }
 
-      // 三栏可见下缘接近：叠放姿态会探出一点，但不应出现一栏明显垂到很低。
+      /*
+       * 三栏可见下缘：**不能**要求完全齐平——扇开量随卡片张数增长
+       * （3 张最大位移 26px、5 张 52px），而种子里三栏分别是 3 / 5 / 2 张，
+       * 底边天然差几十像素。这里只兜住「某一栏垂得特别低」的情况：
+       * 上限取一张卡的高度量级，超过就说明布局算错了。
+       */
       const bottoms = [report.coffee.visibleBottom, report.records.visibleBottom, report.canvas.visibleBottom]
-      expect(Math.max(...bottoms) - Math.min(...bottoms), `${width}px 三栏底边极差过大`).toBeLessThanOrEqual(40)
+      expect(Math.max(...bottoms) - Math.min(...bottoms), `${width}px 三栏底边极差过大`).toBeLessThanOrEqual(60)
+    }
+
+    await app.close()
+    app = null
+  })
+
+  /**
+   * Records 那一叠在列内**居中**。
+   *
+   * 守的是一次返工：卡片原来贴左边缘（左空 0 / 右空 78px），整摞看起来被挤到
+   * 一侧；只居中第一张也不够——叠放向右下扇开 68px，视觉重心仍偏右。正确做法是
+   * 把「卡宽 + 扇开量」整体居中。
+   */
+  test('Records 一叠在列内水平居中', async () => {
+    const launched = await launch(dir)
+    app = launched.app
+    const { page } = launched
+
+    // 指针先离开这一叠：真实系统光标若停在卡片上，那张卡会展开并把叠放挪位。
+    await page.mouse.move(2, 2)
+    await page.addStyleTag({ content: '.records-deck__card{transition:none !important}' })
+
+    for (const width of [1440, 1280, 1100, 980]) {
+      await app.evaluate(({ BrowserWindow }, size) => {
+        const window = BrowserWindow.getAllWindows()[0]
+        window.setSize(size, 900)
+      }, width)
+      await page.waitForTimeout(300)
+      // 改窗口后布局位移，真实光标可能又落到这一叠上：每档都重新让开再测。
+      await page.mouse.move(2, 2)
+      await expect
+        .poll(() => page.evaluate(() => document.querySelector('.records-deck')?.matches(':hover') ?? false))
+        .toBe(false)
+
+      const gaps = await page.evaluate(() => {
+        const stage = document.querySelector('.studio-space--records .studio-space__stage')!
+        const rect = stage.getBoundingClientRect()
+        const cards = Array.from(stage.querySelectorAll('.records-deck__card')).map((card) =>
+          card.getBoundingClientRect()
+        )
+        return {
+          left: Math.min(...cards.map((card) => card.left)) - rect.left,
+          right: rect.right - Math.max(...cards.map((card) => card.right)),
+          stageWidth: rect.width
+        }
+      })
+
+      // 两侧留白相等（叠放卡有旋转，包围盒会多出几像素，给 6px 容差）。
+      expect(
+        Math.abs(gaps.left - gaps.right),
+        `${width}px 偏心 ${Math.round(Math.abs(gaps.left - gaps.right))}px（左 ${Math.round(gaps.left)} / 右 ${Math.round(gaps.right)}）`
+      ).toBeLessThanOrEqual(6)
+      // 两侧都真的留了白：不是「刚好贴边所以左右都等于 0」。
+      expect(gaps.left, `${width}px 左侧没有留白`).toBeGreaterThanOrEqual(8)
     }
 
     await app.close()

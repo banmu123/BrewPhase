@@ -13,6 +13,15 @@ import { isSafeRemoteImage, recordDisplayTitle } from '../records/preview/previe
 /** 首页一叠最多几张：收藏卡的「一叠」，不是完整列表。 */
 export const DECK_LIMIT = 5
 
+/**
+ * 三个空间统一的上限：每栏只摆前 5 个。
+ *
+ * 三个空间各写一个数字的时代已经过去（咖啡 5 / 记录 5 / 画布 3）——
+ * 同一张桌子上，一栏摞 5、一栏摞 3 会让高度和密度都对不齐。
+ * 画布那一栏也走这个上限：缩略图有缓存，5 块的节点查询仍是可接受的。
+ */
+export const SPACE_CARD_LIMIT = DECK_LIMIT
+
 /** 一张卡的姿态：位移（px）与旋转（deg）。 */
 export type DeckPose = { x: number; y: number; r: number }
 

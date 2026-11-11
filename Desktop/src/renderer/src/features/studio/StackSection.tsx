@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 
 /**
  * 首页三个空间的共用外壳：只负责「这是一层内容」的标题、进入入口与点击语义。
@@ -64,12 +64,4 @@ export function StackSection(props: {
       <div className="studio-space__stage">{props.children}</div>
     </section>
   )
-}
-
-/**
- * 给每张堆叠卡片传索引与初始倾角：CSS 用 `--i` 算错位与展开量，
- * 用 `--r` 做「随手摆上去」的轻微旋转（Records 不倾斜，保持可读）。
- */
-export function stackStyle(index: number, tilt = 0): CSSProperties {
-  return { '--i': index, '--r': `${tilt}deg` } as CSSProperties
 }

@@ -1,32 +1,39 @@
+import type { CSSProperties } from 'react'
 import type { Canvas } from '@shared/contracts'
 import { useI18n } from '../../i18n'
 import { CanvasThumbnail } from '../canvas/CanvasThumbnail'
-import { stackStyle } from './StackSection'
+import { deckCardStyle, DECK_REST, SPACE_CARD_LIMIT } from './deck-model'
 import { CanvasEmpty } from './empty-states'
 
 /**
- * Creative Space：复用 Gallery 的 CanvasThumbnail —— 它按真实节点的
- * 世界坐标等比装入，最多绘 8 个（带缓存），不需要截图任务，也不会造假缩略图。
+ * Canvas：一摞摊开的稿纸，姿态与 Coffee / Records 完全一致。
  *
- * 表现是「摊在桌上的几张稿纸」：卡片按索引轻微偏移、旋转叠放，
- * hover 整区时展开（只改 transform），悬停那张抬起来并显示更新时间。
- * 首页最多摆 3 块，避免同时发起过多节点查询。
+ * 缩略图复用 `CanvasThumbnail`——它按真实节点的世界坐标等比装入（最多 8 个，
+ * 带缓存），不截图、不造假内容；这里只把高度交给 CSS（16:10 随卡宽缩放）。
  *
- * 稿纸宽度由 CSS 上限（约 430px）收住，缩略图比例才不会随列宽被拉成
- * 3:1 的长条；容器再窄时卡片跟着变窄，spread 只是位移、不撑破列宽。
+ * 三个空间共用 `deck-model` 的固定姿态，于是「叠放」只有一套实现：
+ * 换卡宽、换卡面，不换叠法。稿纸宽度由 CSS 上限收住，缩略图不会被拉成长条。
  */
 export function CanvasStack({ canvases }: { canvases: Canvas[] }) {
   const { t, formatDate } = useI18n()
-  const shown = canvases.slice(0, 3)
+  const shown = canvases.slice(0, SPACE_CARD_LIMIT)
 
   if (shown.length === 0) {
     return <CanvasEmpty />
   }
 
+  // 整叠扇开量 = 实际用到的姿态里最大的 x 位移；CSS 用它把整摞居中。
+  const fan = Math.max(...DECK_REST.slice(0, shown.length).map((pose) => pose.x))
+
   return (
-    <div className="canvas-deck">
+    <div className="canvas-deck" style={{ '--deck-fan': `${fan}px` } as CSSProperties}>
       {shown.map((canvas, index) => (
-        <article key={canvas.id} className="canvas-deck__card" style={stackStyle(index)}>
+        <article
+          key={canvas.id}
+          className="canvas-deck__card"
+          style={deckCardStyle(index)}
+          aria-label={canvas.name || t.studio.canvas.untitled}
+        >
           <div className="canvas-deck__preview">
             <CanvasThumbnail canvas={canvas} height="fluid" />
           </div>

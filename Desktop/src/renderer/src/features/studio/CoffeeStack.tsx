@@ -2,58 +2,43 @@ import type { CSSProperties } from 'react'
 import type { Bean } from '@shared/contracts'
 import { api } from '../../shared/api'
 import { useI18n } from '../../i18n'
-import { stackStyle } from './StackSection'
+import { deckCardStyle, DECK_REST, SPACE_CARD_LIMIT } from './deck-model'
 import { CoffeeEmpty } from './empty-states'
 
-/** 每包的初始倾角：固定值而非随机，重渲染不会跳。 */
-const TILTS = [-2.6, 1.8, -1.2, 2.4, -0.7]
-
 /**
- * 一排骨袋「占几倍卡宽」的压叠系数，与 CSS 里那几档负边距一一对应：
- * 第 2–5 张分别是 -30% / -24% / -31% / -26%，所以
- * n 张的总宽 = 卡宽 × 系数（1, 1.70, 2.46, 3.15, 3.89）。
+ * Coffee：一摞错开叠放的豆袋。
  *
- * 用它反推卡宽 = 列宽 ÷ 系数，于是**不管有几包都正好铺满一列**；
- * 高度再按 196/132 的袋形比例跟着走，咖啡这栏就不会上方空一块。
- */
-const SHELF_FACTORS = [0, 1, 1.7, 2.46, 3.15, 3.89]
-
-/** 豆袋的高宽比（面 = 132:196）。 */
-const BAG_RATIO = 196 / 132
-
-/**
- * Coffee Shelf：像书架上错开叠放的豆袋。最多取 5 包真实豆子，
- * 有 imagePath 就用真实包装图，没有就用统一占位（不伪造图片）。
+ * 和 Records 共用同一套姿态（`deck-model` 的固定数组）：绝对定位、每张按索引
+ * 向右下错开，第一张留在文档流里撑高容器，hover 整叠展开、单张再抬起来。
  *
- * 叠放靠负边距（每张的压叠量不同，避免排成一列等距卡片）+ 索引递增的
- * 微量下沉，hover 整区时按 `--spread` 展开；悬停那一包抬起来、淡入信息，
- * 其余稍微退后。只改 transform / opacity，不触发布局。
+ * 早先这里是「一排 5 包横着铺满整列」——每包被压掉 70%，五包只剩五条竖边，
+ * 既读不出是哪一包，展开时还会顶出列外。叠成一摞之后每包都看得见。
+ *
+ * 卡片的动作就是「进入咖啡空间」，所以不自己绑 onClick——交给外层 section。
  */
 export function CoffeeStack({ beans }: { beans: Bean[] }) {
   const { t } = useI18n()
-  const shown = beans.slice(0, 5)
-  const factor = SHELF_FACTORS[shown.length] ?? SHELF_FACTORS[5]!
+  const shown = beans.slice(0, SPACE_CARD_LIMIT)
 
   if (shown.length === 0) {
     return <CoffeeEmpty />
   }
 
+  // 整叠扇开量 = 实际用到的姿态里最大的 x 位移；CSS 用它把整摞居中。
+  const fan = Math.max(...DECK_REST.slice(0, shown.length).map((pose) => pose.x))
+
   return (
-    <div
-      className="coffee-shelf"
-      style={
-        {
-          // 卡宽按张数反推（铺满一列），架子高度 = 那一排骨袋的高度。
-          '--cw': `calc(100% / ${factor})`,
-          '--shelf-ratio': `${factor} / ${BAG_RATIO.toFixed(3)}`
-        } as CSSProperties
-      }
-    >
+    <div className="coffee-shelf" style={{ '--deck-fan': `${fan}px` } as CSSProperties}>
       {shown.map((bean, index) => {
         // 只接受纯文件名：`imagePath` 来自 iOS，带目录的路径不该拼进 bpmedia://。
         const image = bean.imagePath && !bean.imagePath.includes('/') ? api.records.mediaUrl(bean.imagePath) : null
         return (
-          <article key={bean.id} className="coffee-shelf__card" style={stackStyle(index, TILTS[index])}>
+          <article
+            key={bean.id}
+            className="coffee-shelf__card"
+            style={deckCardStyle(index)}
+            aria-label={bean.name || t.studio.coffee.unnamed}
+          >
             <div className="coffee-shelf__face">
               {image ? (
                 <img src={image} alt="" loading="lazy" />
