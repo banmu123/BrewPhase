@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type React from 'react'
 import { Group, Image as KonvaImage, Layer, Line, Rect, Shape, Stage, Text } from 'react-konva'
 import type { KonvaEventObject } from 'konva/lib/Node'
@@ -83,6 +83,15 @@ export function CanvasPage() {
   const [canvases, setCanvases] = useState<Canvas[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
 
+  /**
+   * 工作区有自己的工具栏，且画布要顶到窗口上沿：这段时间隐藏全局顶栏。
+   * 在 layout 阶段切 body class，避免先画一帧带顶栏的布局再跳。
+   */
+  useLayoutEffect(() => {
+    document.body.classList.toggle('canvas-workspace', view === 'workspace')
+    return () => document.body.classList.remove('canvas-workspace')
+  }, [view])
+
   // ===== Gallery =====
   const [galleryLoading, setGalleryLoading] = useState(true)
 
@@ -155,6 +164,19 @@ export function CanvasPage() {
 
   const openRecord = useAppStore((state) => state.openRecord)
   const openRecordId = useAppStore((state) => state.openRecordId)
+
+  // 顶栏「快速添加 → 新建一块画布」：回到 Gallery 再开这里原有的新建弹窗。
+  const setModule = useAppStore((state) => state.setModule)
+  const pendingCreate = useAppStore((state) => state.pendingCreate)
+  const consumeCreate = useAppStore((state) => state.consumeCreate)
+  useEffect(() => {
+    if (!pendingCreate) return
+    if (consumeCreate() === 'canvas') {
+      setView('gallery')
+      setActiveId(null)
+      setDialog({ kind: 'create', value: t.canvas.newCanvasName })
+    }
+  }, [pendingCreate, consumeCreate, t])
 
   const withSave = useCallback(async <T,>(task: () => Promise<T>): Promise<T> => {
     setSaveState('saving')
@@ -674,6 +696,9 @@ export function CanvasPage() {
       <div className="page">
         <header className="page-header">
           <div className="page-header__titles">
+            <button type="button" className="back-link" onClick={() => setModule('studio')}>
+              <span aria-hidden="true">←</span> {t.studio.back}
+            </button>
             <h1 className="page-title">{t.canvas.title}</h1>
             <p className="page-sub">{t.canvas.gallerySubtitle(canvases.length)}</p>
           </div>

@@ -3,6 +3,7 @@ import type { Bean, BeanDraft, Brew, BrewDraft, PhaseRule, Tasting } from '@shar
 import { dayAfterRoast, defaultRuleFor, phaseFor } from '@shared/domain/phase'
 import { api, ratioText, toDateInput, toEpoch } from '../../shared/api'
 import { Modal } from '../../shared/Modal'
+import { useAppStore } from '../../app/store'
 import { useI18n } from '../../i18n'
 
 /**
@@ -27,6 +28,18 @@ export function CoffeePage() {
   /** 详情浮层按需出现：点收藏架上的卡片打开，✕ 关闭。 */
   const [panelOpen, setPanelOpen] = useState(false)
   const selected = beans.find((bean) => bean.id === selectedId) ?? null
+
+  // 顶栏「快速添加 → 新增一包豆」：只消费待办，表单仍是本页那一个 Modal。
+  const setModule = useAppStore((state) => state.setModule)
+  const pendingCreate = useAppStore((state) => state.pendingCreate)
+  const consumeCreate = useAppStore((state) => state.consumeCreate)
+  useEffect(() => {
+    if (!pendingCreate) return
+    if (consumeCreate() === 'bean') {
+      setCreatingBean(true)
+      setPanelOpen(false)
+    }
+  }, [pendingCreate, consumeCreate])
 
   const loadBeans = useCallback(async () => {
     try {
@@ -96,6 +109,9 @@ export function CoffeePage() {
     <div className="page">
       <header className="page-header">
         <div className="page-header__titles">
+          <button type="button" className="back-link" onClick={() => setModule('studio')}>
+            <span aria-hidden="true">←</span> {t.studio.back}
+          </button>
           <h1 className="page-title">{t.coffee.title}</h1>
           <p className="page-sub">{t.coffee.shelfSummary(beans.length)}</p>
         </div>

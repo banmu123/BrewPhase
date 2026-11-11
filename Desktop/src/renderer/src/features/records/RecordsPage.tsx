@@ -94,6 +94,16 @@ export function RecordsPage() {
     }
   }, [items, pinnedRecord])
 
+  // 顶栏「快速添加 → 写一段文字 / 收藏一个链接」：只开本页已有的浮窗。
+  const setModule = useAppStore((state) => state.setModule)
+  const pendingCreate = useAppStore((state) => state.pendingCreate)
+  const consumeCreate = useAppStore((state) => state.consumeCreate)
+  useEffect(() => {
+    if (!pendingCreate) return
+    const kind = consumeCreate()
+    if (kind === 'text' || kind === 'link') setCreating(kind)
+  }, [pendingCreate, consumeCreate])
+
   /**
    * 媒体版本：只用来给 `bpmedia://` 加 `?v=`。
    *
@@ -192,6 +202,9 @@ export function RecordsPage() {
     <div className="page">
       <header className="page-header">
         <div className="page-header__titles">
+          <button type="button" className="back-link" onClick={() => setModule('studio')}>
+            <span aria-hidden="true">←</span> {t.studio.back}
+          </button>
           <h1 className="page-title">{t.records.title}</h1>
           <p className="page-sub">
             {t.records.subtitle} · {t.records.count(formatNumber(items.length))}
