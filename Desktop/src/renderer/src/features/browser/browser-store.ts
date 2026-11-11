@@ -41,6 +41,7 @@ type BrowserStore = {
   hide: () => Promise<void>
   close: () => Promise<void>
   showStart: () => Promise<void>
+  showCurrentPage: () => Promise<void>
   navigate: (input: string) => Promise<void>
   back: () => Promise<void>
   forward: () => Promise<void>
@@ -83,6 +84,14 @@ export const useBrowserStore = create<BrowserStore>((set, get) => ({
       set({ state: await api.browser.showStart() })
       // 设置页刚导入完可能已经变了：每次回起始页都重新读一次本地树。
       set({ bookmarks: await api.browser.bookmarks() })
+    } catch (error) {
+      report(error)
+    }
+  },
+
+  showCurrentPage: async () => {
+    try {
+      set({ state: await api.browser.showCurrentPage() })
     } catch (error) {
       report(error)
     }

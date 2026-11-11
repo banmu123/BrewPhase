@@ -233,6 +233,7 @@ export function registerIpc(params: {
   )
   handle(IPC.browserBookmarksTree, () => bookmarks.tree())
   handle(IPC.browserShowStart, () => browser.showStart())
+  handle(IPC.browserShowCurrent, () => browser.showCurrentPage())
 
   // MARK: - 内置浏览器
 

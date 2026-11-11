@@ -112,6 +112,7 @@ const api: RendererApi = {
       await invoke(IPC.browserOpenExternal, url ? { url } : {})
     },
     showStart: () => invoke(IPC.browserShowStart),
+    showCurrentPage: () => invoke(IPC.browserShowCurrent),
     // 只传 Profile 目录名：preload 不构造路径，主进程也不接受路径。
     detectChrome: () => invoke(IPC.browserChromeDetect),
     previewChromeBookmarks: (profileId) => invoke(IPC.browserBookmarksPreview, { profileId }),

@@ -24,8 +24,18 @@ import { seedStudioDatabase } from './studio-seed'
 const BROWSER_PARTITION = 'persist:brewphase-browser'
 
 const HOME_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>Bookmark Home</title>
-<style>body{font-family:-apple-system,sans-serif;margin:0;padding:48px;background:#faf9f6;color:#30372f}</style></head>
-<body><h1>Bookmark Home</h1><p>Served from 127.0.0.1.</p></body></html>`
+<style>body{font-family:-apple-system,sans-serif;margin:0;padding:48px;background:#faf9f6;color:#30372f}
+button{font:inherit;padding:6px 14px;margin-top:12px}</style></head>
+<body><h1>Bookmark Home</h1><p>Served from 127.0.0.1.</p>
+<button id="bump">Bump</button>
+<script>
+  // 页面运行状态探针：恢复网页时 token 与 counter 必须原样保留。
+  window.__brewphaseRestoreProbe = { token: Math.random().toString(36).slice(2), counter: 0 };
+  document.getElementById('bump').addEventListener('click', function () {
+    window.__brewphaseRestoreProbe.counter += 1;
+  });
+</script>
+</body></html>`
 
 const SECOND_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>Second Page</title>
 <style>body{font-family:-apple-system,sans-serif;margin:0;padding:48px;background:#faf9f6;color:#30372f}</style></head>
@@ -204,6 +214,37 @@ async function waitForLoaded(page: Page): Promise<void> {
   await expect(page.locator('.browser-panel__spinner')).toHaveCount(0, { timeout: 15_000 })
 }
 
+/**
+ * 读原生网页里的运行状态。
+ *
+ * 网页不在 Playwright 的 page 里，只能从主进程拿到对应 webContents 再
+ * `executeJavaScript`。token 在页面加载时生成一次，counter 由页面里的按钮
+ * 递增——两者都保留，才说明页面没有被重新加载。
+ */
+async function readProbe(
+  app: ElectronApplication
+): Promise<{ id: number; token: string; counter: number } | null> {
+  return app.evaluate(async ({ BrowserWindow, session }, partition) => {
+    const target = session.fromPartition(partition)
+    const window = BrowserWindow.getAllWindows()[0]
+    const child = window?.contentView.children.find((item) => Boolean(item.webContents))
+    if (!child) return null
+    const data = (await child.webContents.executeJavaScript(
+      '({ token: window.__brewphaseRestoreProbe?.token ?? "", counter: window.__brewphaseRestoreProbe?.counter ?? -1 })'
+    )) as { token: string; counter: number }
+    return { id: child.webContents.id, token: data.token, counter: data.counter }
+  }, BROWSER_PARTITION)
+}
+
+/** 在原生网页里点一下探针按钮，制造「页面内状态」。 */
+async function bumpProbe(app: ElectronApplication): Promise<void> {
+  await app.evaluate(async ({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0]
+    const child = window?.contentView.children.find((item) => Boolean(item.webContents))
+    await child?.webContents.executeJavaScript('document.querySelector("#bump")?.click()')
+  })
+}
+
 test('起始页展示书签、文件夹可展开、点书签导航、返回起始页不销毁网页', async () => {
   const chromeDir = mkdtempSync(join(tmpdir(), 'bp-chrome-'))
   seedChrome(chromeDir)
@@ -255,6 +296,87 @@ test('起始页展示书签、文件夹可展开、点书签导航、返回起�
     expect(resumed.id).toBe(loaded.id)
     expect(resumed.url).toBe(`${baseURL}/second`)
     expect(resumed.visible).toBe(true)
+  } finally {
+    await app.close()
+    rmSync(dataDir, { recursive: true, force: true })
+    rmSync(chromeDir, { recursive: true, force: true })
+  }
+})
+
+test('返回起始页后恢复当前网页：不重新加载，页面内状态原样保留', async () => {
+  const chromeDir = mkdtempSync(join(tmpdir(), 'bp-chrome-'))
+  seedChrome(chromeDir)
+  const { app, page, dataDir } = await launch(chromeDir)
+
+  try {
+    await page.getByRole('button', { name: '打开浏览器' }).click()
+    await page.locator('.browser-start__field input').fill(`${baseURL}/`)
+    await page.locator('.browser-start__field input').press('Enter')
+    await waitForLoaded(page)
+
+    // 页面里生成 token，并点一次按钮把 counter 加到 1。
+    const initial = await readProbe(app)
+    expect(initial?.counter).toBe(0)
+    await bumpProbe(app)
+    const before = await readProbe(app)
+    expect(before?.counter).toBe(1)
+    expect(before?.token).not.toBe('')
+
+    await page.getByRole('button', { name: '起始页' }).click()
+    await expect(page.locator('.browser-start')).toBeVisible()
+
+    // 恢复入口明确写「返回当前页面」，并带标题与域名。
+    const restore = page.locator('.browser-start__resume--current')
+    await expect(restore).toBeVisible()
+    await expect(restore).toContainText('返回当前页面')
+    await expect(restore).toContainText('127.0.0.1')
+
+    // 起始页上导航类按钮全部禁用：它们操作的是网页，不是书签页。
+    await expect(page.getByRole('button', { name: '起始页' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: '后退' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: '前进' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: '刷新' })).toBeDisabled()
+
+    await restore.click()
+    await expect(page.locator('.browser-start')).toHaveCount(0)
+
+    // 硬证据：同一个 webContents、同一个 token、counter 还是 1。
+    const after = await readProbe(app)
+    expect(after?.id).toBe(before?.id)
+    expect(after?.token).toBe(before?.token)
+    expect(after?.counter).toBe(1)
+    expect((await browserView(app)).visible).toBe(true)
+
+    // 恢复之后仍然可以正常导航到新地址。
+    await page.locator('.browser-panel__address input').fill(`${baseURL}/second`)
+    await page.locator('.browser-panel__address input').press('Enter')
+    await waitForLoaded(page)
+    expect((await browserView(app)).url).toBe(`${baseURL}/second`)
+  } finally {
+    await app.close()
+    rmSync(dataDir, { recursive: true, force: true })
+    rmSync(chromeDir, { recursive: true, force: true })
+  }
+})
+
+test('起始页进设置只导航一次：返回后再打开设置停在常规', async () => {
+  const chromeDir = mkdtempSync(join(tmpdir(), 'bp-chrome-'))
+  seedChrome(chromeDir)
+  const { app, page, dataDir } = await launch(chromeDir)
+
+  try {
+    await page.getByRole('button', { name: '打开浏览器' }).click()
+
+    // 没有书签时的导入入口 → 收起浮窗并跳到设置 → 浏览器。
+    await page.locator('.browser-shelves__empty').click()
+    await expect(page.locator('.settings-nav__item[data-active="true"]')).toHaveText('浏览器')
+    await expect(page.locator('.settings-section__title')).toHaveText('浏览器')
+
+    // 离开设置再正常打开：请求已经被消费，不该再落到浏览器分类。
+    await page.locator('.topbar__brand').click()
+    await page.getByRole('button', { name: '设置', exact: true }).click()
+    await expect(page.locator('.settings-nav__item[data-active="true"]')).toHaveText('常规')
+    await expect(page.locator('.settings-section__title')).toHaveText('常规设置')
   } finally {
     await app.close()
     rmSync(dataDir, { recursive: true, force: true })

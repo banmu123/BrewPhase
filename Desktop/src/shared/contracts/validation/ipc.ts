@@ -79,6 +79,7 @@ export const IPC = {
   browserBookmarksImport: 'browser:bookmarks:import',
   browserBookmarksTree: 'browser:bookmarks:tree',
   browserShowStart: 'browser:show-start',
+  browserShowCurrent: 'browser:show-current',
 
   // 内置浏览器（Phase 1）：只有「壳」的操作，网页渲染在主进程的 WebContentsView。
   browserState: 'browser:state',
@@ -158,6 +159,7 @@ export const ipcRequestSchemas = {
   [IPC.browserBookmarksImport]: chromeProfileRequestSchema,
   [IPC.browserBookmarksTree]: z.void(),
   [IPC.browserShowStart]: z.void(),
+  [IPC.browserShowCurrent]: z.void(),
 
   // 内置浏览器
   [IPC.browserState]: z.void(),

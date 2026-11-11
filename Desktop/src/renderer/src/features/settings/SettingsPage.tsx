@@ -39,7 +39,10 @@ export function SettingsPage({ info }: { info: AppInfo | null }) {
   const [category, setCategory] = useState<SettingsCategory>('general')
 
   useEffect(() => {
-    const target = requested ?? consumeRequested()
+    // 必须**无条件**消费：写成 `requested ?? consumeRequested()` 时，只要
+    // `requested` 有值就永远不消费，全局 store 会一直留着这个分类，
+    // 下次正常打开设置又会跳到它。消费后 store 归 null，导航只发生一次。
+    const target = consumeRequested()
     if (target) setCategory(target)
   }, [requested, consumeRequested])
 

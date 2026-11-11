@@ -19,6 +19,9 @@ export function BrowserStartPage(props: {
   lastVisit: BrowserVisit | null
   /** `null` = 还没从主进程取到，先不画书签区，避免闪一下空态。 */
   bookmarks: BookmarkTree | null
+  /** 仍活着的当前网页：显示「返回当前页面」，点击只恢复视图、不重新加载。 */
+  currentPage: { title: string; url: string } | null
+  onResumeCurrent: () => void
   onSubmit: (value: string) => void
   onOpen: (url: string) => void
   /** 空态里的导入入口：跳到 设置 → 浏览器。 */
@@ -69,15 +72,35 @@ export function BrowserStartPage(props: {
           </button>
         </form>
 
-        {props.lastVisit && (
+        {/* 当前页面优先：它就在原生容器里活着，点一下只是把视图重新显示出来。
+            有它时不再显示「继续上次访问」——两张卡指向同一页面只会让人分不清
+            哪个会重新加载。 */}
+        {props.currentPage ? (
           <button
             type="button"
-            className="browser-start__resume"
-            onClick={() => props.onOpen(props.lastVisit!.url)}
+            className="browser-start__resume browser-start__resume--current"
+            title={props.currentPage.url}
+            onClick={props.onResumeCurrent}
           >
-            <span className="browser-start__resume-label">{t.browser.start.resume}</span>
-            <span className="browser-start__resume-title">{visitTitle(props.lastVisit, t.browser.status.untitled)}</span>
+            <span className="browser-start__resume-label">{t.browser.start.returnCurrent}</span>
+            <span className="browser-start__resume-title">
+              {props.currentPage.title.trim() || hostOf(props.currentPage.url) || t.browser.status.untitled}
+            </span>
+            <span className="browser-start__current-host">{hostOf(props.currentPage.url)}</span>
           </button>
+        ) : (
+          props.lastVisit && (
+            <button
+              type="button"
+              className="browser-start__resume"
+              onClick={() => props.onOpen(props.lastVisit!.url)}
+            >
+              <span className="browser-start__resume-label">{t.browser.start.resume}</span>
+              <span className="browser-start__resume-title">
+                {visitTitle(props.lastVisit, t.browser.status.untitled)}
+              </span>
+            </button>
+          )
         )}
 
         {props.bookmarks !== null &&

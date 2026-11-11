@@ -29,6 +29,7 @@ export const browser = {
     placeholder: '输入网址，或直接搜索',
     recent: '最近访问',
     resume: '继续上次访问',
+    returnCurrent: '返回当前页面',
     empty: '还没有访问记录。',
     shortcut: '搜索'
   },

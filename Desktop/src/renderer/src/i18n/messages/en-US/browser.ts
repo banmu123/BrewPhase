@@ -24,6 +24,7 @@ export const browser: typeof BrowserMessages = {
     placeholder: 'Enter an address, or just search',
     recent: 'Recently visited',
     resume: 'Resume last visit',
+    returnCurrent: 'Back to current page',
     empty: 'Nothing visited yet.',
     shortcut: 'Search'
   },

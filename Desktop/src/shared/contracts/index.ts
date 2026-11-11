@@ -165,6 +165,14 @@ export interface RendererApi {
      * 当前网页的加载状态、滚动位置与 Session 都保留，再点书签直接继续。
      */
     showStart: () => Promise<BrowserState>
+    /**
+     * 从起始页恢复到**当前网页实例**。
+     *
+     * 与 `open({ url })` 不同：不调用 `loadURL()`，只把原生视图重新显示出来。
+     * 页面不会重新导航，滚动位置、SPA 状态与 JS 内存状态都保留。
+     * 没有可恢复的页面时原样返回当前状态。
+     */
+    showCurrentPage: () => Promise<BrowserState>
     /** 检测本机 Chrome 与可用 Profile（主进程解析路径，渲染层只拿名称）。 */
     detectChrome: () => Promise<ChromeDetection>
     /** 预览某个 Profile 的书签数量；不写库。 */

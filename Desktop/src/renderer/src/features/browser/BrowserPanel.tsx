@@ -71,9 +71,11 @@ export function BrowserPanel() {
   const { visible, url, error, loading, canGoBack, canGoForward, progress, title } = state
   /**
    * 起始页 = 主进程说「停在这一页」，或从没导航过（老状态兜底）。
-   * 错误页优先于起始页：有错误时显示错误，不显示书签。
+   *
+   * 起始页**优先于错误页**：从一次失败加载回到起始页时应该看到书签，而不是
+   * 卡在错误页；错误信息留在主进程里，恢复网页时仍会显示。
    */
-  const showStart = !error && (state.startPage || !url)
+  const showStart = state.startPage || (!url && !error)
 
   // 每次回到起始页都读一次本地书签树：设置页刚导入完时这里必须看到新数据。
   useEffect(() => {
@@ -168,7 +170,10 @@ export function BrowserPanel() {
   if (!visible) return null
 
   const current = bounds ?? defaultBrowserBounds(viewportSize())
-  const showError = error !== null
+  /** 错误页只在「正在看网页」时出现；起始页永远优先。 */
+  const showError = !showStart && error !== null
+  /** 可恢复的当前网页：容器存在且地址有效（标题可能还没到，交给起始页兜底）。 */
+  const currentPage = state.alive && url ? { title, url } : null
 
   const startDrag = (event: React.PointerEvent<HTMLElement>): void => {
     if (event.button !== 0) return
@@ -308,7 +313,7 @@ export function BrowserPanel() {
           className="browser-panel__nav"
           aria-label={t.browser.toolbar.back}
           title={t.browser.toolbar.back}
-          disabled={!canGoBack}
+          disabled={showStart || !canGoBack}
           onClick={() => void store.getState().back()}
         >
           <ArrowLeftIcon size={17} />
@@ -318,7 +323,7 @@ export function BrowserPanel() {
           className="browser-panel__nav"
           aria-label={t.browser.toolbar.forward}
           title={t.browser.toolbar.forward}
-          disabled={!canGoForward}
+          disabled={showStart || !canGoForward}
           onClick={() => void store.getState().forward()}
         >
           <ArrowRightIcon size={17} />
@@ -328,6 +333,8 @@ export function BrowserPanel() {
           className="browser-panel__nav"
           aria-label={loading ? t.browser.toolbar.stop : t.browser.toolbar.reload}
           title={loading ? t.browser.toolbar.stop : t.browser.toolbar.reload}
+          // 起始页上这些按钮看着像在操作书签页，干脆禁用；恢复网页后按真实状态还原。
+          disabled={showStart}
           onClick={() => void (loading ? store.getState().stop() : store.getState().reload())}
         >
           {loading ? <StopIcon size={17} /> : <ReloadIcon size={17} />}
@@ -359,14 +366,14 @@ export function BrowserPanel() {
           className="browser-panel__nav"
           aria-label={t.browser.toolbar.openExternal}
           title={t.browser.toolbar.openExternal}
-          disabled={!url}
+          disabled={showStart || !url}
           onClick={() => void store.getState().openExternal()}
         >
           <ExternalIcon size={17} />
         </button>
       </div>
 
-      {loading && (
+      {!showStart && loading && (
         <div
           className="browser-panel__progress"
           role="progressbar"
@@ -386,6 +393,8 @@ export function BrowserPanel() {
             recent={state.recent}
             lastVisit={state.lastVisit}
             bookmarks={bookmarks}
+            currentPage={currentPage}
+            onResumeCurrent={() => void store.getState().showCurrentPage()}
             onSubmit={(value) => void store.getState().navigate(value)}
             onOpen={(target) => void store.getState().open({ url: target })}
             onImport={() => {

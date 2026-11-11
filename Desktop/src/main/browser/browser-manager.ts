@@ -138,9 +138,42 @@ export class BrowserManager {
   showStart(): BrowserState {
     this.panelVisible = true
     this.startPage = true
-    this.error = null
-    this.loading = false
-    this.progress = 0
+    // 只切「显示哪一层」：不动 loading / progress / error。网页可能还在后台
+    // 加载，隐藏视图不等于停止加载；把它们清零会让恢复后的状态说谎。
+    this.syncVisibility()
+    this.emit()
+    return this.state()
+  }
+
+  /**
+   * 从起始页恢复到**当前网页实例**。
+   *
+   * 与 `open({ url })` 的本质区别：这里不调用 `loadURL()`，只把原生视图重新
+   * `setVisible(true)`。因此页面不会重新导航，滚动位置、SPA 路由、JS 内存里
+   * 的状态（表单、播放进度、未提交的交互）都还在。
+   *
+   * 没有可恢复的页面（没有 view / view 已销毁 / 没有有效 URL）时安全返回，
+   * 不创建容器、也不改 `startPage`——界面仍停在起始页。
+   */
+  showCurrentPage(): BrowserState {
+    const webContents = this.view?.webContents
+    if (!webContents || webContents.isDestroyed() || !this.currentURL) {
+      // 没有可恢复的页面：不要停在「网页态」的白屏上，退回起始页。
+      // 不创建 view、不导航，只是把显示层切回来。
+      if (!this.startPage) {
+        this.startPage = true
+        this.syncVisibility()
+        this.emit()
+      }
+      return this.state()
+    }
+
+    this.panelVisible = true
+    this.startPage = false
+    // 以真实 webContents 为准修正加载态：隐藏期间事件可能已经把它改成完成，
+    // 也可能仍在加载。恢复时不要沿用起始页里的旧值。
+    this.loading = webContents.isLoading()
+    if (!this.loading && this.error === null) this.progress = 1
     this.syncVisibility()
     this.emit()
     return this.state()

@@ -4804,6 +4804,50 @@ body.canvas-focus .canvas-topbar {
   color: var(--ink);
 }
 
+/* 当前页面：比「上次访问」更实一点——它是活的，点一下只是把视图放回来。
+   绿点表示页面还在原生容器里，不是一条历史记录。 */
+.browser-start__resume--current {
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: var(--radius-small);
+  background: var(--well);
+  color: var(--ink-soft);
+}
+
+.browser-start__resume--current:hover {
+  background: var(--well-deep);
+}
+
+.browser-start__resume--current:hover .browser-start__resume-title {
+  color: var(--ink);
+}
+
+.browser-start__resume--current .browser-start__resume-label::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--sage);
+  vertical-align: 1px;
+}
+
+.browser-start__resume--current .browser-start__resume-title {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.browser-start__current-host {
+  flex: 0 0 auto;
+  max-width: 38%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--ink-faint);
+}
+
 .browser-start__resume-label {
   flex: 0 0 auto;
   font-size: 10px;
