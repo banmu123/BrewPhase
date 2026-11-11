@@ -1,7 +1,10 @@
 import { create } from 'zustand'
 
-export type ModuleKey = 'coffee' | 'records' | 'canvas' | 'settings'
+/** `studio` 是默认首页；三个空间只从首页内容入口进入，不再是全局菜单。 */
+export type ModuleKey = 'studio' | 'coffee' | 'records' | 'canvas' | 'settings'
 export type SettingsCategory = 'general' | 'sync' | 'mcp'
+/** 顶栏「快速添加」要打开的表单：由目标页面自己消费，避免复制业务表单。 */
+export type CreateKind = 'bean' | 'text' | 'link' | 'canvas'
 
 type AppState = {
   module: ModuleKey
@@ -20,6 +23,10 @@ type AppState = {
   openSettingsCategory: SettingsCategory | null
   openSettings: (category: SettingsCategory) => void
   consumeOpenSettings: () => SettingsCategory | null
+  /** 顶栏快速添加 → 切到对应空间并请求打开它已有的新建表单。 */
+  pendingCreate: CreateKind | null
+  requestCreate: (kind: CreateKind) => void
+  consumeCreate: () => CreateKind | null
 }
 
 /**
@@ -27,7 +34,7 @@ type AppState = {
  * 自己刷新，避免「同一个字段在两处缓存，改了一处另一处还是旧的」。
  */
 export const useAppStore = create<AppState>((set, get) => ({
-  module: 'coffee',
+  module: 'studio',
   setModule: (module) => set({ module }),
   openRecordId: null,
   openRecord: (id) => set({ module: 'records', openRecordId: id }),
@@ -42,5 +49,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     const category = get().openSettingsCategory
     if (category) set({ openSettingsCategory: null })
     return category
+  },
+  pendingCreate: null,
+  requestCreate: (kind) =>
+    set({
+      module: kind === 'bean' ? 'coffee' : kind === 'canvas' ? 'canvas' : 'records',
+      pendingCreate: kind
+    }),
+  consumeCreate: () => {
+    const kind = get().pendingCreate
+    if (kind) set({ pendingCreate: null })
+    return kind
   }
 }))

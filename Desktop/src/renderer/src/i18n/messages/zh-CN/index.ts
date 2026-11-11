@@ -6,6 +6,7 @@ import { navigation } from './navigation'
 import { onboarding } from './onboarding'
 import { records } from './records'
 import { settings } from './settings'
+import { studio } from './studio'
 import { sync } from './sync'
 
 /**
@@ -21,7 +22,8 @@ export const zhCN = {
   settings,
   sync,
   mcp,
-  onboarding
+  onboarding,
+  studio
 }
 
 export type Messages = typeof zhCN
