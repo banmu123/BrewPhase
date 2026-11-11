@@ -90,20 +90,28 @@ extension DebugScreen {
 /// 所以这两种状态改由页面在 View 层读取这里的值：不写 Keychain、不碰
 /// `SyncManager`，也不发起任何网络请求。正常启动时全部为 nil。
 enum SyncInspection {
+    /// `-BrewPhaseSyncInspection yes`：让首页状态行也渲染成已配对样子
+    /// （不弹任何页面，与 `-BrewPhaseScreen` 的桌面同步场景互补）。
+    private static var requested: Bool {
+        DebugLaunch.screen?.needsPairedDevice == true
+            || DebugLaunch.value(for: "-BrewPhaseSyncInspection") == "yes"
+    }
+
     static var placeholderDevice: (host: String, port: Int, deviceId: String, token: String)? {
-        guard let screen = DebugLaunch.screen, screen.needsPairedDevice else { return nil }
+        guard requested else { return nil }
         return ("192.168.1.24", 15721, "inspection-device", "UI-INSPECTION-ONLY")
     }
 
     static var deviceName: String? {
-        guard let screen = DebugLaunch.screen, screen.needsPairedDevice else { return nil }
+        guard requested else { return nil }
         return "Studio MacBook Pro"
     }
 }
 
 enum DebugLaunch {
 
-    private static func value(for flag: String) -> String? {
+    // fileprivate：同文件的 `SyncInspection` 也要解析 launch arguments。
+    fileprivate static func value(for flag: String) -> String? {
         let args = ProcessInfo.processInfo.arguments
         guard let index = args.firstIndex(of: flag), args.indices.contains(index + 1) else { return nil }
         let value = args[index + 1]

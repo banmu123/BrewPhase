@@ -103,7 +103,6 @@
 "上一杯" = "Last cup";
 "上一杯为什么酸？" = "Why was the last cup sour?";
 "上一轮的建议：%@" = "Previous suggestion: %@";
-"上次同步" = "Last sync";
 "上次同步失败" = "Last sync failed";
 "上次建议" = "Last suggestion";
 "上次这杯不太理想" = "The last cup was not great";
@@ -396,12 +395,12 @@
 "封面是示例生成的；视频本体不在示例里，详情页会如实说。" = "The cover is generated for the sample set; the video file itself is not included, and the detail page will say so.";
 "将删除全部示例豆及其冲煮与风味记录。你自己的记录不受影响。" = "Deletes every sample bag along with its brews and tasting notes. Your own records are untouched.";
 "将加入 7 包演示豆（含冲煮与风味记录）。你自己的记录不受影响，之后关闭开关即可整批移除。" = "Adds 7 sample bags with brews and tasting notes. Your own records are untouched; turn the switch off later to remove them all.";
-"将咖啡、收藏记录和画布同步到电脑，在更大的屏幕上管理你的个人工作空间。" = "Sync coffee, saved records and canvases to your computer, and manage your personal workspace on a bigger screen.";
 "将把这台 iPhone 上的咖啡记录、冲煮、品鉴、画布和相关媒体复制到这台电脑。原始 iPhone 数据不会被删除；电脑上已有的不同数据不会被覆盖，冲突会停下来等你裁决。" = "This copies this iPhone's coffee records, brews, tastings, canvases and their media to this computer. Nothing on the iPhone is deleted; different data already on the computer isn't overwritten — conflicts stop and wait for your decision.";
 "少一点" = "a bit less";
 "少一点粉" = "a little less coffee";
 "少萃一点：苦和干涩会退下去。" = "Extract a little less: bitterness and dryness should recede.";
 "尚未同步" = "Not synced yet";
+"尚未配对 · 连接桌面端" = "Not paired · Connect the desktop";
 "就这包豆子提问" = "Ask about this bag";
 "尽快喝完" = "Finish it soon";
 "尾段有点空，但干净。喝完这一包，豆仓又空出一格。" = "The tail was a bit thin but clean. Finishing this bag opens a slot on the shelf.";
@@ -432,9 +431,11 @@
 "已读取二维码" = "QR code read";
 "已过窗口 %@ 天" = "%@ days past the window";
 "已过黄金风味期但还剩不少" = "Past the peak window with plenty left";
-"已连接" = "Connected";
 "已选择" = "Selected";
 "已配对" = "Paired";
+"已配对 · 上次同步 %@" = "Paired · Last sync %@";
+"已配对 · 同步失败" = "Paired · Sync failed";
+"已配对 · 尚未同步" = "Paired · Not synced yet";
 "巴拿马 · Boquete" = "Panama · Boquete";
 "巴西 · Cerrado" = "Brazil · Cerrado";
 "帖子" = "Post";
@@ -452,7 +453,6 @@
 "开发" = "Builds";
 "开启本地智能" = "Turn on local intelligence";
 "开始冲煮" = "Brew now";
-"开始配对" = "Start pairing";
 "开始重建" = "Start rebuild";
 "开始首次同步" = "Start first sync";
 "开封后第 %@ 天" = "day %@ after opening";
@@ -612,7 +612,6 @@
 "未命名画布" = "Untitled canvas";
 "未命名链接" = "Untitled link";
 "未填写" = "Not set";
-"未连接" = "Not connected";
 "未选择" = "Not selected";
 "未配对" = "Not paired";
 "本地优先的做法值得借鉴：数据先落在自己的机器上。" = "A local-first approach worth borrowing: the data lands on your own machine first.";
@@ -642,6 +641,7 @@
 "标题" = "Title";
 "桃" = "Peach";
 "桌面同步" = "Desktop sync";
+"桌面空间" = "Desktop space";
 "桌面空间，与你同步。" = "Your desktop space, in step.";
 "桌面端版本不兼容，请把两端都更新到最新版" = "The desktop version is incompatible — update both ends to the latest version";
 "检索" = "Retrieval";
@@ -839,7 +839,6 @@
 "第一版方向为 iPhone → 桌面端。两端都改过的数据会停在桌面端的冲突列表里等你裁决。同步走局域网 HTTP（无 TLS），请在可信网络使用，桌面端需保持运行。" = "First version syncs iPhone → desktop. Data edited on both sides waits in the desktop conflict list for you to decide. LAN sync uses plain HTTP (no TLS) — use trusted networks and keep the desktop running.";
 "简体中文" = "简体中文";
 "管理" = "Manage";
-"管理同步" = "Manage sync";
 "粉 %@" = "%@ coffee";
 "粉水比" = "Ratio";
 "粉水比 %@" = "ratio %@";
@@ -1070,7 +1069,6 @@
 "进行中" = "In progress";
 "连不上 Ollama：%@" = "Could not reach Ollama: %@";
 "连接你的桌面端" = "Connect your desktop";
-"连接桌面端" = "Connect desktop";
 "选一个烘焙程度吧，阶段判断要靠它" = "Pick a roast level — the stage depends on it";
 "选一包豆" = "Pick a bag";
 "选择一张图片" = "Choose a photo";
@@ -1112,7 +1110,6 @@
 "隐私政策" = "Privacy Policy";
 "隔壁新开的店用了同一支豆子，做出来的却是另一种味道。手法重要，水也重要。" = "The new shop next door pulled the same bean and it tasted like another coffee. Technique matters; so does water.";
 "需要 iOS 26 或更新的系统" = "Needs iOS 26 or later";
-"需要在同一个 Wi-Fi 局域网内连接。" = "Connect over the same Wi-Fi network.";
 "需要本机运行 Ollama，换模型更灵活" = "Requires Ollama running locally; makes swapping models easy";
 "预计已过峰值" = "estimated past its peak";
 "预计已进入窗口" = "estimated in its window";

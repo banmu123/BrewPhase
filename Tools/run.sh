@@ -49,6 +49,9 @@
 #           screenshotted open.
 # --stock-overshoot  opens the stock sheet seeded above the bag's total, which is
 #           the only way the "the total will be adjusted" notice is visible.
+# --sync-inspection  renders the home screen's desktop entry row as "paired"
+#           (showcase device from `SyncInspection`, no network, no Keychain
+#           write). The simulator cannot pair for real — see DebugLaunch.swift.
 # --pref    writes one string preference before launching. Repeatable. Used to
 #           point the app at a local Ollama, e.g.
 #             --pref brewphase.rag.answerEngine=ollama
@@ -94,6 +97,7 @@ while [ $# -gt 0 ]; do
     --force-autoplay) DEMO_ARGS+=(-BrewPhaseForceAutoplay yes); shift ;;
     --tag)    DEMO_ARGS+=(-BrewPhaseRecordTag "$2"); shift 2 ;;
     --stock-overshoot) DEMO_ARGS+=(-BrewPhaseStockOvershoot yes); shift ;;
+    --sync-inspection) DEMO_ARGS+=(-BrewPhaseSyncInspection yes); shift ;;
     --lang)   LANG_SETTING="$2"; shift 2 ;;
     --pref)   PREFS+=("$2"); shift 2 ;;
     --udid)   UDID="$2"; shift 2 ;;

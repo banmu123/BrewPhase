@@ -1619,6 +1619,11 @@ EN: dict[str, str] = {
     "打开 BrewPhase Desktop，在设备同步中生成配对二维码。":
         "Open BrewPhase Desktop and generate a pairing code in Settings → Device sync.",
     "扫描二维码": "Scan QR code",
+    "桌面空间": "Desktop space",
+    "尚未配对 · 连接桌面端": "Not paired · Connect the desktop",
+    "已配对 · 尚未同步": "Paired · Not synced yet",
+    "已配对 · 上次同步 %@": "Paired · Last sync %@",
+    "已配对 · 同步失败": "Paired · Sync failed",
     "已读取二维码": "QR code read",
     "正在验证桌面端信息并保存连接…": "Verifying the desktop and saving the connection…",
     "无法连接桌面端，请确认两台设备在同一个局域网。":
