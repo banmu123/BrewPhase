@@ -3196,7 +3196,8 @@ body.canvas-focus .canvas-topbar {
 }
 
 .studio-space--coffee .studio-space__stage {
-  min-height: 198px;
+  /* 空状态要在架子上站得下几只豆袋轮廓，同时容纳真实豆袋（~190px）。 */
+  min-height: 236px;
 }
 
 /* 画布是「摊在桌上的稿纸」，并且往里缩一格：楼梯式错位靠这一下。 */
@@ -3208,22 +3209,65 @@ body.canvas-focus .canvas-topbar {
   min-height: 288px;
 }
 
-/* ---------- 空状态：一句轻描淡写的话 + 一个入口 ---------- */
+/* Records Deck 是 absolute 叠放：舞台高度由这里托住，
+   空状态（同一高度系）与有数据状态之间的体量是连续的。 */
+.studio-space--records .studio-space__stage {
+  min-height: 330px;
+}
+
+/* ---------- 空状态：每个空间自己的「空白载体」 ---------- */
+
+/*
+ * 空状态不再是一句轻描淡写的话：它就是这个空间还没被使用时的样子——
+ * 空的收藏架、空白的灵感卡堆、空白的创作桌。EmptyShell 铺满舞台
+ * （absolute inset:0），装饰在上、文案与入口在下；舞台的 min-height
+ * 空着的时候也生效，空 → 有数据的视觉体量是连续的，不会折叠。
+ */
 
 .studio-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 20px;
+}
+
+.studio-empty__stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.studio-empty__copy {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
-  padding-top: 18px;
+  gap: 6px;
+}
+
+.studio-empty__title {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--ink-soft);
+}
+
+.studio-empty__hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
   color: var(--ink-faint);
 }
 
-.studio-empty p {
-  margin: 0;
-  max-width: 30ch;
-  font-size: 12.5px;
-  line-height: 1.7;
+.studio-empty__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 18px;
+  margin-top: 6px;
 }
 
 .studio-empty__action {
@@ -3247,9 +3291,249 @@ body.canvas-focus .canvas-topbar {
   border-color: var(--ink-faint);
 }
 
-/* 空的时候不留一大片空白舞台：内容自己多高就多高。 */
-.studio-space__stage:has(.studio-empty) {
-  min-height: 0;
+.studio-empty__action:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+/* ----- Coffee：空的收藏架，几只浅色豆袋轮廓等在架子上 ----- */
+
+/* 装饰件的尺寸跟着**舞台高度**走（高度定、宽高比推宽度）：
+   空状态的载体永远装得进舞台，窄窗或低窗口都不会向上溢出压住标题。 */
+.studio-empty-coffee__bag {
+  position: absolute;
+  bottom: 22px;
+  height: clamp(64px, 74%, 132px);
+  width: auto;
+  aspect-ratio: 3 / 4.2;
+  border: 1.5px solid rgba(176, 160, 138, 0.42);
+  border-radius: 10px 10px 7px 7px;
+  background: linear-gradient(168deg, rgba(214, 200, 180, 0.42), rgba(190, 174, 152, 0.2));
+  box-shadow: 0 10px 18px -14px rgba(48, 55, 47, 0.28);
+}
+
+/* 豆袋的封口折线：两道浅弧，让轮廓读起来是「袋」而不是「盒」。 */
+.studio-empty-coffee__bag::before {
+  content: '';
+  position: absolute;
+  top: 12%;
+  left: 12%;
+  right: 12%;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--hairline-strong);
+  opacity: 0.7;
+}
+
+.studio-empty-coffee__bag::after {
+  content: '';
+  position: absolute;
+  top: 20%;
+  left: 30%;
+  right: 30%;
+  height: 26%;
+  border-radius: 50% 50% 8px 8px;
+  border: 1px solid var(--hairline);
+  opacity: 0.55;
+}
+
+.studio-empty-coffee__bag--a {
+  left: 0;
+  transform: rotate(-3.2deg);
+  z-index: 1;
+}
+
+.studio-empty-coffee__bag--b {
+  left: 19%;
+  bottom: 26px;
+  transform: rotate(1.6deg);
+  z-index: 2;
+}
+
+.studio-empty-coffee__bag--c {
+  left: 38%;
+  bottom: 18px;
+  transform: rotate(4.5deg);
+  z-index: 3;
+  background: linear-gradient(168deg, rgba(206, 191, 170, 0.48), rgba(182, 166, 144, 0.24));
+}
+
+.studio-empty-coffee__bag--d {
+  left: 57%;
+  bottom: 24px;
+  transform: rotate(-2.4deg);
+  z-index: 0;
+  /* 更淡的一只：架子上还有空位，等着被真实包装填满。 */
+  opacity: 0.5;
+  border-style: dashed;
+  box-shadow: none;
+}
+
+.studio-empty-coffee__shelfline {
+  position: absolute;
+  left: -6px;
+  right: 12%;
+  bottom: 12px;
+  height: 1px;
+  background: var(--hairline-strong);
+}
+
+/* ----- Records：空白灵感卡堆，前后叠着的三张未填写的卡 ----- */
+
+.studio-empty-records__card {
+  position: absolute;
+  height: clamp(120px, 78%, 180px);
+  width: auto;
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: linear-gradient(170deg, #fcfdfb, #f6f7f3);
+  box-shadow:
+    0 1px 2px rgba(48, 55, 47, 0.04),
+    0 12px 22px -16px rgba(48, 55, 47, 0.4);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  overflow: hidden;
+}
+
+.studio-empty-records__card--back {
+  top: 22px;
+  left: 40%;
+  transform: rotate(2.2deg);
+  z-index: 1;
+}
+
+.studio-empty-records__card--middle {
+  top: 12px;
+  left: 19%;
+  transform: rotate(-1.6deg);
+  z-index: 2;
+}
+
+.studio-empty-records__card--front {
+  top: 0;
+  left: 0;
+  transform: rotate(0.6deg);
+  z-index: 3;
+}
+
+/* 前卡的「照片」轮廓：浅虚线框，等着被真实缩略图替换。 */
+.studio-empty-records__frame {
+  flex: 1 1 auto;
+  border: 1.5px dashed var(--hairline-strong);
+  border-radius: 7px;
+  background:
+    radial-gradient(circle at 30% 30%, rgba(216, 205, 188, 0.4) 0 9%, transparent 10%),
+    linear-gradient(160deg, rgba(233, 226, 214, 0.28), transparent 65%);
+}
+
+.studio-empty-records__linkline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  height: 14px;
+}
+
+.studio-empty-records__linkline::before {
+  content: '↗';
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.studio-empty-records__linkline::after {
+  content: '';
+  flex: 0 0 62%;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--well-deep);
+}
+
+.studio-empty-records__lines {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.studio-empty-records__lines > span {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--well-deep);
+}
+
+/* ----- Canvas：空白创作桌，两张带浅网格的画布纸 ----- */
+
+.studio-empty-canvas__sheet {
+  position: absolute;
+  height: clamp(112px, 76%, 220px);
+  width: auto;
+  aspect-ratio: 16 / 10;
+  border: 1px solid var(--hairline);
+  border-radius: 11px;
+  background: #fefefd;
+  box-shadow:
+    0 1px 2px rgba(48, 55, 47, 0.04),
+    0 14px 24px -16px rgba(48, 55, 47, 0.4);
+}
+
+.studio-empty-canvas__sheet--back {
+  top: 30px;
+  left: 12%;
+  transform: rotate(-1.8deg);
+  z-index: 1;
+}
+
+.studio-empty-canvas__sheet--front {
+  top: 0;
+  left: 0;
+  transform: rotate(0.5deg);
+  z-index: 2;
+  overflow: hidden;
+}
+
+/* 画布纸的点阵：与真实画布的浅点阵同一语言，密度刻意更淡。 */
+.studio-empty-canvas__grid {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, var(--hairline-strong) 1px, transparent 1.4px);
+  background-size: 22px 22px;
+  opacity: 0.5;
+}
+
+.studio-empty-canvas__node {
+  position: absolute;
+  width: 17%;
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 7px;
+  background: rgba(240, 242, 238, 0.85);
+}
+
+.studio-empty-canvas__node--a {
+  top: 18%;
+  left: 14%;
+  transform: rotate(-1.2deg);
+}
+
+.studio-empty-canvas__node--b {
+  top: 44%;
+  left: 47%;
+  transform: rotate(1.1deg);
+}
+
+.studio-empty-canvas__link {
+  position: absolute;
+  top: 36%;
+  left: 27%;
+  width: 24%;
+  height: 1.5px;
+  background: var(--hairline-strong);
+  transform: rotate(14deg);
+  transform-origin: left center;
 }
 
 /* ---------- Coffee Shelf：错开叠放的豆袋 ---------- */
@@ -3420,42 +3704,85 @@ body.canvas-focus .canvas-topbar {
   color: var(--ink-soft);
 }
 
-/* ---------- Records Library：不同宽高比的瀑布流 ---------- */
+/* ---------- Records Deck：一叠灵感收藏卡 ---------- */
 
-.records-library {
-  columns: 3;
-  column-gap: 15px;
+/*
+ * 与 Coffee / Canvas 同一约定：容器 absolute 铺满舞台，卡片逐张错位。
+ * 姿态变量由 deck-model 注入（--deck-x/y/r 紧凑、--deck-*-spread 展开），
+ * CSS 只负责消费：整叠 hover 时换用展开姿态，离开后平滑回叠。
+ */
+
+.records-deck {
+  position: absolute;
+  inset: 0;
 }
 
-.library-card {
-  --lift: 0px;
-  --scale: 1;
-  position: relative;
-  display: block;
-  break-inside: avoid;
-  margin-bottom: 15px;
-  border-radius: 9px;
-  overflow: hidden;
+.records-deck__card {
+  position: absolute;
+  top: 4px;
+  left: 2px;
+  /* 卡宽跟着列宽走，窄窗里也放得下一叠五张。 */
+  width: clamp(190px, 47%, 264px);
+  aspect-ratio: 4 / 3;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border: 0;
+  border-radius: 11px;
   background: var(--card);
+  text-align: left;
   box-shadow:
-    0 1px 2px rgba(48, 55, 47, 0.05),
-    0 10px 20px -16px rgba(48, 55, 47, 0.45);
-  transform: translateY(var(--lift)) scale(var(--scale));
+    0 0 0 1px rgba(48, 55, 47, 0.05),
+    0 1px 2px rgba(48, 55, 47, 0.06),
+    0 14px 26px -16px rgba(48, 55, 47, 0.5);
+  transform: translate(var(--deck-x), var(--deck-y)) rotate(var(--deck-r));
   transition:
-    transform 0.2s cubic-bezier(0.2, 0.75, 0.3, 1),
+    transform 0.24s cubic-bezier(0.2, 0.75, 0.3, 1),
     box-shadow 0.2s ease;
+  will-change: transform;
+  z-index: calc(10 - var(--deck-i));
 }
 
-.library-card:hover {
-  --lift: -5px;
-  --scale: 1.012;
-  z-index: 2;
+.records-deck__card:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+  z-index: 30;
+}
+
+/* 键盘 Tab 进 deck 时整叠展开：被聚焦的那张卡必须看得见内容。 */
+.records-deck:focus-within .records-deck__card {
+  transform: translate(var(--deck-x-spread), var(--deck-y-spread)) rotate(var(--deck-r-spread));
+  transition-duration: 0.28s;
+}
+
+/* hover 展开与 focus-within 同一姿态；被指的单张再轻轻上浮。 */
+.records-deck:hover .records-deck__card {
+  transform: translate(var(--deck-x-spread), var(--deck-y-spread)) rotate(var(--deck-r-spread));
+  transition-duration: 0.28s;
+}
+
+.records-deck .records-deck__card:hover {
+  transform: translate(var(--deck-x-spread), var(--deck-y-spread))
+    rotate(var(--deck-r-spread)) translateY(-6px);
+  z-index: 30;
+  transition-duration: 0.2s;
   box-shadow:
-    0 2px 4px rgba(48, 55, 47, 0.06),
-    0 18px 32px -18px rgba(48, 55, 47, 0.5);
+    0 0 0 1px rgba(48, 55, 47, 0.05),
+    0 2px 4px rgba(48, 55, 47, 0.07),
+    0 24px 38px -18px rgba(48, 55, 47, 0.55);
 }
 
-.library-card img {
+.records-deck__media {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: block;
+  border-radius: 11px;
+  overflow: hidden;
+  background: var(--well);
+}
+
+.records-deck__media img {
   position: absolute;
   inset: 0;
   display: block;
@@ -3465,77 +3792,25 @@ body.canvas-focus .canvas-topbar {
   transition: transform 0.28s cubic-bezier(0.2, 0.75, 0.3, 1);
 }
 
-/* 缩略图轻轻推近，图里的内容才是被「拿起来看」的那一层。 */
-.library-card:hover img {
-  transform: scale(1.035);
+.records-deck .records-deck__card:hover .records-deck__media img {
+  transform: scale(1.03);
 }
 
-.library-card--text {
-  background: var(--card);
-}
-
-.library-card__text {
+.records-deck__play {
   position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding: 15px 14px;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--ink-soft);
+  font-size: 9px;
 }
 
-.library-card__text p {
-  display: -webkit-box;
-  margin: 0;
-  overflow: hidden;
-  font-family: var(--serif);
-  font-size: 12.5px;
-  line-height: 1.78;
-  color: var(--ink);
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 9;
-}
-
-/* 没有封面的链接/视频：一张带色的纸笺，字与标记贴在一起，
-   不再是「左上角一个小箭头 + 右下角一行标题」的空盒子。 */
-.library-card__fallback {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: flex-start;
-  gap: 7px;
-  padding: 16px 15px;
-  background: #fbfcfa;
-}
-
-.library-card--link .library-card__fallback {
-  background: linear-gradient(158deg, #faf6ed, #f0e7d7);
-}
-
-.library-card--video .library-card__fallback {
-  background: linear-gradient(158deg, #f3f6ef, #e2e8d9);
-}
-
-.library-card__glyph {
-  color: var(--roast);
-  font-size: 18px;
-  line-height: 1;
-}
-
-.library-card__fallback strong {
-  font-size: 12.5px;
-  font-weight: 600;
-  line-height: 1.5;
-  color: var(--ink);
-}
-
-.library-card__fallback span.library-card__source {
-  font-size: 9.5px;
-  color: var(--ink-faint);
-}
-
-.library-card__chip {
+.records-deck__chip {
   position: absolute;
   top: 8px;
   left: 8px;
@@ -3550,11 +3825,67 @@ body.canvas-focus .canvas-topbar {
   transition: opacity 0.2s ease;
 }
 
-.library-card:hover .library-card__chip {
+.records-deck .records-deck__card:hover .records-deck__chip {
   opacity: 0.55;
 }
 
-.library-card__meta {
+/* 文字/无封面链接：一张安静纸笺，正文就是真实内容。 */
+.records-deck__paper {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 15px 14px 12px;
+  border-radius: 11px;
+  background: #fbfcfa;
+  overflow: hidden;
+}
+
+.records-deck__card--link .records-deck__paper {
+  background: linear-gradient(158deg, #faf6ed, #f0e7d7);
+}
+
+.records-deck__card--video .records-deck__paper {
+  background: linear-gradient(158deg, #f3f6ef, #e2e8d9);
+}
+
+.records-deck__glyph {
+  color: var(--roast);
+  font-size: 17px;
+  line-height: 1;
+}
+
+.records-deck__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  font-family: var(--serif);
+  font-size: 12.5px;
+  line-height: 1.72;
+  color: var(--ink);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+}
+
+.records-deck__card--link .records-deck__body {
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.records-deck__source {
+  overflow: hidden;
+  font-size: 9.5px;
+  color: var(--ink-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 标题与来源压在卡底：hover 才完全显形，平时只露标题第一行。 */
+.records-deck__meta {
   position: absolute;
   left: 0;
   right: 0;
@@ -3562,21 +3893,30 @@ body.canvas-focus .canvas-topbar {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 30px 11px 10px;
-  background: linear-gradient(to top, rgba(255, 255, 255, 0.97) 42%, rgba(255, 255, 255, 0));
+  padding: 26px 12px 10px;
+  border-radius: 0 0 11px 11px;
+  background: linear-gradient(to top, rgba(255, 255, 255, 0.97) 46%, rgba(255, 255, 255, 0));
   opacity: 0;
   transform: translateY(6px);
   transition:
     opacity 0.16s ease 0.08s,
     transform 0.16s ease 0.08s;
+  pointer-events: none;
 }
 
-.library-card:hover .library-card__meta {
+.records-deck .records-deck__card:hover .records-deck__meta,
+.records-deck .records-deck__card:focus-visible .records-deck__meta {
   opacity: 1;
   transform: translateY(0);
 }
 
-.library-card__meta strong {
+/* 最上面那张的标题平时就露着：一叠卡总要有一张能读。 */
+.records-deck__card:first-child .records-deck__meta {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.records-deck__meta strong {
   overflow: hidden;
   font-size: 11.5px;
   font-weight: 600;
@@ -3585,7 +3925,7 @@ body.canvas-focus .canvas-topbar {
   white-space: nowrap;
 }
 
-.library-card__meta span {
+.records-deck__meta span {
   overflow: hidden;
   font-size: 9.5px;
   color: var(--ink-faint);
@@ -3712,7 +4052,8 @@ body.canvas-focus .canvas-topbar {
 }
 
 /* 一列太窄、两列刚好：咖啡与画布并排，收藏库在下面横铺。
-   此时画布不再缩进——它自己占一列，缩进只会把它挤出可视区。 */
+   此时画布不再缩进——它自己占一列，缩进只会把它挤出可视区。
+   Records Deck 横铺后舞台更矮：叠放高度跟着收，展开量也小一号。 */
 @media (max-width: 1020px) {
   .studio-desk {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -3732,8 +4073,12 @@ body.canvas-focus .canvas-topbar {
     max-width: 100%;
   }
 
-  .records-library {
-    columns: 4;
+  .studio-space--records .studio-space__stage {
+    min-height: 300px;
+  }
+
+  .records-deck__card {
+    width: clamp(180px, 34%, 240px);
   }
 }
 
@@ -3875,7 +4220,7 @@ body.canvas-focus .canvas-topbar {
 /* 触摸屏上没有 hover：信息不该永远藏着，位移也不该在被点时才抖一下。 */
 @media (hover: none) {
   .coffee-shelf__info,
-  .library-card__meta,
+  .records-deck__meta,
   .canvas-deck__meta span {
     opacity: 1;
     transform: none;
@@ -3886,7 +4231,9 @@ body.canvas-focus .canvas-topbar {
   }
 }
 
-/* 减少动态：保留叠放姿态（那是静态布局），只取消 hover 引起的位移与缩放。 */
+/* 减少动态：保留叠放姿态（那是静态布局），只取消 hover 引起的位移与缩放。
+   Records Deck 的展开是姿态变化（compact → spread）：减动态时回紧凑叠，
+   卡片仍在原位可点，只是不再挪动。 */
 @media (prefers-reduced-motion: reduce) {
   .coffee-shelf:hover .coffee-shelf__card,
   .coffee-shelf .coffee-shelf__card:hover {
@@ -3899,13 +4246,19 @@ body.canvas-focus .canvas-topbar {
     opacity: 1;
   }
 
-  .library-card:hover {
-    --lift: 0px;
-    --scale: 1;
+  .records-deck:hover .records-deck__card,
+  .records-deck:focus-within .records-deck__card,
+  .records-deck .records-deck__card:hover {
+    transform: translate(var(--deck-x), var(--deck-y)) rotate(var(--deck-r));
   }
 
-  .library-card:hover img {
+  .records-deck .records-deck__card:hover .records-deck__media img {
     transform: none;
+  }
+
+  .records-deck__meta,
+  .records-deck__media img {
+    transition: none;
   }
 
   .canvas-deck:hover .canvas-deck__card,

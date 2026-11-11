@@ -13,7 +13,8 @@ import { StackSection } from './StackSection'
  *
  * 只读三空间已有 API 的**真实数据**，不复制业务对象、不生成假封面；
  * 首页本身只是引用式预览，后续要固定内容时加的是引用关系而非副本。
- * 预览数量刻意收敛（Records 8 / Canvas 3 / Coffee 5），避免一次加载过多媒体。
+ * 预览数量刻意收敛：Records 取 8 条、Deck 只摆前 5 张（DECK_LIMIT），
+ * Canvas 3 块，Coffee 5 包，避免一次加载过多媒体。
  *
  * 版面是「一张桌子」而不是三块面板：左列是桌上正在用的东西（咖啡架在上、
  * 画布稿纸在下且向内缩进），右列是摊开的收藏库。三块内容共享同一张桌面
@@ -22,7 +23,6 @@ import { StackSection } from './StackSection'
 export function StudioHome() {
   const { t } = useI18n()
   const setModule = useAppStore((state) => state.setModule)
-  const requestCreate = useAppStore((state) => state.requestCreate)
   const [beans, setBeans] = useState<Bean[]>([])
   const [records, setRecords] = useState<RecordItem[]>([])
   const [canvases, setCanvases] = useState<Canvas[]>([])
@@ -72,7 +72,7 @@ export function StudioHome() {
             openLabel={t.studio.coffee.open}
             onOpen={() => setModule('coffee')}
           >
-            <CoffeeStack beans={beans} onCreate={() => requestCreate('bean')} />
+            <CoffeeStack beans={beans} />
           </StackSection>
 
           <StackSection
@@ -84,7 +84,7 @@ export function StudioHome() {
             openLabel={t.studio.canvas.open}
             onOpen={() => setModule('canvas')}
           >
-            <CanvasStack canvases={canvases} onCreate={() => requestCreate('canvas')} />
+            <CanvasStack canvases={canvases} />
           </StackSection>
 
           <StackSection
@@ -95,7 +95,7 @@ export function StudioHome() {
             openLabel={t.studio.records.open}
             onOpen={() => setModule('records')}
           >
-            <RecordsStack items={records} onCreate={() => requestCreate('text')} />
+            <RecordsStack items={records} />
           </StackSection>
         </div>
       </div>

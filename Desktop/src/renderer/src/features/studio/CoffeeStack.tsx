@@ -1,7 +1,8 @@
 import type { Bean } from '@shared/contracts'
 import { api } from '../../shared/api'
 import { useI18n } from '../../i18n'
-import { stackStyle, StudioEmpty } from './StackSection'
+import { stackStyle } from './StackSection'
+import { CoffeeEmpty } from './empty-states'
 
 /** 每包的初始倾角：固定值而非随机，重渲染不会跳。 */
 const TILTS = [-2.6, 1.8, -1.2, 2.4, -0.7]
@@ -14,14 +15,12 @@ const TILTS = [-2.6, 1.8, -1.2, 2.4, -0.7]
  * 微量下沉，hover 整区时按 `--spread` 展开；悬停那一包抬起来、淡入信息，
  * 其余稍微退后。只改 transform / opacity，不触发布局。
  */
-export function CoffeeStack({ beans, onCreate }: { beans: Bean[]; onCreate: () => void }) {
+export function CoffeeStack({ beans }: { beans: Bean[] }) {
   const { t } = useI18n()
   const shown = beans.slice(0, 5)
 
   if (shown.length === 0) {
-    return (
-      <StudioEmpty text={t.studio.coffee.empty} actionLabel={t.studio.newBean} onCreate={onCreate} />
-    )
+    return <CoffeeEmpty />
   }
 
   return (

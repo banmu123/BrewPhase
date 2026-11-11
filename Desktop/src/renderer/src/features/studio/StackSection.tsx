@@ -73,26 +73,3 @@ export function StackSection(props: {
 export function stackStyle(index: number, tilt = 0): CSSProperties {
   return { '--i': index, '--r': `${tilt}deg` } as CSSProperties
 }
-
-/**
- * 空状态：不是一块虚线占位框，而是桌面上一句轻声的说明 + 一个添加入口。
- * 入口交给目标空间**已有的新建流程**（`requestCreate`），不在这里另开表单。
- */
-export function StudioEmpty(props: { text: string; actionLabel: string; onCreate: () => void }) {
-  return (
-    <div className="studio-empty">
-      <p>{props.text}</p>
-      <button
-        type="button"
-        className="studio-empty__action"
-        onClick={(event) => {
-          event.stopPropagation()
-          props.onCreate()
-        }}
-      >
-        {props.actionLabel}
-        <span aria-hidden="true">↗</span>
-      </button>
-    </div>
-  )
-}

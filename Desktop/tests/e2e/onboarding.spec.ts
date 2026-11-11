@@ -35,7 +35,7 @@ test.describe('首次启动：干净数据 + 配对引导', () => {
       await pinLocale(page)
 
       // 全新库：默认落在 Studio 首页，咖啡架必须是空的（引导遮罩盖着，先进不去空间页）。
-      await expect(page.locator('.studio-space--coffee .studio-empty')).toContainText('架子还空着')
+      await expect(page.locator('.studio-space--coffee .studio-empty')).toContainText('咖啡架还在等')
       await expect(page.locator('.shelf-card')).toHaveCount(0)
 
       // 引导只讲配对：三步 + 两个出口，不写功能清单。

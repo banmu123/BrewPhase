@@ -22,7 +22,9 @@ export const studio = {
     overline: 'COFFEE / SHELF',
     hint: 'Like bags on a shelf, kept one layer at a time.',
     open: 'Open Shelf',
-    empty: 'The shelf is empty. Log your first bag and it will appear here.',
+    emptyTitle: 'Your coffee shelf is waiting.',
+    emptyHint: 'Start collecting the coffees you love.',
+    emptyAction: 'Add your first bean',
     count: (n: number) => `${n} bags`,
     unnamed: 'Unnamed beans',
     noRoaster: 'Roaster not recorded'
@@ -31,14 +33,19 @@ export const studio = {
     overline: 'RECORDS / LIBRARY',
     hint: 'Images, links and words, slowly becoming a library.',
     open: 'Open Library',
-    empty: 'Nothing collected yet. Save an image, a link, or a thought.',
+    emptyTitle: 'Collect things worth keeping.',
+    emptyHint: 'Save a thought, a link, or a moment.',
+    emptyNote: 'Add a note',
+    emptyLink: 'Save a link',
     untitled: 'Untitled record'
   },
   canvas: {
     overline: 'CANVAS / CREATIVE SPACE',
     hint: 'Projects laid out, left just as you arranged them.',
     open: 'Open Canvas',
-    empty: 'No canvases yet. Make one and put your ideas on it.',
+    emptyTitle: 'Every idea starts somewhere.',
+    emptyHint: 'Give your thoughts a space to take shape.',
+    emptyAction: 'Create a canvas',
     count: (n: number) => `${n} canvases`,
     untitled: 'Untitled canvas',
     updated: (date: string) => `Updated ${date}`

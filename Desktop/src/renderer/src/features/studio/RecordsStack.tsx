@@ -1,94 +1,90 @@
 import type { RecordItem } from '@shared/contracts'
 import { api } from '../../shared/api'
+import { useAppStore } from '../../app/store'
 import { useI18n } from '../../i18n'
-import { isSafeRemoteImage, recordDisplayTitle } from '../records/preview/preview-model'
-import { stackStyle, StudioEmpty } from './StackSection'
-
-/**
- * 固定宽高比组合：不同类型自然交错，但不随渲染随机跳动。
- * 只给比例（不写像素宽），列宽变了图片跟着缩放。
- */
-const SHAPES = [
-  { width: 3, height: 4 },
-  { width: 3, height: 2 },
-  { width: 4, height: 5 },
-  { width: 1, height: 1 },
-  { width: 3, height: 4 },
-  { width: 4, height: 3 },
-  { width: 2, height: 3 },
-  { width: 5, height: 7 }
-]
+import { deckCard, deckCardStyle, DECK_LIMIT } from './deck-model'
+import { RecordsEmpty } from './empty-states'
 
 const GLYPHS: Record<string, string> = { text: '¶', link: '↗', video: '▶', image: '▣' }
 
 /**
- * Personal Library：图片 / 链接 / 文字三种真实记录用不同宽高比散放。
- * 本地媒体走 bpmedia://，远程缩略图只放行 https；文字记录显示真实正文摘要。
+ * Records Deck：一叠灵感收藏卡，不是瀑布流。
  *
- * 多栏瀑布流（CSS columns）——每张卡按自己的比例占位，没有两行对齐的网格感。
- * 不常驻任何操作按钮：hover 时当前卡上浮、缩略图轻微推近，标题与来源在
- * 80ms 后淡入；相邻卡片不动，所以不会把瀑布流挤跳。
+ * 最新几张真实记录前后错位叠放（姿态来自 deck-model 的固定数组，渲染稳定）；
+ * hover 整叠时卡片向各自方向展开、能看清彼此，离开后回到紧凑叠放。
+ * 点击某张卡沿用既有跨页路径 `openRecord(id)` —— RecordsPage 消费后
+ * 打开它已有的详情浮层，这里不复制任何 Modal。
+ *
+ * 卡面按载体差异化：图片用真实缩略图（bpmedia://）、链接用安全远程图
+ * 或「标题 + 域名」纸笺、文字用真实正文摘要。没有任何占位数据。
+ *
+ * 叠放用 absolute 定位，舞台高度由 CSS min-height 保证（与 Coffee /
+ * Canvas 同一约定），不会把页面布局高度抽掉。
  */
-export function RecordsStack({ items, onCreate }: { items: RecordItem[]; onCreate: () => void }) {
+export function RecordsStack({ items }: { items: RecordItem[] }) {
   const { t } = useI18n()
-  const shown = items.slice(0, 8)
+  const openRecord = useAppStore((state) => state.openRecord)
+  const shown = items.slice(0, DECK_LIMIT).map((item, index) => deckCard(item, index, api.records.mediaUrl))
 
   if (shown.length === 0) {
-    return (
-      <StudioEmpty text={t.studio.records.empty} actionLabel={t.studio.newText} onCreate={onCreate} />
-    )
+    return <RecordsEmpty />
   }
 
   return (
-    <div className="records-library">
-      {shown.map((item, index) => {
-        const shape = SHAPES[index % SHAPES.length]
-        const local = item.previewPath ?? item.mediaPath
-        const remote = isSafeRemoteImage(item.thumbnailURLString)
-        const image = local ? api.records.mediaUrl(local) : remote
-        // 标题只有一条来源：记录自己的 title。文字记录没有标题时不要拿
-        // 「未命名记录」来凑——正文就在卡面上，再贴一个空标题只是噪音。
-        const title = recordDisplayTitle(item)
-        // 只显示人写的来源/作者；`provider`（generic / github / youtube）是内部
-        // 字段，摆到界面上就是「generic」这种黑话。
-        const source = item.sourceName || item.authorName || ''
-        const glyph = GLYPHS[item.carrier] ?? '▣'
+    <div className="records-deck">
+      {shown.map((card) => {
+        const glyph = GLYPHS[card.item.carrier] ?? '▣'
+        const label = card.title || card.body || t.studio.records.untitled
         return (
-          <article
-            key={item.id}
-            className={`library-card library-card--${item.carrier}`}
-            style={{ ...stackStyle(index), aspectRatio: `${shape.width} / ${shape.height}` }}
+          <button
+            key={card.item.id}
+            type="button"
+            className={`records-deck__card records-deck__card--${card.item.carrier}`}
+            style={deckCardStyle(card.index)}
+            aria-label={label}
+            onClick={(event) => {
+              // 卡片自己的语义（打开详情）优先：不让 section 的「进入空间」抢走。
+              event.stopPropagation()
+              openRecord(card.item.id)
+            }}
+            onKeyDown={(event) => event.stopPropagation()}
           >
-            {image ? (
-              <>
-                <img src={image} alt="" loading="lazy" />
-                <span className="library-card__chip" aria-hidden="true">
+            {card.image ? (
+              <span className="records-deck__media">
+                <img src={card.image} alt="" loading="lazy" />
+                {card.item.carrier === 'video' && (
+                  <span className="records-deck__play" aria-hidden="true">
+                    ▶
+                  </span>
+                )}
+                <span className="records-deck__chip" aria-hidden="true">
                   {glyph}
                 </span>
-              </>
-            ) : item.carrier === 'text' ? (
-              <div className="library-card__text">
-                <p>{(item.note || item.summary || '').slice(0, 180)}</p>
-              </div>
+              </span>
+            ) : card.body ? (
+              <span className="records-deck__paper">
+                <span className="records-deck__body">{card.body}</span>
+              </span>
             ) : (
-              // 链接/视频没有缩略图时，卡片正面就是它自己的标题与来源：
-              // 这是记录里真实存在的内容，不是占位图。
-              <div className="library-card__fallback">
-                <span className="library-card__glyph" aria-hidden="true">
+              // 没有封面的链接/视频：纸笺上就是它自己的标题与来源。
+              <span className="records-deck__paper">
+                <span className="records-deck__glyph" aria-hidden="true">
                   {glyph}
                 </span>
-                <strong>{(title || t.studio.records.untitled).slice(0, 70)}</strong>
-                {source && <span className="library-card__source">{source.slice(0, 40)}</span>}
-              </div>
+                <span className="records-deck__body">{(card.title || t.studio.records.untitled).slice(0, 70)}</span>
+                {card.source && <span className="records-deck__source">{card.source.slice(0, 40)}</span>}
+              </span>
             )}
 
-            {(image || item.carrier === 'text') && title && (
-              <div className="library-card__meta">
-                <strong>{title.slice(0, 60)}</strong>
-                {source && <span>{source.slice(0, 40)}</span>}
-              </div>
+            {/* 标题只有一条来源：记录自己的 title。文字记录没有标题时卡面就是正文，
+                不再压一个「未命名记录」的条子上去。 */}
+            {card.title && (
+              <span className="records-deck__meta">
+                <strong>{card.title.slice(0, 60)}</strong>
+                {card.source && <span>{card.source.slice(0, 40)}</span>}
+              </span>
             )}
-          </article>
+          </button>
         )
       })}
     </div>

@@ -1,7 +1,8 @@
 import type { Canvas } from '@shared/contracts'
 import { useI18n } from '../../i18n'
 import { CanvasThumbnail } from '../canvas/CanvasThumbnail'
-import { stackStyle, StudioEmpty } from './StackSection'
+import { stackStyle } from './StackSection'
+import { CanvasEmpty } from './empty-states'
 
 /**
  * Creative Space：复用 Gallery 的 CanvasThumbnail —— 它按真实节点的
@@ -14,14 +15,12 @@ import { stackStyle, StudioEmpty } from './StackSection'
  * 稿纸宽度由 CSS 上限（约 430px）收住，缩略图比例才不会随列宽被拉成
  * 3:1 的长条；容器再窄时卡片跟着变窄，spread 只是位移、不撑破列宽。
  */
-export function CanvasStack({ canvases, onCreate }: { canvases: Canvas[]; onCreate: () => void }) {
+export function CanvasStack({ canvases }: { canvases: Canvas[] }) {
   const { t, formatDate } = useI18n()
   const shown = canvases.slice(0, 3)
 
   if (shown.length === 0) {
-    return (
-      <StudioEmpty text={t.studio.canvas.empty} actionLabel={t.studio.newCanvas} onCreate={onCreate} />
-    )
+    return <CanvasEmpty />
   }
 
   return (

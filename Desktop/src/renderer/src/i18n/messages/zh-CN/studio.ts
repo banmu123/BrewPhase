@@ -22,7 +22,9 @@ export const studio = {
     overline: 'COFFEE / SHELF',
     hint: '像书架上的包装袋，一层一层收着。',
     open: '打开收藏架',
-    empty: '架子还空着。记下第一包豆子，它就会出现在这里。',
+    emptyTitle: '你的咖啡架还在等。',
+    emptyHint: '把喜欢的咖啡，一杯一杯收进来。',
+    emptyAction: '收入第一包豆',
     count: (n: number) => `${n} 包豆子`,
     unnamed: '未命名豆子',
     noRoaster: '未记录烘焙商'
@@ -31,14 +33,19 @@ export const studio = {
     overline: 'RECORDS / LIBRARY',
     hint: '图片、链接与文字，慢慢攒成自己的 library。',
     open: '打开收藏库',
-    empty: '还没有收藏。存一张图、一条链接，或写点什么。',
+    emptyTitle: '值得留下的，都收进来。',
+    emptyHint: '存一个念头、一条链接，或一个瞬间。',
+    emptyNote: '写一段文字',
+    emptyLink: '存一条链接',
     untitled: '未命名记录'
   },
   canvas: {
     overline: 'CANVAS / CREATIVE SPACE',
     hint: '摊开的项目，留着当时摆放的样子。',
     open: '打开画布',
-    empty: '还没有画布。新建一块，把想法摆进去。',
+    emptyTitle: '每个想法，都始于一张空桌。',
+    emptyHint: '给思绪一个成形的地方。',
+    emptyAction: '新建一块画布',
     count: (n: number) => `${n} 块画布`,
     untitled: '未命名画布',
     updated: (date: string) => `更新于 ${date}`
