@@ -2,16 +2,21 @@ import type { RecordItem } from '@shared/contracts'
 import { api } from '../../shared/api'
 import { useI18n } from '../../i18n'
 import { isSafeRemoteImage, recordDisplayTitle } from '../records/preview/preview-model'
-import { stackStyle } from './StackSection'
+import { stackStyle, StudioEmpty } from './StackSection'
 
-/** 固定宽高比组合：不同类型自然交错，但不随渲染随机跳动。 */
+/**
+ * 固定宽高比组合：不同类型自然交错，但不随渲染随机跳动。
+ * 只给比例（不写像素宽），列宽变了图片跟着缩放。
+ */
 const SHAPES = [
-  { width: 172, height: 218 },
-  { width: 214, height: 150 },
-  { width: 158, height: 196 },
-  { width: 202, height: 168 },
-  { width: 166, height: 214 },
-  { width: 220, height: 156 }
+  { width: 3, height: 4 },
+  { width: 3, height: 2 },
+  { width: 4, height: 5 },
+  { width: 1, height: 1 },
+  { width: 3, height: 4 },
+  { width: 4, height: 3 },
+  { width: 2, height: 3 },
+  { width: 5, height: 7 }
 ]
 
 const GLYPHS: Record<string, string> = { text: '¶', link: '↗', video: '▶', image: '▣' }
@@ -20,15 +25,18 @@ const GLYPHS: Record<string, string> = { text: '¶', link: '↗', video: '▶', 
  * Personal Library：图片 / 链接 / 文字三种真实记录用不同宽高比散放。
  * 本地媒体走 bpmedia://，远程缩略图只放行 https；文字记录显示真实正文摘要。
  *
- * 多栏瀑布流（CSS columns）——每张卡按自己的宽高比占位，没有两行对齐的网格感。
- * 不常驻任何操作按钮：hover 时当前卡上浮，标题与来源在 80ms 后淡入。
+ * 多栏瀑布流（CSS columns）——每张卡按自己的比例占位，没有两行对齐的网格感。
+ * 不常驻任何操作按钮：hover 时当前卡上浮、缩略图轻微推近，标题与来源在
+ * 80ms 后淡入；相邻卡片不动，所以不会把瀑布流挤跳。
  */
-export function RecordsStack({ items }: { items: RecordItem[] }) {
+export function RecordsStack({ items, onCreate }: { items: RecordItem[]; onCreate: () => void }) {
   const { t } = useI18n()
-  const shown = items.slice(0, 6)
+  const shown = items.slice(0, 8)
 
   if (shown.length === 0) {
-    return <div className="studio-empty">{t.studio.records.empty}</div>
+    return (
+      <StudioEmpty text={t.studio.records.empty} actionLabel={t.studio.newText} onCreate={onCreate} />
+    )
   }
 
   return (
@@ -38,7 +46,9 @@ export function RecordsStack({ items }: { items: RecordItem[] }) {
         const local = item.previewPath ?? item.mediaPath
         const remote = isSafeRemoteImage(item.thumbnailURLString)
         const image = local ? api.records.mediaUrl(local) : remote
-        const title = recordDisplayTitle(item) || t.studio.records.untitled
+        // 标题只有一条来源：记录自己的 title。文字记录没有标题时不要拿
+        // 「未命名记录」来凑——正文就在卡面上，再贴一个空标题只是噪音。
+        const title = recordDisplayTitle(item)
         // 只显示人写的来源/作者；`provider`（generic / github / youtube）是内部
         // 字段，摆到界面上就是「generic」这种黑话。
         const source = item.sourceName || item.authorName || ''
@@ -67,12 +77,12 @@ export function RecordsStack({ items }: { items: RecordItem[] }) {
                 <span className="library-card__glyph" aria-hidden="true">
                   {glyph}
                 </span>
-                <strong>{title.slice(0, 70)}</strong>
+                <strong>{(title || t.studio.records.untitled).slice(0, 70)}</strong>
                 {source && <span className="library-card__source">{source.slice(0, 40)}</span>}
               </div>
             )}
 
-            {(image || item.carrier === 'text') && (
+            {(image || item.carrier === 'text') && title && (
               <div className="library-card__meta">
                 <strong>{title.slice(0, 60)}</strong>
                 {source && <span>{source.slice(0, 40)}</span>}

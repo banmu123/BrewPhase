@@ -1,24 +1,27 @@
 import type { Bean } from '@shared/contracts'
 import { api } from '../../shared/api'
 import { useI18n } from '../../i18n'
-import { stackStyle } from './StackSection'
+import { stackStyle, StudioEmpty } from './StackSection'
 
 /** 每包的初始倾角：固定值而非随机，重渲染不会跳。 */
-const TILTS = [-2.4, 1.6, -1.1, 2.2, -0.6]
+const TILTS = [-2.6, 1.8, -1.2, 2.4, -0.7]
 
 /**
  * Coffee Shelf：像书架上错开叠放的豆袋。最多取 5 包真实豆子，
  * 有 imagePath 就用真实包装图，没有就用统一占位（不伪造图片）。
  *
- * 叠放靠负边距 + 每次索引递增的位移，hover 整区时按 `--spread` 展开，
- * 悬停那一包再抬起来并淡入信息——只改 transform / opacity，不触发布局。
+ * 叠放靠负边距（每张的压叠量不同，避免排成一列等距卡片）+ 索引递增的
+ * 微量下沉，hover 整区时按 `--spread` 展开；悬停那一包抬起来、淡入信息，
+ * 其余稍微退后。只改 transform / opacity，不触发布局。
  */
-export function CoffeeStack({ beans }: { beans: Bean[] }) {
+export function CoffeeStack({ beans, onCreate }: { beans: Bean[]; onCreate: () => void }) {
   const { t } = useI18n()
   const shown = beans.slice(0, 5)
 
   if (shown.length === 0) {
-    return <div className="studio-empty">{t.studio.coffee.empty}</div>
+    return (
+      <StudioEmpty text={t.studio.coffee.empty} actionLabel={t.studio.newBean} onCreate={onCreate} />
+    )
   }
 
   return (

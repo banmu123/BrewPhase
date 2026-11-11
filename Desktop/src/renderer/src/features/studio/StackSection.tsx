@@ -4,6 +4,10 @@ import type { CSSProperties, ReactNode } from 'react'
  * 首页三个空间的共用外壳：只负责「这是一层内容」的标题、进入入口与点击语义。
  * 堆叠本身由各自的 Stack 组件渲染，三种表现不混在一起。
  *
+ * Phase 1.1：外壳**不再是一块面板**——没有背景、没有边框、没有圆角，
+ * 只有一条压在标题上方的发丝线。空间靠留白、字号与构图区分，而不是靠
+ * 三个灰绿色矩形把内容装起来。
+ *
  * 入口按钮的 aria-label 用空间名（t.navigation.*），让键盘/读屏与既有
  * e2e 流程都能稳定找到它；整个 section 也可点击，但不嵌套 button。
  * `count` 只有在数据源能给出**准确总数**时才传（Coffee / Canvas）；
@@ -33,28 +37,31 @@ export function StackSection(props: {
       aria-label={props.label}
     >
       <div className="studio-space__head">
-        <span className="overline">{props.overline}</span>
-        <h2 className="studio-space__title">{props.label}</h2>
+        <div className="studio-space__meta">
+          <span className="overline">{props.overline}</span>
+          {props.count && <span className="studio-space__count">{props.count}</span>}
+        </div>
+
+        <div className="studio-space__heading">
+          <h2 className="studio-space__title">{props.label}</h2>
+          <button
+            type="button"
+            className="studio-space__open"
+            aria-label={props.label}
+            onClick={(event) => {
+              event.stopPropagation()
+              props.onOpen()
+            }}
+          >
+            {props.openLabel}
+            <span aria-hidden="true">↗</span>
+          </button>
+        </div>
+
         <p className="studio-space__hint">{props.hint}</p>
-        {props.count && <span className="studio-space__count">{props.count}</span>}
       </div>
 
       <div className="studio-space__stage">{props.children}</div>
-
-      <div className="studio-space__foot">
-        <button
-          type="button"
-          className="studio-space__open"
-          aria-label={props.label}
-          onClick={(event) => {
-            event.stopPropagation()
-            props.onOpen()
-          }}
-        >
-          {props.openLabel}
-          <span aria-hidden="true">↗</span>
-        </button>
-      </div>
     </section>
   )
 }
@@ -65,4 +72,27 @@ export function StackSection(props: {
  */
 export function stackStyle(index: number, tilt = 0): CSSProperties {
   return { '--i': index, '--r': `${tilt}deg` } as CSSProperties
+}
+
+/**
+ * 空状态：不是一块虚线占位框，而是桌面上一句轻声的说明 + 一个添加入口。
+ * 入口交给目标空间**已有的新建流程**（`requestCreate`），不在这里另开表单。
+ */
+export function StudioEmpty(props: { text: string; actionLabel: string; onCreate: () => void }) {
+  return (
+    <div className="studio-empty">
+      <p>{props.text}</p>
+      <button
+        type="button"
+        className="studio-empty__action"
+        onClick={(event) => {
+          event.stopPropagation()
+          props.onCreate()
+        }}
+      >
+        {props.actionLabel}
+        <span aria-hidden="true">↗</span>
+      </button>
+    </div>
+  )
 }
