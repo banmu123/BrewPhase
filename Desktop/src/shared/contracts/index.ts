@@ -30,6 +30,12 @@ export type AppInfo = {
   syncProtocolVersion: number
   platform: string
   dataDir: string
+  /**
+   * 首次启动引导（配对指引）是否该出现：打包版为 true；dev / e2e 跑的是
+   * `out/`（未打包）恒为 false，避免测试与开发被 overlay 挡住。
+   * `BREWPHASE_FORCE_ONBOARDING=yes` 可强制打开（截图/验收用）。
+   */
+  onboardingEligible: boolean
 }
 
 export interface RendererApi {

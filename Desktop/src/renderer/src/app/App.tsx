@@ -7,6 +7,7 @@ import { CoffeePage } from '../features/coffee/CoffeePage'
 import { RecordsPage } from '../features/records/RecordsPage'
 import { SettingsPage } from '../features/settings/SettingsPage'
 import { useI18n } from '../i18n'
+import { hasSeenOnboarding, markOnboardingSeen, Onboarding } from './Onboarding'
 import { useAppStore, type ModuleKey } from './store'
 
 /**
@@ -21,6 +22,7 @@ export function App() {
   const { t } = useI18n()
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [onboardingOpen, setOnboardingOpen] = useState(false)
 
   useEffect(() => {
     api.app
@@ -28,6 +30,24 @@ export function App() {
       .then(setInfo)
       .catch((cause: Error) => setError(cause.message))
   }, [])
+
+  // 首次启动引导（配对指引）：打包版 + 没看过 + 未配对时出现一次。
+  // 判定三条件都在 App 层收口，Onboarding 只负责呈现与出口。
+  useEffect(() => {
+    if (!info?.onboardingEligible) return
+    if (hasSeenOnboarding()) return
+    void api.sync
+      .status()
+      .then((status) => {
+        // 已经配对过的用户不需要引导，也不该再被打扰。
+        if (status.devices.length > 0) {
+          markOnboardingSeen()
+          return
+        }
+        setOnboardingOpen(true)
+      })
+      .catch(() => undefined)
+  }, [info])
 
   const spaces: { key: ModuleKey; label: string; hint: string; icon: typeof BeanIcon }[] = [
     { key: 'records', label: t.navigation.records, hint: t.navigation.hint.records, icon: RecordsIcon },
@@ -57,8 +77,9 @@ export function App() {
   }
 
   return (
-    <div className="app">
-      <aside className="sidebar">
+    <>
+      <div className="app">
+        <aside className="sidebar">
         <div className="sidebar__brand">
           <PhaseOrbit />
           <span className="sr-only">BREWPHASE</span>
@@ -88,7 +109,10 @@ export function App() {
         )}
       </main>
     </div>
-  )
+
+    {onboardingOpen && <Onboarding onClose={() => setOnboardingOpen(false)} />}
+  </>
+)
 }
 
 /** Phase Orbit：轨道环 + 一颗在轨的豆——品牌图形，只出现在这里。 */

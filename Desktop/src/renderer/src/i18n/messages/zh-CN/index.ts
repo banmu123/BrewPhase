@@ -3,6 +3,7 @@ import { coffee } from './coffee'
 import { common } from './common'
 import { mcp } from './mcp'
 import { navigation } from './navigation'
+import { onboarding } from './onboarding'
 import { records } from './records'
 import { settings } from './settings'
 import { sync } from './sync'
@@ -19,7 +20,8 @@ export const zhCN = {
   canvas,
   settings,
   sync,
-  mcp
+  mcp,
+  onboarding
 }
 
 export type Messages = typeof zhCN

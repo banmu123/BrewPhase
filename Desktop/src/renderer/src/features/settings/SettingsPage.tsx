@@ -11,6 +11,7 @@ import type {
 import { MCP_SCOPE_GROUPS } from '@shared/contracts'
 import { api } from '../../shared/api'
 import { SUPPORTED_LOCALES, useI18n } from '../../i18n'
+import { useAppStore, type SettingsCategory } from '../../app/store'
 
 /**
  * 更多 / Settings。
@@ -23,11 +24,18 @@ import { SUPPORTED_LOCALES, useI18n } from '../../i18n'
  * 用户数据（设备名、客户端名、token、路径）不翻译。
  */
 
-type SettingsCategory = 'general' | 'sync' | 'mcp'
-
 export function SettingsPage({ info }: { info: AppInfo | null }) {
   const { t } = useI18n()
+  // 跨页直达（引导页「打开设备同步设置」）：mount 时消费一次挂起的请求，
+  // 之后每次新请求跟随切换。用户手动点子导航不经过 store，不受影响。
+  const requested = useAppStore((state) => state.openSettingsCategory)
+  const consumeRequested = useAppStore((state) => state.consumeOpenSettings)
   const [category, setCategory] = useState<SettingsCategory>('general')
+
+  useEffect(() => {
+    const target = requested ?? consumeRequested()
+    if (target) setCategory(target)
+  }, [requested, consumeRequested])
 
   const categories: Array<{ key: SettingsCategory; label: string }> = [
     { key: 'general', label: t.settings.nav.general },

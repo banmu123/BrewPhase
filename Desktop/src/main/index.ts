@@ -5,6 +5,7 @@ import { app, BrowserWindow, net, protocol, session } from 'electron'
 import { openDatabase, type DatabaseHandle } from './database/client'
 import { registerIpc } from './ipc/register'
 import { MEDIA_HOST, MEDIA_SCHEME, mediaFilePath } from './media/store'
+import { resolveUserDataDir } from './paths'
 import { createMainWindow } from './window'
 import { SyncService } from './sync/sync-service'
 import { pendingMetadataJobs, prepareLocalMetadata } from './database/repositories/records'
@@ -89,9 +90,13 @@ protocol.registerSchemesAsPrivileged([
 
 // 便携/测试场景：库与媒体目录整体重定向。必须在 requestSingleInstanceLock
 // 之前设置——实例锁文件就在 userData 里，重定向后不同目录可各自持锁。
-if (process.env.BREWPHASE_USER_DATA_DIR) {
-  app.setPath('userData', process.env.BREWPHASE_USER_DATA_DIR)
-}
+// 打包版另有固定隔离：开发态与正式安装不能共用同一个库（见 paths.ts）。
+const userDataDir = resolveUserDataDir(
+  app.getPath('appData'),
+  app.isPackaged,
+  process.env.BREWPHASE_USER_DATA_DIR
+)
+if (userDataDir) app.setPath('userData', userDataDir)
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {

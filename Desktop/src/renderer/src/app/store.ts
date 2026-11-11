@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 export type ModuleKey = 'coffee' | 'records' | 'canvas' | 'settings'
+export type SettingsCategory = 'general' | 'sync' | 'mcp'
 
 type AppState = {
   module: ModuleKey
@@ -12,6 +13,13 @@ type AppState = {
   openRecordId: string | null
   openRecord: (id: string) => void
   consumeOpenRecord: () => string | null
+  /**
+   * 跨页直达设置分类：引导页「打开设备同步设置」→ 设置页直接开在 sync。
+   * 同一个「打开 + 消费」约定；谁消费谁清空。
+   */
+  openSettingsCategory: SettingsCategory | null
+  openSettings: (category: SettingsCategory) => void
+  consumeOpenSettings: () => SettingsCategory | null
 }
 
 /**
@@ -27,5 +35,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     const id = get().openRecordId
     if (id) set({ openRecordId: null })
     return id
+  },
+  openSettingsCategory: null,
+  openSettings: (category) => set({ module: 'settings', openSettingsCategory: category }),
+  consumeOpenSettings: () => {
+    const category = get().openSettingsCategory
+    if (category) set({ openSettingsCategory: null })
+    return category
   }
 }))

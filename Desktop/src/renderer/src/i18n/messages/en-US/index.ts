@@ -4,6 +4,7 @@ import { coffee } from './coffee'
 import { common } from './common'
 import { mcp } from './mcp'
 import { navigation } from './navigation'
+import { onboarding } from './onboarding'
 import { records } from './records'
 import { settings } from './settings'
 import { sync } from './sync'
@@ -20,5 +21,6 @@ export const enUS = {
   canvas,
   settings,
   sync,
-  mcp
+  mcp,
+  onboarding
 } satisfies Messages

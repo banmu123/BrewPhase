@@ -2726,3 +2726,94 @@ body.canvas-focus .canvas-topbar {
   pointer-events: none;
   z-index: 4;
 }
+
+/* ============================================================
+   Onboarding：首次启动的配对指引。
+   全屏覆盖层 + 居中单卡；三步配对指引是唯一内容。
+   ============================================================ */
+
+.onboarding {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--paper);
+  padding: 48px;
+}
+
+.onboarding__card {
+  width: min(560px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-large);
+  padding: 40px 44px;
+}
+
+.onboarding__title {
+  margin: 0;
+  font-size: var(--fs-display);
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  color: var(--ink);
+}
+
+.onboarding__lead {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--ink-soft);
+}
+
+.onboarding__steps {
+  list-style: none;
+  margin: 0;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--well);
+  border-radius: var(--radius);
+}
+
+.onboarding__step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+.onboarding__step-index {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--card);
+  color: var(--roast);
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 1px;
+}
+
+.onboarding__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.onboarding__note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-faint);
+}

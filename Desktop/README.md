@@ -179,6 +179,48 @@ tests/          unit（纯函数）/ integration（真 SQLite）/ e2e（真 Elec
 docs/           产品范围、架构、数据模型映射、同步协议、安全模型、画布规格、路线图
 ```
 
+### 数据目录与首次启动
+
+桌面端**不预置任何用户数据**：全新安装首次打开 Coffee 页是空态，豆子、冲煮、
+品鉴与记录只在配对后由 iPhone 经局域网同步过来。首次启动显示一次配对引导
+（跳「设置 → 设备同步」出二维码，iPhone 在「更多 → 数据 → 桌面同步」扫码），
+看过或已配对后不再出现。
+
+正式安装包与开发构建不共用 userData（macOS 示例）：
+
+| 形态 | 数据目录 |
+| --- | --- |
+| 打包版 | `~/Library/Application Support/BrewPhase/brewphase.db` |
+| `pnpm dev` / e2e | `~/Library/Application Support/brewphase-desktop/brewphase.db` |
+| `BREWPHASE_USER_DATA_DIR=...` | 指定目录，优先级最高 |
+
+`electron-builder` 的 `productName: BrewPhase` 不会改 Electron 的 `app.getName()`
+（它读 package.json 的 `name`），所以打包版在 `src/main/paths.ts` 显式切目录。
+2026-11-10 之前两者共用 `brewphase-desktop`，开发联调留下的豆子会出现在刚
+下载的桌面端里。旧目录不删不搬；确需保留请手动复制 `brewphase.db` 与 `media/`。
+
+### Canvas 同步方向与数据所有权
+
+**iOS → Desktop 单向同步；Desktop Canvas 编辑是本地创作，不回传 iOS。**
+
+- iPhone 上已有的画布与节点（`canvas` / `canvasNode`）可以同步进桌面端；桌面端
+  没改过时，iOS 仍是唯一事实来源。
+- 在 Mac 上新建/改名/删除画布、添加记录到画布、拖动与缩放节点、改层级与
+  annotation、写便签与笔迹、通过 MCP 修改画布，**都只改本机 SQLite**：不写
+  `sync_baseline`，不发起任何到 iPhone 的同步请求。
+- 桌面便签（`canvas_notes`）与笔迹（`canvas_strokes`）是纯 Desktop 能力，iOS 没有
+  对应同步模型；入站批次被导入器拒绝，只保存在桌面本地库。
+- iPhone 后续推送旧内容，或修改/删除同一实体时，按 `sync_baseline` + 指纹生成
+  冲突，**优先保护桌面本地修改**，不静默覆盖；只有用户在设置页显式选择
+  「接受手机版本」才允许覆盖。桌面独有画布不会被下一次同步抹掉。
+- 不新增来源字段：`sync_baseline` / `sync_conflicts` / `sync_rejected` 已能表达
+  `ios_source` 与 `desktop_local`。规则细节见 `docs/SYNC_PROTOCOL.md` §4，
+  回归测试见 `tests/integration/canvas-sync-isolation.test.ts`。
+
+清空边界：只有「撤销并清空内容」这一显式确认操作会删画布（**含桌面本地创作的
+便签、笔迹与调整过的节点位置**），确认弹窗已写明；「只撤销授权」与关闭同步
+服务都不会删除任何画布内容。
+
 ## 已实现
 
 - **Coffee**：豆子 CRUD、详情、冲煮记录、品鉴、风味阶段（派生）、库存扣减/回补/盘点。

@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { z } from 'zod'
 import { IPC, ipcRequestSchemas } from '../../shared/contracts/validation/ipc'
 import type { DatabaseHandle } from '../database/client'
@@ -93,7 +93,8 @@ export function registerIpc(params: {
     dbSchemaVersion: DB_SCHEMA_VERSION,
     syncProtocolVersion: SYNC_PROTOCOL_VERSION,
     platform: process.platform,
-    dataDir: db.sqlite.name
+    dataDir: db.sqlite.name,
+    onboardingEligible: app.isPackaged || process.env.BREWPHASE_FORCE_ONBOARDING === 'yes'
   }))
 
   // MARK: - Coffee
