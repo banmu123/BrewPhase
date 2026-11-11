@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Bean, BeanDraft, Brew, BrewDraft, PhaseRule, Tasting } from '@shared/contracts'
 import { dayAfterRoast, defaultRuleFor, phaseFor } from '@shared/domain/phase'
 import { api, ratioText, toDateInput, toEpoch } from '../../shared/api'
+import { Modal } from '../../shared/Modal'
 import { useI18n } from '../../i18n'
 
 /**
@@ -21,6 +22,7 @@ export function CoffeePage() {
   const [error, setError] = useState<string | null>(null)
   const [creatingBean, setCreatingBean] = useState(false)
   const [loggingBrew, setLoggingBrew] = useState(false)
+  const [editingBean, setEditingBean] = useState(false)
 
   /** 详情浮层按需出现：点收藏架上的卡片打开，✕ 关闭。 */
   const [panelOpen, setPanelOpen] = useState(false)
@@ -45,15 +47,15 @@ export function CoffeePage() {
   // 打开着的咖啡页必须自己重读，不然用户会以为清空失败了。
   useEffect(() => api.sync.onChanged(() => void loadBeans()), [loadBeans])
 
-  // Esc 关闭豆子详情：与 ✕ 同一语义。
+  // Esc 关闭豆子详情：与 ✕ 同一语义。浮窗打开时优先关浮窗，详情侧栏保持。
   useEffect(() => {
-    if (!panelOpen) return
+    if (!panelOpen || creatingBean || loggingBrew || editingBean) return
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape' && !event.defaultPrevented) setPanelOpen(false)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [panelOpen])
+  }, [panelOpen, creatingBean, loggingBrew, editingBean])
 
   const loadBeanDetails = useCallback(async (beanId: string) => {
     try {
@@ -99,13 +101,13 @@ export function CoffeePage() {
         </div>
         <div className="page-header__actions">
           <button
-            className={creatingBean ? 'button' : 'button button--primary'}
+            className="button button--primary"
             onClick={() => {
-              setCreatingBean((value) => !value)
+              setCreatingBean(true)
               setPanelOpen(false)
             }}
           >
-            {creatingBean ? t.coffee.collapseForm : t.coffee.addBean}
+            {t.coffee.addBean}
           </button>
         </div>
       </header>
@@ -159,19 +161,6 @@ export function CoffeePage() {
               </div>
             )}
 
-            {creatingBean && (
-              <div className="panel" style={{ marginTop: 18, maxWidth: 460 }}>
-                <BeanForm
-                  title={t.coffee.newBean}
-                  onCancel={() => setCreatingBean(false)}
-                  onSubmit={async (draft) => {
-                    await api.coffee.createBean(draft)
-                    setCreatingBean(false)
-                    await loadBeans()
-                  }}
-                />
-              </div>
-            )}
           </section>
         </div>
       </div>
@@ -234,22 +223,10 @@ export function CoffeePage() {
               <span className="overline" style={{ margin: 0 }}>
                 {t.coffee.brews(brews.length)}
               </span>
-              <button className="button button--primary" onClick={() => setLoggingBrew((value) => !value)}>
+              <button className="button button--primary" onClick={() => setLoggingBrew(true)}>
                 {t.coffee.logBrew}
               </button>
             </div>
-
-            {loggingBrew && (
-              <BrewForm
-                beanId={selected.id}
-                onCancel={() => setLoggingBrew(false)}
-                onSubmit={async (draft) => {
-                  await api.coffee.createBrew(draft)
-                  setLoggingBrew(false)
-                  await refreshAll()
-                }}
-              />
-            )}
 
             {brews.length === 0 ? (
               <div className="empty">{t.coffee.empty.noBrews}</div>
@@ -299,17 +276,12 @@ export function CoffeePage() {
           </div>
 
           <div className="hairline" />
-          <span className="overline">{t.coffee.editProfile}</span>
-          <BeanForm
-            title={t.common.edit}
-            bean={selected}
-            onCancel={() => undefined}
-            cancelLabel=""
-            onSubmit={async (draft) => {
-              await api.coffee.updateBean(selected.id, draft)
-              await loadBeans()
-            }}
-          />
+          <div className="row row--between">
+            <span className="overline" style={{ margin: 0 }}>{t.coffee.editProfile}</span>
+            <button className="button button--ghost" onClick={() => setEditingBean(true)}>
+              {t.common.edit}
+            </button>
+          </div>
 
           <div className="hairline" />
           <span className="overline">{t.coffee.phaseWindow}</span>
@@ -347,6 +319,51 @@ export function CoffeePage() {
           </button>
         </aside>
       )}
+
+      {creatingBean && (
+        <Modal title={t.coffee.newBean} onClose={() => setCreatingBean(false)} width="lg">
+          <BeanForm
+            title={t.coffee.newBean}
+            hideTitle
+            onCancel={() => setCreatingBean(false)}
+            onSubmit={async (draft) => {
+              await api.coffee.createBean(draft)
+              setCreatingBean(false)
+              await loadBeans()
+            }}
+          />
+        </Modal>
+      )}
+
+      {loggingBrew && selected && (
+        <Modal title={t.coffee.logBrew} onClose={() => setLoggingBrew(false)} width="lg">
+          <BrewForm
+            beanId={selected.id}
+            onCancel={() => setLoggingBrew(false)}
+            onSubmit={async (draft) => {
+              await api.coffee.createBrew(draft)
+              setLoggingBrew(false)
+              await refreshAll()
+            }}
+          />
+        </Modal>
+      )}
+
+      {editingBean && selected && (
+        <Modal title={t.coffee.editProfile} onClose={() => setEditingBean(false)} width="lg">
+          <BeanForm
+            title={t.common.edit}
+            hideTitle
+            bean={selected}
+            onCancel={() => setEditingBean(false)}
+            onSubmit={async (draft) => {
+              await api.coffee.updateBean(selected.id, draft)
+              setEditingBean(false)
+              await loadBeans()
+            }}
+          />
+        </Modal>
+      )}
     </div>
   )
 }
@@ -355,6 +372,8 @@ export function CoffeePage() {
 
 function BeanForm(props: {
   title: string
+  /** 放进浮窗时由浮窗提供标题，避免同一行文字出现两次。 */
+  hideTitle?: boolean
   bean?: Bean
   cancelLabel?: string
   onCancel: () => void
@@ -399,9 +418,11 @@ function BeanForm(props: {
         }
       }}
     >
-      <span className="overline" style={{ margin: 0 }}>
-        {props.title}
-      </span>
+      {!props.hideTitle && (
+        <span className="overline" style={{ margin: 0 }}>
+          {props.title}
+        </span>
+      )}
       <div className="field">
         <label>{t.coffee.form.name}</label>
         <input
@@ -492,8 +513,7 @@ function BrewForm(props: {
 
   return (
     <form
-      className="stack panel"
-      style={{ marginBottom: 14 }}
+      className="stack"
       onSubmit={async (event) => {
         event.preventDefault()
         setBusy(true)

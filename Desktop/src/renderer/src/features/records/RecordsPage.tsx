@@ -4,6 +4,7 @@ import { coalesce } from '@shared/coalesce'
 import { api } from '../../shared/api'
 import { useAppStore } from '../../app/store'
 import { SearchIcon } from '../../shared/icons'
+import { Modal } from '../../shared/Modal'
 import { parseLink } from '@shared/link-parser'
 import { useI18n } from '../../i18n'
 import { LinkPlayer } from './preview/LinkPlayer'
@@ -158,8 +159,9 @@ export function RecordsPage() {
   // Esc 关闭详情浮层：与右上角 ✕ 同一语义。
   // 播放器放大时 Esc 归播放器（退出放大，不销毁播放器），所以这一层必须让位——
   // 两个监听都挂在 window 上，注册顺序决定谁先跑，只能显式判断。
+  // 新建浮窗打开时 Esc 归浮窗，详情侧栏保持不动。
   useEffect(() => {
-    if (!panelOpen) return
+    if (!panelOpen || creating) return
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape' || event.defaultPrevented) return
       if (document.querySelector('.link-player--zoomed')) return
@@ -167,7 +169,7 @@ export function RecordsPage() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [panelOpen])
+  }, [panelOpen, creating])
 
   // MCP / 其他主进程写入后的领域通知：页面没有发起请求，收到事件再取一次
   useEffect(
@@ -275,28 +277,6 @@ export function RecordsPage() {
               {error && <span className="error">{error}</span>}
             </div>
 
-            {creating && (
-              <NewRecordForm
-                carrier={creating}
-                tags={tags}
-                onCancel={() => setCreating(null)}
-                onSubmit={async (draft) => {
-                  const created = await api.records.create(draft)
-                  setCreating(null)
-                  await load()
-                  setSelectedId(created.id)
-                  setPanelOpen(true)
-                  // 元数据补全不阻塞保存：先让记录落到列表，再后台抓取并刷新。
-                  if (draft.carrier === 'link' && draft.urlString.trim()) {
-                    void api.records
-                      .resolveMetadata(created.id)
-                      .then(() => load())
-                      .catch(() => undefined)
-                  }
-                }}
-              />
-            )}
-
             {items.length === 0 ? (
               <div className="empty">{t.records.empty}</div>
             ) : (
@@ -385,6 +365,35 @@ export function RecordsPage() {
               </>
           </aside>
           )}
+
+          {creating && (
+            <Modal
+              title={creating === 'text' ? t.records.newText : t.records.newLink}
+              onClose={() => setCreating(null)}
+              width={creating === 'link' ? 'md' : 'sm'}
+            >
+              <NewRecordForm
+                carrier={creating}
+                tags={tags}
+                hideTitle
+                onCancel={() => setCreating(null)}
+                onSubmit={async (draft) => {
+                  const created = await api.records.create(draft)
+                  setCreating(null)
+                  await load()
+                  setSelectedId(created.id)
+                  setPanelOpen(true)
+                  // 元数据补全不阻塞保存：先让记录落到列表，再后台抓取并刷新。
+                  if (draft.carrier === 'link' && draft.urlString.trim()) {
+                    void api.records
+                      .resolveMetadata(created.id)
+                      .then(() => load())
+                      .catch(() => undefined)
+                  }
+                }}
+              />
+            </Modal>
+          )}
         </div>
       </div>
     </div>
@@ -472,6 +481,8 @@ function ParsedLinkStatus(props: { parsed: ReturnType<typeof parseLink> | null }
 
 function NewRecordForm(props: {
   carrier: 'text' | 'link'
+  /** 放进浮窗时标题由浮窗提供。 */
+  hideTitle?: boolean
   tags: RecordTag[]
   onCancel: () => void
   onSubmit: (draft: RecordDraft) => Promise<void>
@@ -491,8 +502,7 @@ function NewRecordForm(props: {
 
   return (
     <form
-      className="stack panel"
-      style={{ marginBottom: 16 }}
+      className="stack"
       onSubmit={async (event) => {
         event.preventDefault()
         setBusy(true)
@@ -524,9 +534,11 @@ function NewRecordForm(props: {
         }
       }}
     >
-      <span className="overline" style={{ margin: 0 }}>
-        {props.carrier === 'text' ? t.records.newText : t.records.newLink}
-      </span>
+      {!props.hideTitle && (
+        <span className="overline" style={{ margin: 0 }}>
+          {props.carrier === 'text' ? t.records.newText : t.records.newLink}
+        </span>
+      )}
       <div className="field">
         <label>{t.records.form.title}</label>
         <input value={title} onChange={(event) => setTitle(event.target.value)} />

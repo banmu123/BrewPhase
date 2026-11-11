@@ -40,7 +40,7 @@ test('新建链接：本地识别 + 保存不被阻塞', async () => {
   await page.getByRole('button', { name: '新链接' }).click()
 
   // 无效协议：本地立即报错，不发任何请求
-  const urlInput = page.locator('.panel .field', { hasText: '网址' }).locator('input')
+  const urlInput = page.locator('.dialog .field', { hasText: '网址' }).locator('input')
   await urlInput.fill('javascript:alert(1)')
   await expect(page.locator('.field-hint--error')).toHaveText(/不是有效的网页地址/)
 

@@ -5,7 +5,6 @@ export const coffee = {
   shelfSummary: (n: number) => `Your coffee shelf · ${n} ${n === 1 ? 'bag' : 'bags'} on shelf`,
   currentlyBrewing: 'Currently Brewing',
   addBean: 'Add bean',
-  collapseForm: 'Hide form',
   unnamedBean: 'Untitled bean',
   noRoaster: 'No roaster',
   noMethod: 'No method',

@@ -10,7 +10,6 @@ export const coffee = {
   shelfSummary: (n: number) => `你的咖啡架 · ${n} 包在架`,
   currentlyBrewing: '正在喝',
   addBean: '新增豆子',
-  collapseForm: '收起表单',
   unnamedBean: '未命名豆子',
   noRoaster: '未填烘焙商',
   noMethod: '未填手法',
