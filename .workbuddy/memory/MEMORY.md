@@ -164,6 +164,19 @@
 * **备份 v4**：`canvasNodes` 是可选段；旧备份（v2/v3）不动设备已有节点；
   坏引用节点跳过并记日志，不失败整份备份。
 
+## Studio Desk 外壳（2026-11-11 起）
+
+* **默认页是 Studio Home**（`ModuleKey` 含 `studio`）。三个空间没有全局 Tab，
+  只从首页内容入口进；空间页头只有一个 `.back-link` 回 Studio。
+* **顶栏不做空间切换**：品牌 / 搜索 / 快速添加 / 设置。搜索是 `SearchPalette`
+  （⌘K），快速添加走 `pendingCreate`，由目标页消费并打开**本页已有**表单，
+  不许复制第二份表单。
+* 首页三种堆叠只在 `features/studio/`：Coffee Shelf 负边距叠放、Records Library
+  CSS 瀑布流、Canvas Deck 复用 `CanvasThumbnail`。动效只改 `--spread/--lift/--scale`
+  变量（200ms / 展开 280ms），reduced-motion 复位变量、`hover:none` 常显信息。
+* **画布工作区隐藏全局顶栏**（body `canvas-workspace`）：画布自带工具栏，且
+  `.float-panel` 已下移到 66px，别再加回 top 14。
+
 ## 代码风格
 
 * 阈值集中在 `RAG/Rules/IntelligenceConfig.swift`；中文词表放 `Resources/*.json`
