@@ -90,8 +90,11 @@ export class ChromeHostInstaller {
 
   /** Chrome 读取 manifest 的位置（macOS / Linux）；Windows 走注册表。 */
   manifestFilePath(): string {
-    // 测试 / 便携：manifest 与 Host 放在同一个隔离目录，绝不写系统位置。
-    if (this.options.hostDirOverride) return this.manifestFilePathInHostDir()
+    // Windows 的 manifest 固定放在 Host 同目录，由 HKCU 注册表指向它。
+    // 测试 / 便携：同样放进隔离目录，绝不写系统位置。
+    if (process.platform === 'win32' || this.options.hostDirOverride) {
+      return this.manifestFilePathInHostDir()
+    }
     if (process.platform === 'darwin') {
       return join(
         homedir(),
@@ -220,8 +223,7 @@ export class ChromeHostInstaller {
   }
 
   private manifestLocation(): string {
-    if (this.options.hostDirOverride) return this.manifestFilePathInHostDir()
-    return process.platform === 'win32' ? this.manifestFilePathInHostDir() : this.manifestFilePath()
+    return this.manifestFilePath()
   }
 
   private manifestFilePathInHostDir(): string {
