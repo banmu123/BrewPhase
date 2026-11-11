@@ -171,11 +171,33 @@
 * **顶栏不做空间切换**：品牌 / 搜索 / 快速添加 / 设置。搜索是 `SearchPalette`
   （⌘K），快速添加走 `pendingCreate`，由目标页消费并打开**本页已有**表单，
   不许复制第二份表单。
-* 首页三种堆叠只在 `features/studio/`：Coffee Shelf 负边距叠放、Records Library
-  CSS 瀑布流、Canvas Deck 复用 `CanvasThumbnail`。动效只改 `--spread/--lift/--scale`
+* 首页三种堆叠只在 `features/studio/`：Coffee Shelf 负边距叠放、Records Deck
+  固定姿态叠放（`deck-model.ts`）、Canvas Deck 复用 `CanvasThumbnail`。动效只改
   变量（200ms / 展开 280ms），reduced-motion 复位变量、`hover:none` 常显信息。
+* **Records 首页是 Deck 不是瀑布流**（Phase 1.2）：`DECK_LIMIT=5`，姿态取
+  `DECK_REST`/`DECK_SPREAD` 固定数组（不随机、渲染稳定），CSS 只消费
+  `--deck-x/y/r` 与 `--deck-*-spread`。卡是 `<button>`，点击走 `openRecord(id)`
+  复用 Records 详情浮层，必须 `stopPropagation`（否则被外层 section 的
+  「进入空间」抢走）。完整 Records 页仍是 masonry，两者不要互相替代。
+* **三个空状态各一个组件**（`empty-states.tsx`，没有通用 StudioEmpty）：
+  架 / 空白卡堆 / 空白创作桌。装饰件尺寸用「高度定 + 宽高比推宽度」，
+  否则低窗口会向上溢出压住空间标题。所有入口只调 `requestCreate`。
+* **舞台高度是契约**：coffee 236 / canvas 288 / records 330（≤1020 记录区 300），
+  不要再用 `:has(.studio-empty){min-height:0}` 把空态高度抽掉。
 * **画布工作区隐藏全局顶栏**（body `canvas-workspace`）：画布自带工具栏，且
   `.float-panel` 已下移到 66px，别再加回 top 14。
+
+## Desktop E2E 与帧节流（2026-11-11 起）
+
+* 无 GPU 的 Electron 窗口被遮挡时**渲染帧会被节流**：Playwright 的
+  「element is stable」可点击性检查会一直等不到帧（`element is not stable`
+  → 30s 超时），CSS transition 也会整段不推进。别把它当成产品 bug。
+* 断言姿态/展开：先 `addStyleTag` 关掉 transition，再断 `:hover` 匹配 +
+  computed 终态；不要用「读两次 transform 相等」当稳定判据。
+* 点击：`scrollIntoView({block:'center'})` → `elementFromPoint` 命中测试
+  （顺带证明没被遮挡）→ `click({force:true})`；卡片类会随 hover 移动的元素
+  用 `element.click()` 派发，另用命中测试保证可点。
+* 截图用与 `:hover` 同一组 CSS 变量把目标状态钉住，不要赌动画跑到终态。
 
 ## 代码风格
 
