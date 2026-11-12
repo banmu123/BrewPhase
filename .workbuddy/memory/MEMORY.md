@@ -56,6 +56,19 @@
 * 三个空状态各一个组件（`empty-states.tsx`），入口只调 `requestCreate`；
   装饰件「高度定 + 宽高比推宽度」，否则窄窗向上溢出压住标题。
 
+## Desktop：外观（浅色 / 深色）
+
+* 颜色只有两处来源：`app.css` 的 `:root` 与 `[data-theme='dark']`；**组件不许
+  自己判断明暗**（不许读 `prefers-color-scheme`），否则必然半深半浅。
+* 主按钮文字是 `--on-espresso`，**不要写死 `#fff`**：深色下 espresso 翻转成
+  暖亮色，白字会消失。同类派生变量：`--on-danger`、`--stage`（永远深底）、
+  `--fade` / `--scrim-chip`（压图上的渐隐与圆钮）、`--sheet-*`（纸面）。
+* 深色不是反色：浅色靠投影分层，黑底投影看不见，改成 card > paper 的亮度差。
+* Konva 缓存自带外观标记（`tokens.ts` 的 `cachedTheme`），切主题自动失效；
+  调用点不要再手动 `refreshThemeColors()` 之外加逻辑。
+* `shared/theme.ts` 必须用 `globalThis` 最小结构类型，不能用 `document` /
+  `MediaQueryListEvent`——tests 被 `tsconfig.node.json` 编译，那里没有 DOM lib。
+
 ## Desktop：内置浏览器（Phase 1）
 
 * 唯一实例 `src/main/browser/browser-manager.ts`（`WebContentsView` +
