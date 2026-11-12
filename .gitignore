@@ -15,3 +15,6 @@ Tools/CoffeeAI/**/*.gguf
 .DS_Store
 *.xcuserstate
 xcuserdata/
+
+# Xcode 命令行构建产物（-derivedDataPath build/DerivedData）
+build/
