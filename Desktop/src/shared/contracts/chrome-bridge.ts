@@ -25,7 +25,7 @@ export const CHROME_MAX_SELECTED_TEXT = 20_000
 export const CHROME_MAX_REQUEST_ID = 100
 
 export const CHROME_HOST_NAME = 'com.brewphase.chrome'
-export const CHROME_HOST_VERSION = '0.1.0'
+export const CHROME_HOST_VERSION = '0.2.0'
 
 /** 与 ChromeExtension/src/shared/protocol.ts 保持一致（有测试守护）。 */
 export const CHROME_COMPANION_ERROR_CODES = [
@@ -67,18 +67,67 @@ export const chromePagePayloadSchema = z.object({
 })
 export type ChromePagePayload = z.infer<typeof chromePagePayloadSchema>
 
-export const chromeCompanionRequestSchema = z
-  .object({
-    version: z.literal(CHROME_BRIDGE_PROTOCOL_VERSION),
-    requestId: z.string().min(1).max(CHROME_MAX_REQUEST_ID),
-    type: z.enum(['PING', 'SAVE_PAGE']),
-    payload: chromePagePayloadSchema.optional()
-  })
-  .superRefine((value, ctx) => {
-    if (value.type === 'SAVE_PAGE' && !value.payload) {
-      ctx.addIssue({ code: 'custom', path: ['payload'], message: 'SAVE_PAGE requires payload' })
-    }
-  })
+// MARK: - 图片分块传输
+
+/** 一次传输的总字节上限（截图/右键图片压缩后远小于这个值）。 */
+export const CHROME_IMAGE_MAX_BYTES = 8 * 1024 * 1024
+/** 单个分块的原始二进制上限；base64 后约 128KB，低于本地 IPC 256KB。 */
+export const CHROME_IMAGE_MAX_CHUNK_BYTES = 96 * 1024
+export const CHROME_IMAGE_MAX_CHUNKS = 200
+export const CHROME_IMAGE_MAX_DIMENSION = 10_000
+export const CHROME_IMAGE_MAX_NOTE = 20_000
+
+export const chromeImageMetadataSchema = z.object({
+  title: z.string().max(CHROME_MAX_TITLE).default(''),
+  sourceUrl: z
+    .string()
+    .trim()
+    .max(CHROME_MAX_URL)
+    .refine(isSupportedPageURL, { message: 'only http(s) source URLs are supported' }),
+  /** 网页里选中的原文。 */
+  selectedText: z.string().max(CHROME_MAX_SELECTED_TEXT).default(''),
+  /** 用户自己写的备注。 */
+  note: z.string().max(CHROME_IMAGE_MAX_NOTE).default('')
+})
+export type ChromeImageMetadata = z.infer<typeof chromeImageMetadataSchema>
+
+export const chromeImageBeginSchema = z.object({
+  transferId: z.string().uuid(),
+  mimeType: z.enum(['image/jpeg', 'image/png']),
+  byteSize: z.number().int().min(1).max(CHROME_IMAGE_MAX_BYTES),
+  width: z.number().int().min(1).max(CHROME_IMAGE_MAX_DIMENSION),
+  height: z.number().int().min(1).max(CHROME_IMAGE_MAX_DIMENSION),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  chunkCount: z.number().int().min(1).max(CHROME_IMAGE_MAX_CHUNKS),
+  metadata: chromeImageMetadataSchema
+})
+export type ChromeImageBegin = z.infer<typeof chromeImageBeginSchema>
+
+export const chromeImageChunkSchema = z.object({
+  transferId: z.string().uuid(),
+  index: z.number().int().min(0).max(CHROME_IMAGE_MAX_CHUNKS - 1),
+  /** base64；服务端解码后再校验原始字节上限。 */
+  data: z.string().min(1).max(Math.ceil((CHROME_IMAGE_MAX_CHUNK_BYTES * 4) / 3) + 16)
+})
+export type ChromeImageChunk = z.infer<typeof chromeImageChunkSchema>
+
+export const chromeImageCommitSchema = z.object({
+  transferId: z.string().uuid()
+})
+export type ChromeImageCommit = z.infer<typeof chromeImageCommitSchema>
+
+const requestBase = {
+  version: z.literal(CHROME_BRIDGE_PROTOCOL_VERSION),
+  requestId: z.string().min(1).max(CHROME_MAX_REQUEST_ID)
+}
+
+export const chromeCompanionRequestSchema = z.discriminatedUnion('type', [
+  z.object({ ...requestBase, type: z.literal('PING') }),
+  z.object({ ...requestBase, type: z.literal('SAVE_PAGE'), payload: chromePagePayloadSchema }),
+  z.object({ ...requestBase, type: z.literal('IMAGE_BEGIN'), payload: chromeImageBeginSchema }),
+  z.object({ ...requestBase, type: z.literal('IMAGE_CHUNK'), payload: chromeImageChunkSchema }),
+  z.object({ ...requestBase, type: z.literal('IMAGE_COMMIT'), payload: chromeImageCommitSchema })
+])
 export type ChromeCompanionRequest = z.infer<typeof chromeCompanionRequestSchema>
 
 export const chromeCompanionResponseSchema = z.object({
@@ -133,8 +182,20 @@ export const chromeCompanionStatusSchema = z.object({
   bridgeRunning: z.boolean(),
   /** Windows 是 `\\.\pipe\...`，macOS/Linux 是 socket 绝对路径。 */
   endpoint: z.string().nullable(),
-  /** Native Host 可执行文件和 manifest 是否已经就位。 */
+  /** 兼容字段：= installationValid。 */
   hostInstalled: z.boolean(),
+  /** 逐项状态：文件、配置、manifest、注册表。 */
+  binaryExists: z.boolean(),
+  configExists: z.boolean(),
+  manifestExists: z.boolean(),
+  manifestValid: z.boolean(),
+  /** null = 无法确定（注册表查询被系统策略拦截 / 输出无法解析），不当作未安装。 */
+  registered: z.boolean().nullable(),
+  installationValid: z.boolean(),
+  /** connected 优先于 installed：本次运行真的收到过握手。 */
+  connectionState: z.enum(['connected', 'installed', 'not-installed', 'invalid', 'unknown']),
+  lastHandshakeAt: z.number().int().nullable(),
+  lastRequestAt: z.number().int().nullable(),
   hostVersion: z.string().nullable(),
   hostPath: z.string().nullable(),
   manifestPath: z.string().nullable(),
@@ -154,3 +215,12 @@ export const chromeCompanionInstallResultSchema = z.object({
   message: z.string().max(300).nullable()
 })
 export type ChromeCompanionInstallResult = z.infer<typeof chromeCompanionInstallResultSchema>
+
+/** 本地 IPC 自检：hello + PING 走一遍，不涉及 Chrome 扩展本身。 */
+export const chromeSelfTestResultSchema = z.object({
+  ok: z.boolean(),
+  code: z.string().max(60),
+  message: z.string().max(300).optional(),
+  appVersion: z.string().max(60).optional()
+})
+export type ChromeSelfTestResult = z.infer<typeof chromeSelfTestResultSchema>

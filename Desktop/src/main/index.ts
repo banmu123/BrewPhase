@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { app, BrowserWindow, net, protocol, session } from 'electron'
+import { installApplicationMenu } from './app-menu'
 import { openDatabase, type DatabaseHandle } from './database/client'
 import { registerIpc } from './ipc/register'
 import { MEDIA_HOST, MEDIA_SCHEME, mediaFilePath } from './media/store'
@@ -20,6 +21,8 @@ import { McpClientService } from './application/authorization/permission-service
 import { BrowserManager } from './browser/browser-manager'
 import { BookmarkService } from './browser/bookmark-service'
 import { ChromeService } from './integrations/chrome/chrome-service'
+import { resolveDataLocation, setActiveDataDir } from './data-location'
+import { DataLocationService } from './data-location-service'
 import { BridgeServer } from './mcp-bridge/bridge-server'
 import { BRIDGE_PROTOCOL_VERSION, bridgePaths, platformSupportsBridge } from './mcp-bridge/bridge-contract'
 import type { McpBridgeStatus } from '../shared/contracts/mcp'
@@ -103,6 +106,11 @@ const userDataDir = resolveUserDataDir(
 )
 if (userDataDir) app.setPath('userData', userDataDir)
 
+// 业务数据目录（db + media）默认等于 userData，可在设置里改到任意空目录。
+// 这个解析必须在打开数据库之前完成；配置损坏时回退默认，不阻塞启动。
+const initialDataLocation = resolveDataLocation(app.getPath('userData'))
+setActiveDataDir(initialDataLocation.dataDir)
+
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
@@ -114,6 +122,12 @@ if (!gotLock) {
 }
 
 function bootstrap(): void {
+  // Windows 的任务栏分组与系统通知身份：必须与 electron-builder 的 appId
+  // 一致，否则任务栏、通知、系统弹窗都会显示「Electron」的默认原子图标。
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.brewphase.desktop')
+  }
+
   // 开发态跑的是 Electron 自己的二进制，Dock 会显示 Electron 默认图标；
   // 打包版的图标来自 electron-builder 的 build/icon.icns，这里只补 dev / preview。
   if (!app.isPackaged && process.platform === 'darwin') {
@@ -121,7 +135,7 @@ function bootstrap(): void {
     if (existsSync(iconPath)) app.dock?.setIcon(iconPath)
   }
 
-  db = openDatabase(join(app.getPath('userData'), 'brewphase.db'))
+  db = openDatabase(join(initialDataLocation.dataDir, 'brewphase.db'))
 
   protocol.handle(MEDIA_SCHEME, async (request) => {
     try {
@@ -207,6 +221,7 @@ function bootstrap(): void {
   // Host 是否安装由用户在设置页决定；已安装时这里会刷新 token。
   const chromeIntegration = new ChromeService({
     userDataDir: app.getPath('userData'),
+    dataDir: initialDataLocation.dataDir,
     appVersion: APP_VERSION,
     appPath: app.getAppPath(),
     resourcesPath: process.resourcesPath,
@@ -222,6 +237,27 @@ function bootstrap(): void {
     console.error('[chrome] start failed', error)
   })
 
+  // 数据目录迁移：复制前先停掉所有会写库/写文件的服务；成功后由设置页
+  // 触发重启（或自动重启），失败时原数据与配置都不动。
+  const dataLocation = new DataLocationService({
+    userDataDir: app.getPath('userData'),
+    appPath: app.getAppPath(),
+    onBeforeMigrate: async () => {
+      await chromeIntegration.stop()
+      const server = bridgeServer
+      bridgeServer = null
+      await server?.stop()
+      browserManager?.dispose()
+      browserManager = null
+      db?.close()
+      db = null
+    },
+    relaunch: () => {
+      app.relaunch()
+      app.exit(0)
+    }
+  })
+
   registerIpc({
     db,
     devServerUrl,
@@ -230,15 +266,20 @@ function bootstrap(): void {
     bridgeStatus,
     browser: browserManager,
     bookmarks: bookmarkService,
-    chrome: chromeIntegration
+    chrome: chromeIntegration,
+    dataDir: initialDataLocation.dataDir,
+    dataLocation
   })
+
+  // 应用菜单必须在开窗前就位：快捷键（复制/粘贴/缩放…）随 role 注册，
+  // Windows/Linux 的传统菜单栏由 autoHideMenuBar 收起，入口在 Renderer 顶栏。
+  installApplicationMenu()
 
   const mainWindow = createMainWindow({ devServerUrl })
   // 窗口尺寸变化：原生视图不归 CSS 管，必须显式收回来。
   // 渲染层也会重新上报 bounds，这里是「渲染层还没来得及报」时的兜底。
   mainWindow.on('resize', () => browserManager?.refit())
   mainWindow.on('closed', () => browserManager?.dispose())
-
   // 上次运行没跑完的 pending 任务（应用被关掉 / 崩溃）：接着抓，不遗忘
   try {
     for (const job of pendingMetadataJobs(db.db)) metadataQueue.enqueue(job)

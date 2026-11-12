@@ -26,6 +26,19 @@ export const settings = {
     localData: '本地数据',
     localDataNote: '全部数据存在本机的 SQLite 与 media 目录里，不上传、不登录、不需要网络。',
     dataDir: '数据目录',
+    dataDirHint: '数据库与媒体文件都在这里；缓存、语言偏好与登录状态不在这个目录。',
+    dataDirChange: '更改位置…',
+    dataDirMoving: '正在迁移…',
+    dataDirReset: '使用默认位置',
+    dataDirChangeTitle: '更改数据存储位置？',
+    dataDirChangeBody:
+      '会把数据库与媒体复制到你选择的空文件夹，然后重启 BrewPhase。未保存的输入会丢失；原目录的数据不会删除。',
+    dataDirResetTitle: '恢复默认位置？',
+    dataDirResetBody:
+      '会切回默认数据目录。自定义目录里的数据不会移动或删除，之后仍可以手动清理。',
+    dataDirRestarting: '已迁移，正在重启 BrewPhase…',
+    dataDirRestartNow: '立即重启',
+    dataDirFailed: '迁移没有完成',
     about: '关于 BrewPhase',
     aboutText:
       '本地优先的咖啡记录与风味分析应用：记录每一包豆，看到风味怎么变化。阶段判断、冲煮记录、个人规律都在你的设备上，不联网也能完整使用。',
@@ -101,9 +114,22 @@ export const settings = {
       host: 'Native Host',
       installed: '已安装',
       missing: '未安装',
+      connected: '已连接',
+      connection: '扩展连接',
+      installedIdle: '已安装，等待连接',
+      invalid: '安装异常',
+      unknown: '状态未知',
+      lastSeen: (time: string) => `最近通信：${time}`,
+      never: '最近通信：还没收到 Chrome 的请求',
+      registeredUnknown: '注册状态读不到（系统策略限制），以实际连接状态为准。',
+      selfTest: '测试本地服务',
+      selfTesting: '正在测试…',
+      selfTestOk: '本地服务正常',
+      selfTestFailed: (message: string) => `本地服务异常：${message}`,
       extensionId: '扩展 ID',
       extensionMissing: '尚未生成',
-      extensionHint: 'Desktop 读不到 Chrome 的已加载扩展列表；请在 chrome://extensions 确认卡片上的 ID 与上面一致。',
+      extensionHint:
+        'Desktop 读不到 Chrome 的已加载扩展列表；请在 chrome://extensions 确认卡片上的 ID 与上面一致。',
       appVersion: '宿主版本'
     },
     actions: {
@@ -115,6 +141,8 @@ export const settings = {
     },
     result: {
       installed: 'Native Host 已注册，可以到 Chrome 加载扩展了。',
+      installedPartial:
+        'Host 文件与 manifest 已就位；系统策略拦截了注册表写入，实际连接状态以“已连接”为准。',
       removed: '已移除注册信息与本地 Host。',
       failed: (message: string) => `操作没有完成：${message}`
     },

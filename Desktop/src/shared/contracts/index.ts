@@ -12,8 +12,10 @@ import type {
 } from './bookmarks'
 import type {
   ChromeCompanionInstallResult,
-  ChromeCompanionStatus
+  ChromeCompanionStatus,
+  ChromeSelfTestResult
 } from './chrome-bridge'
+import type { DataLocationChangeResult, DataLocationStatus } from './data-location'
 import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from './version'
 
 export * from './version'
@@ -25,6 +27,7 @@ export * from './mcp'
 export * from './browser'
 export * from './bookmarks'
 export * from './chrome-bridge'
+export * from './data-location'
 export * from './validation/ipc'
 
 /**
@@ -55,6 +58,8 @@ export type AppInfo = {
 export interface RendererApi {
   app: {
     info: () => Promise<AppInfo>
+    /** 弹出主进程应用菜单（role 提供 Copy/Paste/Zoom 等与快捷键）。 */
+    popupMenu: () => Promise<void>
     /** 主进程写入后的刷新通知（MCP/同步等外部来源）。 */
     onChanged: (listener: (domain: AppDomain) => void) => () => void
   }
@@ -199,6 +204,18 @@ export interface RendererApi {
     /** 幂等：复制 Host、写 host-config、注册 Chrome Native Messaging manifest。 */
     install: () => Promise<ChromeCompanionInstallResult>
     uninstall: () => Promise<ChromeCompanionInstallResult>
+    /** 本地 IPC 自检（hello + PING）；不代表 Chrome 已加载扩展。 */
+    selfTest: () => Promise<ChromeSelfTestResult>
+  }
+  /**
+   * 数据目录：`brewphase.db` 与 `media/` 的位置。切换后需要重启；
+   * 迁移只复制、不删除原目录，失败不改配置。
+   */
+  dataLocation: {
+    status: () => Promise<DataLocationStatus>
+    choose: () => Promise<DataLocationChangeResult>
+    reset: () => Promise<DataLocationChangeResult>
+    relaunch: () => Promise<void>
   }
 }
 

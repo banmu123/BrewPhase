@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process'
 import { constants, existsSync, readFileSync } from 'node:fs'
-import { access, chmod, copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, chmod, copyFile, mkdir, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import {
   CHROME_BRIDGE_PROTOCOL_VERSION,
@@ -26,7 +26,13 @@ const execFileAsync = promisify(execFile)
  */
 
 export type ChromeHostInstallState = {
-  hostInstalled: boolean
+  binaryExists: boolean
+  configExists: boolean
+  manifestExists: boolean
+  manifestValid: boolean
+  /** null = 注册状态未知（查询被系统策略拦截 / 输出无法解析）。 */
+  registered: boolean | null
+  installationValid: boolean
   hostPath: string | null
   manifestPath: string | null
   hostVersion: string | null
@@ -140,27 +146,38 @@ export class ChromeHostInstaller {
   async status(): Promise<ChromeHostInstallState> {
     const hostPath = this.hostPath()
     const configPath = this.configPath()
-    let hostInstalled = false
-    let registered = false
-
-    try {
-      await access(hostPath, constants.X_OK)
-      await access(configPath, constants.R_OK)
-      hostInstalled = true
-    } catch {
-      hostInstalled = false
-    }
-
-    if (hostInstalled) {
-      registered = await this.isRegistered()
-    }
-
+    const manifestPath = this.manifestFilePath()
     const extensionId = this.extensionId()
+
+    const binaryExists = await canAccess(hostPath, constants.X_OK)
+    const configExists = await canAccess(configPath, constants.R_OK)
+    const manifestExists = existsSync(manifestPath)
+    const manifest = manifestExists ? this.readManifest() : null
+    const manifestValid = Boolean(
+      manifest &&
+        extensionId &&
+        manifest.path &&
+        normalizePathForCompare(manifest.path) === normalizePathForCompare(hostPath) &&
+        Array.isArray(manifest.allowed_origins) &&
+        manifest.allowed_origins.includes(`chrome-extension://${extensionId}/`)
+    )
+
+    // 注册表查询失败（例如系统策略禁止 reg.exe）只代表「未知」，不能当成未安装：
+    // 用户可能已经手动注册、扩展也能正常通信。
+    const registered = manifestExists ? await this.registryMatches() : false
+    const installationValid =
+      binaryExists && configExists && manifestExists && manifestValid && registered !== false
+
     return {
-      hostInstalled: hostInstalled && registered,
-      hostPath: hostInstalled ? hostPath : null,
-      manifestPath: registered ? this.manifestLocation() : null,
-      hostVersion: hostInstalled ? CHROME_HOST_VERSION : null,
+      binaryExists,
+      configExists,
+      manifestExists,
+      manifestValid,
+      registered,
+      installationValid,
+      hostPath: binaryExists ? hostPath : null,
+      manifestPath: manifestExists ? manifestPath : null,
+      hostVersion: binaryExists ? CHROME_HOST_VERSION : null,
       extensionId,
       extensionDir: this.extensionDir(),
       lastError: this.lastError
@@ -222,10 +239,6 @@ export class ChromeHostInstaller {
     return this.status()
   }
 
-  private manifestLocation(): string {
-    return this.manifestFilePath()
-  }
-
   private manifestFilePathInHostDir(): string {
     return join(this.hostDir(), `${CHROME_HOST_NAME}.json`)
   }
@@ -275,22 +288,79 @@ export class ChromeHostInstaller {
     await execFileAsync('reg', ['delete', this.windowsRegistryKey(), '/f']).catch(() => undefined)
   }
 
-  private async isRegistered(): Promise<boolean> {
-    if (this.options.hostDirOverride || process.platform !== 'win32') {
-      try {
-        const manifest = JSON.parse(await readFile(this.manifestFilePath(), 'utf8')) as {
-          path?: string
-        }
-        return manifest.path === this.hostPath()
-      } catch {
-        return false
-      }
-    }
+  /** 读 manifest；损坏时返回 null，由 status 判为 manifestValid=false。 */
+  private readManifest(): {
+    path?: string
+    allowed_origins?: string[]
+  } | null {
     try {
-      const { stdout } = await execFileAsync('reg', ['query', this.windowsRegistryKey(), '/ve'])
-      return stdout.includes(this.manifestFilePathInHostDir())
+      return JSON.parse(readFileSync(this.manifestFilePath(), 'utf8')) as {
+        path?: string
+        allowed_origins?: string[]
+      }
     } catch {
-      return false
+      return null
     }
   }
+
+  /**
+   * 注册状态：
+   * - true：注册表/manifest 指向当前 Host；
+   * - false：明确未注册或指向别处；
+   * - null：无法判断（reg.exe 被策略拦截、输出无法解析）——**不当作未安装**。
+   */
+  private async registryMatches(): Promise<boolean | null> {
+    if (process.platform !== 'win32' || this.options.hostDirOverride) {
+      const manifest = this.readManifest()
+      if (!manifest) return false
+      return Boolean(
+        manifest.path &&
+          normalizePathForCompare(manifest.path) === normalizePathForCompare(this.hostPath())
+      )
+    }
+
+    try {
+      const stdout = await new Promise<Buffer>((resolve, reject) => {
+        execFile(
+          'reg',
+          ['query', this.windowsRegistryKey(), '/ve'],
+          { encoding: 'buffer', windowsHide: true },
+          (error, output) => {
+            if (error) reject(error)
+            else resolve(output as unknown as Buffer)
+          }
+        )
+      })
+      // reg.exe 输出是系统代码页；路径只取 ASCII 结构，用 latin1 保留字节。
+      const found = parseRegistryQueryPath(stdout.toString('latin1'))
+      if (!found) return null
+      return normalizePathForCompare(found) === normalizePathForCompare(this.manifestFilePathInHostDir())
+    } catch (error) {
+      const stderr = (error as { stderr?: Buffer | string }).stderr
+      const text = Buffer.isBuffer(stderr) ? stderr.toString('latin1') : String(stderr ?? '')
+      if (/unable to find|找不到|cannot find/i.test(text)) return false
+      // EPERM（安全策略）等：状态未知，不判成未安装。
+      return null
+    }
+  }
+}
+
+async function canAccess(path: string, mode: number): Promise<boolean> {
+  try {
+    await access(path, mode)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 大小写、斜杠方向都归一后再比较；Windows 路径不区分大小写。 */
+export function normalizePathForCompare(value: string): string {
+  return resolve(value).replace(/\//g, '\\').toLowerCase()
+}
+
+/** 从 `reg query` 输出里取 manifest 路径；输出含额外空格/制表符也能认。 */
+export function parseRegistryQueryPath(output: string): string | null {
+  const match = output.match(/[A-Za-z]:\\[^\r\n"]*?\.json/i)
+  return match ? match[0].trim() : null
 }

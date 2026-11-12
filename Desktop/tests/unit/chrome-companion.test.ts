@@ -10,6 +10,7 @@ import { ApplicationEvents } from '../../src/main/application/events/application
 import { RecordService } from '../../src/main/application/records/record-service'
 import { ChromeBridgeServer, chromeBridgePaths } from '../../src/main/integrations/chrome/chrome-bridge-server'
 import { ChromeMessageHandler } from '../../src/main/integrations/chrome/chrome-message-handler'
+import { ChromeImageReceiver } from '../../src/main/integrations/chrome/chrome-image-receiver'
 import {
   CHROME_BRIDGE_PROTOCOL_VERSION,
   CHROME_HOST_NAME,
@@ -42,13 +43,15 @@ describe('Chrome Companion：协议与落库', () => {
   let handle: DatabaseHandle
   let records: RecordService
   let handler: ChromeMessageHandler
+  let images: ChromeImageReceiver
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'bp-chrome-'))
     handle = openDatabase(join(dir, 'brewphase.db'))
     const events = new ApplicationEvents()
     records = new RecordService(handle.db, handle.deviceId, events, () => undefined)
-    handler = new ChromeMessageHandler(records, '0.1.1-test')
+    images = new ChromeImageReceiver(dir, records)
+    handler = new ChromeMessageHandler(records, '0.1.1-test', images, () => undefined)
   })
 
   afterEach(() => {
@@ -56,8 +59,8 @@ describe('Chrome Companion：协议与落库', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  it('PING 只报告 Desktop 版本，不写库', () => {
-    const response = handler.handle({
+  it('PING 只报告 Desktop 版本，不写库', async () => {
+    const response = await handler.handle({
       version: 1,
       requestId: 'ping-1',
       type: 'PING'
@@ -69,8 +72,8 @@ describe('Chrome Companion：协议与落库', () => {
     expect(records.list({ search: '', carrier: null, tagId: null, limit: 50, offset: 0 })).toHaveLength(0)
   })
 
-  it('SAVE_PAGE 把标题 / 选中文字 / 描述落到既有字段', () => {
-    const response = handler.handle({
+  it('SAVE_PAGE 把标题 / 选中文字 / 描述落到既有字段', async () => {
+    const response = await handler.handle({
       version: 1,
       requestId: 'save-1',
       type: 'SAVE_PAGE',
@@ -89,21 +92,21 @@ describe('Chrome Companion：协议与落库', () => {
     expect(record!.provider).toBe('generic')
   })
 
-  it('重复 requestId 只产生一条记录（Popup 连点 / Host 重发）', () => {
+  it('重复 requestId 只产生一条记录（Popup 连点 / Host 重发）', async () => {
     const request = {
       version: 1 as const,
       requestId: 'dup-1',
       type: 'SAVE_PAGE' as const,
       payload: SAMPLE
     }
-    const first = handler.handle(request)
-    const second = handler.handle(request)
+    const first = await handler.handle(request)
+    const second = await handler.handle(request)
 
     expect(second.data?.recordId).toBe(first.data?.recordId)
     expect(records.list({ search: '', carrier: null, tagId: null, limit: 50, offset: 0 })).toHaveLength(1)
   })
 
-  it('拒绝 javascript: / data: / file: 等非 http(s) 地址', () => {
+  it('拒绝 javascript: / data: / file: 等非 http(s) 地址', async () => {
     for (const url of ['javascript:alert(1)', 'data:text/html,hi', 'file:///etc/passwd', 'chrome://settings']) {
       expect(isSupportedPageURL(url)).toBe(false)
       const parsed = chromeCompanionRequestSchema.safeParse({
@@ -117,7 +120,7 @@ describe('Chrome Companion：协议与落库', () => {
     expect(isSupportedPageURL('https://example.com')).toBe(true)
   })
 
-  it('超长字段在 schema 层被拒绝，不进入数据库', () => {
+  it('超长字段在 schema 层被拒绝，不进入数据库', async () => {
     const parsed = chromeCompanionRequestSchema.safeParse({
       version: 1,
       requestId: 'long',
@@ -132,7 +135,7 @@ describe('Chrome Companion：协议与落库', () => {
     expect(parsed.success).toBe(false)
   })
 
-  it('缺少 payload 的 SAVE_PAGE 被拒绝，PING 不需要 payload', () => {
+  it('缺少 payload 的 SAVE_PAGE 被拒绝，PING 不需要 payload', async () => {
     expect(
       chromeCompanionRequestSchema.safeParse({ version: 1, requestId: 'no-payload', type: 'SAVE_PAGE' })
         .success
@@ -142,8 +145,8 @@ describe('Chrome Companion：协议与落库', () => {
     ).toBe(true)
   })
 
-  it('handler 对绕过 schema 的非法 URL 返回 UNSUPPORTED_URL', () => {
-    const response = handler.handle({
+  it('handler 对绕过 schema 的非法 URL 返回 UNSUPPORTED_URL', async () => {
+    const response = await handler.handle({
       version: 1,
       requestId: 'bypass',
       type: 'SAVE_PAGE',
@@ -154,7 +157,7 @@ describe('Chrome Companion：协议与落库', () => {
     expect(response.code).toBe('UNSUPPORTED_URL')
   })
 
-  it('扩展侧协议常量与 Desktop 权威定义一致', () => {
+  it('扩展侧协议常量与 Desktop 权威定义一致', async () => {
     const source = readFileSync(
       fileURLToPath(new URL('../../../ChromeExtension/src/shared/protocol.ts', import.meta.url)),
       'utf8'

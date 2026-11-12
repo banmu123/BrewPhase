@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { app, dialog, nativeImage } from 'electron'
+import { dialog, nativeImage } from 'electron'
 import type { ImportImageResult } from '../../shared/contracts'
+import { activeDataDir } from '../data-location'
 
 /**
  * 媒体文件只由主进程碰。
@@ -21,10 +22,10 @@ const DISPLAY_MAX_EDGE = 2_048
 const PREVIEW_MAX_EDGE = 480
 
 export function mediaDir(): string {
-  // 测试与便携场景可覆盖；正常运行永远用 userData。
+  // 测试与便携场景可整体覆盖；正常运行时跟随用户选择的数据目录。
   const override = process.env.BREWPHASE_USER_DATA_DIR
   if (override) return path.join(override, 'media')
-  return path.join(app.getPath('userData'), 'media')
+  return path.join(activeDataDir(), 'media')
 }
 
 export async function ensureMediaDir(): Promise<void> {
@@ -61,7 +62,17 @@ export async function importImageFromDialog(): Promise<ImportImageResult | null>
   if (!stat.isFile()) throw new Error('不是文件')
   if (stat.size > MAX_IMAGE_BYTES) throw new Error('图片超过 40MB')
 
-  const original = await fs.readFile(sourcePath)
+  return importImageBuffer(await fs.readFile(sourcePath))
+}
+
+/**
+ * 从内存字节导入一张图片（Chrome 截图 / 右键图片共用）。
+ *
+ * 与文件导入走同一套校验、缩放与缩略图逻辑：不产生第二套媒体格式。
+ */
+export async function importImageBuffer(original: Buffer): Promise<ImportImageResult> {
+  if (original.byteLength > MAX_IMAGE_BYTES) throw new Error('图片超过 40MB')
+
   const sha256 = createHash('sha256').update(original).digest('hex')
   const image = nativeImage.createFromBuffer(original)
   if (image.isEmpty()) throw new Error('无法读取这张图片')
@@ -83,9 +94,15 @@ export async function importImageFromDialog(): Promise<ImportImageResult | null>
     previewName,
     width: size.width,
     height: size.height,
-    byteSize: stat.size,
+    byteSize: original.byteLength,
     sha256
   }
+}
+
+/** Records 写入失败时回滚已生成的媒体文件，避免孤儿文件。 */
+export async function removeImageFiles(fileName: string, previewName: string | null): Promise<void> {
+  await fs.rm(mediaFilePath(fileName), { force: true }).catch(() => undefined)
+  if (previewName) await fs.rm(mediaFilePath(previewName), { force: true }).catch(() => undefined)
 }
 
 function resizeToFit(image: Electron.NativeImage, maxEdge: number): Electron.NativeImage {

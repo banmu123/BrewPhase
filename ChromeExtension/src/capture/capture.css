@@ -1,0 +1,251 @@
+/**
+ * Capture 页样式：与 Popup 同一套 BrewPhase 视觉（纸面 / 墨色 / 焙火红）。
+ *
+ * 窗口由 Service Worker 以固定尺寸打开（720×860），整页滚动容纳预览与表单。
+ */
+
+:root {
+  --paper: #f7f4ef;
+  --card: #fffdf9;
+  --ink: #30372f;
+  --ink-faint: rgba(48, 55, 47, 0.56);
+  --line: rgba(48, 55, 47, 0.1);
+  --accent: #30372f;
+  --roast: #a8503f;
+  --sage: #6d7d5f;
+  --sage-soft: #f0ede3;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  width: 720px;
+  min-height: 860px;
+  background: var(--paper);
+  color: var(--ink);
+  font: 13px/1.6 -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.capture {
+  display: flex;
+  flex-direction: column;
+  min-height: 860px;
+}
+
+.capture__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+}
+
+.capture__brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.capture__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  align-self: center;
+}
+
+.capture__name {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.capture__product {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-faint);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.capture__hint {
+  font-size: 10.5px;
+  color: var(--ink-faint);
+}
+
+.capture__loading,
+.capture__empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--ink-faint);
+}
+
+.capture__empty h1 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--ink);
+}
+
+.capture__empty p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.capture__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 22px 20px;
+}
+
+.capture__preview {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  padding: 8px;
+}
+
+.capture__preview img {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: #efece5;
+}
+
+.capture__source {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.capture__source h1 {
+  margin: 2px 0 3px;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.capture__source p {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ink-faint);
+  word-break: break-all;
+}
+
+.overline {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--sage);
+}
+
+.capture__field {
+  display: block;
+}
+
+.capture__field textarea {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+  min-height: 72px;
+}
+
+.capture__field textarea:focus {
+  outline: 2px solid rgba(109, 125, 95, 0.35);
+  outline-offset: 0;
+}
+
+.capture__actions,
+.capture__saved {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.capture__saved {
+  justify-content: space-between;
+  padding: 12px 14px;
+  border: 1px solid rgba(109, 125, 95, 0.3);
+  border-radius: 10px;
+  background: rgba(109, 125, 95, 0.08);
+  color: var(--sage);
+}
+
+.capture__saved strong {
+  font-size: 12.5px;
+}
+
+.capture__saved .mono {
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.capture__error {
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid rgba(168, 80, 63, 0.26);
+  border-radius: 10px;
+  background: rgba(168, 80, 63, 0.06);
+  color: var(--roast);
+  font-size: 12px;
+}
+
+.button {
+  padding: 9px 18px;
+  border: none;
+  border-radius: 999px;
+  font: 600 12.5px/1.4 inherit;
+  cursor: pointer;
+}
+
+.button--primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+.button--primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.button--ghost {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+.button--ghost:hover {
+  background: var(--sage-soft);
+}

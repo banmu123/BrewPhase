@@ -196,16 +196,17 @@ textarea {
   overflow: hidden;
 }
 
-/* 顶栏只做全局动作（品牌/搜索/快速添加/设置），不做空间切换。
-   整条是拖动区；红绿灯压在左上角，mac 上左侧留 92px。
+/* 融合式标题栏：系统窗口控制（mac 红绿灯 / Windows WCO 按钮）与应用顶栏
+   共用这一条 44px 的区域。整条是拖动区，控件 no-drag；
+   Windows 用 env(titlebar-area-*) 避开右上角的原生按钮安全区；
    它与首页共用同一张纸：底色一致，只留一条几乎看不见的线。 */
 .topbar {
-  flex: 0 0 52px;
-  height: 52px;
+  flex: 0 0 44px;
+  height: 44px;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 14px;
+  padding: 0 10px;
   border-bottom: 1px solid var(--hairline-faint);
   background: var(--paper);
   -webkit-app-region: drag;
@@ -213,14 +214,52 @@ textarea {
   z-index: 40;
 }
 
-.topbar[data-mac='true'] {
-  padding-left: 92px;
+/* macOS：hiddenInset 的红绿灯占左上角约 80px。 */
+.topbar[data-platform='mac'] {
+  padding-left: 80px;
+}
+
+/* Windows：titleBarOverlay 把原生按钮画进右上角，剩余宽度用
+   env(titlebar-area-width) 推出安全区；env 缺省值让其他平台退化为 0。 */
+.topbar[data-platform='windows'] {
+  padding-right: calc(
+    100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)
+  );
 }
 
 .topbar button,
 .topbar input,
-.topbar kbd {
+.topbar kbd,
+.topbar__menu {
   -webkit-app-region: no-drag;
+}
+
+/* 轻量应用菜单入口（Windows/Linux）：弹出主进程应用菜单，
+   传统菜单栏由 autoHideMenuBar 收起，快捷键不受影响。 */
+.topbar__appmenu {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-left: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--ink-soft);
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
+}
+
+.topbar__appmenu:hover {
+  background: var(--well);
+  color: var(--ink);
+}
+
+.topbar__appmenu:active {
+  background: var(--well-deep);
 }
 
 .topbar__brand {
@@ -1836,16 +1875,28 @@ textarea {
   overflow: hidden;
 }
 
+/* 画布工作区的顶条：全局顶栏在这里隐藏，它就是窗口的顶栏——
+   同一条 44px 融合式标题栏，平台留白与 .topbar 一致。 */
 .canvas-topbar {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 52px;
+  height: 44px;
   flex: none;
-  padding: 0 14px 0 88px;
+  padding: 0 14px;
   border-bottom: 1px solid var(--hairline);
   background: var(--paper-deep);
   -webkit-app-region: drag;
+}
+
+.canvas-topbar[data-platform='mac'] {
+  padding-left: 80px;
+}
+
+.canvas-topbar[data-platform='windows'] {
+  padding-right: calc(
+    100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw)
+  );
 }
 
 .canvas-topbar select {
@@ -5303,6 +5354,12 @@ body.canvas-focus .canvas-topbar {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11.5px;
+}
+
+.chrome-status__last-seen {
+  font-size: 11px;
+  color: var(--ink-faint);
+  text-align: right;
 }
 
 .chrome-steps {

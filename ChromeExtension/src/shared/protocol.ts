@@ -36,11 +36,84 @@ export type PagePayload = {
   selectedText: string
 }
 
-export type ChromeCompanionRequest = {
-  version: typeof PROTOCOL_VERSION
-  requestId: string
-  type: 'PING' | 'SAVE_PAGE'
-  payload?: PagePayload
+// MARK: - 图片分块传输
+
+export const IMAGE_MAX_BYTES = 8 * 1024 * 1024
+/** 每块原始二进制上限；base64 后约 128KB，低于 Desktop 的 256KB 行上限。 */
+export const IMAGE_CHUNK_BYTES = 96 * 1024
+export const IMAGE_MAX_CHUNKS = 200
+
+export type ImageMetadata = {
+  title: string
+  sourceUrl: string
+  selectedText: string
+  note: string
+}
+
+export type ImageBeginPayload = {
+  transferId: string
+  mimeType: 'image/jpeg' | 'image/png'
+  byteSize: number
+  width: number
+  height: number
+  sha256: string
+  chunkCount: number
+  metadata: ImageMetadata
+}
+
+export type ImageChunkPayload = {
+  transferId: string
+  index: number
+  data: string
+}
+
+export type ImageCommitPayload = {
+  transferId: string
+}
+
+export type ChromeCompanionRequest =
+  | { version: typeof PROTOCOL_VERSION; requestId: string; type: 'PING' }
+  | {
+      version: typeof PROTOCOL_VERSION
+      requestId: string
+      type: 'SAVE_PAGE'
+      payload: PagePayload
+    }
+  | {
+      version: typeof PROTOCOL_VERSION
+      requestId: string
+      type: 'IMAGE_BEGIN'
+      payload: ImageBeginPayload
+    }
+  | {
+      version: typeof PROTOCOL_VERSION
+      requestId: string
+      type: 'IMAGE_CHUNK'
+      payload: ImageChunkPayload
+    }
+  | {
+      version: typeof PROTOCOL_VERSION
+      requestId: string
+      type: 'IMAGE_COMMIT'
+      payload: ImageCommitPayload
+    }
+
+/** Popup / Capture Page → Service Worker 的消息。 */
+export type PopupMessage =
+  | { source: 'brewphase-popup'; type: 'PING' }
+  | { source: 'brewphase-popup'; type: 'SAVE_PAGE'; payload: PagePayload }
+  | { source: 'brewphase-popup'; type: 'IMAGE_BEGIN'; payload: ImageBeginPayload }
+  | { source: 'brewphase-popup'; type: 'IMAGE_CHUNK'; payload: ImageChunkPayload }
+  | { source: 'brewphase-popup'; type: 'IMAGE_COMMIT'; payload: ImageCommitPayload }
+
+/** Capture Page 的临时草稿（只存 session storage，不上云）。 */
+export type CaptureDraft = {
+  kind: 'screenshot'
+  dataUrl: string
+  page: PagePayload
+  selectedText: string
+  note: string
+  createdAt: number
 }
 
 export type ChromeCompanionResponse = {

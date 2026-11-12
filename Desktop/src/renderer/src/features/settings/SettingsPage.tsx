@@ -7,6 +7,8 @@ import type {
   BookmarkRootKind,
   ChromeCompanionStatus,
   ChromeDetection,
+  ChromeSelfTestResult,
+  DataLocationStatus,
   McpBridgeStatus,
   McpClientCreated,
   McpClientInfo,
@@ -95,6 +97,70 @@ export function SettingsPage({ info }: { info: AppInfo | null }) {
 /** 常规：语言、应用信息、本地数据、关于。 */
 function GeneralSection({ info }: { info: AppInfo | null }) {
   const { t, locale, setLocale } = useI18n()
+  const [location, setLocation] = useState<DataLocationStatus | null>(null)
+  const [moving, setMoving] = useState(false)
+  const [restarting, setRestarting] = useState(false)
+  const [moveError, setMoveError] = useState<string | null>(null)
+
+  useEffect(() => {
+    void api.dataLocation
+      .status()
+      .then(setLocation)
+      .catch((cause) => console.error('[data-location] status failed', cause))
+  }, [])
+
+  async function changeDataLocation(): Promise<void> {
+    const confirmed = await confirmAction({
+      title: t.settings.general.dataDirChangeTitle,
+      description: t.settings.general.dataDirChangeBody,
+      confirmLabel: t.settings.general.dataDirChange,
+      cancelLabel: t.common.cancel
+    })
+    if (!confirmed) return
+
+    setMoving(true)
+    setMoveError(null)
+    try {
+      const result = await api.dataLocation.choose()
+      if (result.canceled) return
+      setLocation(result.status)
+      if (result.requiresRestart) setRestarting(true)
+      if (!result.ok) {
+        setMoveError(`${t.settings.general.dataDirFailed}: ${result.message ?? ''}`.trim())
+        return
+      }
+    } catch (cause) {
+      setMoveError(String(cause))
+    } finally {
+      setMoving(false)
+    }
+  }
+
+  async function resetDataLocation(): Promise<void> {
+    const confirmed = await confirmAction({
+      title: t.settings.general.dataDirResetTitle,
+      description: t.settings.general.dataDirResetBody,
+      confirmLabel: t.settings.general.dataDirReset,
+      cancelLabel: t.common.cancel
+    })
+    if (!confirmed) return
+
+    setMoving(true)
+    setMoveError(null)
+    try {
+      const result = await api.dataLocation.reset()
+      setLocation(result.status)
+      if (!result.ok) {
+        setMoveError(`${t.settings.general.dataDirFailed}: ${result.message ?? ''}`.trim())
+        return
+      }
+      setRestarting(true)
+    } catch (cause) {
+      setMoveError(String(cause))
+    } finally {
+      setMoving(false)
+    }
+  }
 
   return (
     <div className="settings-section">
@@ -139,9 +205,43 @@ function GeneralSection({ info }: { info: AppInfo | null }) {
         <dl className="info-list">
           <dt>{t.settings.general.dataDir}</dt>
           <dd className="mono" style={{ fontSize: 11 }}>
-            {info?.dataDir ?? '—'}
+            {location?.dataDir ?? info?.dataDir ?? '—'}
           </dd>
         </dl>
+        <div className="row" style={{ marginTop: 10 }}>
+          <button
+            className="button"
+            onClick={() => void changeDataLocation()}
+            disabled={moving || restarting}
+          >
+            {moving ? t.settings.general.dataDirMoving : t.settings.general.dataDirChange}
+          </button>
+          {location?.isCustom && (
+            <button
+              className="button button--ghost"
+              onClick={() => void resetDataLocation()}
+              disabled={moving || restarting}
+            >
+              {t.settings.general.dataDirReset}
+            </button>
+          )}
+          {restarting && (
+            <button className="button" onClick={() => void api.dataLocation.relaunch()}>
+              {t.settings.general.dataDirRestartNow}
+            </button>
+          )}
+        </div>
+        <p className="note">{t.settings.general.dataDirHint}</p>
+        {restarting && (
+          <p className="note" style={{ color: '#5f7256' }}>
+            {t.settings.general.dataDirRestarting}
+          </p>
+        )}
+        {moveError && (
+          <p className="note" style={{ color: 'var(--priority)' }}>
+            {moveError}
+          </p>
+        )}
       </section>
 
       <section className="settings-subsection">
@@ -379,6 +479,8 @@ function ChromeSection() {
   const { t } = useI18n()
   const [status, setStatus] = useState<ChromeCompanionStatus | null>(null)
   const [busy, setBusy] = useState<'install' | 'uninstall' | null>(null)
+  const [testing, setTesting] = useState(false)
+  const [selfTest, setSelfTest] = useState<ChromeSelfTestResult | null>(null)
   const [feedback, setFeedback] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -402,12 +504,27 @@ function ChromeSection() {
       setFeedback(
         outcome.ok
           ? { tone: 'ok', text: t.settings.chrome.result.installed }
-          : { tone: 'error', text: t.settings.chrome.result.failed(outcome.message ?? '') }
+          : outcome.status.installationValid
+            ? { tone: 'ok', text: t.settings.chrome.result.installedPartial }
+            : { tone: 'error', text: t.settings.chrome.result.failed(outcome.message ?? '') }
       )
     } catch (cause) {
       setFeedback({ tone: 'error', text: t.settings.chrome.result.failed(String(cause)) })
     } finally {
       setBusy(null)
+    }
+  }
+
+  async function runSelfTest(): Promise<void> {
+    setTesting(true)
+    setSelfTest(null)
+    try {
+      setSelfTest(await api.chrome.selfTest())
+    } catch (cause) {
+      setSelfTest({ ok: false, code: 'INTERNAL_ERROR', message: String(cause) })
+    } finally {
+      setTesting(false)
+      void refresh()
     }
   }
 
@@ -439,7 +556,23 @@ function ChromeSection() {
   }
 
   const bridgeOk = status?.bridgeRunning ?? false
-  const hostOk = status?.hostInstalled ?? false
+  const hostOk = status?.installationValid ?? false
+  const connection = status?.connectionState ?? 'unknown'
+  const connectionOk = connection === 'connected' || connection === 'installed'
+  const connectionLabel =
+    connection === 'connected'
+      ? t.settings.chrome.status.connected
+      : connection === 'installed'
+        ? t.settings.chrome.status.installedIdle
+        : connection === 'invalid'
+          ? t.settings.chrome.status.invalid
+          : connection === 'not-installed'
+            ? t.settings.chrome.status.missing
+            : t.settings.chrome.status.unknown
+  const lastSeenAt = status?.lastRequestAt ?? status?.lastHandshakeAt ?? null
+  const lastSeen = lastSeenAt
+    ? t.settings.chrome.status.lastSeen(new Date(lastSeenAt).toLocaleString())
+    : t.settings.chrome.status.never
 
   return (
     <div className="settings-section">
@@ -458,10 +591,14 @@ function ChromeSection() {
           </div>
           <div className="chrome-status__row">
             <dt>{t.settings.chrome.status.host}</dt>
-            <dd data-ok={hostOk}>
+            <dd data-ok={connectionOk}>
               <i aria-hidden="true" />
-              {hostOk ? t.settings.chrome.status.installed : t.settings.chrome.status.missing}
+              {connectionLabel}
             </dd>
+          </div>
+          <div className="chrome-status__row">
+            <dt>{t.settings.chrome.status.connection}</dt>
+            <dd className="chrome-status__last-seen">{lastSeen}</dd>
           </div>
           <div className="chrome-status__row">
             <dt>{t.settings.chrome.status.extensionId}</dt>
@@ -474,6 +611,9 @@ function ChromeSection() {
             <dd className="mono">{status?.hostVersion ?? '—'}</dd>
           </div>
         </dl>
+        {status?.registered === null && (
+          <p className="note">{t.settings.chrome.status.registeredUnknown}</p>
+        )}
         <p className="note">{t.settings.chrome.status.extensionHint}</p>
 
         <div className="row" style={{ marginTop: 14 }}>
@@ -491,6 +631,13 @@ function ChromeSection() {
           </button>
           <button
             className="button button--ghost"
+            onClick={() => void runSelfTest()}
+            disabled={testing || busy !== null}
+          >
+            {testing ? t.settings.chrome.status.selfTesting : t.settings.chrome.status.selfTest}
+          </button>
+          <button
+            className="button button--ghost"
             onClick={() => void uninstall()}
             disabled={busy !== null || !hostOk}
           >
@@ -499,6 +646,13 @@ function ChromeSection() {
               : t.settings.chrome.actions.uninstall}
           </button>
         </div>
+        {selfTest && (
+          <p className="note" style={{ color: selfTest.ok ? '#5f7256' : 'var(--priority)' }}>
+            {selfTest.ok
+              ? t.settings.chrome.status.selfTestOk
+              : t.settings.chrome.status.selfTestFailed(selfTest.message ?? selfTest.code)}
+          </p>
+        )}
         {feedback && (
           <p
             className="note"
@@ -535,7 +689,8 @@ function ChromeSection() {
   )
 }
 
-function ImportFailure({ reason }: { reason: BookmarkPreviewFailure }) {  const { t } = useI18n()
+function ImportFailure({ reason }: { reason: BookmarkPreviewFailure }) {
+  const { t } = useI18n()
   return (
     <div className="browser-import__error" role="alert">
       <strong>{t.settings.browser.error.title}</strong>

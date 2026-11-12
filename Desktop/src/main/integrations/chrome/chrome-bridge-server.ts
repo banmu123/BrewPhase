@@ -66,7 +66,9 @@ export class ChromeBridgeServer {
   constructor(
     private readonly paths: ChromeBridgePaths,
     private readonly handler: ChromeBridgeHandler,
-    private readonly appVersion: string
+    private readonly appVersion: string,
+    /** 握手成功回调：状态页据此显示「已连接」，不依赖注册表查询。 */
+    private readonly hooks?: { onHandshake?: () => void }
   ) {}
 
   isRunning(): boolean {
@@ -207,6 +209,7 @@ export class ChromeBridgeServer {
       ack = { type: 'hello', ok: false, message: 'invalid handshake' }
     }
     this.reply(socket, chromeBridgeHelloAckSchema.parse(ack))
+    if (ack.ok) this.hooks?.onHandshake?.()
     return ack.ok
   }
 

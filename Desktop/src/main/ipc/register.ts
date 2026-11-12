@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, type IpcMainInvokeEvent } from 'electron'
 import { z } from 'zod'
 import { IPC, ipcRequestSchemas } from '../../shared/contracts/validation/ipc'
 import type { DatabaseHandle } from '../database/client'
@@ -43,6 +43,7 @@ import type { SyncService } from '../sync/sync-service'
 import type { BrowserManager } from '../browser/browser-manager'
 import type { BookmarkService } from '../browser/bookmark-service'
 import type { ChromeService } from '../integrations/chrome/chrome-service'
+import type { DataLocationService } from '../data-location-service'
 import { DEFAULT_PHASE_RULES } from '../../shared/domain/phase'
 import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from '../../shared/contracts/version'
 
@@ -70,8 +71,23 @@ export function registerIpc(params: {
   bookmarks: BookmarkService
   /** Chrome Companion：查看本地 IPC 与 Native Host 的安装状态。 */
   chrome: ChromeService
+  /** 当前业务数据目录（db + media），可能与 userData 不同。 */
+  dataDir: string
+  /** 数据目录选择/迁移；成功后需要重启。 */
+  dataLocation: DataLocationService
 }): void {
-  const { db, devServerUrl, sync, services, bridgeStatus, browser, bookmarks, chrome } = params
+  const {
+    db,
+    devServerUrl,
+    sync,
+    services,
+    bridgeStatus,
+    browser,
+    bookmarks,
+    chrome,
+    dataDir,
+    dataLocation
+  } = params
 
   // 首次启动铺默认阶段规则（之后由用户或同步决定，不覆盖）。
   seedPhaseRulesIfEmpty(db.db, DEFAULT_PHASE_RULES)
@@ -102,9 +118,19 @@ export function registerIpc(params: {
     dbSchemaVersion: DB_SCHEMA_VERSION,
     syncProtocolVersion: SYNC_PROTOCOL_VERSION,
     platform: process.platform,
-    dataDir: db.sqlite.name,
+    dataDir,
     onboardingEligible: app.isPackaged || process.env.BREWPHASE_FORCE_ONBOARDING === 'yes'
   }))
+
+  // 轻量菜单入口：把应用菜单（role + 快捷键都在其中）弹在窗口鼠标位置。
+  // 菜单是主进程对象，Renderer 只发一个空请求，拿不到任何菜单结构。
+  // 走原生 ipcMain.handle 而不是上面的 handle 助手——这里需要 event.sender
+  // 定位宿主窗口，助手只透传 schema 解析后的参数。
+  ipcMain.handle(IPC.appPopupMenu, async (event) => {
+    assertTrustedSender(event, devServerUrl)
+    const window = BrowserWindow.fromWebContents(event.sender) ?? undefined
+    Menu.getApplicationMenu()?.popup({ window })
+  })
 
   // MARK: - Coffee
 
@@ -245,6 +271,31 @@ export function registerIpc(params: {
   handle(IPC.chromeStatus, () => chrome.status())
   handle(IPC.chromeInstall, () => chrome.install())
   handle(IPC.chromeUninstall, () => chrome.uninstall())
+  handle(IPC.chromeSelfTest, () => chrome.selfTest())
+
+  // MARK: - 数据目录
+  //
+  // 迁移会关闭数据库与本地服务，成功后必须重启；这里留一点时间让渲染层
+  // 先画出「正在重启」。E2E 用 BREWPHASE_NO_AUTO_RELAUNCH 阻止自动退出。
+  const scheduleRelaunch = (delayMs: number): void => {
+    if (process.env.BREWPHASE_NO_AUTO_RELAUNCH === '1') return
+    setTimeout(() => dataLocation.relaunch(), delayMs)
+  }
+  handle(IPC.dataLocationStatus, () => dataLocation.status())
+  handle(IPC.dataLocationChoose, async () => {
+    const result = await dataLocation.choose()
+    if (result.ok) scheduleRelaunch(900)
+    return result
+  })
+  handle(IPC.dataLocationReset, async () => {
+    const result = await dataLocation.reset()
+    if (result.ok) scheduleRelaunch(900)
+    return result
+  })
+  handle(IPC.dataLocationRelaunch, () => {
+    scheduleRelaunch(120)
+    return null
+  })
 
   // MARK: - 内置浏览器
 

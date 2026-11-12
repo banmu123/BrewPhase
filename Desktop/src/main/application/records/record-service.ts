@@ -1,11 +1,18 @@
 import { inArray } from 'drizzle-orm'
-import type { RecordDraft, RecordItem, RecordQuery, RecordTag } from '../../../shared/contracts'
+import type {
+  ImportImageResult,
+  RecordDraft,
+  RecordItem,
+  RecordQuery,
+  RecordTag
+} from '../../../shared/contracts'
 import {
   CHROME_MAX_DESCRIPTION,
   CHROME_MAX_SELECTED_TEXT,
   CHROME_MAX_TITLE,
   type ChromePagePayload
 } from '../../../shared/contracts'
+import { formatChromeCaptureNote } from '../../../shared/chrome-note'
 import { parseLink } from '../../../shared/link-parser'
 import type { Db } from '../../database/client'
 import {
@@ -197,6 +204,40 @@ export class RecordService {
 
     const record = createRecord(this.db, this.deviceId, draft)
     this.scheduleMetadata([record.id])
+    this.events.emit('records')
+    return record
+  }
+
+  /**
+   * Chrome 图片 / 截图：媒体文件已经由 `media/store` 落盘，这里只创建记录。
+   *
+   * 写入失败时由调用方删除已生成的媒体文件（不能留下没有记录的孤儿文件）。
+   * `note` 用统一格式区分「网页摘录 / 我的备注 / 来源」。
+   */
+  createImageFromChrome(input: {
+    media: ImportImageResult
+    title: string
+    sourceUrl: string
+    selectedText: string
+    note: string
+  }): RecordItem {
+    const draft: RecordDraft = {
+      carrier: 'image',
+      title: input.title.trim().slice(0, CHROME_MAX_TITLE),
+      note: formatChromeCaptureNote(input),
+      urlString: input.sourceUrl,
+      canonicalURL: null,
+      platformContentID: null,
+      provider: 'generic',
+      sourceName: '',
+      authorName: '',
+      summary: '',
+      mediaPath: input.media.fileName,
+      previewPath: input.media.previewName,
+      tagIds: []
+    }
+
+    const record = createRecord(this.db, this.deviceId, draft)
     this.events.emit('records')
     return record
   }

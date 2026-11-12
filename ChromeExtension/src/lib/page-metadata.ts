@@ -50,18 +50,19 @@ export type CollectResult =
   | { ok: true; page: PagePayload }
   | { ok: false; reason: 'no-tab' | 'unsupported' | 'extract-failed'; url: string }
 
-export async function collectActivePage(): Promise<CollectResult> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-  if (!tab?.id) return { ok: false, reason: 'no-tab', url: '' }
-
-  const tabUrl = tab.url ?? ''
-  if (!isSupportedUrl(tabUrl)) {
-    return { ok: false, reason: 'unsupported', url: tabUrl }
-  }
-
+export async function collectPageFromTab(tabId: number): Promise<CollectResult> {
+  let tabUrl = ''
+  let tabTitle = ''
   try {
+    const tab = await chrome.tabs.get(tabId)
+    tabUrl = tab.url ?? ''
+    tabTitle = tab.title ?? ''
+    if (!isSupportedUrl(tabUrl)) {
+      return { ok: false, reason: 'unsupported', url: tabUrl }
+    }
+
     const results = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
+      target: { tabId },
       func: readPageMetadata
     })
     const raw = results[0]?.result
@@ -70,7 +71,7 @@ export async function collectActivePage(): Promise<CollectResult> {
     return {
       ok: true,
       page: normalizePayload({
-        title: raw.title || tab.title || '',
+        title: raw.title || tabTitle || '',
         url: raw.url || tabUrl,
         faviconUrl: raw.faviconUrl,
         description: raw.description,
@@ -81,4 +82,10 @@ export async function collectActivePage(): Promise<CollectResult> {
     // chrome://、扩展页、PDF 查看器等注入受限：按「不支持采集」处理。
     return { ok: false, reason: 'extract-failed', url: tabUrl }
   }
+}
+
+export async function collectActivePage(): Promise<CollectResult> {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+  if (!tab?.id) return { ok: false, reason: 'no-tab', url: '' }
+  return collectPageFromTab(tab.id)
 }

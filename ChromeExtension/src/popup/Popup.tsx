@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { collectActivePage } from '../lib/page-metadata'
+import { openCaptureEditor } from '../lib/capture-draft'
 import {
   PREVIEW_SELECTED_TEXT,
   type ChromeCompanionResponse,
@@ -7,7 +8,7 @@ import {
 } from '../shared/protocol'
 
 /**
- * Popup：只做两件事——展示当前页、提交保存。
+ * Popup：展示当前页、提交保存、发起截图。
  *
  * 所有网页内容都当作纯文本渲染（React 默认转义），不注入 innerHTML；
  * URL 只作为文本显示，不做可点击跳转。
@@ -35,7 +36,10 @@ const COPY = {
     selection: '选中的文字',
     description: '页面摘要',
     privacy: '只在你点击时读取当前页面',
-    loading: '正在读取当前网页'
+    loading: '正在读取当前网页',
+    capture: '截图当前页面',
+    capturing: '正在截图…',
+    captureFailed: '无法截取当前页面'
   },
   en: {
     connected: 'Connected',
@@ -54,7 +58,10 @@ const COPY = {
     selection: 'Selected text',
     description: 'Page summary',
     privacy: 'Reads the current page only when you click',
-    loading: 'Reading the current page'
+    loading: 'Reading the current page',
+    capture: 'Capture this page',
+    capturing: 'Capturing…',
+    captureFailed: 'Could not capture this page'
   }
 } as const
 
@@ -70,6 +77,8 @@ export function Popup() {
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [message, setMessage] = useState('')
   const [iconFailed, setIconFailed] = useState(false)
+  const [capturing, setCapturing] = useState(false)
+  const [captureError, setCaptureError] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -111,6 +120,34 @@ export function Popup() {
       setMessage(t.offlineHint)
     } else {
       setMessage(t.saveFailed)
+    }
+  }
+
+  /** 截图当前可见区域 → 编辑页（预览 / 选中文字 / 备注）→ 保存。 */
+  async function handleCapture(): Promise<void> {
+    if (!page || capturing) return
+    setCapturing(true)
+    setCaptureError('')
+
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+      if (!tab?.windowId) throw new Error('no active window')
+      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
+        format: 'jpeg',
+        quality: 92
+      })
+      await openCaptureEditor({
+        kind: 'screenshot',
+        dataUrl,
+        page,
+        selectedText: page.selectedText,
+        note: '',
+        createdAt: Date.now()
+      })
+    } catch {
+      setCaptureError(t.captureFailed)
+    } finally {
+      setCapturing(false)
     }
   }
 
@@ -207,6 +244,22 @@ export function Popup() {
               <span className="save__target">{t.target}</span>
             </button>
 
+            <button
+              className="capture"
+              type="button"
+              onClick={() => void handleCapture()}
+              disabled={capturing}
+            >
+              <CameraIcon />
+              <span>{capturing ? t.capturing : t.capture}</span>
+            </button>
+
+            {captureError && (
+              <p className="status" data-tone="error">
+                {captureError}
+              </p>
+            )}
+
             <p className="status" data-tone={saveState === 'failed' ? 'error' : saveState === 'saved' ? 'ok' : 'muted'}>
               {saveState === 'saved'
                 ? t.saved
@@ -236,6 +289,20 @@ function CupIcon() {
       />
       <path d="M16 9.5h1.6a2.4 2.4 0 0 1 0 4.8H16" stroke="currentColor" strokeWidth="1.5" />
       <path d="M8 5.2c0-.8 1-1 1-1.8M12 5.2c0-.8 1-1 1-1.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function CameraIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M4 8.5h3l1.6-2.2h6.8L17 8.5h3a1 1 0 0 1 1 1V18a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9.5a1 1 0 0 1 1-1Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <circle cx="12" cy="13.4" r="3.1" stroke="currentColor" strokeWidth="1.5" />
     </svg>
   )
 }

@@ -112,7 +112,7 @@ type ChromeCompanionResponse = {
 
 ## 4. Records 字段映射
 
-第一版**不改表结构**：
+**链接记录**（`SAVE_PAGE`，不改表结构）：
 
 | 页面字段 | Record 字段 | 说明 |
 |---|---|---|
@@ -122,7 +122,17 @@ type ChromeCompanionResponse = {
 | description | `summary` | meta description / og:description 的纯文本 |
 | — | `carrier` | 固定 `link` |
 
-favicon 会被采集并在 popup 展示，但 Records 模型暂无可写字段，第一版不持久化。
+**图片记录**（`IMAGE_BEGIN/CHUNK/COMMIT`）：
+
+| 字段 | Record 字段 | 说明 |
+|---|---|---|
+| metadata.title | `title` | 截图标题（页面标题或域名） |
+| metadata.sourceUrl | `urlString` | 来源网页 |
+| media（展示图/缩略图） | `mediaPath` / `previewPath` | 复用 `media/store.importImageBuffer`，与手动导入同一套缩放逻辑 |
+| selectedText + note + sourceUrl | `note` | `formatChromeCaptureNote` 三段式：【网页摘录】/【我的备注】/【来源】，空段不输出 |
+| — | `carrier` | 固定 `image` |
+
+favicon 会被采集并在 popup 展示，但 Records 模型暂无可写字段，不持久化。
 
 ## 5. 去重与并发
 
@@ -155,15 +165,20 @@ favicon 会被采集并在 popup 展示，但 Records 模型暂无可写字段�
 | 层 | 测试 | 覆盖 |
 |---|---|---|
 | Desktop | `tests/unit/chrome-companion.test.ts` | PING、落库字段、去重、URL 白名单、超长拒绝、契约常量一致、IPC 握手/坏 JSON/停止 |
+| Desktop | `tests/unit/chrome-image.test.ts` | 分块顺序/缺失/重复、SHA-256 不符、字节超限、Record 失败清孤儿媒体、TTL 清理 |
+| Desktop | `tests/unit/chrome-host-status.test.ts` / `chrome-host-installer.test.ts` | 状态拆分（binary/config/manifest/注册表）、路径归一化、大小写与 `..`、EPERM 未知态 |
 | Native Host | `tests/integration/chrome-host.test.ts` | 真实进程、正常帧、分段读取、Desktop 未运行、token 失配、超大帧、坏 JSON |
-| Extension | `ChromeExtension/tests/*.test.ts` | 协议规范化、错误响应、DOM 提取、空选区、meta 回退 |
-| 全链路 | `tests/e2e/chrome-companion.e2e.spec.ts` | 安装 → 真实 Host → 真实 IPC → Records → 响应 / 去重 |
+| Extension | `ChromeExtension/tests/*.test.ts` | 协议规范化、错误响应、DOM 提取、空选区、meta 回退、分块 base64、SHA-256 向量 |
+| 全链路 | `tests/e2e/chrome-companion.e2e.spec.ts` | 安装 → 真实 Host → 真实 IPC → Records → 响应 / 去重；图片分块 → image Record → 媒体落盘 → 临时文件清理 |
 
 ## 9. 已知限制
 
-- 第一版只支持 Chrome（Chromium 系可按同样 manifest 路径扩展，未验证 Edge）；
+- 只支持 Chrome（Chromium 系可按同样 manifest 路径扩展，未验证 Edge）；
 - 扩展通过 Load Unpacked 安装，未发布 Chrome Web Store；
 - favicon 不落库；
 - macOS / Linux 的 IPC 与注册代码已实现，但本机（Windows 11）只实测了 Windows；
-- 选中文字直接进 `note`，没有单独的「摘录」字段；如果未来 Personal Desk 需要
-  结构化摘录，应新增字段而不是继续挤占 `note`。
+- 右键图片依赖 `<img>` 元素完整可见：背景图（CSS background）、跨域 iframe 内的
+  图片、被滚动裁切的图片无法定位，扩展会明确提示而不是静默降级；这些场景可以
+  用「截图当前页面」代替；
+- 截图只覆盖当前可见区域，不做整页长截图；
+- Windows 注册表被安全策略拦截时状态显示「未知」，不冒充「未安装」。

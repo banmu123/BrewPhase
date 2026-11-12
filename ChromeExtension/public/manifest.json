@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "BrewPhase Chrome Companion",
   "description": "Save the page you are reading to BrewPhase Records — only when you click.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minimum_chrome_version": "116",
   "action": {
     "default_title": "Save to BrewPhase",
@@ -21,7 +21,8 @@
   "permissions": [
     "activeTab",
     "scripting",
-    "nativeMessaging"
+    "nativeMessaging",
+    "contextMenus"
   ],
   "icons": {
     "16": "icons/icon16.png",

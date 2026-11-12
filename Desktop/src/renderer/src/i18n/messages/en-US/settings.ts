@@ -27,6 +27,20 @@ export const settings = {
     localDataNote:
       "All data lives in this Mac's SQLite database and media folder — no upload, no account, no network required.",
     dataDir: 'Data folder',
+    dataDirHint:
+      'The database and media files live here. Caches, language preference and sign-in state do not.',
+    dataDirChange: 'Change location…',
+    dataDirMoving: 'Moving…',
+    dataDirReset: 'Use default location',
+    dataDirChangeTitle: 'Change where data is stored?',
+    dataDirChangeBody:
+      'BrewPhase will copy the database and media to the empty folder you pick, then restart. Unsaved input is lost; the original folder is left untouched.',
+    dataDirResetTitle: 'Switch back to the default location?',
+    dataDirResetBody:
+      'The app will use the default data folder again. Data in the custom folder is not moved or deleted — you can clean it up manually later.',
+    dataDirRestarting: 'Moved — restarting BrewPhase…',
+    dataDirRestartNow: 'Restart now',
+    dataDirFailed: 'The move did not finish',
     about: 'About BrewPhase',
     aboutText:
       'A local-first coffee journal and flavour analysis app: log every bag and watch its flavour move. Phase tracking, brew logs and personal patterns all stay on your device — fully usable offline.',
@@ -104,6 +118,19 @@ export const settings = {
       host: 'Native Host',
       installed: 'Installed',
       missing: 'Not installed',
+      connected: 'Connected',
+      connection: 'Extension link',
+      installedIdle: 'Installed, waiting for Chrome',
+      invalid: 'Installation looks invalid',
+      unknown: 'Unknown',
+      lastSeen: (time: string) => `Last request: ${time}`,
+      never: 'Last request: nothing from Chrome yet',
+      registeredUnknown:
+        'Registration state could not be read (system policy). Trust the live connection state instead.',
+      selfTest: 'Test local service',
+      selfTesting: 'Testing…',
+      selfTestOk: 'Local service is healthy',
+      selfTestFailed: (message: string) => `Local service error: ${message}`,
       extensionId: 'Extension ID',
       extensionMissing: 'Not generated',
       extensionHint: 'Desktop cannot read Chrome’s loaded extensions; check that the ID on chrome://extensions matches the one above.',
@@ -118,6 +145,8 @@ export const settings = {
     },
     result: {
       installed: 'Native Host is registered. You can load the extension in Chrome now.',
+      installedPartial:
+        'Host files and manifest are in place; the system blocked the registry write. Trust the live “Connected” state instead.',
       removed: 'Registration and local host files were removed.',
       failed: (message: string) => `Could not finish: ${message}`
     },

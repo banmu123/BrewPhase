@@ -292,6 +292,31 @@ button {
   opacity: 0.55;
 }
 
+.capture {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  font: 600 11.5px/1.4 inherit;
+  cursor: pointer;
+}
+
+.capture:hover:not(:disabled) {
+  background: var(--well);
+}
+
+.capture:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .status {
   min-height: 15px;
   margin: 0;

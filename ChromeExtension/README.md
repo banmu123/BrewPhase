@@ -121,8 +121,27 @@ fohjelihijmiefmjadckiajickopdojn
 5. 点「保存到 BrewPhase」→ 显示「已保存到 BrewPhase Records」；
 6. 打开 BrewPhase 的 Records，能看到这条记录（标题 / 链接 / 备注里的选中文字）。
 
-如果显示「未运行」：确认 Desktop 正在运行，并且设置 → Chrome 扩展显示「Native Host 已安装」。
+如果显示「未运行」：确认 Desktop 正在运行，并且设置 → Chrome 扩展显示
+「已安装，等待连接」或「已连接」。
 如果一直「连接中」：看下一节的调试方法。
+
+## 右键菜单与截图
+
+页面里右键有 BrewPhase 菜单：
+
+- **保存当前网页到 Records** — 等价于 popup 的保存；
+- **保存选中的文字** — 选中文字先划好再右键，直接进 Records；
+- **保存图片到 BrewPhase** — 定位右键的 `<img>`，用当前可见区域截屏裁出
+  图片像素，然后打开 Capture 编辑页（预览 / 选中文字 / 我的备注）确认保存。
+  图片不在可见区域或找不到元素时会如实提示，不会静默保存链接。
+
+Popup 里的 **截图当前页面** 按钮截取当前可见区域，同样进入 Capture 编辑页。
+截图草稿只放在 `chrome.storage.session`（随浏览器会话消失、不上云），
+保存成功或取消后立即清除。
+
+Capture 页保存的记录是 `image` 类型：截图真实写入 Desktop 的媒体目录
+（展示图 + 缩略图），`note` 按「【网页摘录】/【我的备注】/【来源】」三段保存，
+图片经 96KB 分块 + SHA-256 校验传输，SQLite 里不存 base64。
 
 ## 调试
 
@@ -204,11 +223,14 @@ npx playwright test tests/e2e/chrome-companion.e2e.spec.ts  # 真实 Electron �
 
 ## 安全边界
 
-- 权限只有 `activeTab`、`scripting`、`nativeMessaging`；没有 `cookies`、`history`、
-  `webRequest`，也没有 `<all_urls>`；
-- 只在用户点击扩展时读取**当前**标签页；没有 content script 常驻、没有后台扫描；
+- 权限只有 `activeTab`、`scripting`、`nativeMessaging`、`contextMenus`；没有
+  `cookies`、`history`、`webRequest`，也没有 `<all_urls>`；
+  `contextMenus` 只用于注册右键菜单项，不读取任何浏览数据；
+- 只在用户点击扩展 / 菜单时读取**当前**标签页；没有 content script 常驻、没有后台扫描；
+- 截图（`captureVisibleTab`）与图片裁剪只在用户主动操作时执行一次；
 - 不读 Cookie / localStorage / 表单值 / 密码，不复制 Chrome Profile；
 - 网页内容只作为不可信文本处理：Desktop 用 Zod 校验长度与协议，React 默认转义；
+- 图片传输逐块校验顺序、字节数与 SHA-256，签名不符（非 PNG/JPEG）直接拒绝；
 - 本地 IPC 只监听本机（Named Pipe / Unix socket），不监听 TCP；
   握手 token 每次 Desktop 启动轮换；socket 目录 0700、文件 0600；
 - Host 只转发，不执行网页传来的任何命令；Desktop 不向网页暴露任何接口。

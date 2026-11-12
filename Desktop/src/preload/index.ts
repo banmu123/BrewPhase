@@ -15,6 +15,8 @@ const invoke = (channel: string, payload?: unknown) => ipcRenderer.invoke(channe
 const api: RendererApi = {
   app: {
     info: () => invoke(IPC.appInfo),
+    // 轻量菜单入口（Windows/Linux）：弹出主进程的应用菜单，快捷键随之可用。
+    popupMenu: () => invoke(IPC.appPopupMenu),
     onChanged: (listener) => {
       const wrapped = (_event: unknown, domain: string) => listener(domain as never)
       ipcRenderer.on('app:changed', wrapped)
@@ -127,7 +129,14 @@ const api: RendererApi = {
   chrome: {
     status: () => invoke(IPC.chromeStatus),
     install: () => invoke(IPC.chromeInstall),
-    uninstall: () => invoke(IPC.chromeUninstall)
+    uninstall: () => invoke(IPC.chromeUninstall),
+    selfTest: () => invoke(IPC.chromeSelfTest)
+  },
+  dataLocation: {
+    status: () => invoke(IPC.dataLocationStatus),
+    choose: () => invoke(IPC.dataLocationChoose),
+    reset: () => invoke(IPC.dataLocationReset),
+    relaunch: () => invoke(IPC.dataLocationRelaunch)
   }
 }
 

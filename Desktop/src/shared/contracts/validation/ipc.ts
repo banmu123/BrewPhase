@@ -16,6 +16,7 @@ import { chromeProfileRequestSchema } from '../bookmarks'
 
 export const IPC = {
   appInfo: 'app:info',
+  appPopupMenu: 'app:popup-menu',
 
   beansList: 'coffee:beans:list',
   beanCreate: 'coffee:bean:create',
@@ -97,11 +98,21 @@ export const IPC = {
   // 网页内容走 Native Messaging → 本地 IPC，不经过 Renderer。
   chromeStatus: 'chrome:status',
   chromeInstall: 'chrome:install',
-  chromeUninstall: 'chrome:uninstall'
+  chromeUninstall: 'chrome:uninstall',
+  chromeSelfTest: 'chrome:self-test',
+
+  // 数据目录：只在本机选目录、迁移、重启；Renderer 不传路径。
+  dataLocationStatus: 'data-location:status',
+  dataLocationChoose: 'data-location:choose',
+  dataLocationReset: 'data-location:reset',
+  dataLocationRelaunch: 'data-location:relaunch'
 } as const
 
 export const ipcRequestSchemas = {
   [IPC.appInfo]: z.void(),
+  // 轻量菜单入口：Renderer 顶栏按钮 → 主进程把应用菜单弹成 popup。
+  // 无参数；菜单内容与快捷键都在主进程的 role 里，不经 Renderer 之手。
+  [IPC.appPopupMenu]: z.void(),
   [IPC.beansList]: z.void(),
   [IPC.beanCreate]: beanDraftSchema,
   [IPC.beanUpdate]: z.object({ id: z.string().uuid(), draft: beanDraftSchema }),
@@ -182,7 +193,13 @@ export const ipcRequestSchemas = {
   // Chrome Companion：三个动作都不带参数，避免 Renderer 传路径 / 扩展 ID。
   [IPC.chromeStatus]: z.void(),
   [IPC.chromeInstall]: z.void(),
-  [IPC.chromeUninstall]: z.void()
+  [IPC.chromeUninstall]: z.void(),
+  [IPC.chromeSelfTest]: z.void(),
+
+  [IPC.dataLocationStatus]: z.void(),
+  [IPC.dataLocationChoose]: z.void(),
+  [IPC.dataLocationReset]: z.void(),
+  [IPC.dataLocationRelaunch]: z.void()
 } as const
 
 export type IpcChannel = keyof typeof ipcRequestSchemas

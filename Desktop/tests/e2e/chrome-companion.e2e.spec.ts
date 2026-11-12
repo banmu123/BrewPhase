@@ -2,9 +2,11 @@ import { test, expect, _electron as electronLauncher } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { deflateSync } from 'node:zlib'
 import { pinLocale } from './locale'
 
 /**
@@ -119,11 +121,11 @@ test('设置页安装 Native Host，扩展 ID 与固定公钥一致', async () =
     expect(manifest.path).toBe(outcome.status.hostPath)
     expect(manifest.allowed_origins).toEqual(['chrome-extension://fohjelihijmiefmjadckiajickopdojn/'])
 
-    // 设置页能看到真实状态。
+    // 设置页能看到真实状态（已安装但扩展尚未连过 → 等待连接）。
     await page.getByRole('button', { name: '设置', exact: true }).click()
     await page.getByRole('button', { name: 'Chrome 扩展', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Chrome 扩展', exact: true })).toBeVisible()
-    await expect(page.getByText('已安装', { exact: true })).toBeVisible()
+    await expect(page.getByText('已安装，等待连接')).toBeVisible()
     await expect(page.getByText('fohjelihijmiefmjadckiajickopdojn')).toBeVisible()
   } finally {
     await app.close()
@@ -200,6 +202,147 @@ test('模拟 Chrome → Host → Desktop → Records：保存成功且重复 req
       })
     )
     expect(after).toHaveLength(1)
+  } finally {
+    host?.kill()
+    await app.close()
+    rmSync(dataDir, { recursive: true, force: true })
+    rmSync(hostDir, { recursive: true, force: true })
+  }
+})
+
+// MARK: - 图片分块传输
+
+/** 纯 Node 构造一张真实 PNG（32×24 纯色），nativeImage 可解码。 */
+function makePng(width: number, height: number): Buffer {
+  const crcTable = [...Array(256)].map((_, n) => {
+    let c = n
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+    return c >>> 0
+  })
+  function crc32(chunk: Buffer): number {
+    let c = 0xffffffff
+    for (const byte of chunk) c = crcTable[(c ^ byte) & 0xff] ^ (c >>> 8)
+    return (c ^ 0xffffffff) >>> 0
+  }
+  function chunkOf(type: string, data: Buffer): Buffer {
+    const head = Buffer.alloc(4)
+    head.writeUInt32BE(data.length, 0)
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data])
+    const crc = Buffer.alloc(4)
+    crc.writeUInt32BE(crc32(body), 0)
+    return Buffer.concat([head, body, crc])
+  }
+
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(width, 0)
+  ihdr.writeUInt32BE(height, 4)
+  ihdr[8] = 8 // bit depth
+  ihdr[9] = 2 // RGB
+  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(width * 3, 0x6d)])
+  const idat = deflateSync(Buffer.concat(Array(height).fill(row)))
+
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunkOf('IHDR', ihdr),
+    chunkOf('IDAT', idat),
+    chunkOf('IEND', Buffer.alloc(0))
+  ])
+}
+
+test('模拟 Chrome → Host → Desktop：截图分块传输落成 image Record', async () => {
+  test.setTimeout(120_000)
+  const { app, page, dataDir, hostDir } = await launch()
+  let host: ChildProcessWithoutNullStreams | null = null
+  try {
+    const outcome = await page.evaluate(() => (window as never as { brewphase: any }).brewphase.chrome.install())
+    expect(outcome.ok, JSON.stringify(outcome)).toBe(true)
+
+    host = startHost(join(hostDir, 'host-config.json'))
+
+    const png = makePng(32, 24)
+    const sha256 = createHash('sha256').update(png).digest('hex')
+    const chunks = [png.toString('base64')]
+    const requestId = 'e2e-image-1'
+    const transferId = randomUUID()
+    const metadata = {
+      title: '一张来自 Chrome 的截图',
+      sourceUrl: 'https://example.com/screenshot-source',
+      selectedText: '页面里选中的原文',
+      note: '这是我对截图的想法'
+    }
+
+    const begin = await roundTrip(host, {
+      version: 1,
+      requestId,
+      type: 'IMAGE_BEGIN',
+      payload: {
+        transferId,
+        mimeType: 'image/png',
+        byteSize: png.length,
+        width: 32,
+        height: 24,
+        sha256,
+        chunkCount: chunks.length,
+        metadata
+      }
+    })
+    expect(begin.success, JSON.stringify(begin)).toBe(true)
+    expect(begin.code).toBe('OK')
+
+    for (const [index, data] of chunks.entries()) {
+      const ack = await roundTrip(host, {
+        version: 1,
+        requestId: `${requestId}-c${index}`,
+        type: 'IMAGE_CHUNK',
+        payload: { transferId, index, data }
+      })
+      expect(ack.success, JSON.stringify(ack)).toBe(true)
+    }
+
+    const commit = await roundTrip(host, {
+      version: 1,
+      requestId: `${requestId}-x`,
+      type: 'IMAGE_COMMIT',
+      payload: { transferId }
+    })
+    expect(commit.success, JSON.stringify(commit)).toBe(true)
+    expect(commit.code).toBe('OK')
+    const recordId = (commit.data as { recordId?: string }).recordId
+    expect(recordId).toBeTruthy()
+
+    // 临时分块文件已清理。
+    expect(existsSync(join(dataDir, 'chrome-transfers', `${transferId}.part`))).toBe(false)
+
+    const records = await page.evaluate(() =>
+      (window as never as { brewphase: any }).brewphase.records.list({
+        search: '',
+        carrier: null,
+        tagId: null,
+        limit: 50,
+        offset: 0
+      })
+    )
+    expect(records).toHaveLength(1)
+    const record = records[0]
+    expect(record).toMatchObject({
+      id: recordId,
+      carrier: 'image',
+      title: metadata.title,
+      urlString: metadata.sourceUrl
+    })
+    // note 三段可区分：摘录 / 备注 / 来源。
+    expect(record.note).toContain('【网页摘录】')
+    expect(record.note).toContain(metadata.selectedText)
+    expect(record.note).toContain('【我的备注】')
+    expect(record.note).toContain(metadata.note)
+    expect(record.note).toContain('【来源】')
+
+    // 图片真实写进 media 目录（不是只有链接），SQLite 里没有 base64 大字段。
+    const mediaFile = join(dataDir, 'media', record.mediaPath as string)
+    const previewFile = join(dataDir, 'media', record.previewPath as string)
+    expect(existsSync(mediaFile)).toBe(true)
+    expect(existsSync(previewFile)).toBe(true)
+    expect(readFileSync(mediaFile).byteLength).toBeGreaterThan(png.length / 4)
   } finally {
     host?.kill()
     await app.close()
