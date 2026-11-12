@@ -1,6 +1,7 @@
 /** Studio Home 与全局顶栏。文案与其它字典一样：中文是类型基准。 */
 export const studio = {
   brand: 'BREWPHASE',
+  appMenu: '应用菜单（Alt 也可唤出）',
   overline: '个人工作室',
   title: '为在意的事，留出位置。',
   subtitle: '你的桌面、你的收藏、你的想法。',

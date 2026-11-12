@@ -14,6 +14,7 @@ import { SearchPalette } from './SearchPalette'
 import { TopBar } from './TopBar'
 import { useAppStore } from './store'
 import { ConfirmHost } from '../shared/ConfirmDialog'
+import { titleBarPlatform } from '../shared/platform'
 
 /**
  * Studio Desk 外壳：一条极简全局顶栏 + 自适应工作区。
@@ -29,8 +30,8 @@ export function App() {
   const [error, setError] = useState<string | null>(null)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
-  /** 红绿灯压住左上角：mac 上顶栏要给品牌留出 92px。 */
-  const isMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
+  /** 平台形态：mac 红绿灯在左上角；Windows 原生按钮叠在右上角（WCO）。 */
+  const platform = titleBarPlatform()
 
   useEffect(() => {
     api.app
@@ -81,7 +82,7 @@ export function App() {
   return (
     <>
       <div className="app">
-        <TopBar isMac={isMac} onSearch={() => setSearchOpen(true)} />
+        <TopBar platform={platform} onSearch={() => setSearchOpen(true)} />
 
         <main className="workspace">
           {error ? (

@@ -1,17 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
-import { BeanIcon, CanvasIcon, GlobeIcon, RecordsIcon, SearchIcon, SlidersIcon } from '../shared/icons'
+import { BeanIcon, CanvasIcon, GlobeIcon, MenuIcon, RecordsIcon, SearchIcon, SlidersIcon } from '../shared/icons'
 import { useI18n } from '../i18n'
 import { useBrowserStore } from '../features/browser/browser-store'
+import { api } from '../shared/api'
 import { useAppStore, type CreateKind } from './store'
 
+/** 平台形态：决定标题栏左侧（红绿灯）与右侧（Windows 原生按钮）的留白。 */
+export type TitleBarPlatform = 'mac' | 'windows' | 'other'
+
 /**
- * 全局顶栏：品牌 / 搜索 / 快速添加 / 设置。
+ * 全局顶栏 = 融合式标题栏（44px）。
  *
- * 它**不承担空间切换**——三个空间只从 Studio 首页的内容入口进入。
- * 顶栏高度固定 52px，整条是 macOS 的拖动区（`hiddenInset` 下红绿灯压在左上角，
- * 所以 mac 上留出 92px 让品牌不与红绿灯重叠）；所有控件 `no-drag`。
+ * 整条是拖动区；交互控件 `no-drag`。macOS 上红绿灯压在左上角（`hiddenInset`，
+ * 左侧留 80px）；Windows 上原生最小化/最大化/关闭画在右上角
+ * （`titleBarOverlay`，CSS 用 `env(titlebar-area-*)` 避开按钮安全区）；
+ * Windows/Linux 还有一个轻量菜单按钮，把主进程的应用菜单弹成 popup——
+ * 传统菜单栏由 `autoHideMenuBar` 收起，功能与快捷键一份不少。
  */
-export function TopBar(props: { onSearch: () => void; isMac: boolean }) {
+export function TopBar(props: { onSearch: () => void; platform: TitleBarPlatform }) {
   const { t } = useI18n()
   const setModule = useAppStore((state) => state.setModule)
   const requestCreate = useAppStore((state) => state.requestCreate)
@@ -45,7 +51,19 @@ export function TopBar(props: { onSearch: () => void; isMac: boolean }) {
   ]
 
   return (
-    <header className="topbar" data-mac={props.isMac}>
+    <header className="topbar" data-platform={props.platform}>
+      {props.platform !== 'mac' && (
+        <button
+          type="button"
+          className="topbar__appmenu"
+          aria-label={t.studio.appMenu}
+          title={t.studio.appMenu}
+          onClick={() => void api.app.popupMenu()}
+        >
+          <MenuIcon size={16} />
+        </button>
+      )}
+
       <button
         type="button"
         className="topbar__brand"
@@ -66,7 +84,7 @@ export function TopBar(props: { onSearch: () => void; isMac: boolean }) {
       >
         <SearchIcon size={15} />
         <span>{t.studio.search}</span>
-        <kbd>{props.isMac ? '⌘K' : 'Ctrl K'}</kbd>
+        <kbd>{props.platform === 'mac' ? '⌘K' : 'Ctrl K'}</kbd>
       </button>
 
       {/*

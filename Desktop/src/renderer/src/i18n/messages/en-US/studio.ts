@@ -1,6 +1,7 @@
 /** Studio Home and the global top bar. Must match the zh-CN key set exactly. */
 export const studio = {
   brand: 'BREWPHASE',
+  appMenu: 'App menu (Alt also opens it)',
   overline: 'YOUR PERSONAL STUDIO',
   title: 'Make room for what matters.',
   subtitle: 'Your desk. Your collections. Your ideas.',

@@ -20,6 +20,7 @@ import { api } from '../../shared/api'
 import { useI18n } from '../../i18n'
 import { useAppStore } from '../../app/store'
 import { refreshThemeColors, themeColors } from '../../shared/tokens'
+import { titleBarPlatform } from '../../shared/platform'
 import { Modal } from '../../shared/Modal'
 import { ConfirmDialog } from '../../shared/ConfirmDialog'
 import { CanvasThumbnail } from './CanvasThumbnail'
@@ -776,7 +777,7 @@ export function CanvasPage() {
   return (
     <div className="page">
       <div className="canvas-shell">
-        <div className="canvas-topbar">
+        <div className="canvas-topbar" data-platform={titleBarPlatform()}>
           <button
             className="button button--ghost canvas-back"
             aria-label={t.canvas.workspace.back}

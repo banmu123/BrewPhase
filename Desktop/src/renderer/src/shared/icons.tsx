@@ -54,6 +54,15 @@ export function CanvasIcon({ size = 20 }: IconProps) {
   )
 }
 
+/** 应用菜单：三条横线（比 Sliders 更轻，语义是「菜单」而不是「设置」）。 */
+export function MenuIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M3.4 5.6h11.2M3.4 10h11.2M3.4 14.4h11.2" />
+    </svg>
+  )
+}
+
 /** 更多：三条调节杆 */
 export function SlidersIcon({ size = 20 }: IconProps) {
   return (
