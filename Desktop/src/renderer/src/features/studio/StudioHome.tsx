@@ -3,6 +3,7 @@ import type { Bean, Canvas, RecordItem } from '@shared/contracts'
 import { api } from '../../shared/api'
 import { useI18n } from '../../i18n'
 import { useAppStore } from '../../app/store'
+import { WorkContextSection } from './WorkContextSection'
 import { CoffeeStack } from './CoffeeStack'
 import { RecordsStack } from './RecordsStack'
 import { CanvasStack } from './CanvasStack'
@@ -98,6 +99,8 @@ export function StudioHome() {
             <RecordsStack items={records} />
           </StackSection>
         </div>
+
+        <WorkContextSection />
       </div>
     </div>
   )

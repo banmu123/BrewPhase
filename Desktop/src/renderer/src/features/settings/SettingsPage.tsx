@@ -19,6 +19,8 @@ import type {
 import { MCP_SCOPE_GROUPS } from '@shared/contracts'
 import { api } from '../../shared/api'
 import { SUPPORTED_LOCALES, useI18n } from '../../i18n'
+import { THEMES } from '../../shared/theme'
+import { useTheme } from '../../shared/useTheme'
 import { useAppStore, type SettingsCategory } from '../../app/store'
 import { confirmAction } from '../../shared/ConfirmDialog'
 
@@ -97,6 +99,7 @@ export function SettingsPage({ info }: { info: AppInfo | null }) {
 /** 常规：语言、应用信息、本地数据、关于。 */
 function GeneralSection({ info }: { info: AppInfo | null }) {
   const { t, locale, setLocale } = useI18n()
+  const { preference, setPreference } = useTheme()
   const [location, setLocation] = useState<DataLocationStatus | null>(null)
   const [moving, setMoving] = useState(false)
   const [restarting, setRestarting] = useState(false)
@@ -165,6 +168,28 @@ function GeneralSection({ info }: { info: AppInfo | null }) {
   return (
     <div className="settings-section">
       <h2 className="settings-section__title">{t.settings.general.title}</h2>
+
+      {/* 外观：三档，与语言同一套控件——两者都是「整个应用立即生效并记住」
+          的偏好，长成一样才不会让人以为是两种东西。 */}
+      <section className="settings-subsection">
+        <h2 className="settings-subsection__title">{t.settings.general.appearance}</h2>
+        <p className="note" style={{ marginBottom: 10 }}>
+          {t.settings.general.appearanceHint}
+        </p>
+        <div className="segmented" role="group" aria-label={t.settings.general.appearance}>
+          {THEMES.map((item) => (
+            <button
+              key={item}
+              className="segmented__item"
+              data-active={preference === item}
+              aria-pressed={preference === item}
+              onClick={() => setPreference(item)}
+            >
+              {t.settings.general.appearanceName[item]}
+            </button>
+          ))}
+        </div>
+      </section>
 
       <section className="settings-subsection">
         <h2 className="settings-subsection__title">{t.settings.general.language}</h2>

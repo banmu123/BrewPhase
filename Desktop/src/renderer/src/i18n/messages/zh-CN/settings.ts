@@ -11,7 +11,14 @@ export const settings = {
   },
   general: {
     title: '常规设置',
-    subtitle: '语言、应用与本地数据',
+    subtitle: '外观、语言、应用与本地数据',
+    appearance: '外观',
+    appearanceHint: '「跟随系统」会随 macOS / Windows 的外观自动切换；选了浅色或深色就固定下来。',
+    appearanceName: {
+      system: '跟随系统',
+      light: '浅色',
+      dark: '深色'
+    },
     language: '语言',
     languageHint: '切换后整个应用立即更新，并会记住你的选择。',
     languageName: {

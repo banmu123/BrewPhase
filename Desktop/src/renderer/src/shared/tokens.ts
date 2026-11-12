@@ -50,8 +50,16 @@ const VARS: Record<keyof ThemeColors, string> = {
 }
 
 let cache: ThemeColors | null = null
+/** 缓存是对着哪一套明暗读的。`data-theme` 一变，这份缓存立即作废。 */
+let cachedTheme: string | null = null
 
-/** 读一次 CSS 变量并缓存。画布挂载时与 `RefreshOnThemeChange` 场景调用。 */
+/** 当前落在 `<html>` 上的外观；未设置时按浅色的一组变量读。 */
+function currentTheme(): string {
+  if (typeof document === 'undefined') return ''
+  return document.documentElement.dataset.theme ?? ''
+}
+
+/** 强制丢弃缓存并重读。画布挂载时，以及外观切换后调用。 */
 export function refreshThemeColors(): ThemeColors {
   const style = getComputedStyle(document.documentElement)
   const read = (name: string): string => style.getPropertyValue(name).trim()
@@ -62,11 +70,18 @@ export function refreshThemeColors(): ThemeColors {
   cache = Object.fromEntries(
     Object.entries(VARS).map(([key, cssName]) => [key, read(cssName)])
   ) as ThemeColors
+  cachedTheme = currentTheme()
   return cache
 }
 
-/** Konva 渲染时取色。首次调用会自动初始化缓存。 */
+/**
+ * Konva 渲染时取色。
+ *
+ * 缓存自己带外观标记：切换浅色/深色之后不需要任何调用点显式刷新——
+ * 下一次取色发现 `data-theme` 变了就重读。少了这一步，画布会一直停在
+ * 打开它那一刻的配色，页面全黑而画布仍是白的。
+ */
 export function themeColors(): ThemeColors {
-  if (!cache) return refreshThemeColors()
+  if (!cache || cachedTheme !== currentTheme()) return refreshThemeColors()
   return cache
 }

@@ -15,6 +15,7 @@ import { ResolveQueue } from './metadata/resolve-queue'
 import { activeMetadataFixture } from './metadata/metadata-fixture'
 import { ApplicationEvents } from './application/events/application-events'
 import { RecordService } from './application/records/record-service'
+import { WorkContextService } from './application/work-context/work-context-service'
 import { CoffeeService } from './application/coffee/coffee-service'
 import { CanvasService } from './application/canvas/canvas-service'
 import { McpClientService } from './application/authorization/permission-service'
@@ -182,6 +183,7 @@ function bootstrap(): void {
   const coffee = new CoffeeService(db.db)
   const canvas = new CanvasService(db.db, db.deviceId, events)
   const clients = new McpClientService(db.db)
+  const workContexts = new WorkContextService(db.db, events)
 
   const bridgeStatus = (): McpBridgeStatus => ({
     running: bridgeServer?.isRunning() ?? false,
@@ -197,7 +199,7 @@ function bootstrap(): void {
   if (platformSupportsBridge()) {
     const server = new BridgeServer(
       bridgePaths(app.getPath('userData')),
-      { db: db.db, clients, records, coffee, canvas },
+      { db: db.db, clients, records, coffee, canvas, workContexts },
       APP_VERSION
     )
     bridgeServer = server
@@ -262,7 +264,7 @@ function bootstrap(): void {
     db,
     devServerUrl,
     sync: syncService,
-    services: { records, clients },
+    services: { records, clients, workContexts },
     bridgeStatus,
     browser: browserManager,
     bookmarks: bookmarkService,

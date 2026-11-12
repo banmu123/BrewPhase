@@ -11,7 +11,15 @@ export const settings = {
   },
   general: {
     title: 'General',
-    subtitle: 'Language, app and local data',
+    subtitle: 'Appearance, language, app and local data',
+    appearance: 'Appearance',
+    appearanceHint:
+      'System follows your macOS / Windows appearance. Choosing Light or Dark keeps it fixed.',
+    appearanceName: {
+      system: 'System',
+      light: 'Light',
+      dark: 'Dark'
+    },
     language: 'Language',
     languageHint: 'Applies immediately across the whole app and is remembered.',
     languageName: {

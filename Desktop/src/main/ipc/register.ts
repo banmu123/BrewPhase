@@ -17,6 +17,7 @@ import {
 } from '../database/repositories/coffee'
 import type { McpClientService } from '../application/authorization/permission-service'
 import type { RecordService } from '../application/records/record-service'
+import type { WorkContextService } from '../application/work-context/work-context-service'
 import type { McpBridgeStatus } from '../../shared/contracts/mcp'
 import {
   addNode,
@@ -46,6 +47,7 @@ import type { ChromeService } from '../integrations/chrome/chrome-service'
 import type { DataLocationService } from '../data-location-service'
 import { DEFAULT_PHASE_RULES } from '../../shared/domain/phase'
 import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from '../../shared/contracts/version'
+import { WINDOW_CHROME, type WindowAppearance } from '../appearance'
 
 /**
  * IPC 注册表：**每一个通道**都先校验来源、再校验参数，最后才碰数据库。
@@ -63,6 +65,7 @@ export function registerIpc(params: {
   services: {
     records: RecordService
     clients: McpClientService
+    workContexts: WorkContextService
   }
   bridgeStatus: () => McpBridgeStatus
   /** 内置浏览器：网页在主进程绘制，IPC 只表达意图。 */
@@ -126,10 +129,35 @@ export function registerIpc(params: {
   // 菜单是主进程对象，Renderer 只发一个空请求，拿不到任何菜单结构。
   // 走原生 ipcMain.handle 而不是上面的 handle 助手——这里需要 event.sender
   // 定位宿主窗口，助手只透传 schema 解析后的参数。
+  // Studio Home「继续工作」：最近活动的上下文（含资源标签，存在性已校验）。
+  handle(IPC.workContextsStudio, () => services.workContexts.listForStudio(3))
+
   ipcMain.handle(IPC.appPopupMenu, async (event) => {
     assertTrustedSender(event, devServerUrl)
     const window = BrowserWindow.fromWebContents(event.sender) ?? undefined
     Menu.getApplicationMenu()?.popup({ window })
+  })
+
+  // 外观切换：Renderer 在 `<html data-theme>` 落地之后报一次，主进程只负责
+  // 窗口自己那一层——底色与 Windows 标题栏按钮。窗口在缩放时露出的颜色、
+  // 以及最小化/最大化的原生按钮，都靠这一步跟着页面一起变深。
+  // 同样走原生 ipcMain.handle：需要 event.sender 定位是哪个窗口。
+  ipcMain.handle(IPC.appThemeAppearance, async (event, payload) => {
+    assertTrustedSender(event, devServerUrl)
+    const parsed = ipcRequestSchemas[IPC.appThemeAppearance].safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(`invalid payload for ${IPC.appThemeAppearance}`)
+    }
+    const appearance: WindowAppearance = parsed.data
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window || window.isDestroyed()) return null
+    const chrome = WINDOW_CHROME[appearance]
+    window.setBackgroundColor(chrome.background)
+    // titleBarOverlay 只存在于 Windows；其余平台调它没有意义，也可能抛错。
+    if (process.platform === 'win32') {
+      window.setTitleBarOverlay({ color: chrome.background, symbolColor: chrome.symbol, height: 44 })
+    }
+    return null
   })
 
   // MARK: - Coffee

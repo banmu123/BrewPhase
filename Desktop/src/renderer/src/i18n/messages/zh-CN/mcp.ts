@@ -25,6 +25,7 @@ export const mcp = {
       records: '记录',
       tags: '标签',
       coffee: '咖啡',
+      workContext: '工作上下文',
       canvas: '画布'
     }
   },

@@ -363,6 +363,36 @@ CREATE TABLE IF NOT EXISTS mcp_idempotency (
 );
 `
 
+// MARK: - Work Context（migration 008）
+
+const WORK_CONTEXT_SQL = `
+CREATE TABLE IF NOT EXISTS work_contexts (
+  id TEXT PRIMARY KEY NOT NULL,
+  title TEXT NOT NULL,
+  goal TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT '',
+  next_step TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  last_activity_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS work_contexts_status_idx ON work_contexts (status);
+CREATE INDEX IF NOT EXISTS work_contexts_last_activity_idx ON work_contexts (last_activity_at);
+
+CREATE TABLE IF NOT EXISTS work_context_resources (
+  id TEXT PRIMARY KEY NOT NULL,
+  work_context_id TEXT NOT NULL REFERENCES work_contexts(id) ON DELETE CASCADE,
+  resource_type TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'reference',
+  note TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  UNIQUE (work_context_id, resource_type, resource_id)
+);
+CREATE INDEX IF NOT EXISTS work_context_resources_context_idx ON work_context_resources (work_context_id);
+`
+
 export const migrations: Migration[] = [
   { version: 1, name: 'init', sql: INIT_SQL },
   { version: 2, name: 'sync-align-ios', sql: SYNC_ALIGN_SQL },
@@ -370,7 +400,8 @@ export const migrations: Migration[] = [
   { version: 4, name: 'rejected-remote-fingerprints', sql: REJECTED_REMOTE_SQL },
   { version: 5, name: 'resolver-metadata-separation', sql: RESOLVER_METADATA_SQL },
   { version: 6, name: 'canvas-notes', sql: CANVAS_NOTES_SQL },
-  { version: 7, name: 'mcp-access', sql: MCP_ACCESS_SQL }
+  { version: 7, name: 'mcp-access', sql: MCP_ACCESS_SQL },
+  { version: 8, name: 'work-contexts', sql: WORK_CONTEXT_SQL }
 ]
 
 /**

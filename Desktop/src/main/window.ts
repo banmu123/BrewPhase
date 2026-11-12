@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, BrowserWindow, shell } from 'electron'
 import { isEmbedFrameURL } from '../shared/link-embed'
+import { initialWindowAppearance, WINDOW_CHROME } from './appearance'
 
 /**
  * 一个窗口，能开的只允许是应用自己。
@@ -22,6 +23,9 @@ export function createMainWindow(params: { devServerUrl: string | null }): Brows
     : [join(app.getAppPath(), 'build/icon.png')]
   const iconPath = iconCandidates.find((candidate) => existsSync(candidate))
 
+  // 窗口底色与标题栏按钮跟随外观：深色下若仍用浅色底，缩放窗口会闪一道白光。
+  const chrome = WINDOW_CHROME[initialWindowAppearance()]
+
   const window = new BrowserWindow({
     width: 1200,
     height: 760,
@@ -29,7 +33,7 @@ export function createMainWindow(params: { devServerUrl: string | null }): Brows
     minHeight: 640,
     show: false,
     title: 'BrewPhase',
-    backgroundColor: '#f7f8f6',
+    backgroundColor: chrome.background,
     ...(iconPath && !mac ? { icon: iconPath } : {}),
     // 标题栏融合：
     // - macOS：hiddenInset 保留原生红绿灯（Renderer 顶栏左上角留出位置）；
@@ -42,8 +46,8 @@ export function createMainWindow(params: { devServerUrl: string | null }): Brows
     ...(windows
       ? {
           titleBarOverlay: {
-            color: '#f7f8f6',
-            symbolColor: '#30372f',
+            color: chrome.background,
+            symbolColor: chrome.symbol,
             height: 44
           }
         }

@@ -19,6 +19,14 @@ export const studio = {
   newText: '写一段文字',
   newLink: '收藏一个链接',
   newCanvas: '新建一块画布',
+  workContext: {
+    overline: 'WORK CONTEXT',
+    title: '继续工作',
+    nextStep: '下一步',
+    status: { active: '进行中', paused: '已暂停', completed: '已完成' },
+    counts: (records: number, canvases: number, urls: number) =>
+      `${records} 条记录 · ${canvases} 块画布 · ${urls} 个链接`
+  },
   coffee: {
     overline: 'COFFEE / SHELF',
     hint: '像书架上的包装袋，一层一层收着。',

@@ -19,6 +19,14 @@ export const studio = {
   newText: 'Write a note',
   newLink: 'Save a link',
   newCanvas: 'Start a canvas',
+  workContext: {
+    overline: 'WORK CONTEXT',
+    title: 'Continue working',
+    nextStep: 'Next step',
+    status: { active: 'Active', paused: 'Paused', completed: 'Completed' },
+    counts: (records: number, canvases: number, urls: number) =>
+      `${records} records · ${canvases} canvases · ${urls} links`
+  },
   coffee: {
     overline: 'COFFEE / SHELF',
     hint: 'Like bags on a shelf, kept one layer at a time.',

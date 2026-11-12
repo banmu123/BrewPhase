@@ -70,7 +70,7 @@ test('MCP：Bridge 随 App 启停、Agent 写入、UI 刷新、撤销即失效',
   await client.connect(transport)
 
   const tools = await client.listTools()
-  expect(tools.tools.length).toBe(18)
+  expect(tools.tools.length).toBe(23)
 
   const title = `E2E 记录 ${Date.now()}`
   const createdRecord = await client.callTool({

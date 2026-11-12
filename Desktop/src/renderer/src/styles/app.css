@@ -16,6 +16,29 @@
   --hairline-strong: #dde1d9; /* studio-border-strong */
   /* 顶栏与桌面之间几乎看不见的那条线：有边界感，但不切出一道横杠 */
   --hairline-faint: rgba(48, 55, 47, 0.055);
+  /* 半透明的浮层底：顶栏搜索框这类「压在内容上、又要透出一点底」的表面。
+     深色下不能继续用白色叠加，必须单独给一个值。 */
+  --well-translucent: rgba(255, 255, 255, 0.62);
+  /* 播放器舞台：永远是深底（里面是视频/封面），不跟随页面明暗翻转。 */
+  --stage: #30372f;
+  /* 纸：空态装饰卡、无封面的「链接纸笺」、画布纸。比 card 更轻一点，
+     是页面里少数几处允许有自己质感的表面。 */
+  --sheet: #fcfdfb;
+  --sheet-deep: #f6f7f3;
+  --sheet-warm: #faf6ed;
+  --sheet-warm-deep: #f0e7d7;
+  /* 压在图片上的渐隐与圆钮：为了让标题/播放键在任意封面上都读得清。 */
+  --fade: rgba(255, 255, 255, 0.97);
+  --scrim-chip: rgba(255, 255, 255, 0.88);
+  /* 视频纸笺的冷绿纸，与 --sheet-warm 成对。 */
+  --sheet-cool: #f3f6ef;
+  --sheet-cool-deep: #e2e8d9;
+  /* 弹窗背后那层：浅色下是磨砂，深色下必须加重，否则浮层和页面糊在一起。 */
+  --backdrop: rgba(48, 55, 47, 0.22);
+  /* 空态装饰件的暖色笔触：深色下要压到很低，否则一片暖光浮在黑底上。 */
+  --sketch-strong: rgba(214, 200, 180, 0.42);
+  --sketch-soft: rgba(190, 174, 152, 0.22);
+  --sketch-warm: rgba(233, 226, 214, 0.28);
 
   /* Text */
   --ink: #30372f;
@@ -32,6 +55,10 @@
   --cream: #e3e9df;
   --sage: #849779;
   --focus: #9baa91;
+  /* 主按钮上的字：浅色下是白字压深底，深色下要反过来变成深字压亮底。
+     `--espresso` 一翻转，写死 `#fff` 的地方就会看不清，所以单独拆出来。 */
+  --on-espresso: #ffffff;
+  --espresso-active: #2e2117;
 
   /* Phase colours：只在表达阶段信息时出现 */
   --phase-resting: #a6a9a0;
@@ -39,6 +66,13 @@
   --phase-peak: #8b9a82;
   --phase-declining: #b88c83;
   --priority: #a8503f;
+  --priority-hover: #b25a48;
+  --priority-active: #8f4536;
+  /* 破坏性主按钮上的字：深色下红底提亮，白字要换成深字。 */
+  --on-danger: #ffffff;
+  /* 错误提示的淡红底与描边：深色下 6% 的红几乎看不见，必须提高透明度。 */
+  --danger-tint: rgba(168, 80, 63, 0.06);
+  --danger-tint-border: rgba(168, 80, 63, 0.26);
 
   /* Elevation：普通卡片不投影；浮层才允许柔和阴影 */
   --shadow-hover: 0 4px 14px rgba(48, 55, 47, 0.06);
@@ -67,6 +101,82 @@
   --fs-section: 11px;
 
   color-scheme: light;
+}
+
+/* ============================================================
+   Dark Studio — 暖黑咖啡
+
+   深色不是把浅色的颜色反过来，而是换一套分层方式：
+   浅色靠投影把卡片从纸上抬起来，黑底上的黑投影等于没有，所以层级
+   改成「越靠上的表面越亮」——paper < card < well < well-deep。
+   底色带一点棕（#15120f），保留咖啡的纸张感，不用中性灰。
+
+   文字是暖白而非纯白：纯白压在暖黑上会发青，也不像夜里的一杯咖啡。
+
+   这一块**只覆盖颜色**：字体、间距、圆角与浅色共用，不做第二套。
+   ============================================================ */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* Background */
+  --paper: #15120f;
+  --paper-deep: #0f0d0b;
+  --card: #201b17;
+  --well: #27221d;
+  --well-deep: #332c25;
+  --hairline: #352d26;
+  --hairline-strong: #463b32;
+  --hairline-faint: rgba(255, 255, 255, 0.055);
+  --well-translucent: rgba(255, 255, 255, 0.06);
+  --stage: #120f0c;
+  /* 纸：深色下不能是白的，但要比 card 再亮一档——它们是「被放到面前的东西」 */
+  --sheet: #241f1a;
+  --sheet-deep: #1d1915;
+  --sheet-warm: #2b2219;
+  --sheet-warm-deep: #231a13;
+  /* 压在封面上的渐隐改成暗色，标题才不会在浅色封面上糊成一片 */
+  --fade: rgba(32, 27, 23, 0.97);
+  --scrim-chip: rgba(20, 16, 13, 0.72);
+  --sheet-cool: #1f241c;
+  --sheet-cool-deep: #1a1e17;
+  --backdrop: rgba(0, 0, 0, 0.55);
+  --sketch-strong: rgba(214, 200, 180, 0.14);
+  --sketch-soft: rgba(190, 174, 152, 0.08);
+  --sketch-warm: rgba(233, 226, 214, 0.06);
+
+  /* Text */
+  --ink: #efe7dc;
+  --ink-soft: #b9ad9e;
+  --ink-faint: #8f867b;
+
+  /* Brand：espresso 翻转成暖亮色，主按钮随之从「深底白字」变成「浅底深字」 */
+  --espresso: #e0c7a6;
+  --espresso-hover: #ebd5b8;
+  --espresso-active: #c9ae8b;
+  --on-espresso: #191410;
+
+  --roast: #c79a72;
+  --latte: #d9b994;
+  --cream: #3a322b;
+  --sage: #9db08f;
+  --focus: #8fa383;
+
+  /* Phase colours：同样提亮，保证在深底上仍能分辨 */
+  --phase-resting: #a9a79c;
+  --phase-opening: #d2a96f;
+  --phase-peak: #9cb18e;
+  --phase-declining: #c99182;
+  --priority: #d0695a;
+  --priority-hover: #dc8571;
+  --priority-active: #b5564a;
+  --on-danger: #1a1210;
+  --danger-tint: rgba(208, 105, 90, 0.14);
+  --danger-tint-border: rgba(208, 105, 90, 0.42);
+
+  /* Elevation：黑底上的投影必须更重才看得出来 */
+  --shadow-hover: 0 4px 14px rgba(0, 0, 0, 0.4);
+  --shadow-lifted: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-panel: 0 16px 48px rgba(0, 0, 0, 0.6);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -301,7 +411,7 @@ textarea {
   padding: 0 8px 0 11px;
   border: 1px solid transparent;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.62);
+  background: var(--well-translucent);
   color: var(--ink-faint);
   font-size: var(--fs-caption);
   transition:
@@ -346,7 +456,7 @@ textarea {
   border: 0;
   border-radius: 999px;
   background: var(--espresso);
-  color: #fff;
+  color: var(--on-espresso);
   font-size: var(--fs-caption);
   font-weight: 500;
   transition: background 0.16s ease;
@@ -632,7 +742,7 @@ textarea {
 .button--primary {
   background: var(--espresso);
   border-color: var(--espresso);
-  color: #ffffff;
+  color: var(--on-espresso);
 }
 
 .button--primary:hover {
@@ -642,7 +752,7 @@ textarea {
 }
 
 .button--primary:active {
-  background: #2e2117;
+  background: var(--espresso-active);
 }
 
 .button--ghost {
@@ -670,7 +780,7 @@ textarea {
 
 .button--danger:hover {
   border-color: var(--priority);
-  background: rgba(168, 80, 63, 0.06);
+  background: var(--danger-tint);
   box-shadow: none;
 }
 
@@ -679,17 +789,17 @@ textarea {
 .button--danger-solid {
   background: var(--priority);
   border-color: var(--priority);
-  color: #ffffff;
+  color: var(--on-danger);
 }
 
 .button--danger-solid:hover {
-  background: #b25a48;
-  border-color: #b25a48;
+  background: var(--priority-hover);
+  border-color: var(--priority-hover);
   box-shadow: var(--shadow-hover);
 }
 
 .button--danger-solid:active {
-  background: #8f4536;
+  background: var(--priority-active);
 }
 
 .button:disabled {
@@ -962,7 +1072,9 @@ textarea {
 }
 
 .record-masonry .record-tile {
-  display: inline-flex;
+  /* 必须是块级 flex：inline-flex 会被 Chromium 的多列平衡器当成行内内容，
+     只填充前几列（右侧大片留白）；块级盒才能正确分发到每一列。 */
+  display: flex;
   width: 100%;
   margin: 0 0 18px;
   break-inside: avoid;
@@ -1063,7 +1175,7 @@ textarea {
   gap: 5px;
   padding: 3px 8px;
   border-radius: 999px;
-  background: rgba(250, 249, 246, 0.92);
+  background: var(--scrim-chip);
   border: 1px solid var(--hairline);
   font-size: 10px;
   font-weight: 600;
@@ -1269,7 +1381,7 @@ textarea {
   justify-content: space-between;
   gap: 8px;
   padding: 6px 10px;
-  background: rgba(250, 249, 246, 0.94);
+  background: var(--fade);
   border-top: 1px solid var(--hairline);
   min-width: 0;
 }
@@ -1498,7 +1610,7 @@ textarea {
   aspect-ratio: 16 / 9;
   border-radius: var(--radius);
   border: 1px solid var(--hairline);
-  background: var(--espresso);
+  background: var(--stage);
   overflow: hidden;
 }
 
@@ -2265,7 +2377,7 @@ body.canvas-focus .canvas-topbar {
 
 .canvas-save[data-state='error'] {
   color: var(--priority);
-  background: rgba(168, 80, 63, 0.08);
+  background: var(--danger-tint);
 }
 
 .canvas-hint {
@@ -2437,7 +2549,7 @@ body.canvas-focus .canvas-topbar {
   z-index: 100;
   /* 轻磨砂：把底下的内容压成背景，浮层才有"停在一层之上"的感觉。
      0.22 的遮罩 + 3px 模糊，比单纯压暗更耐看，也不至于看不清内容。 */
-  background: rgba(48, 55, 47, 0.22);
+  background: var(--backdrop);
   -webkit-backdrop-filter: blur(3px);
   backdrop-filter: blur(3px);
   display: flex;
@@ -3511,7 +3623,7 @@ body.canvas-focus .canvas-topbar {
   aspect-ratio: 3 / 4.2;
   border: 1.5px solid rgba(176, 160, 138, 0.42);
   border-radius: 10px 10px 7px 7px;
-  background: linear-gradient(168deg, rgba(214, 200, 180, 0.42), rgba(190, 174, 152, 0.2));
+  background: linear-gradient(168deg, var(--sketch-strong), var(--sketch-soft));
   box-shadow: 0 10px 18px -14px rgba(48, 55, 47, 0.28);
 }
 
@@ -3558,7 +3670,7 @@ body.canvas-focus .canvas-topbar {
   bottom: 18px;
   transform: rotate(4.5deg);
   z-index: 3;
-  background: linear-gradient(168deg, rgba(206, 191, 170, 0.48), rgba(182, 166, 144, 0.24));
+  background: linear-gradient(168deg, var(--sketch-strong), var(--sketch-soft));
 }
 
 .studio-empty-coffee__bag--d {
@@ -3590,7 +3702,7 @@ body.canvas-focus .canvas-topbar {
   aspect-ratio: 4 / 3;
   border: 1px solid var(--hairline);
   border-radius: 10px;
-  background: linear-gradient(170deg, #fcfdfb, #f6f7f3);
+  background: linear-gradient(170deg, var(--sheet), var(--sheet-deep));
   box-shadow:
     0 1px 2px rgba(48, 55, 47, 0.04),
     0 12px 22px -16px rgba(48, 55, 47, 0.4);
@@ -3628,8 +3740,8 @@ body.canvas-focus .canvas-topbar {
   border: 1.5px dashed var(--hairline-strong);
   border-radius: 7px;
   background:
-    radial-gradient(circle at 30% 30%, rgba(216, 205, 188, 0.4) 0 9%, transparent 10%),
-    linear-gradient(160deg, rgba(233, 226, 214, 0.28), transparent 65%);
+    radial-gradient(circle at 30% 30%, var(--sketch-strong) 0 9%, transparent 10%),
+    linear-gradient(160deg, var(--sketch-warm), transparent 65%);
 }
 
 .studio-empty-records__linkline {
@@ -3676,7 +3788,7 @@ body.canvas-focus .canvas-topbar {
   aspect-ratio: 16 / 10;
   border: 1px solid var(--hairline);
   border-radius: 11px;
-  background: #fefefd;
+  background: var(--sheet);
   box-shadow:
     0 1px 2px rgba(48, 55, 47, 0.04),
     0 14px 24px -16px rgba(48, 55, 47, 0.4);
@@ -3712,7 +3824,8 @@ body.canvas-focus .canvas-topbar {
   aspect-ratio: 4 / 3;
   border: 1px solid var(--hairline-strong);
   border-radius: 7px;
-  background: rgba(240, 242, 238, 0.85);
+  /* 0.85 的透明是为了让底下的点阵网格透出来一点，别改成实色。 */
+  background: color-mix(in srgb, var(--well) 85%, transparent);
 }
 
 .studio-empty-canvas__node--a {
@@ -3877,7 +3990,7 @@ body.canvas-focus .canvas-topbar {
   gap: 1px;
   padding: 20px 10px 9px;
   border-radius: 0 0 10px 10px;
-  background: linear-gradient(to top, rgba(253, 253, 251, 0.98) 58%, rgba(253, 253, 251, 0));
+  background: linear-gradient(to top, var(--fade) 58%, transparent);
   opacity: 0;
   transform: translateY(6px);
   transition:
@@ -4041,7 +4154,7 @@ body.canvas-focus .canvas-topbar {
   width: 22px;
   height: 22px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--scrim-chip);
   color: var(--ink-soft);
   font-size: 9px;
 }
@@ -4055,7 +4168,7 @@ body.canvas-focus .canvas-topbar {
   width: 20px;
   height: 20px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.84);
+  background: var(--scrim-chip);
   color: var(--ink-soft);
   font-size: 10px;
   transition: opacity 0.2s ease;
@@ -4074,16 +4187,16 @@ body.canvas-focus .canvas-topbar {
   gap: 7px;
   padding: 15px 14px 12px;
   border-radius: 11px;
-  background: #fbfcfa;
+  background: var(--sheet);
   overflow: hidden;
 }
 
 .records-deck__card--link .records-deck__paper {
-  background: linear-gradient(158deg, #faf6ed, #f0e7d7);
+  background: linear-gradient(158deg, var(--sheet-warm), var(--sheet-warm-deep));
 }
 
 .records-deck__card--video .records-deck__paper {
-  background: linear-gradient(158deg, #f3f6ef, #e2e8d9);
+  background: linear-gradient(158deg, var(--sheet-cool), var(--sheet-cool-deep));
 }
 
 .records-deck__glyph {
@@ -4131,7 +4244,7 @@ body.canvas-focus .canvas-topbar {
   gap: 2px;
   padding: 26px 12px 10px;
   border-radius: 0 0 11px 11px;
-  background: linear-gradient(to top, rgba(255, 255, 255, 0.97) 46%, rgba(255, 255, 255, 0));
+  background: linear-gradient(to top, var(--fade) 46%, transparent);
   opacity: 0;
   transform: translateY(6px);
   transition:
@@ -5289,9 +5402,9 @@ body.canvas-focus .canvas-topbar {
 .browser-import__error {
   margin-top: 10px;
   padding: 12px 14px;
-  border: 1px solid rgba(168, 80, 63, 0.26);
+  border: 1px solid var(--danger-tint-border);
   border-radius: var(--radius-small);
-  background: rgba(168, 80, 63, 0.06);
+  background: var(--danger-tint);
 }
 
 /* ---------- 设置 · Chrome Companion ---------- */
@@ -5340,7 +5453,7 @@ body.canvas-focus .canvas-topbar {
 }
 
 .chrome-status__row dd[data-ok='true'] i {
-  background: #7c9070;
+  background: var(--sage);
   box-shadow: 0 0 0 3px rgba(124, 144, 112, 0.14);
 }
 
@@ -5643,4 +5756,121 @@ body.canvas-focus .canvas-topbar {
   flex: 0 0 auto;
   font-size: 11.5px;
   padding: 5px 10px;
+}
+
+/* ============ Studio Home · 继续工作（Work Context V1） ============ */
+/* 极轻量区块：不是一级页面；延续首页同一张纸 + 发丝线的语言。 */
+.work-context {
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px solid var(--hairline-faint);
+}
+
+.work-context__head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.work-context__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.work-context__list {
+  display: flex;
+  gap: 14px;
+  margin-top: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.work-context__card {
+  flex: 0 1 380px;
+  min-width: 300px;
+  padding: 14px 16px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.work-context__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.work-context__name {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.work-context__status {
+  flex: none;
+  font-size: 10px;
+  color: var(--sage);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.work-context__summary {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.work-context__next {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.work-context__next .overline {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.work-context__resources {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.work-context__count {
+  font-size: 10.5px;
+  color: var(--ink-faint);
+}
+
+.work-context__chip {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 3px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--well);
+  color: var(--ink-soft);
+  font-size: 10.5px;
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
+}
+
+.work-context__chip:hover {
+  background: var(--well-deep);
+  color: var(--ink);
 }

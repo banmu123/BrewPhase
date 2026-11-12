@@ -17,6 +17,10 @@ import { chromeProfileRequestSchema } from '../bookmarks'
 export const IPC = {
   appInfo: 'app:info',
   appPopupMenu: 'app:popup-menu',
+  // 外观：Renderer 只报「现在是浅色还是深色」，色值由主进程自己决定。
+  // 不让 Renderer 传颜色，是为了窗口底色与页面配色永远出自同一份定义。
+  appThemeAppearance: 'app:theme-appearance',
+  workContextsStudio: 'work-contexts:studio',
 
   beansList: 'coffee:beans:list',
   beanCreate: 'coffee:bean:create',
@@ -110,9 +114,13 @@ export const IPC = {
 
 export const ipcRequestSchemas = {
   [IPC.appInfo]: z.void(),
+  // Studio Home「继续工作」区块的只读读取（创建/更新走 MCP）。
+  [IPC.workContextsStudio]: z.void(),
   // 轻量菜单入口：Renderer 顶栏按钮 → 主进程把应用菜单弹成 popup。
   // 无参数；菜单内容与快捷键都在主进程的 role 里，不经 Renderer 之手。
   [IPC.appPopupMenu]: z.void(),
+  // 窗口底色与 Windows 标题栏按钮的配色：只接受两个已定义的取值。
+  [IPC.appThemeAppearance]: z.enum(['light', 'dark']),
   [IPC.beansList]: z.void(),
   [IPC.beanCreate]: beanDraftSchema,
   [IPC.beanUpdate]: z.object({ id: z.string().uuid(), draft: beanDraftSchema }),

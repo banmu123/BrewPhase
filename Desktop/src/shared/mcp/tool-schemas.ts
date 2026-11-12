@@ -108,6 +108,85 @@ export const TOOL_DEFINITIONS = {
     input: z.object({ name: z.string().trim().min(1).max(40) })
   },
 
+  // MARK: - Work Context（持续工作上下文）
+
+  list_work_contexts: {
+    scope: 'work_context:read',
+    write: false,
+    description:
+      'List work contexts (persisted working context: goal / progress / next step). ' +
+      'Defaults to most-recently-active first. Use this to resume ongoing work.',
+    input: z.object({
+      status: z.enum(['active', 'paused', 'completed']).optional(),
+      limit: z.number().int().min(1).max(50).optional(),
+      offset: z.number().int().min(0).optional()
+    })
+  },
+
+  get_work_context: {
+    scope: 'work_context:read',
+    write: false,
+    description:
+      'Read one work context: goal, progress summary, next step, status and every linked ' +
+      'resource (record / canvas / url with role and label). Use it to restore working context.',
+    input: z.object({ context_id: uuid })
+  },
+
+  create_work_context: {
+    scope: 'work_context:create',
+    write: true,
+    description:
+      'Create a work context for an ongoing task. Title is required; goal / summary / ' +
+      'next_step are optional and can be filled in later via update_work_context.',
+    input: z.object({
+      title: z.string().trim().min(1).max(200),
+      goal: z.string().max(2_000).optional(),
+      summary: z.string().max(4_000).optional(),
+      next_step: z.string().max(2_000).optional(),
+      idempotency_key: idempotencyKey
+    })
+  },
+
+  update_work_context: {
+    scope: 'work_context:update',
+    write: true,
+    description:
+      'Update title / goal / summary / next_step / status of a work context. Only provided ' +
+      'fields change. Requires expected_updated_at (epoch ms) from get_work_context; ' +
+      'a mismatch returns STALE_RECORD — re-read, then retry.',
+    input: z.object({
+      context_id: uuid,
+      expected_updated_at: z.number().int(),
+      patch: z
+        .object({
+          title: z.string().trim().min(1).max(200).optional(),
+          goal: z.string().max(2_000).optional(),
+          summary: z.string().max(4_000).optional(),
+          next_step: z.string().max(2_000).optional(),
+          status: z.enum(['active', 'paused', 'completed']).optional()
+        })
+        .refine((value) => Object.keys(value).length > 0, { message: 'patch must contain at least one field' })
+    })
+  },
+
+  link_work_context_resource: {
+    scope: 'work_context:link',
+    write: true,
+    description:
+      'Link an existing resource (record / canvas) or an http(s) URL to a work context. ' +
+      'Roles: source / output / reference. Linking the same resource twice is idempotent ' +
+      '(no duplicate). Record / canvas content is never copied into the context.',
+    input: z.object({
+      context_id: uuid,
+      resource_type: z.enum(['record', 'canvas', 'url']),
+      resource_id: uuid.optional(),
+      url: z.string().max(2_000).optional(),
+      role: z.enum(['source', 'output', 'reference']).optional(),
+      note: z.string().max(500).optional(),
+      idempotency_key: idempotencyKey
+    })
+  },
+
   list_beans: {
     scope: 'coffee:read',
     write: false,

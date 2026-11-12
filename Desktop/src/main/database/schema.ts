@@ -439,3 +439,56 @@ export const schema = {
   mcpIdempotency
 }
 
+
+// MARK: - Work Context（migration 008）
+
+/**
+ * 持续工作上下文：只存元信息（目标 / 进度 / 下一步），业务内容通过
+ * work_context_resources 引用现有实体 ID。不进 change_log / iOS 同步。
+ */
+export const workContexts = sqliteTable(
+  'work_contexts',
+  {
+    id: text('id').primaryKey(),
+    title: text('title').notNull(),
+    goal: text('goal').notNull().default(''),
+    summary: text('summary').notNull().default(''),
+    nextStep: text('next_step').notNull().default(''),
+    status: text('status').notNull().default('active'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    lastActivityAt: integer('last_activity_at').notNull()
+  },
+  (table) => [
+    index('work_contexts_status_idx').on(table.status),
+    index('work_contexts_last_activity_idx').on(table.lastActivityAt)
+  ]
+)
+
+/**
+ * 上下文 ↔ 资源关联：record / canvas 存实体 ID，url 存规范化 HTTP(S) 地址。
+ * UNIQUE 约束保证同一上下文不重复关联同一资源；Record/Canvas 被删除后
+ * 由 Service 在读取时清理失效关联（prune-on-read）。
+ */
+export const workContextResources = sqliteTable(
+  'work_context_resources',
+  {
+    id: text('id').primaryKey(),
+    workContextId: text('work_context_id')
+      .notNull()
+      .references(() => workContexts.id, { onDelete: 'cascade' }),
+    resourceType: text('resource_type').notNull(),
+    resourceId: text('resource_id').notNull(),
+    role: text('role').notNull().default('reference'),
+    note: text('note').notNull().default(''),
+    createdAt: integer('created_at').notNull()
+  },
+  (table) => [
+    index('work_context_resources_context_idx').on(table.workContextId),
+    uniqueIndex('work_context_resources_unique_idx').on(
+      table.workContextId,
+      table.resourceType,
+      table.resourceId
+    )
+  ]
+)

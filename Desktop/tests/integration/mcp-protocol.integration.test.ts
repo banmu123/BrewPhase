@@ -6,6 +6,7 @@ import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import type { McpScope } from '@shared/contracts/mcp'
 import { platformSupportsBridge } from '../../src/main/mcp-bridge/bridge-contract'
+import { WorkContextService } from '../../src/main/application/work-context/work-context-service'
 import { openDatabase, type DatabaseHandle } from '../../src/main/database/client'
 import { ApplicationEvents } from '../../src/main/application/events/application-events'
 import { RecordService } from '../../src/main/application/records/record-service'
@@ -56,7 +57,8 @@ describe.skipIf(!platformSupportsBridge())('MCP 协议面 — 真实 stdio，仅
       clients: new McpClientService(handle.db),
       records: new RecordService(handle.db, handle.deviceId, events, () => undefined),
       coffee: new CoffeeService(handle.db),
-      canvas: new CanvasService(handle.db, handle.deviceId, events)
+      canvas: new CanvasService(handle.db, handle.deviceId, events),
+      workContexts: new WorkContextService(handle.db, events),
     }
     server = new BridgeServer(bridgePaths(dir), ctx, '0.1.0-test')
     await server.start()
@@ -92,9 +94,9 @@ describe.skipIf(!platformSupportsBridge())('MCP 协议面 — 真实 stdio，仅
   })
 
   describe('MCP 协议面', () => {
-    it('initialize 后能列出全部 18 个工具，且每个都有描述与 inputSchema', async () => {
+    it('initialize 后能列出全部 23 个工具，且每个都有描述与 inputSchema', async () => {
       const tools = await client.listTools()
-      expect(tools.tools).toHaveLength(18)
+      expect(tools.tools).toHaveLength(23)
       for (const tool of tools.tools) {
         expect(tool.description ?? '').not.toBe('')
         expect(tool.inputSchema).toBeTruthy()

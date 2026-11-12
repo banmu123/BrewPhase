@@ -1,4 +1,5 @@
 import type { Bean, BeanDraft, Brew, BrewDraft, PhaseRule, Tasting, TastingDraft } from './entities/coffee'
+import type { WorkContextStudioItem } from './work-context'
 import type { Canvas, CanvasNode, CanvasNodeWithRecord, CanvasNote, CanvasStroke } from './entities/canvas'
 import type { ImportImageResult, RecordDraft, RecordItem, RecordQuery, RecordTag } from './entities/records'
 import type { SyncStatus, SyncConflictItem, WipeResult } from './sync'
@@ -27,6 +28,7 @@ export * from './mcp'
 export * from './browser'
 export * from './bookmarks'
 export * from './chrome-bridge'
+export * from './work-context'
 export * from './data-location'
 export * from './validation/ipc'
 
@@ -34,7 +36,7 @@ export * from './validation/ipc'
  * 应用事件：主进程写入（尤其是 MCP Bridge 的写入）之后广播的领域名。
  * 页面收到后自己重新取数据——不把内容塞进事件，避免出现第二份状态。
  */
-export const APP_DOMAINS = ['records', 'coffee', 'canvas'] as const
+export const APP_DOMAINS = ['records', 'coffee', 'canvas', 'workContexts'] as const
 export type AppDomain = (typeof APP_DOMAINS)[number]
 
 /**
@@ -60,6 +62,13 @@ export interface RendererApi {
     info: () => Promise<AppInfo>
     /** 弹出主进程应用菜单（role 提供 Copy/Paste/Zoom 等与快捷键）。 */
     popupMenu: () => Promise<void>
+    /** Studio Home「继续工作」区块的只读数据。 */
+    studioList: () => Promise<WorkContextStudioItem[]>
+    /**
+     * 报告解析后的明暗，让窗口底色与 Windows 标题栏按钮跟随页面。
+     * 只传 `light` / `dark`：色值定义在主进程，Renderer 不参与配色。
+     */
+    setAppearance: (appearance: 'light' | 'dark') => Promise<void>
     /** 主进程写入后的刷新通知（MCP/同步等外部来源）。 */
     onChanged: (listener: (domain: AppDomain) => void) => () => void
   }

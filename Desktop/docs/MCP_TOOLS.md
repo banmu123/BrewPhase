@@ -151,3 +151,57 @@ annotation）+ `notes[]` + `strokes[]`（只有 id/颜色/宽度/点数量，**�
 | list_beans / get_bean / list_brews / list_tastings / get_coffee_summary | coffee:read |
 | list_canvases / get_canvas | canvas:read |
 | create_canvas / add_record_to_canvas / create_canvas_note / update_canvas_note / annotate_canvas_node | canvas:write |
+
+## Work Context（持续工作上下文）
+
+> 设计与边界见 `docs/WORK_CONTEXT_SPEC.md`。V1 为 Desktop 本地数据，
+> 所有写响应带 `"sync_status": "desktop_local_only"`，不进 iOS 同步。
+
+### `list_work_contexts` — `work_context:read`
+
+```ts
+{ status?: 'active'|'paused'|'completed', limit?: number, offset?: number }
+```
+
+返回 `{ items: [{ context_id, title, status, summary, next_step,
+last_activity_at, record_count, canvas_count, url_count }], limit, offset,
+has_more }`，按 `last_activity_at` 倒序。**恢复工作的入口**：先 list 再 get。
+
+### `get_work_context` — `work_context:read`
+
+```ts
+{ context_id: string }
+```
+
+返回基本信息 + `resources[]`（`{ resource_id, resource_type: 'record'|'canvas'|'url',
+resource_ref, role, note, label }`，label 是 record 标题 / canvas 名称 / url 本身）。
+指向已删除实体的关联会在读取时自动清理。
+
+### `create_work_context` — `work_context:create`（幂等）
+
+```ts
+{ title, goal?, summary?, next_step?, idempotency_key }
+```
+
+返回 `{ context_id, title, status, created_at, updated_at, sync_status }`。
+
+### `update_work_context` — `work_context:update`
+
+```ts
+{ context_id, expected_updated_at, patch: { title?, goal?, summary?, next_step?,
+status?: 'active'|'paused'|'completed' } }
+```
+
+只改传入字段；`expected_updated_at` 不匹配返回 `STALE_RECORD`（重读后重试）。
+返回更新后的完整上下文（同 get 形状）。
+
+### `link_work_context_resource` — `work_context:link`（幂等）
+
+```ts
+{ context_id, resource_type: 'record'|'canvas'|'url', resource_id?, url?, role?,
+note?, idempotency_key }
+```
+
+record / canvas 必须真实存在（否则 `NOT_FOUND`）；url 仅 http/https；同一资源
+重复关联返回已有关联（`created: false`）。返回
+`{ resource: { resource_id, resource_type, resource_ref, role, note, label }, created }`。

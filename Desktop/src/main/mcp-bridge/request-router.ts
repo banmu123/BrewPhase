@@ -1,6 +1,8 @@
 import { eq } from 'drizzle-orm'
 import type { McpScope } from '../../shared/contracts/mcp'
 import { TOOL_DEFINITIONS, type ToolName } from '../../shared/mcp/tool-schemas'
+import { type WorkContextService } from '../application/work-context/work-context-service'
+import type { WorkContextStatus } from '../../shared/contracts/work-context'
 import type { AuthenticatedClient, McpClientService } from '../application/authorization/permission-service'
 import type { CanvasService } from '../application/canvas/canvas-service'
 import type { CoffeeService } from '../application/coffee/coffee-service'
@@ -25,6 +27,7 @@ export type RouterContext = {
   records: RecordService
   coffee: CoffeeService
   canvas: CanvasService
+  workContexts: WorkContextService
 }
 
 type HandlerResult = {
@@ -188,6 +191,73 @@ const HANDLERS: Record<ToolName, ToolHandler> = {
       annotation: params.annotation as string
     })
     return { data: node, entityType: 'canvasNode', entityId: node.id }
+  },
+
+  // MARK: - Work Context
+
+  list_work_contexts: (ctx, params) => {
+    const items = ctx.workContexts.list((params.status as WorkContextStatus | undefined) ?? null)
+    const limit = (params.limit as number | undefined) ?? 20
+    const offset = (params.offset as number | undefined) ?? 0
+    return {
+      data: {
+        items: items.slice(offset, offset + limit).map((context) => ctx.workContexts.summaryForMcp(context)),
+        limit,
+        offset,
+        has_more: offset + limit < items.length
+      }
+    }
+  },
+
+  get_work_context: (ctx, params) => ({ data: ctx.workContexts.getForMcp(params.context_id as string) }),
+
+  create_work_context: (ctx, params) => {
+    const context = ctx.workContexts.create({
+      title: params.title as string,
+      goal: params.goal as string | undefined,
+      summary: params.summary as string | undefined,
+      nextStep: params.next_step as string | undefined
+    })
+    return {
+      data: createShape('create_work_context', context as unknown as Record<string, unknown>),
+      entityType: 'workContext',
+      entityId: context.id
+    }
+  },
+
+  update_work_context: (ctx, params) => {
+    const patch = (params.patch ?? {}) as Record<string, unknown>
+    const context = ctx.workContexts.update(params.context_id as string, params.expected_updated_at as number, {
+      ...(patch.title !== undefined ? { title: patch.title as string } : {}),
+      ...(patch.goal !== undefined ? { goal: patch.goal as string } : {}),
+      ...(patch.summary !== undefined ? { summary: patch.summary as string } : {}),
+      ...(patch.next_step !== undefined ? { nextStep: patch.next_step as string } : {}),
+      ...(patch.status !== undefined ? { status: patch.status as WorkContextStatus } : {})
+    })
+    return {
+      data: ctx.workContexts.getForMcp(context.id),
+      entityType: 'workContext',
+      entityId: context.id
+    }
+  },
+
+  link_work_context_resource: (ctx, params) => {
+    const result = ctx.workContexts.link({
+      contextId: params.context_id as string,
+      resourceType: params.resource_type as Parameters<WorkContextService['link']>[0]['resourceType'],
+      resourceId: params.resource_id as string | undefined,
+      url: params.url as string | undefined,
+      role: params.role as Parameters<WorkContextService['link']>[0]['role'],
+      note: params.note as string | undefined
+    })
+    return {
+      data: createShape('link_work_context_resource', {
+        resource: ctx.workContexts.resourceForMcp(result.resource.id),
+        created: result.created
+      }),
+      entityType: 'workContextResource',
+      entityId: result.resource.id
+    }
   }
 }
 
@@ -196,7 +266,9 @@ const IDEMPOTENT_TOOLS: ReadonlySet<ToolName> = new Set([
   'create_record',
   'create_canvas',
   'add_record_to_canvas',
-  'create_canvas_note'
+  'create_canvas_note',
+  'create_work_context',
+  'link_work_context_resource'
 ])
 
 export function routeBridgeRequest(ctx: RouterContext, request: BridgeRequest): BridgeResponse {
@@ -336,6 +408,16 @@ function replayIdempotent(
       return createShape('add_record_to_canvas', { node: ctx.canvas.getNodeForMcp(entityId), created: false })
     case 'canvasNote':
       return createShape('create_canvas_note', ctx.canvas.getNoteForMcp(entityId) as unknown as Record<string, unknown>)
+    case 'workContext':
+      return createShape(
+        'create_work_context',
+        ctx.workContexts.get(entityId).context as unknown as Record<string, unknown>
+      )
+    case 'workContextResource':
+      return createShape('link_work_context_resource', {
+        resource: ctx.workContexts.resourceForMcp(entityId),
+        created: false
+      })
     default:
       throw new AppError('INTERNAL_ERROR', `cannot replay ${toolName}: unknown entity type ${String(entityType)}`)
   }
@@ -372,6 +454,16 @@ function createShape(toolName: ToolName, entity: Record<string, unknown>): Recor
       }
     case 'add_record_to_canvas':
       return { node: entity.node, created: entity.created ?? false }
+    case 'create_work_context':
+      return {
+        context_id: entity.id,
+        title: entity.title,
+        status: entity.status,
+        created_at: entity.created_at,
+        updated_at: entity.updated_at
+      }
+    case 'link_work_context_resource':
+      return { resource: entity.resource, created: entity.created ?? false }
     default:
       return entity
   }

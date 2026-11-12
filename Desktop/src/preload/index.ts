@@ -17,6 +17,10 @@ const api: RendererApi = {
     info: () => invoke(IPC.appInfo),
     // 轻量菜单入口（Windows/Linux）：弹出主进程的应用菜单，快捷键随之可用。
     popupMenu: () => invoke(IPC.appPopupMenu),
+    // Studio Home 只读：最近工作上下文。
+    studioList: () => invoke(IPC.workContextsStudio),
+    // 外观：只报明暗，窗口底色与标题栏配色由主进程映射。
+    setAppearance: (appearance) => invoke(IPC.appThemeAppearance, appearance),
     onChanged: (listener) => {
       const wrapped = (_event: unknown, domain: string) => listener(domain as never)
       ipcRenderer.on('app:changed', wrapped)

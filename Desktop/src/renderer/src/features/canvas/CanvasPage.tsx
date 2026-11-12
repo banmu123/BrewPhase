@@ -20,6 +20,7 @@ import { api } from '../../shared/api'
 import { useI18n } from '../../i18n'
 import { useAppStore } from '../../app/store'
 import { refreshThemeColors, themeColors } from '../../shared/tokens'
+import { useTheme } from '../../shared/useTheme'
 import { titleBarPlatform } from '../../shared/platform'
 import { Modal } from '../../shared/Modal'
 import { ConfirmDialog } from '../../shared/ConfirmDialog'
@@ -80,6 +81,11 @@ function contentRects(
 
 export function CanvasPage() {
   const { t, formatDate, formatNumber } = useI18n()
+
+  // 订阅外观：切浅色/深色时这一层重渲染，下面各个 Shape 取色时 `themeColors()`
+  // 会发现 `data-theme` 变了并重读（见 shared/tokens.ts）。画布是唯一读不到
+  // CSS 的地方，所以也只有这里需要显式订阅——其余界面由 CSS 变量自己换。
+  useTheme()
 
   // ===== 视图层级 =====
   const [view, setView] = useState<'gallery' | 'workspace'>('gallery')
