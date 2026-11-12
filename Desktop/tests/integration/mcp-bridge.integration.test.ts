@@ -24,7 +24,7 @@ import { BridgeClient, BridgeError } from '../../src/mcp/bridge-client'
 // Bridge V1 明确不支持 Windows（Named Pipe ACL 未验证，见
 // `bridge-contract.ts` 的 `platformSupportsBridge`），socket 集成测试
 // 随产品边界走：不支持的平台整个跳过，而不是把 listen 失败当成 bug。
-describe.skipIf(!platformSupportsBridge())('MCP Bridge socket 集成 — 仅 darwin/linux', () => {
+describe.skipIf(!platformSupportsBridge())('MCP Bridge socket 集成', () => {
   let dir: string
   let handle: DatabaseHandle
   let ctx: RouterContext
@@ -63,15 +63,32 @@ describe.skipIf(!platformSupportsBridge())('MCP Bridge socket 集成 — 仅 dar
     rmSync(dir, { recursive: true, force: true })
   })
 
+  // Windows 的 Named Pipe 不是文件系统条目：可见性用「能否 connect」判定。
+  function socketReachable(path: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const socket = connect(path)
+      const done = (ok: boolean): void => {
+        socket.removeAllListeners()
+        socket.destroy()
+        resolve(ok)
+      }
+      socket.once('connect', () => done(true))
+      socket.once('error', () => done(false))
+      socket.setTimeout(500, () => done(false))
+    })
+  }
+  const socketVisible = (path: string): Promise<boolean> =>
+    process.platform === 'win32' ? socketReachable(path) : Promise.resolve(existsSync(path))
+
   function makeClient(scopes: McpScope[] = ALL_SCOPES): { id: string; token: string } {
     const created = ctx.clients.create({ name: 'Bridge Test', scopes })
     return { id: created.id, token: created.token }
   }
 
   describe('Bridge 生命周期', () => {
-    it('启动后发布 bridge-info.json（不含 token），socket 存在', () => {
+    it('启动后发布 bridge-info.json（不含 token），socket 存在', async () => {
       const paths = bridgePaths(dir)
-      expect(existsSync(paths.socketPath)).toBe(true)
+      expect(await socketVisible(paths.socketPath)).toBe(true)
       const info = JSON.parse(readFileSync(paths.infoPath, 'utf8')) as BridgeInfo
       expect(info.socketPath).toBe(paths.socketPath)
       expect(info.protocolVersion).toBe(BRIDGE_PROTOCOL_VERSION)
@@ -83,7 +100,7 @@ describe.skipIf(!platformSupportsBridge())('MCP Bridge socket 集成 — 仅 dar
     it('stop 后 socket 与 info 都被清理', async () => {
       await server.stop()
       const paths = bridgePaths(dir)
-      expect(existsSync(paths.socketPath)).toBe(false)
+      expect(await socketVisible(paths.socketPath)).toBe(false)
       expect(existsSync(paths.infoPath)).toBe(false)
     })
   })

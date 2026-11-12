@@ -39,7 +39,11 @@ test('MCP：Bridge 随 App 启停、Agent 写入、UI 刷新、撤销即失效',
   // 1) Bridge 随主进程启动，而且 socket 文件真实存在
   const status = await page.evaluate(async () => window.brewphase.mcp.bridgeStatus())
   expect(status.running).toBe(true)
-  expect(status.socketPath ?? '').toContain('bridge.sock')
+  if (process.platform === 'win32') {
+    expect(status.socketPath ?? '').toContain('\\\\.\\pipe\\brewphase-mcp-v1-')
+  } else {
+    expect(status.socketPath ?? '').toContain('bridge.sock')
+  }
   expect(status.mcpEntryPath).toContain(join('out', 'mcp', 'stdio.mjs'))
 
   // 2) 通过设置页同款 IPC 创建客户端，拿到一次性 token
@@ -109,7 +113,10 @@ test('MCP：Bridge 随 App 启停、Agent 写入、UI 刷新、撤销即失效',
   // 7) 退出：Bridge 清理（socket + info）
   await app.close()
   expect(existsSync(join(userData, 'mcp', 'bridge-info.json'))).toBe(false)
-  expect(existsSync(join(userData, 'mcp', 'bridge.sock'))).toBe(false)
+  // Named Pipe 不是文件系统条目，Windows 上没有可检查的 socket 文件。
+  if (process.platform !== 'win32') {
+    expect(existsSync(join(userData, 'mcp', 'bridge.sock'))).toBe(false)
+  }
 
   // 8) 重启：Bridge 能重新启动（失效 socket 不会挡路）
   const app2 = await electron.launch({ args: ['.', '--no-sandbox', '--disable-gpu'], env: launchEnv(userData) })

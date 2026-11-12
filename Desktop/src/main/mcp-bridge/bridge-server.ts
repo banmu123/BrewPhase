@@ -181,5 +181,7 @@ function probeSocket(socketPath: string): Promise<boolean> {
 async function writeAtomic(path: string, content: string): Promise<void> {
   const tmp = `${path}.tmp-${process.pid}`
   await writeFile(tmp, content, { mode: 0o600 })
+  // Windows 的 rename 不能覆盖已存在文件：崩溃残留的 info 先删掉再落位。
+  await unlink(path).catch(() => undefined)
   await rename(tmp, path)
 }

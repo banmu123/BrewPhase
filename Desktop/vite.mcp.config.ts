@@ -26,7 +26,7 @@ export default defineConfig({
     },
     rollupOptions: {
       // node: 内置 + 所有裸包说明符（从 node_modules 解析）都不打包。
-      external: (id) => id.startsWith('node:') || (!id.startsWith('.') && !id.startsWith('/') && !id.startsWith('\0'))
+      external: (id) => id.startsWith('node:') || id.startsWith('@modelcontextprotocol')
     }
   }
 })
