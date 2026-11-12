@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { constants, existsSync, readFileSync } from 'node:fs'
 import { access, chmod, copyFile, mkdir, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, win32 } from 'node:path'
 import { promisify } from 'node:util'
 import {
   CHROME_BRIDGE_PROTOCOL_VERSION,
@@ -354,9 +354,18 @@ async function canAccess(path: string, mode: number): Promise<boolean> {
   }
 }
 
-/** 大小写、斜杠方向都归一后再比较；Windows 路径不区分大小写。 */
+/**
+ * 大小写、斜杠方向都归一后再比较；Windows 路径不区分大小写。
+ *
+ * Windows 路径**必须**用 `win32` 语义解析：这个函数既用来比对注册表里的
+ * `C:\...`，也用来比对 macOS 上的 `/Users/...`。用平台相关的 `resolve()`
+ * 时，在 macOS 上会把 `C:\Users\x\..\y.json` 当成相对路径，`..` 不折叠，
+ * 同一个位置的两条路径永远不相等 —— 表现为「明明装好了却报未安装」。
+ */
 export function normalizePathForCompare(value: string): string {
-  return resolve(value).replace(/\//g, '\\').toLowerCase()
+  const looksWindows = /^[A-Za-z]:[\\/]/.test(value) || value.includes('\\')
+  const resolved = looksWindows ? win32.resolve(value) : resolve(value)
+  return resolved.replace(/\//g, '\\').toLowerCase()
 }
 
 /** 从 `reg query` 输出里取 manifest 路径；输出含额外空格/制表符也能认。 */

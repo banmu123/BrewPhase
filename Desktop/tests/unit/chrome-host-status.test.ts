@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -85,6 +85,12 @@ describe('ChromeHostInstaller.status', () => {
   function writeHostFiles(): void {
     const target = installer()
     writeFileSync(target.hostPath(), 'fake-host')
+    /*
+     * 必须补可执行位：status() 用 `X_OK` 判断 binary 是否存在，
+     * Windows 上 X_OK 等于「文件存在即可」，macOS/Linux 上不可执行的文件
+     * 会被判成不存在——而安装流程自己也会 chmod 0o755。
+     */
+    chmodSync(target.hostPath(), 0o755)
     writeFileSync(target.configPath(), JSON.stringify({ version: 1 }))
     writeFileSync(
       target.manifestFilePath(),

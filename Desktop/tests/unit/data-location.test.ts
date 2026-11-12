@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
@@ -98,9 +98,18 @@ describe('数据目录解析与校验', () => {
     const system = process.platform === 'win32' ? 'C:\\Windows\\bp-data' : '/etc/bp-data'
     expect(validateDataTarget(system, current, appPath).ok).toBe(false)
 
-    const empty = join(root, 'empty')
-    mkdirSync(empty)
-    expect(validateDataTarget(empty, current, appPath).ok).toBe(true)
+    /*
+     * 「空目录可以接受」这条不能用 `os.tmpdir()` 当夹具：macOS 的临时目录是
+     * `/var/folders/.../T`，而 `/var` 正是产品明确拒绝的系统目录，断言会恒为假
+     * （Windows 的 %LOCALAPPDATA%\Temp 不在拦截名单里，所以那边一直是通过的）。
+     * 这里单独建一个家目录下的临时目录——任何平台的系统目录前缀都不覆盖它。
+     */
+    const empty = mkdtempSync(join(homedir(), '.brewphase-test-empty-'))
+    try {
+      expect(validateDataTarget(empty, current, appPath).ok).toBe(true)
+    } finally {
+      rmSync(empty, { recursive: true, force: true })
+    }
   })
 })
 
