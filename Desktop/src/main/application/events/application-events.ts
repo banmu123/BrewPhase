@@ -5,7 +5,7 @@
  * Main 在 bootstrap 里注册一个监听器，把事件转成 `app:changed` 发给所有窗口。
  */
 
-export type AppDomain = 'records' | 'coffee' | 'canvas' | 'workContexts'
+export type AppDomain = 'records' | 'coffee' | 'canvas' | 'workContexts' | 'personalDirection'
 
 export class ApplicationEvents {
   private readonly listeners = new Set<(domain: AppDomain) => void>()

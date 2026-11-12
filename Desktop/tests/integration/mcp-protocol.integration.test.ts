@@ -7,6 +7,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import type { McpScope } from '@shared/contracts/mcp'
 import { platformSupportsBridge } from '../../src/main/mcp-bridge/bridge-contract'
 import { WorkContextService } from '../../src/main/application/work-context/work-context-service'
+import { PersonalDirectionService } from '../../src/main/application/personal-direction/personal-direction-service'
 import { openDatabase, type DatabaseHandle } from '../../src/main/database/client'
 import { ApplicationEvents } from '../../src/main/application/events/application-events'
 import { RecordService } from '../../src/main/application/records/record-service'
@@ -59,6 +60,8 @@ describe.skipIf(!platformSupportsBridge())('MCP 协议面 — 真实 stdio，仅
       coffee: new CoffeeService(handle.db),
       canvas: new CanvasService(handle.db, handle.deviceId, events),
       workContexts: new WorkContextService(handle.db, events),
+
+      personalDirection: new PersonalDirectionService(handle.db, events),
     }
     server = new BridgeServer(bridgePaths(dir), ctx, '0.1.0-test')
     await server.start()

@@ -1,5 +1,17 @@
 import type { Bean, BeanDraft, Brew, BrewDraft, PhaseRule, Tasting, TastingDraft } from './entities/coffee'
 import type { WorkContextStudioItem } from './work-context'
+import type {
+  CurrentState,
+  CurrentStateDraft,
+  Direction,
+  DirectionInput,
+  DirectionPatch,
+  PersonalDirectionOverview,
+  ProposalKind,
+  StageGoal,
+  StageGoalInput,
+  StageGoalPatch
+} from './personal-direction'
 import type { Canvas, CanvasNode, CanvasNodeWithRecord, CanvasNote, CanvasStroke } from './entities/canvas'
 import type { ImportImageResult, RecordDraft, RecordItem, RecordQuery, RecordTag } from './entities/records'
 import type { SyncStatus, SyncConflictItem, WipeResult } from './sync'
@@ -29,6 +41,7 @@ export * from './browser'
 export * from './bookmarks'
 export * from './chrome-bridge'
 export * from './work-context'
+export * from './personal-direction'
 export * from './data-location'
 export * from './validation/ipc'
 
@@ -36,7 +49,7 @@ export * from './validation/ipc'
  * 应用事件：主进程写入（尤其是 MCP Bridge 的写入）之后广播的领域名。
  * 页面收到后自己重新取数据——不把内容塞进事件，避免出现第二份状态。
  */
-export const APP_DOMAINS = ['records', 'coffee', 'canvas', 'workContexts'] as const
+export const APP_DOMAINS = ['records', 'coffee', 'canvas', 'workContexts', 'personalDirection'] as const
 export type AppDomain = (typeof APP_DOMAINS)[number]
 
 /**
@@ -71,6 +84,37 @@ export interface RendererApi {
     setAppearance: (appearance: 'light' | 'dark') => Promise<void>
     /** 主进程写入后的刷新通知（MCP/同步等外部来源）。 */
     onChanged: (listener: (domain: AppDomain) => void) => () => void
+  }
+  /**
+   * Personal Direction：现状 / 方向 / 阶段。
+   *
+   * 这里的 `resolveProposal` 是「确认草稿」的唯一入口——MCP 侧没有对应能力，
+   * 所以只有用户在这里点下去，AI 的提议才会变成正式资料。
+   */
+  direction: {
+    overview: () => Promise<PersonalDirectionOverview>
+    saveCurrentState: (draft: CurrentStateDraft) => Promise<CurrentState>
+    confirmCurrentState: (id: string) => Promise<CurrentState>
+    createDirection: (input: DirectionInput) => Promise<Direction>
+    updateDirection: (
+      id: string,
+      expectedUpdatedAt: number,
+      patch: DirectionPatch
+    ) => Promise<Direction>
+    deleteDirection: (id: string) => Promise<void>
+    createStage: (input: StageGoalInput) => Promise<StageGoal>
+    updateStage: (
+      id: string,
+      expectedUpdatedAt: number,
+      patch: StageGoalPatch
+    ) => Promise<StageGoal>
+    deleteStage: (id: string) => Promise<void>
+    /** 确认或丢弃一条草稿；确认后它才成为正式资料。 */
+    resolveProposal: (
+      kind: ProposalKind,
+      id: string,
+      action: 'confirm' | 'discard'
+    ) => Promise<unknown>
   }
   coffee: {
     listBeans: () => Promise<Bean[]>

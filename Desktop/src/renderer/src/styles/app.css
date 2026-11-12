@@ -5874,3 +5874,333 @@ body.canvas-focus .canvas-topbar {
   background: var(--well-deep);
   color: var(--ink);
 }
+
+/* ---------- Studio：Personal Direction（现状 / 方向 / 阶段） ---------- */
+/*
+   音量刻意低于上面三栏：这里是「你要去哪」，不是「你有什么」。
+   没有图表、没有百分比、没有连续打卡——只有几条能被自己读懂的文字。
+*/
+
+.direction {
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px solid var(--hairline-faint);
+}
+
+.direction__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.direction__title {
+  margin: 2px 0 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.direction__sub {
+  margin: 4px 0 0;
+  color: var(--ink-soft);
+  font-size: var(--fs-caption);
+}
+
+.direction__hint {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: var(--fs-caption);
+  line-height: 1.5;
+}
+
+.direction__error {
+  margin: 8px 0 0;
+  color: var(--priority);
+  font-size: var(--fs-caption);
+}
+
+/* 待确认提议：视觉上比正式资料「轻一档」，因为它还不是用户的东西 */
+.direction__proposal {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 14px;
+  padding: 12px 16px;
+  border: 1px dashed var(--hairline-strong);
+  border-radius: var(--radius);
+  background: var(--well);
+}
+
+.direction__proposal-text {
+  min-width: 0;
+}
+
+.direction__proposal-label {
+  margin: 3px 0 4px;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.direction__proposal-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.direction__empty {
+  margin-top: 14px;
+  padding: 20px 18px;
+  border: 1px dashed var(--hairline-strong);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.direction__empty h3 {
+  margin: 0 0 6px;
+  font-size: var(--fs-title);
+}
+
+.direction__empty p {
+  max-width: 52ch;
+  margin: 0 0 14px;
+  color: var(--ink-soft);
+  font-size: var(--fs-callout);
+  line-height: 1.6;
+}
+
+.direction__state {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  background: var(--well);
+}
+
+.direction__state-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.direction__state-body {
+  margin: 6px 0 0;
+  font-size: var(--fs-body);
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.direction__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.direction__card {
+  padding: 14px 16px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.direction__card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.direction__card-title {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 650;
+}
+
+.direction__card-desc {
+  margin: 6px 0 0;
+  color: var(--ink-soft);
+  font-size: var(--fs-callout);
+  line-height: 1.6;
+}
+
+.direction__badge {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  color: var(--ink-soft);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+}
+
+.direction__badge[data-status='active'] {
+  color: var(--sage);
+  border-color: color-mix(in srgb, var(--sage) 42%, transparent);
+}
+
+.direction__badge[data-status='paused'] {
+  color: var(--ink-faint);
+}
+
+.direction__badge[data-status='achieved'] {
+  color: var(--phase-opening);
+  border-color: color-mix(in srgb, var(--phase-opening) 42%, transparent);
+}
+
+.direction__badge[data-status='dropped'] {
+  color: var(--ink-faint);
+  text-decoration: line-through;
+}
+
+.direction__stage {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline-faint);
+}
+
+.direction__stage-name {
+  margin: 4px 0;
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.direction__actions {
+  display: flex;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.direction__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-soft);
+  font-family: inherit;
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+
+.direction__link:hover {
+  color: var(--ink);
+}
+
+.direction__link--danger:hover {
+  color: var(--priority);
+}
+
+.direction__link:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ---------- 引导向导 ---------- */
+
+.direction-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.direction-form__hint {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: var(--fs-callout);
+  line-height: 1.6;
+}
+
+.direction-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.direction-form__label {
+  color: var(--ink-soft);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+}
+
+.direction-form__field input,
+.direction-form__field textarea,
+.direction-form__field select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-small);
+  background: var(--well);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  resize: vertical;
+}
+
+.direction-form__field input:focus,
+.direction-form__field textarea:focus,
+.direction-form__field select:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: -1px;
+}
+
+.direction-form__field input:disabled,
+.direction-form__field textarea:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.direction-form__warning {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: var(--fs-caption);
+  line-height: 1.5;
+}
+
+.direction-form__error {
+  margin: 0 0 8px;
+  color: var(--priority);
+  font-size: var(--fs-callout);
+}
+
+.direction-form__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.direction-form__step {
+  color: var(--ink-faint);
+  font-size: var(--fs-caption);
+}
+
+.direction-form__nav {
+  display: flex;
+  gap: 8px;
+}
+
+.direction-form__summary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+}
+
+.direction-form__summary dt {
+  color: var(--ink-faint);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.direction-form__summary dd {
+  margin: 2px 0 0;
+  font-size: var(--fs-body);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}

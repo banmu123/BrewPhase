@@ -393,6 +393,65 @@ CREATE TABLE IF NOT EXISTS work_context_resources (
 CREATE INDEX IF NOT EXISTS work_context_resources_context_idx ON work_context_resources (work_context_id);
 `
 
+/**
+ * 009 · Personal Direction：现状 → 方向 → 阶段。
+ *
+ * 三张表都是 Desktop 本地数据（不进 change_log / iOS 同步）。现状允许存在
+ * 多条历史版本，靠 status 区分 draft / confirmed / archived；方向与阶段
+ * 的 proposed 就是「Agent 提议、等用户确认」的那一条。
+ */
+const PERSONAL_DIRECTION_SQL = `
+CREATE TABLE IF NOT EXISTS current_states (
+  id TEXT PRIMARY KEY,
+  summary TEXT NOT NULL DEFAULT '',
+  work_status TEXT NOT NULL DEFAULT '',
+  capabilities TEXT NOT NULL DEFAULT '',
+  ongoing TEXT NOT NULL DEFAULT '',
+  capacity TEXT NOT NULL DEFAULT '',
+  constraints TEXT NOT NULL DEFAULT '',
+  other TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'draft',
+  source TEXT NOT NULL DEFAULT 'user',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS current_states_status_idx ON current_states (status, updated_at);
+
+CREATE TABLE IF NOT EXISTS directions (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  motivation TEXT NOT NULL DEFAULT '',
+  time_horizon TEXT NOT NULL DEFAULT '',
+  outcomes TEXT NOT NULL DEFAULT '[]',
+  constraints TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'proposed',
+  source TEXT NOT NULL DEFAULT 'user',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS directions_status_idx ON directions (status, updated_at);
+
+CREATE TABLE IF NOT EXISTS stage_goals (
+  id TEXT PRIMARY KEY,
+  direction_id TEXT NOT NULL REFERENCES directions(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  goal TEXT NOT NULL DEFAULT '',
+  expected_outcome TEXT NOT NULL DEFAULT '',
+  completion_criteria TEXT NOT NULL DEFAULT '',
+  time_horizon TEXT NOT NULL DEFAULT '',
+  obstacles TEXT NOT NULL DEFAULT '',
+  work_context_id TEXT REFERENCES work_contexts(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'proposed',
+  source TEXT NOT NULL DEFAULT 'user',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS stage_goals_direction_idx ON stage_goals (direction_id, sort_order);
+CREATE INDEX IF NOT EXISTS stage_goals_status_idx ON stage_goals (status);
+`
+
 export const migrations: Migration[] = [
   { version: 1, name: 'init', sql: INIT_SQL },
   { version: 2, name: 'sync-align-ios', sql: SYNC_ALIGN_SQL },
@@ -401,7 +460,8 @@ export const migrations: Migration[] = [
   { version: 5, name: 'resolver-metadata-separation', sql: RESOLVER_METADATA_SQL },
   { version: 6, name: 'canvas-notes', sql: CANVAS_NOTES_SQL },
   { version: 7, name: 'mcp-access', sql: MCP_ACCESS_SQL },
-  { version: 8, name: 'work-contexts', sql: WORK_CONTEXT_SQL }
+  { version: 8, name: 'work-contexts', sql: WORK_CONTEXT_SQL },
+  { version: 9, name: 'personal-direction', sql: PERSONAL_DIRECTION_SQL }
 ]
 
 /**

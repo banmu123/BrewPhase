@@ -27,6 +27,21 @@ const api: RendererApi = {
       return () => ipcRenderer.removeListener('app:changed', wrapped)
     }
   },
+  // Personal Direction：确认草稿只走这一组通道，MCP 侧没有对应能力。
+  direction: {
+    overview: () => invoke(IPC.directionOverview),
+    saveCurrentState: (draft) => invoke(IPC.directionSaveCurrentState, draft),
+    confirmCurrentState: (id) => invoke(IPC.directionConfirmCurrentState, { id }),
+    createDirection: (input) => invoke(IPC.directionCreateDirection, input),
+    updateDirection: (id, expectedUpdatedAt, patch) =>
+      invoke(IPC.directionUpdateDirection, { id, expectedUpdatedAt, patch }),
+    deleteDirection: (id) => invoke(IPC.directionDeleteDirection, { id }),
+    createStage: (input) => invoke(IPC.directionCreateStage, input),
+    updateStage: (id, expectedUpdatedAt, patch) =>
+      invoke(IPC.directionUpdateStage, { id, expectedUpdatedAt, patch }),
+    deleteStage: (id) => invoke(IPC.directionDeleteStage, { id }),
+    resolveProposal: (kind, id, action) => invoke(IPC.directionResolveProposal, { kind, id, action })
+  },
   coffee: {
     listBeans: () => invoke(IPC.beansList),
     createBean: (draft) => invoke(IPC.beanCreate, draft),

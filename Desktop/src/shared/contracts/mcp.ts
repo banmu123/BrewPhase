@@ -20,7 +20,11 @@ export const MCP_SCOPES = [
   'work_context:read',
   'work_context:create',
   'work_context:update',
-  'work_context:link'
+  'work_context:link',
+  // Personal Direction：Agent 只能读，和「提议」（写草稿）。
+  // 没有 confirm 类 scope——确认动作只存在于应用界面，MCP 无权授出。
+  'direction:read',
+  'direction:propose'
 ] as const
 
 export const mcpScopeSchema = z.enum(MCP_SCOPES)
@@ -30,7 +34,14 @@ export type McpScope = (typeof MCP_SCOPES)[number]
  * 设置页展示时的分组。`group` 只是字典键——显示名由 Renderer 的 i18n
  * （`t.mcp.create.scopeGroup[group]`）提供；权限判断与它对无关。
  */
-export const MCP_SCOPE_GROUP_KEYS = ['records', 'tags', 'coffee', 'canvas', 'workContext'] as const
+export const MCP_SCOPE_GROUP_KEYS = [
+  'records',
+  'tags',
+  'coffee',
+  'canvas',
+  'workContext',
+  'direction'
+] as const
 export type McpScopeGroup = (typeof MCP_SCOPE_GROUP_KEYS)[number]
 
 export const MCP_SCOPE_GROUPS: Array<{ group: McpScopeGroup; scopes: McpScope[] }> = [
@@ -41,7 +52,8 @@ export const MCP_SCOPE_GROUPS: Array<{ group: McpScopeGroup; scopes: McpScope[] 
   {
     group: 'workContext',
     scopes: ['work_context:read', 'work_context:create', 'work_context:update', 'work_context:link']
-  }
+  },
+  { group: 'direction', scopes: ['direction:read', 'direction:propose'] }
 ]
 
 export const MCP_ERROR_CODES = [

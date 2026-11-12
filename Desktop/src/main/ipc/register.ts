@@ -48,6 +48,16 @@ import type { DataLocationService } from '../data-location-service'
 import { DEFAULT_PHASE_RULES } from '../../shared/domain/phase'
 import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from '../../shared/contracts/version'
 import { WINDOW_CHROME, type WindowAppearance } from '../appearance'
+import type {
+  DirectionInput,
+  PersonalDirectionService,
+  StageGoalInput
+} from '../application/personal-direction/personal-direction-service'
+import type {
+  UpdateDirectionPatch,
+  UpdateStageGoalPatch
+} from '../database/repositories/personal-direction'
+import type { CurrentStateDraft, ProposalKind } from '../../shared/contracts/personal-direction'
 
 /**
  * IPC 注册表：**每一个通道**都先校验来源、再校验参数，最后才碰数据库。
@@ -66,6 +76,7 @@ export function registerIpc(params: {
     records: RecordService
     clients: McpClientService
     workContexts: WorkContextService
+    personalDirection: PersonalDirectionService
   }
   bridgeStatus: () => McpBridgeStatus
   /** 内置浏览器：网页在主进程绘制，IPC 只表达意图。 */
@@ -323,6 +334,65 @@ export function registerIpc(params: {
   handle(IPC.dataLocationRelaunch, () => {
     scheduleRelaunch(120)
     return null
+  })
+
+  // MARK: - Personal Direction
+  //
+  // 这一组是**唯一**能把草稿变成正式资料的路径，而它只挂在 IPC 上。
+  // MCP 侧没有对应工具，所以「AI 不能自己把提议转正」不靠自觉，靠通道不存在。
+
+  handle(IPC.directionOverview, () => services.personalDirection.overview())
+
+  handle(IPC.directionSaveCurrentState, (input) =>
+    services.personalDirection.saveCurrentState(input as CurrentStateDraft)
+  )
+
+  handle(IPC.directionConfirmCurrentState, (input) =>
+    services.personalDirection.confirmCurrentState((input as { id: string }).id)
+  )
+
+  handle(IPC.directionCreateDirection, (input) =>
+    services.personalDirection.createDirection(input as DirectionInput)
+  )
+
+  handle(IPC.directionUpdateDirection, (input) => {
+    const value = input as { id: string; expectedUpdatedAt: number; patch: UpdateDirectionPatch }
+    return services.personalDirection.updateDirection(value.id, value.expectedUpdatedAt, value.patch)
+  })
+
+  handle(IPC.directionDeleteDirection, (input) => {
+    services.personalDirection.deleteDirection((input as { id: string }).id)
+    return null
+  })
+
+  handle(IPC.directionCreateStage, (input) =>
+    services.personalDirection.createStage(input as StageGoalInput)
+  )
+
+  handle(IPC.directionUpdateStage, (input) => {
+    const value = input as { id: string; expectedUpdatedAt: number; patch: UpdateStageGoalPatch }
+    return services.personalDirection.updateStage(value.id, value.expectedUpdatedAt, value.patch)
+  })
+
+  handle(IPC.directionDeleteStage, (input) => {
+    services.personalDirection.deleteStage((input as { id: string }).id)
+    return null
+  })
+
+  // 确认与丢弃：同一入口分派。Agent 拿不到这两个动作里的任何一个。
+  handle(IPC.directionResolveProposal, (input) => {
+    const value = input as { kind: ProposalKind; id: string; action: 'confirm' | 'discard' }
+    if (value.action === 'discard') {
+      services.personalDirection.discardDraft(value.kind, value.id)
+      return null
+    }
+    if (value.kind === 'currentState') {
+      return services.personalDirection.confirmCurrentState(value.id)
+    }
+    if (value.kind === 'direction') {
+      return services.personalDirection.confirmDirection(value.id)
+    }
+    return services.personalDirection.confirmStage(value.id)
   })
 
   // MARK: - 内置浏览器

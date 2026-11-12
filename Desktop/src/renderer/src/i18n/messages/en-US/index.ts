@@ -3,6 +3,7 @@ import { browser } from './browser'
 import { canvas } from './canvas'
 import { coffee } from './coffee'
 import { common } from './common'
+import { direction } from './direction'
 import { mcp } from './mcp'
 import { navigation } from './navigation'
 import { onboarding } from './onboarding'
@@ -26,5 +27,6 @@ export const enUS = {
   mcp,
   onboarding,
   studio,
-  browser
+  browser,
+  direction
 } satisfies Messages

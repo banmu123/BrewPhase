@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { McpScope } from '@shared/contracts/mcp'
 import { openDatabase, type DatabaseHandle } from '../../src/main/database/client'
 import { WorkContextService } from '../../src/main/application/work-context/work-context-service'
+import { PersonalDirectionService } from '../../src/main/application/personal-direction/personal-direction-service'
 import { ApplicationEvents } from '../../src/main/application/events/application-events'
 import { RecordService } from '../../src/main/application/records/record-service'
 import { CoffeeService } from '../../src/main/application/coffee/coffee-service'
@@ -54,6 +55,8 @@ describe.skipIf(!platformSupportsBridge())('MCP Bridge socket 集成', () => {
       coffee: new CoffeeService(handle.db),
       canvas: new CanvasService(handle.db, handle.deviceId, events),
       workContexts: new WorkContextService(handle.db, events),
+
+      personalDirection: new PersonalDirectionService(handle.db, events),
     }
     server = new BridgeServer(bridgePaths(dir), ctx, '0.1.0-test')
     await server.start()

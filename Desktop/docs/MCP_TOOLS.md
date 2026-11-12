@@ -151,6 +151,13 @@ annotation）+ `notes[]` + `strokes[]`（只有 id/颜色/宽度/点数量，**�
 | list_beans / get_bean / list_brews / list_tastings / get_coffee_summary | coffee:read |
 | list_canvases / get_canvas | canvas:read |
 | create_canvas / add_record_to_canvas / create_canvas_note / update_canvas_note / annotate_canvas_node | canvas:write |
+| list_work_contexts / get_work_context | work_context:read |
+| create_work_context / link_work_context_resource | work_context:create |
+| update_work_context | work_context:update |
+| get_direction_overview | direction:read |
+| propose_current_state / propose_direction / propose_stage_goal | direction:propose |
+
+**没有** `direction:confirm` 这类 scope。确认动作不存在于 MCP 侧，故无从授出。
 
 ## Work Context（持续工作上下文）
 
@@ -205,3 +212,64 @@ note?, idempotency_key }
 record / canvas 必须真实存在（否则 `NOT_FOUND`）；url 仅 http/https；同一资源
 重复关联返回已有关联（`created: false`）。返回
 `{ resource: { resource_id, resource_type, resource_ref, role, note, label }, created }`。
+
+## Personal Direction（现状 / 方向 / 阶段）
+
+> 设计见 `docs/PERSONAL_DIRECTION_SPEC.md`。Desktop 本地数据，不进 iOS 同步。
+>
+> **这组工具只有 read 与 propose。** 确认动作只挂在应用界面的 IPC 上，
+> MCP 侧没有对应工具、也没有对应 scope——AI 因此无法把草稿变成用户的正式资料。
+> 这不是调用约定，是通道层面的事实：少一条通道，就少一条越界的路径。
+
+### `get_direction_overview` — `direction:read`
+
+```ts
+{ include_state_history?: boolean }
+```
+
+返回 `{ current_state, current_state_draft, directions[], stages[],
+pending_proposals: { current_state, directions, stages } }`。
+
+- `current_state` 是**已确认**的现状（没有就是 `null`）；`current_state_draft`
+  是 Agent 之前写的那份草稿。两者分开，AI 不该把草稿当成用户的真实状态。
+- `directions[]` 含 `direction_id / title / description / motivation /
+  time_horizon / outcomes / constraints / status / source`。
+- `stages[]` 含 `stage_id / direction_id / name / goal / expected_outcome /
+  completion_criteria / time_horizon / obstacles / work_context_id / status`。
+- 刻意不返回 `created_at`：AI 很容易拿一个时间戳编出「最近三周没进展」，
+  而它并没有活动数据支撑这个结论。
+
+### `propose_current_state` — `direction:propose`
+
+```ts
+{ summary?, work_status?, capabilities?, ongoing?, capacity?, constraints?, other? }
+```
+
+写入**草稿**，不替换已确认的现状。重复调用覆盖上一份草稿（不会堆成多条）。
+字段留空比编造好——用户没说过的事不要替他说。
+
+返回 `{ state_id, status: 'draft', note }`。
+
+### `propose_direction` — `direction:propose`
+
+```ts
+{ title, description?, motivation?, time_horizon?, outcomes?: string[], constraints? }
+```
+
+写入 `status: 'proposed'` 的方向。同名提议视为同一份草稿的再编辑，覆盖而非追加。
+返回 `{ direction_id, title, status: 'proposed', note }`。
+
+不要求量化：无法量化的方向不折算成分数。
+
+### `propose_stage_goal` — `direction:propose`
+
+```ts
+{ direction_id, name, goal?, expected_outcome?, completion_criteria?,
+  time_horizon?, obstacles?, work_context_id? }
+```
+
+写入 `status: 'proposed'` 的阶段，`direction_id` 必须指向真实方向（否则 `NOT_FOUND`）。
+同名阶段在同一方向下同样覆盖。`completion_criteria` 应当是能被观察到的；
+用户没说过怎么算完成，就留空，不要自己发明一个阈值。
+
+返回 `{ stage_id, direction_id, status: 'proposed', note }`。

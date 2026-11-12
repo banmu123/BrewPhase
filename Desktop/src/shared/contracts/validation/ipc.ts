@@ -5,6 +5,14 @@ import { canvasNodeMoveSchema, canvasNodeResizeSchema, canvasNoteSchema, canvasS
 import { mcpClientCreateInputSchema } from '../mcp'
 import { browserBoundsUpdateSchema, browserNavigateSchema, browserOpenSchema } from '../browser'
 import { chromeProfileRequestSchema } from '../bookmarks'
+import {
+  currentStateDraftSchema,
+  directionInputSchema,
+  directionPatchSchema,
+  proposalKindSchema,
+  stageGoalInputSchema,
+  stageGoalPatchSchema
+} from '../personal-direction'
 
 /**
  * IPC 的**唯一**契约清单：通道名 + 请求体校验 + 响应形状。
@@ -109,7 +117,20 @@ export const IPC = {
   dataLocationStatus: 'data-location:status',
   dataLocationChoose: 'data-location:choose',
   dataLocationReset: 'data-location:reset',
-  dataLocationRelaunch: 'data-location:relaunch'
+  dataLocationRelaunch: 'data-location:relaunch',
+
+  // Personal Direction：桌面端本地数据。**确认类动作只在这里出现**——
+  // MCP 侧没有对应通道，AI 因此无法把草稿转成正式资料。
+  directionOverview: 'direction:overview',
+  directionSaveCurrentState: 'direction:current-state:save',
+  directionConfirmCurrentState: 'direction:current-state:confirm',
+  directionCreateDirection: 'direction:create',
+  directionUpdateDirection: 'direction:update',
+  directionDeleteDirection: 'direction:delete',
+  directionCreateStage: 'direction:stage:create',
+  directionUpdateStage: 'direction:stage:update',
+  directionDeleteStage: 'direction:stage:delete',
+  directionResolveProposal: 'direction:proposal:resolve'
 } as const
 
 export const ipcRequestSchemas = {
@@ -207,7 +228,33 @@ export const ipcRequestSchemas = {
   [IPC.dataLocationStatus]: z.void(),
   [IPC.dataLocationChoose]: z.void(),
   [IPC.dataLocationReset]: z.void(),
-  [IPC.dataLocationRelaunch]: z.void()
+  [IPC.dataLocationRelaunch]: z.void(),
+
+  // Personal Direction
+  [IPC.directionOverview]: z.void(),
+  [IPC.directionSaveCurrentState]: currentStateDraftSchema,
+  [IPC.directionConfirmCurrentState]: z.object({ id: z.string().uuid() }),
+  [IPC.directionCreateDirection]: directionInputSchema,
+  [IPC.directionUpdateDirection]: z.object({
+    id: z.string().uuid(),
+    expectedUpdatedAt: z.number().int(),
+    patch: directionPatchSchema
+  }),
+  [IPC.directionDeleteDirection]: z.object({ id: z.string().uuid() }),
+  [IPC.directionCreateStage]: stageGoalInputSchema,
+  [IPC.directionUpdateStage]: z.object({
+    id: z.string().uuid(),
+    expectedUpdatedAt: z.number().int(),
+    patch: stageGoalPatchSchema
+  }),
+  [IPC.directionDeleteStage]: z.object({ id: z.string().uuid() }),
+  // 确认与丢弃合在一个通道：两者的入参形状相同，分成两条只会让
+  // preload 多一个几乎一样的函数。
+  [IPC.directionResolveProposal]: z.object({
+    kind: proposalKindSchema,
+    id: z.string().uuid(),
+    action: z.enum(['confirm', 'discard'])
+  })
 } as const
 
 export type IpcChannel = keyof typeof ipcRequestSchemas

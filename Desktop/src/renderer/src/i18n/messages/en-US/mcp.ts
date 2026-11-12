@@ -26,7 +26,8 @@ export const mcp = {
       tags: 'Tags',
       coffee: 'Coffee',
       workContext: 'Work context',
-      canvas: 'Canvas'
+      canvas: 'Canvas',
+      direction: 'Personal direction'
     }
   },
   clients: {

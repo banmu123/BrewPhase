@@ -313,6 +313,79 @@ export const TOOL_DEFINITIONS = {
       node_id: uuid,
       annotation: z.string().max(2_000)
     })
+  },
+
+  // MARK: - Personal Direction
+  //
+  // 只有 read 与 propose：Agent 能读全部上下文、能写「提议」，但**没有**
+  // confirm 类工具。确认只发生在应用界面里——这是结构保证，不是约定。
+
+  get_direction_overview: {
+    scope: 'direction:read',
+    write: false,
+    description:
+      'Read the user personal direction: the confirmed current state, their long-term ' +
+      'directions, stage goals, and how many proposals are waiting for confirmation. ' +
+      'Call this first — never assume what the user is working on or what they want.',
+    input: z.object({
+      /** 现状的历史版本（已归档）只在需要回顾变化时要。 */
+      include_state_history: z.boolean().optional()
+    })
+  },
+
+  propose_current_state: {
+    scope: 'direction:propose',
+    write: true,
+    description:
+      'Propose a description of the user current state, based on what they actually told you. ' +
+      'This writes a DRAFT: it does not replace the confirmed state, and it becomes official ' +
+      'only after the user confirms it in the app. Re-proposing replaces the previous draft. ' +
+      'Leave fields empty rather than inventing details.',
+    input: z.object({
+      summary: z.string().max(4_000).optional(),
+      work_status: z.string().max(2_000).optional(),
+      capabilities: z.string().max(2_000).optional(),
+      ongoing: z.string().max(2_000).optional(),
+      capacity: z.string().max(2_000).optional(),
+      constraints: z.string().max(2_000).optional(),
+      other: z.string().max(2_000).optional()
+    })
+  },
+
+  propose_direction: {
+    scope: 'direction:propose',
+    write: true,
+    description:
+      'Propose a long-term direction the user described in their own words. ' +
+      'Creates a proposal the user must confirm; it never becomes their direction automatically. ' +
+      'Write the direction as the user expressed it — do not quantify it or turn it into a score.',
+    input: z.object({
+      title: z.string().trim().min(1).max(120),
+      description: z.string().max(4_000).optional(),
+      motivation: z.string().max(2_000).optional(),
+      time_horizon: z.string().max(200).optional(),
+      outcomes: z.array(z.string().max(300)).max(20).optional(),
+      constraints: z.string().max(2_000).optional()
+    })
+  },
+
+  propose_stage_goal: {
+    scope: 'direction:propose',
+    write: true,
+    description:
+      'Propose one verifiable stage toward an existing direction. Creates a proposal the user ' +
+      'must confirm. `completion_criteria` should be something observable; if the user has not ' +
+      'said how they would know it is done, leave it empty instead of inventing a threshold.',
+    input: z.object({
+      direction_id: uuid,
+      name: z.string().trim().min(1).max(120),
+      goal: z.string().max(2_000).optional(),
+      expected_outcome: z.string().max(2_000).optional(),
+      completion_criteria: z.string().max(2_000).optional(),
+      time_horizon: z.string().max(200).optional(),
+      obstacles: z.string().max(2_000).optional(),
+      work_context_id: uuid.optional()
+    })
   }
 } satisfies Record<string, ToolDefinition>
 

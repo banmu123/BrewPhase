@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm'
 import type { McpScope } from '../../shared/contracts/mcp'
 import { TOOL_DEFINITIONS, type ToolName } from '../../shared/mcp/tool-schemas'
 import { type WorkContextService } from '../application/work-context/work-context-service'
+import { type PersonalDirectionService } from '../application/personal-direction/personal-direction-service'
 import type { WorkContextStatus } from '../../shared/contracts/work-context'
 import type { AuthenticatedClient, McpClientService } from '../application/authorization/permission-service'
 import type { CanvasService } from '../application/canvas/canvas-service'
@@ -28,6 +29,7 @@ export type RouterContext = {
   coffee: CoffeeService
   canvas: CanvasService
   workContexts: WorkContextService
+  personalDirection: PersonalDirectionService
 }
 
 type HandlerResult = {
@@ -257,6 +259,74 @@ const HANDLERS: Record<ToolName, ToolHandler> = {
       }),
       entityType: 'workContextResource',
       entityId: result.resource.id
+    }
+  },
+
+  // MARK: - Personal Direction
+  //
+  // 三个 propose 工具写进去的都是草稿。这里没有、也不会有 confirm——
+  // Agent 拿不到那条路径，用户确认只发生在应用界面。
+
+  get_direction_overview: (ctx, params) => ({
+    data: ctx.personalDirection.overviewForMcp(params.include_state_history === true)
+  }),
+
+  propose_current_state: (ctx, params) => {
+    const state = ctx.personalDirection.proposeCurrentState({
+      summary: (params.summary as string | undefined) ?? '',
+      workStatus: (params.work_status as string | undefined) ?? '',
+      capabilities: (params.capabilities as string | undefined) ?? '',
+      ongoing: (params.ongoing as string | undefined) ?? '',
+      capacity: (params.capacity as string | undefined) ?? '',
+      constraints: (params.constraints as string | undefined) ?? '',
+      other: (params.other as string | undefined) ?? ''
+    })
+    return {
+      data: {
+        state_id: state.id,
+        status: state.status,
+        note: 'Draft only — the user must confirm it in BrewPhase before it becomes their current state.'
+      }
+    }
+  },
+
+  propose_direction: (ctx, params) => {
+    const direction = ctx.personalDirection.proposeDirection({
+      title: params.title as string,
+      description: params.description as string | undefined,
+      motivation: params.motivation as string | undefined,
+      timeHorizon: params.time_horizon as string | undefined,
+      outcomes: params.outcomes as string[] | undefined,
+      constraints: params.constraints as string | undefined
+    })
+    return {
+      data: {
+        direction_id: direction.id,
+        title: direction.title,
+        status: direction.status,
+        note: 'Proposal only — the user must confirm it in BrewPhase.'
+      }
+    }
+  },
+
+  propose_stage_goal: (ctx, params) => {
+    const stage = ctx.personalDirection.proposeStage({
+      directionId: params.direction_id as string,
+      name: params.name as string,
+      goal: params.goal as string | undefined,
+      expectedOutcome: params.expected_outcome as string | undefined,
+      completionCriteria: params.completion_criteria as string | undefined,
+      timeHorizon: params.time_horizon as string | undefined,
+      obstacles: params.obstacles as string | undefined,
+      workContextId: (params.work_context_id as string | undefined) ?? null
+    })
+    return {
+      data: {
+        stage_id: stage.id,
+        direction_id: stage.directionId,
+        status: stage.status,
+        note: 'Proposal only — the user must confirm it in BrewPhase.'
+      }
     }
   }
 }

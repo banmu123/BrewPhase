@@ -492,3 +492,89 @@ export const workContextResources = sqliteTable(
     )
   ]
 )
+
+// MARK: - Personal Direction（migration 9）
+//
+// 三层：现状 → 方向 → 阶段。与 Work Context 同为 Desktop 本地数据，
+// 不进 change_log / iOS 同步。
+
+/**
+ * 我的现状。**每次确认生成一个新版本**，旧的 confirmed 转 archived——
+ * 「我去年怎么描述自己」因此可查，不被覆盖。同一时刻最多一条 confirmed。
+ */
+export const currentStates = sqliteTable(
+  'current_states',
+  {
+    id: text('id').primaryKey(),
+    summary: text('summary').notNull().default(''),
+    workStatus: text('work_status').notNull().default(''),
+    capabilities: text('capabilities').notNull().default(''),
+    ongoing: text('ongoing').notNull().default(''),
+    capacity: text('capacity').notNull().default(''),
+    constraints: text('constraints').notNull().default(''),
+    other: text('other').notNull().default(''),
+    /** draft | confirmed | archived */
+    status: text('status').notNull().default('draft'),
+    /** user | agent —— 来源可追溯，Agent 写的永远是 draft */
+    source: text('source').notNull().default('user'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (table) => [index('current_states_status_idx').on(table.status, table.updatedAt)]
+)
+
+/** 长期方向：用户自己定义的「希望成为的样子」，不折算成分数。 */
+export const directions = sqliteTable(
+  'directions',
+  {
+    id: text('id').primaryKey(),
+    title: text('title').notNull(),
+    description: text('description').notNull().default(''),
+    motivation: text('motivation').notNull().default(''),
+    timeHorizon: text('time_horizon').notNull().default(''),
+    /** JSON 字符串数组：可观察的结果。 */
+    outcomes: text('outcomes').notNull().default('[]'),
+    constraints: text('constraints').notNull().default(''),
+    /** proposed | active | paused | achieved | dropped */
+    status: text('status').notNull().default('proposed'),
+    source: text('source').notNull().default('user'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (table) => [index('directions_status_idx').on(table.status, table.updatedAt)]
+)
+
+/**
+ * 阶段目标：把方向切成可验证的一段。
+ * 同一方向同一时刻只保留一个 active——「当前阶段」是单数，其余自动转 paused，
+ * 阶段序列因此不会被多个「当前」撕开。
+ */
+export const stageGoals = sqliteTable(
+  'stage_goals',
+  {
+    id: text('id').primaryKey(),
+    directionId: text('direction_id')
+      .notNull()
+      .references(() => directions.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    goal: text('goal').notNull().default(''),
+    expectedOutcome: text('expected_outcome').notNull().default(''),
+    completionCriteria: text('completion_criteria').notNull().default(''),
+    timeHorizon: text('time_horizon').notNull().default(''),
+    obstacles: text('obstacles').notNull().default(''),
+    /** 关联的持续工作；Work Context 被删时置空而不是连带删阶段。 */
+    workContextId: text('work_context_id').references(() => workContexts.id, {
+      onDelete: 'set null'
+    }),
+    /** proposed | active | paused | completed | revised */
+    status: text('status').notNull().default('proposed'),
+    source: text('source').notNull().default('user'),
+    sortOrder: integer('sort_order').notNull().default(0),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (table) => [
+    index('stage_goals_direction_idx').on(table.directionId, table.sortOrder),
+    index('stage_goals_status_idx').on(table.status)
+  ]
+)

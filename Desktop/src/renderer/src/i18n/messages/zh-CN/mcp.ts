@@ -26,7 +26,8 @@ export const mcp = {
       tags: '标签',
       coffee: '咖啡',
       workContext: '工作上下文',
-      canvas: '画布'
+      canvas: '画布',
+      direction: '个人方向'
     }
   },
   clients: {

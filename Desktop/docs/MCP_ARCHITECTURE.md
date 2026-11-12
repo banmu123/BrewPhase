@@ -1,7 +1,8 @@
 # BrewPhase MCP V1 — 架构（AI Action Gateway）
 
-> 状态：V1 已实现（2026-11-09）；2026-11-12 起支持 Windows（Named Pipe）
-> 并新增 Work Context 工具组（共 23 个工具）。这份文档描述**已经落地的结构**，不是提案。
+> 状态：V1 已实现（2026-11-09）；2026-11-12 起支持 Windows（Named Pipe），
+> 并新增 Work Context 与 Personal Direction 工具组（共 27 个工具）。
+> 这份文档描述**已经落地的结构**，不是提案。
 > 工具清单见 `MCP_TOOLS.md`，信任边界与授权模型见 `MCP_SECURITY.md`。
 
 ## 1. 目标与边界

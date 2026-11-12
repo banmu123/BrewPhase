@@ -1,6 +1,7 @@
 import { canvas } from './canvas'
 import { coffee } from './coffee'
 import { common } from './common'
+import { direction } from './direction'
 import { browser } from './browser'
 import { mcp } from './mcp'
 import { navigation } from './navigation'
@@ -25,7 +26,8 @@ export const zhCN = {
   mcp,
   onboarding,
   studio,
-  browser
+  browser,
+  direction
 }
 
 export type Messages = typeof zhCN

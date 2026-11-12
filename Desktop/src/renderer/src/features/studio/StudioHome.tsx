@@ -4,6 +4,7 @@ import { api } from '../../shared/api'
 import { useI18n } from '../../i18n'
 import { useAppStore } from '../../app/store'
 import { WorkContextSection } from './WorkContextSection'
+import { PersonalDirectionPanel } from './PersonalDirectionPanel'
 import { CoffeeStack } from './CoffeeStack'
 import { RecordsStack } from './RecordsStack'
 import { CanvasStack } from './CanvasStack'
@@ -100,6 +101,9 @@ export function StudioHome() {
           </StackSection>
         </div>
 
+        {/* 先方向（要去哪），再手头的工作（现在在做什么）——
+            这是规格 §8 的顺序：My Direction 在 Current Activity 之上。 */}
+        <PersonalDirectionPanel />
         <WorkContextSection />
       </div>
     </div>
