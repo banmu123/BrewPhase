@@ -3,8 +3,20 @@ export const studio = {
   brand: 'BREWPHASE',
   appMenu: '应用菜单（Alt 也可唤出）',
   overline: '个人工作室',
+  // 品牌主文案：Studio Home 的固定标题已改为动态问候，但 About / 产品宣传等
+  // 场景仍可能复用这句，所以保留原键，不随本次改动全局删除。
   title: '为在意的事，留出位置。',
   subtitle: '你的桌面、你的收藏、你的想法。',
+  /** 动态问候：按设备本地时段取 `greeting[key]`，标识由 shared/greeting.ts 提供。 */
+  greeting: {
+    lateNight: '夜深了',
+    morning: '上午好',
+    midday: '中午好',
+    afternoon: '下午好',
+    evening: '晚上好'
+  },
+  /** 辅助文案：所有时段统一，视觉权重低于标题。 */
+  greetingSubtitle: '今天，也按自己的节奏来。',
   back: '返回 Studio',
   search: '搜索记录',
   quickAdd: '快速添加',

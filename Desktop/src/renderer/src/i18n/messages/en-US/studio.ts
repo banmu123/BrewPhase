@@ -3,8 +3,23 @@ export const studio = {
   brand: 'BREWPHASE',
   appMenu: 'App menu (Alt also opens it)',
   overline: 'YOUR PERSONAL STUDIO',
+  // Brand line kept for About / marketing surfaces; Studio Home now uses the
+  // time-based greeting below. Do not remove this key as part of that change.
   title: 'Make room for what matters.',
   subtitle: 'Your desk. Your collections. Your ideas.',
+  /**
+   * Natural English, not a word-for-word rendering of the five Chinese buckets:
+   * English has no "Good noon", so midday and afternoon share "Good afternoon".
+   * The keys still map 1:1 to the local-time rules in shared/greeting.ts.
+   */
+  greeting: {
+    lateNight: "It's late",
+    morning: 'Good morning',
+    midday: 'Good afternoon',
+    afternoon: 'Good afternoon',
+    evening: 'Good evening'
+  },
+  greetingSubtitle: 'Take today at your own pace.',
   back: 'Back to Studio',
   search: 'Search records',
   quickAdd: 'Quick add',

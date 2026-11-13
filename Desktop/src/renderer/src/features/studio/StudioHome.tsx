@@ -9,6 +9,7 @@ import { CoffeeStack } from './CoffeeStack'
 import { RecordsStack } from './RecordsStack'
 import { CanvasStack } from './CanvasStack'
 import { StackSection } from './StackSection'
+import { useTimeGreeting } from './useTimeGreeting'
 
 /**
  * Studio Home：应用默认首页，也是三个空间的唯一入口。
@@ -24,6 +25,7 @@ import { StackSection } from './StackSection'
  */
 export function StudioHome() {
   const { t } = useI18n()
+  const greeting = useTimeGreeting()
   const setModule = useAppStore((state) => state.setModule)
   const [beans, setBeans] = useState<Bean[]>([])
   const [records, setRecords] = useState<RecordItem[]>([])
@@ -58,8 +60,8 @@ export function StudioHome() {
       <div className="studio-home__inner">
         <header className="studio-hero">
           <span className="overline">{t.studio.overline}</span>
-          <h1 className="studio-hero__title">{t.studio.title}</h1>
-          <p className="studio-hero__sub">{t.studio.subtitle}</p>
+          <h1 className="studio-hero__title">{t.studio.greeting[greeting]}</h1>
+          <p className="studio-hero__sub">{t.studio.greetingSubtitle}</p>
         </header>
 
         {error && <div className="error">{error}</div>}

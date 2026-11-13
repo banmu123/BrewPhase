@@ -3351,6 +3351,8 @@ body.canvas-focus .canvas-topbar {
   line-height: 1.16;
   letter-spacing: -0.022em;
   color: var(--ink);
+  /* 动态问候随时段/语言换字：锁住一行高度，文案变短也不让下方桌面向上跳。 */
+  min-height: 1.16em;
 }
 
 .studio-hero__sub {
