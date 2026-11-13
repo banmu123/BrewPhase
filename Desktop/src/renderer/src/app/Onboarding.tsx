@@ -6,7 +6,7 @@ import { OnboardingAgent } from './OnboardingAgent'
 /**
  * 首次启动引导（统一入口）。
  *
- * 三条路：连接 AI Agent / 配对 iPhone / 先进入。两条配置路径都是可选的，
+ * 三条路：连接 AI Agent / 配对移动设备 / 先进入。两条配置路径都是可选的，
  * 引导本身必须随时可退出——它不是许可证协议。
  *
  * 版本标记的兼容是这里最容易被忽略的一点：
@@ -106,7 +106,7 @@ export function Onboarding({
                   className="onboarding-choice"
                   onClick={() => setStage('pairing')}
                 >
-                  <span className="onboarding-choice__label">{t.onboarding.welcome.pairPhone}</span>
+                  <span className="onboarding-choice__label">{t.onboarding.welcome.pairDevice}</span>
                 </button>
               </div>
 

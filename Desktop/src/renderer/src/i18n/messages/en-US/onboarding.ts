@@ -20,7 +20,7 @@ export const onboarding = {
     title: 'Your personal space, connected to the tools you trust.',
     lead: 'BrewPhase keeps your data on this machine. You can optionally connect an AI agent, and let it read and help organise your material within the permissions you grant.',
     connectAgent: 'Connect an AI agent',
-    pairPhone: 'Pair an iPhone',
+    pairDevice: 'Pair a mobile device',
     skip: 'Skip for now and open BrewPhase',
     note: 'Both paths are optional. You can set either up later in Settings.'
   },

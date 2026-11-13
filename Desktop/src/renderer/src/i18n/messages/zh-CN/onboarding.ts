@@ -1,7 +1,7 @@
 /**
  * 首次启动引导。
  *
- * 两部分：统一入口（连接 AI / 配对 iPhone / 先进入）与 AI 接入流程。
+ * 两部分：统一入口（连接 AI / 配对移动设备 / 先进入）与 AI 接入流程。
  * 语气要求：两条路径都是可选的，不催促、不暗示「不连就落后」。
  */
 export const onboarding = {
@@ -21,7 +21,7 @@ export const onboarding = {
     title: '你的个人空间，也可以连接你信任的 AI 工具。',
     lead: 'BrewPhase 把你的数据保存在本机。你可以选择连接 AI Agent，让它在明确授权的范围内读取和协助整理你的个人资料。',
     connectAgent: '连接 AI Agent',
-    pairPhone: '配对 iPhone',
+    pairDevice: '配对移动设备',
     skip: '暂时跳过，先进入 BrewPhase',
     note: '两条路径都是可选的，之后随时可以在设置里配置。'
   },

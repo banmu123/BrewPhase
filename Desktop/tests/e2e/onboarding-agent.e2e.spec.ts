@@ -58,7 +58,7 @@ test('新用户：统一入口 → 选 Codex → 生成 TOML 配置', async () =
     // 统一入口：两条配置路径 + 跳过
     await expect(page.locator('.onboarding__card')).toBeVisible()
     await expect(page.getByRole('button', { name: '连接 AI Agent' })).toBeVisible()
-    await expect(page.getByRole('button', { name: '配对 iPhone' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '配对移动设备' })).toBeVisible()
     await expect(page.getByRole('button', { name: '暂时跳过，先进入 BrewPhase' })).toBeVisible()
     await shoot(page, '1-welcome')
 
