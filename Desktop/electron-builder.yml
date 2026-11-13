@@ -6,12 +6,25 @@ directories:
 files:
   - out/**/*
   - package.json
+  # MCP runtime 由 extraResources 放到 asar 之外，asar 里不再保留一份副本。
+  - "!out/mcp/**"
 asar: true
 # better-sqlite3 13 自带各平台 N-API 预编译二进制（gypfile: false），
 # 不需要在打包时重建原生模块；显式解包避免 asar 内的 .node 无法加载。
 npmRebuild: false
 asarUnpack:
   - "**/better-sqlite3/prebuilds/**/*.node"
+# MCP STDIO runtime —— 必须落在 asar 之外。
+# 入口由 Codex / WorkBuddy 等外部客户端用普通 Node spawn，而 Node 不认识 asar
+# 的虚拟文件系统，所以把它复制到 <resources>/mcp。
+# 构建产物是**单文件**（vite.mcp.config.ts 把 SDK 与 zod 全部内联），因此这里
+# 不需要再带 node_modules —— 也就绕开了 pnpm 符号链接导致依赖复制不全的问题。
+extraResources:
+  - from: out/mcp
+    to: mcp
+    filter:
+      - "**/*"
+      - "!**/*.map"
 artifactName: "BrewPhase-${version}-${os}-${arch}.${ext}"
 
 mac:

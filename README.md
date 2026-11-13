@@ -71,7 +71,8 @@ The [Releases page](https://github.com/banmu123/BrewPhase/releases) carries thre
 **desktop-v0.1.0** (published 2026-11-10) with the macOS build plus an unsigned Windows x64 NSIS
 `.exe` — each with `.sha256` files, anonymous-downloadable. The Windows build has no Authenticode
 signature yet, so Windows Defender
-SmartScreen will warn; MCP V1 is macOS/Linux-only and is not supported in the Windows build. The
+SmartScreen will warn. MCP works on macOS, Linux and Windows — Windows uses a named pipe with an
+ACL limited to the current user. The
 download entry inside the iOS app points at this same Releases page — there is no external download
 site to keep in sync. The canonical, dated record is
 [docs/PROJECT\_STATUS.md](docs/PROJECT_STATUS.md).

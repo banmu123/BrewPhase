@@ -32,6 +32,31 @@ import { APP_VERSION } from '../shared/contracts/version'
 import { EMBED_FRAME_ORIGINS } from '../shared/link-embed'
 
 /**
+ * MCP STDIO 入口的绝对路径。
+ *
+ * 打包后入口**不能**留在 `app.asar` 里：它是被 Codex / WorkBuddy 这类外部
+ * 客户端用普通 Node `spawn` 起来的，而 Node 不认识 asar 的虚拟文件系统。
+ * 所以 electron-builder 用 extraResources 把入口连同它需要的三个包
+ * （@modelcontextprotocol/server、core、zod）复制到 `<resources>/mcp/`，
+ * 这里返回那个真实路径。开发态仍用仓库内的 out/mcp。
+ *
+ * 纯函数式导出，便于单测在不启动 Electron 的情况下核对两种分支。
+ */
+export function resolveMcpEntryPath(params?: {
+  packaged?: boolean
+  resourcesPath?: string
+  appPath?: string
+}): string {
+  const packaged = params?.packaged ?? app.isPackaged
+  if (packaged) {
+    const resources = params?.resourcesPath ?? process.resourcesPath
+    return join(resources, 'mcp', 'stdio.mjs')
+  }
+  const appPath = params?.appPath ?? app.getAppPath()
+  return join(appPath, 'out', 'mcp', 'stdio.mjs')
+}
+
+/**
  * 主进程入口。
  *
  * 启动顺序是有意为之：先开库（失败就退出，绝不带着半可用的库进界面）、再挂
@@ -193,11 +218,11 @@ function bootstrap(): void {
     protocolVersion: BRIDGE_PROTOCOL_VERSION,
     clientCount: clients.count(),
     userDataDir: app.getPath('userData'),
-    mcpEntryPath: join(app.getAppPath(), 'out', 'mcp', 'stdio.mjs'),
+    mcpEntryPath: resolveMcpEntryPath(),
     platformSupported: platformSupportsBridge()
   })
 
-  // Local Bridge：Windows 的 Named Pipe ACL 未验证，V1 只在 darwin/linux 启动。
+  // Local Bridge：macOS/Linux 用 Unix socket，Windows 用 Named Pipe（ACL 限当前用户）。
   if (platformSupportsBridge()) {
     const server = new BridgeServer(
       bridgePaths(app.getPath('userData')),

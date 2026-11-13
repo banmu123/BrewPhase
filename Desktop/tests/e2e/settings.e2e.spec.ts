@@ -87,7 +87,8 @@ test('Settings：二级导航、常规信息与 AI 连接全流程', async () =>
   // 配置模板里是真实入口路径（不是占位符）
   const configPreview = await page.locator('pre').innerText()
   expect(configPreview).toContain('mcp_servers.brewphase')
-  expect(configPreview).toContain('out/mcp/stdio.mjs')
+  // Windows 上是反斜杠，且 TOML 里还会被转义；只校验文件名，避免平台相关。
+  expect(configPreview).toContain('stdio.mjs')
   expect(configPreview).toContain('BREWPHASE_MCP_USER_DATA_DIR')
   expect(configPreview).toContain(tokenText)
 

@@ -18,7 +18,9 @@
     "mcp:start": "node out/mcp/stdio.mjs",
     "mcp:dev": "vite build --config vite.mcp.config.ts --watch",
     "db:generate": "drizzle-kit generate",
-    "dist": "electron-vite build && electron-builder"
+    "dist": "pnpm mcp:build && electron-vite build && electron-builder && pnpm verify:mcp-runtime",
+    "dist:dir": "pnpm mcp:build && electron-vite build && electron-builder --dir && pnpm verify:mcp-runtime",
+    "verify:mcp-runtime": "node scripts/verify-mcp-runtime.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

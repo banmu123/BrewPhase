@@ -276,7 +276,7 @@ userData 目录。
 - **同步** —— v1 协议跑在局域网 HTTP 上：一次性配对、Bearer 身份、HMAC 签名写入、快照 → 变更日志 →
   媒体分块，冲突显式上报。
 - **MCP** —— 独立 stdio Server（MCP SDK），通过 `0700` 目录 / `0600` 权限的 Unix socket 与 Electron 主进程
-  用 NDJSON 通信。不监听 TCP，V1 不支持 Windows。
+  用 NDJSON 通信；Windows 走 Named Pipe（ACL 限当前用户）。不监听 TCP。
 - **安全模型** —— 两份互补文档：
   [`Desktop/docs/SECURITY_MODEL.md`](Desktop/docs/SECURITY_MODEL.md)（Electron 边界）与
   [`Desktop/docs/MCP_SECURITY.md`](Desktop/docs/MCP_SECURITY.md)（AI 客户端边界）。

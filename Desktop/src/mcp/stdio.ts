@@ -34,7 +34,7 @@ Environment:
 
 Notes:
   - stdout carries MCP protocol messages only; logs go to stderr.
-  - The BrewPhase desktop app must be running (V1 requires macOS/Linux).`
+  - The BrewPhase desktop app must be running on the same machine (macOS, Linux, Windows).`
 
 type ParsedArgs = { userDataDir: string | undefined; help: boolean; version: boolean }
 

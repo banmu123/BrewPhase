@@ -6,6 +6,7 @@ import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import type { McpScope } from '@shared/contracts/mcp'
 import { platformSupportsBridge } from '../../src/main/mcp-bridge/bridge-contract'
+import { TOOL_NAMES } from '../../src/shared/mcp/tool-schemas'
 import { WorkContextService } from '../../src/main/application/work-context/work-context-service'
 import { PersonalDirectionService } from '../../src/main/application/personal-direction/personal-direction-service'
 import { openDatabase, type DatabaseHandle } from '../../src/main/database/client'
@@ -97,9 +98,10 @@ describe.skipIf(!platformSupportsBridge())('MCP 协议面 — 真实 stdio，仅
   })
 
   describe('MCP 协议面', () => {
-    it('initialize 后能列出全部 23 个工具，且每个都有描述与 inputSchema', async () => {
+    it('initialize 后列出的工具数量与 TOOL_DEFINITIONS 一致，且每个都有描述与 inputSchema', async () => {
       const tools = await client.listTools()
-      expect(tools.tools).toHaveLength(23)
+      // 不写死数字：工具集随功能增长，硬编码只会让每次新增都改一次测试。
+      expect(tools.tools).toHaveLength(TOOL_NAMES.length)
       for (const tool of tools.tools) {
         expect(tool.description ?? '').not.toBe('')
         expect(tool.inputSchema).toBeTruthy()
