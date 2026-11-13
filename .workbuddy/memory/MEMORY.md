@@ -96,6 +96,17 @@
 * 双指只用 `MagnifyGesture`；换 UIKit 手势层会抢走捏合（真机实测）。
 * 点阵屏幕间距钳 14–40pt，不能按比例隐藏；右上角加号必须留给「放大」。
 
+## Desktop：MCP 与接入引导
+
+* 权限预设第一档就是默认值（`MCP_SCOPE_PRESETS[0]`，全量 14 项含写入），
+  顺序即梯度；改默认只改契约一处，两处 `useState` 都跟着走。
+* **默认全给 ≠ 放宽确认边界**：MCP 侧永远没有 confirm 能力，
+  `direction:propose` 只写草稿，方向只能用户在应用内确认。
+* 引导里权限默认折叠成一行摘要，点「调整」才展开；摘要按 `scopes.length`
+  说，不按 preset 名说（否则选「只看记录」还会显示「全部 14 项」）。
+* `.onboarding__card--wide` 底部不留白，由 sticky 的 actions 自己撑（含顶部渐隐），
+  否则内容一长主按钮就被顶出视口。
+
 ## 代码风格与工作流
 
 * 阈值集中 `RAG/Rules/IntelligenceConfig.swift`；中文词表放 `Resources/*.json`。
