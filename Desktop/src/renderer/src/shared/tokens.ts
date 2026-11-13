@@ -26,6 +26,18 @@ export type ThemeColors = {
   phasePeak: string
   phaseDeclining: string
   priority: string
+  /* Canvas 工作台：台面、点阵、节点纸、来源标签、节点内分隔线 */
+  canvasPaper: string
+  canvasDot: string
+  canvasNode: string
+  canvasChip: string
+  canvasRule: string
+  /* 压在封面上的固定层：不随主题翻转 */
+  mediaInk: string
+  mediaInkSoft: string
+  mediaScrim: string
+  mediaControl: string
+  mediaControlInk: string
 }
 
 const VARS: Record<keyof ThemeColors, string> = {
@@ -46,7 +58,17 @@ const VARS: Record<keyof ThemeColors, string> = {
   phaseOpening: '--phase-opening',
   phasePeak: '--phase-peak',
   phaseDeclining: '--phase-declining',
-  priority: '--priority'
+  priority: '--priority',
+  canvasPaper: '--canvas-paper',
+  canvasDot: '--canvas-dot',
+  canvasNode: '--canvas-node',
+  canvasChip: '--canvas-chip',
+  canvasRule: '--canvas-rule',
+  mediaInk: '--media-ink',
+  mediaInkSoft: '--media-ink-soft',
+  mediaScrim: '--media-scrim',
+  mediaControl: '--media-control',
+  mediaControlInk: '--media-control-ink'
 }
 
 let cache: ThemeColors | null = null

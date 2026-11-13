@@ -25,7 +25,19 @@ import { titleBarPlatform } from '../../shared/platform'
 import { Modal } from '../../shared/Modal'
 import { ConfirmDialog } from '../../shared/ConfirmDialog'
 import { CanvasThumbnail } from './CanvasThumbnail'
-import { EraserIcon, FitIcon, MinusIcon, NoteIcon, PanIcon, PenIcon, PlusIcon, SelectIcon } from '../../shared/icons'
+import {
+  EraserIcon,
+  FitIcon,
+  ImageIcon,
+  MinusIcon,
+  NoteAddIcon,
+  NoteIcon,
+  PanIcon,
+  PenIcon,
+  PlusIcon,
+  RecordIcon,
+  SelectIcon
+} from '../../shared/icons'
 
 /**
  * Canvas 空间的两级结构（对标 iOS CanvasListView → CanvasWorkspaceView）：
@@ -46,6 +58,8 @@ type SaveState = 'idle' | 'saving' | 'saved' | 'error'
 type StudioTool = CanvasTool | 'select' | 'hand' | 'note'
 type LoadState = 'loading' | 'ready' | 'error'
 
+/* 笔迹颜色是画的内容，不是界面主题：切深浅色时它不该跟着变，
+   否则用户昨天画的墨绿今天会变成浅米色。 */
 const PEN_COLORS = ['#30372f', '#849779', '#97765a', '#9a9f97', '#a8503f']
 const NOTE_COLORS = ['#f6f2df', '#e3e9df', '#e8ebe5', '#f7e8df']
 const PICKER_PAGE = 60
@@ -1643,29 +1657,57 @@ function StudioToolbar(props: {
   onAddRecord: () => void
 }) {
   const { t } = useI18n()
-  // 图标与导航栏同一套线性 SVG（不再用 ✋ 这类彩色 emoji：字重、基线、
-  // 选中态都由 currentColor 统一控制）。
-  const items: Array<{ key: StudioTool; hint: string; icon: React.ReactNode }> = [
+  /*
+     三段，按「我在做什么」排：先是指针（看和选），再是画（留下痕迹），
+     最后是往上放内容。全部图标 + tooltip，不再混排文字按钮——文字按钮
+     宽窄不一，会让这一条看起来像几个不同控件的拼凑。
+  */
+  const pointerTools: Array<{ key: StudioTool; hint: string; icon: React.ReactNode }> = [
     { key: 'select', hint: t.canvas.tools.selectHint, icon: <SelectIcon size={18} /> },
-    { key: 'hand', hint: t.canvas.tools.handHint, icon: <PanIcon size={18} /> },
+    { key: 'hand', hint: t.canvas.tools.handHint, icon: <PanIcon size={18} /> }
+  ]
+  const drawTools: Array<{ key: StudioTool; hint: string; icon: React.ReactNode }> = [
     { key: 'pen', hint: t.canvas.tools.penHint, icon: <PenIcon size={18} /> },
     { key: 'eraser', hint: t.canvas.tools.eraserHint, icon: <EraserIcon size={18} /> },
     { key: 'note', hint: t.canvas.tools.noteHint, icon: <NoteIcon size={18} /> }
   ]
+
   return (
     <div className="studio-toolbar">
-      {items.map((item) => (
-        <button
-          key={item.key}
-          className="studio-toolbar__tool"
-          data-active={props.tool === item.key}
-          title={item.hint}
-          aria-label={item.hint}
-          onClick={() => props.onTool(item.key)}
-        >
-          {item.icon}
-        </button>
-      ))}
+      <span className="studio-toolbar__group">
+        {pointerTools.map((item) => (
+          <button
+            key={item.key}
+            className="studio-toolbar__tool"
+            data-active={props.tool === item.key}
+            title={item.hint}
+            aria-label={item.hint}
+            aria-pressed={props.tool === item.key}
+            onClick={() => props.onTool(item.key)}
+          >
+            {item.icon}
+          </button>
+        ))}
+      </span>
+
+      <span className="studio-toolbar__divider" />
+
+      <span className="studio-toolbar__group">
+        {drawTools.map((item) => (
+          <button
+            key={item.key}
+            className="studio-toolbar__tool"
+            data-active={props.tool === item.key}
+            title={item.hint}
+            aria-label={item.hint}
+            aria-pressed={props.tool === item.key}
+            onClick={() => props.onTool(item.key)}
+          >
+            {item.icon}
+          </button>
+        ))}
+      </span>
+
       {props.tool === 'pen' && (
         <span className="studio-toolbar__colors">
           {PEN_COLORS.map((color) => (
@@ -1680,29 +1722,37 @@ function StudioToolbar(props: {
           ))}
         </span>
       )}
+
       <span className="studio-toolbar__divider" />
-      <button
-        className="studio-toolbar__tool studio-toolbar__tool--wide"
-        title={t.canvas.toolbar.newNoteTitle}
-        onClick={props.onNote}
-      >
-        {t.canvas.toolbar.note}
-      </button>
-      <button
-        className="studio-toolbar__tool studio-toolbar__tool--wide"
-        title={t.canvas.toolbar.importImageTitle}
-        onClick={props.onAddImage}
-      >
-        {t.canvas.toolbar.image}
-      </button>
-      <button
-        className="studio-toolbar__tool studio-toolbar__tool--wide"
-        data-active={props.pickerActive}
-        title={t.canvas.toolbar.addRecordTitle}
-        onClick={props.onAddRecord}
-      >
-        {t.canvas.toolbar.record}
-      </button>
+
+      <span className="studio-toolbar__group">
+        <button
+          className="studio-toolbar__tool"
+          title={t.canvas.toolbar.newNoteTitle}
+          aria-label={t.canvas.toolbar.newNoteTitle}
+          onClick={props.onNote}
+        >
+          <NoteAddIcon size={18} />
+        </button>
+        <button
+          className="studio-toolbar__tool"
+          title={t.canvas.toolbar.importImageTitle}
+          aria-label={t.canvas.toolbar.importImageTitle}
+          onClick={props.onAddImage}
+        >
+          <ImageIcon size={18} />
+        </button>
+        {/* 主操作：这一条里只有它常年带一点底色，其余靠 hover 出声 */}
+        <button
+          className="studio-toolbar__tool studio-toolbar__tool--primary"
+          data-active={props.pickerActive}
+          title={t.canvas.toolbar.addRecordTitle}
+          aria-label={t.canvas.toolbar.addRecordTitle}
+          onClick={props.onAddRecord}
+        >
+          <RecordIcon size={18} />
+        </button>
+      </span>
     </div>
   )
 }
@@ -1747,13 +1797,16 @@ function NoteShape(props: {
         height={props.note.height}
         fill={props.note.color}
         cornerRadius={14}
-        stroke={props.selected ? colors.sage : colors.hairline}
+        stroke={props.selected ? colors.espresso : colors.canvasRule}
         strokeWidth={props.selected ? 1.5 : 1}
-        shadowColor="#30372f"
-        shadowOpacity={0.08}
+        /* 便签是唯一允许带一点浮起感的节点：它就是「贴」在台面上的 */
+        shadowColor={colors.ink}
+        shadowOpacity={0.07}
         shadowBlur={10}
         shadowOffsetY={3}
       />
+      {/* 便签纸的颜色是用户数据，不随主题翻转；纸上的字也永远用墨水色，
+          否则深色模式下浅黄纸上会出现暖白字，什么都读不到。 */}
       <Text
         x={14}
         y={12}
@@ -1762,7 +1815,7 @@ function NoteShape(props: {
         fontSize={13}
         fontStyle="600"
         fontFamily={KONVA_FONT}
-        fill={colors.ink}
+        fill={colors.mediaControlInk}
         lineHeight={1.3}
         wrap="word"
         ellipsis
@@ -1776,7 +1829,8 @@ function NoteShape(props: {
         text={props.note.body || t.canvas.note.defaultBody}
         fontSize={12}
         fontFamily={KONVA_FONT}
-        fill={colors.inkSoft}
+        fill={colors.mediaControlInk}
+        opacity={0.78}
         lineHeight={1.5}
         wrap="word"
         ellipsis
@@ -1945,6 +1999,7 @@ function CanvasNodeShape(props: {
             selected={props.selected}
             missingSymbol="▶"
             fallbackTitle={t.canvas.untitledVideo}
+            carrierLabel={t.canvas.carrier.video}
           />
           {playback !== null && !isPlaying && <PlayBadge onTogglePlay={props.onTogglePlay} node={node} />}
         </>
@@ -1966,32 +2021,38 @@ function CanvasNodeShape(props: {
         <TextCardBody node={node} colors={colors} radius={radius} selected={props.selected} />
       )}
 
+      {/*
+          选中只用 espresso 细描边 + 一个角柄：sage 留给业务状态（阶段、库存），
+          两者混用之后「这个绿点是什么意思」就说不清了。
+          描边压在卡片边缘内侧，不遮挡任何内容。
+      */}
       {props.selected && (
         <>
           <Rect
             width={node.width}
             height={node.height}
             cornerRadius={radius}
-            stroke={colors.sage}
+            stroke={colors.espresso}
             strokeWidth={1.5}
             listening={false}
           />
           <Rect
-            x={node.width - 7}
-            y={node.height - 7}
-            width={14}
-            height={14}
-            fill={colors.sage}
-            cornerRadius={4}
+            x={node.width - 8}
+            y={node.height - 8}
+            width={13}
+            height={13}
+            fill={colors.espresso}
+            cornerRadius={3.5}
+            opacity={0.9}
             draggable
             onDragMove={(event) => {
-              const nextW = Math.max(120, event.target.x() + 7)
-              const nextH = Math.max(90, event.target.y() + 7)
-              event.target.position({ x: nextW - 7, y: nextH - 7 })
+              const nextW = Math.max(120, event.target.x() + 8)
+              const nextH = Math.max(90, event.target.y() + 8)
+              event.target.position({ x: nextW - 8, y: nextH - 8 })
               props.onLiveResize?.(nextW, nextH)
             }}
             onDragEnd={(event) => {
-              void props.onResized?.(event.target.x() + 7, event.target.y() + 7)
+              void props.onResized?.(event.target.x() + 8, event.target.y() + 8)
             }}
           />
         </>
@@ -2001,8 +2062,9 @@ function CanvasNodeShape(props: {
 }
 
 /**
- * 媒体卡封面（图片卡与视频卡共用）：整卡裁剪图 + 底部渐变标题区
- * （白字标题 + 斜体画布备注，iOS mediaCaption）；图片缺失落 MissingMediaBody。
+ * 媒体卡（图片 / 视频）：图片出血铺满，不留边框——图片本身就是主角。
+ * 底部压一层与 --media-scrim 同色的渐隐，标题与备注才能在任何封面上读清；
+ * 视频在标题上方多一行极小的类型标签，不做成播放器控制条。
  */
 function MediaCover(props: {
   node: CanvasNodeWithRecord
@@ -2014,11 +2076,15 @@ function MediaCover(props: {
   missingSymbol: string
   /** 标题缺失时的兜底文案（区分图片/视频） */
   fallbackTitle: string
+  /** 视频卡传类型标签；图片卡不传。 */
+  carrierLabel?: string
 }) {
   const { node, image, colors } = props
   if (!image) {
     return <MissingMediaBody node={node} symbol={props.missingSymbol} colors={colors} radius={props.radius} />
   }
+  const caption = captionHeight(node)
+  const labelHeight = props.carrierLabel ? 14 : 0
   return (
     <Group clipFunc={(ctx) => roundedRectPath(ctx, 0, 0, node.width, node.height, props.radius)}>
       <KonvaImage
@@ -2028,25 +2094,39 @@ function MediaCover(props: {
         crop={coverCrop(image, node.width, node.height)}
         listening={false}
       />
-      {/* 渐变标题区：透明 → 墨色 */}
       <Rect
-        y={node.height - captionHeight(node)}
+        y={node.height - caption}
         width={node.width}
-        height={captionHeight(node)}
+        height={caption}
         fillLinearGradientStartPoint={{ x: 0, y: 0 }}
-        fillLinearGradientEndPoint={{ x: 0, y: captionHeight(node) }}
-        fillLinearGradientColorStops={[0, 'rgba(20,24,18,0)', 1, 'rgba(20,24,18,0.72)']}
+        fillLinearGradientEndPoint={{ x: 0, y: caption }}
+        fillLinearGradientColorStops={[0, 'rgba(24,20,16,0)', 0.55, colors.mediaScrim, 1, colors.mediaScrim]}
         listening={false}
       />
+      {props.carrierLabel && (
+        <Text
+          x={13}
+          y={node.height - caption + 9}
+          width={node.width - 26}
+          text={props.carrierLabel}
+          fontSize={9}
+          fontStyle="600"
+          letterSpacing={0.8}
+          fontFamily={KONVA_FONT}
+          fill={colors.mediaInkSoft}
+          height={12}
+          listening={false}
+        />
+      )}
       <Text
-        x={12}
-        y={node.height - captionHeight(node) + 10}
-        width={node.width - 24}
+        x={13}
+        y={node.height - caption + 10 + labelHeight}
+        width={node.width - 26}
         text={node.recordTitle || props.fallbackTitle}
         fontSize={12.5}
         fontStyle="600"
         fontFamily={KONVA_FONT}
-        fill="#ffffff"
+        fill={colors.mediaInk}
         wrap="word"
         ellipsis
         height={20}
@@ -2054,17 +2134,17 @@ function MediaCover(props: {
       />
       {node.annotation && (
         <Text
-          x={12}
-          y={node.height - captionHeight(node) + 32}
-          width={node.width - 24}
+          x={13}
+          y={node.height - caption + 32 + labelHeight}
+          width={node.width - 26}
           text={`❝ ${node.annotation}`}
           fontSize={10}
           fontStyle="italic"
           fontFamily={KONVA_FONT}
-          fill="rgba(255,255,255,0.85)"
+          fill={colors.mediaInkSoft}
           wrap="word"
           ellipsis
-          height={captionHeight(node) - 38}
+          height={caption - 38 - labelHeight}
           listening={false}
         />
       )}
@@ -2072,7 +2152,13 @@ function MediaCover(props: {
   )
 }
 
-/** 链接卡：封面 / 来源 / 标题 / 摘要 / 打开来源 / 播放（iOS linkCard）。 */
+/**
+ * 链接卡：一张剪报。
+ *
+ * 结构固定为「封面 → 来源行 → 标题 → 摘要 → 备注」，来源用一个小圆点加域名
+ * 统一表达，不用彩色徽章——每张卡颜色都不一样的话，颜色就失去意义了。
+ * 备注单独压在底部，左侧一条细竖线把它和正文分开，读起来像贴上去的一张便条。
+ */
 function LinkCardBody(props: {
   node: CanvasNodeWithRecord
   image: HTMLImageElement | null
@@ -2086,94 +2172,166 @@ function LinkCardBody(props: {
 }) {
   const { node, image, colors } = props
   const { t } = useI18n()
-  const coverHeight = Math.max(60, Math.min(160, node.height * 0.5))
+  const coverHeight = Math.max(56, Math.min(140, node.height * 0.46))
   const bodyTop = coverHeight
   const bodyHeight = node.height - coverHeight
+  const host = node.recordSourceName || providerHostOf(node)
+  const noteReserve = node.annotation ? 26 : 0
   return (
     <>
       <Group clipFunc={(ctx) => roundedRectPath(ctx, 0, 0, node.width, node.height, props.radius)}>
-        <Rect width={node.width} height={node.height} fill={colors.card} listening={false} />
+        <Rect width={node.width} height={node.height} fill={colors.canvasNode} listening={false} />
         {image ? (
           <KonvaImage image={image} width={node.width} height={coverHeight} listening={false} />
         ) : (
-          <Rect width={node.width} height={coverHeight} fill={colors.well} listening={false} />
+          <>
+            <Rect width={node.width} height={coverHeight} fill={colors.canvasChip} listening={false} />
+            {/* 无封面时用域名首字压住这块空当，比一块纯色更像个来源 */}
+            <Text
+              text={(host || '·').slice(0, 1).toUpperCase()}
+              width={node.width}
+              height={coverHeight}
+              align="center"
+              verticalAlign="middle"
+              fontSize={Math.min(30, coverHeight * 0.42)}
+              fontFamily={KONVA_FONT}
+              fill={colors.inkFaint}
+              opacity={0.5}
+              listening={false}
+            />
+          </>
         )}
-        <Rect y={bodyTop} width={node.width} height={bodyHeight} fill={colors.card} listening={false} />
+
+        {/* 封面与正文之间的那条线：有图时才画，避免无封面时多出一道横杠 */}
+        {image && (
+          <Rect y={bodyTop} width={node.width} height={1} fill={colors.canvasRule} opacity={0.7} listening={false} />
+        )}
+
+        {/* 来源行：一个淡点 + 域名，全应用统一这一种来源表达 */}
+        {host !== '' && (
+          <>
+            <Rect x={13} y={bodyTop + 15} width={4} height={4} cornerRadius={2} fill={colors.latte} listening={false} />
+            <Text
+              x={21}
+              y={bodyTop + 11}
+              width={node.width - 34}
+              text={host}
+              fontSize={9.5}
+              letterSpacing={0.3}
+              fontFamily={KONVA_FONT}
+              fill={colors.inkFaint}
+              ellipsis
+              height={12}
+              listening={false}
+            />
+          </>
+        )}
+
         <Text
-          x={12}
-          y={bodyTop + 10}
-          width={node.width - 24}
+          x={13}
+          y={bodyTop + 27}
+          width={node.width - 26}
           text={node.recordTitle || t.canvas.untitledLink}
-          fontSize={12.5}
+          fontSize={13}
           fontStyle="600"
           fontFamily={KONVA_FONT}
           fill={colors.ink}
+          lineHeight={1.35}
           wrap="word"
           ellipsis
-          height={32}
+          height={36}
           listening={false}
         />
-        <Text
-          x={12}
-          y={bodyTop + 44}
-          width={node.width - 24}
-          text={node.recordSourceName || providerHostOf(node)}
-          fontSize={10.5}
-          fontFamily={KONVA_FONT}
-          fill={colors.inkFaint}
-          wrap="word"
-          ellipsis
-          height={16}
-          listening={false}
-        />
-        {node.recordSummary && bodyHeight > 78 && (
+
+        {node.recordSummary && bodyHeight > 96 && (
           <Text
-            x={12}
-            y={bodyTop + 62}
-            width={node.width - 24}
-            height={bodyHeight - 74}
+            x={13}
+            y={bodyTop + 66}
+            width={node.width - 26}
+            height={bodyHeight - 66 - noteReserve - 8}
             text={node.recordSummary}
             fontSize={10.5}
             fontFamily={KONVA_FONT}
             fill={colors.inkSoft}
-            lineHeight={1.4}
+            lineHeight={1.5}
             wrap="word"
             ellipsis
             listening={false}
           />
         )}
+
         {node.annotation && (
-          <Text
-            x={12}
-            y={node.height - 24}
-            width={node.width - 24}
-            text={`❝ ${node.annotation}`}
-            fontSize={10}
-            fontStyle="italic"
-            fontFamily={KONVA_FONT}
-            fill={colors.inkFaint}
-            wrap="word"
-            ellipsis
-            height={20}
-            listening={false}
-          />
+          <>
+            <Rect
+              x={13}
+              y={node.height - 22}
+              width={2}
+              height={13}
+              cornerRadius={1}
+              fill={colors.canvasRule}
+              listening={false}
+            />
+            <Text
+              x={21}
+              y={node.height - 24}
+              width={node.width - 34}
+              text={node.annotation}
+              fontSize={9.5}
+              fontStyle="italic"
+              fontFamily={KONVA_FONT}
+              fill={colors.inkFaint}
+              ellipsis
+              height={16}
+              listening={false}
+            />
+          </>
         )}
       </Group>
-      {/* 打开来源：独立按钮（iOS arrow.up.right badge） */}
+
+      {/* 打开来源：鼠标形状的轻按钮，不给它上色，免得抢标题 */}
       {node.recordURLString && (
-        <Group x={node.width - 30} y={bodyTop + 8} onClick={(event) => { event.cancelBubble = true; props.onOpenSource() }}>
+        <Group
+          x={node.width - 30}
+          y={bodyTop + 6}
+          onClick={(event) => {
+            event.cancelBubble = true
+            props.onOpenSource()
+          }}
+        >
           <Rect width={22} height={22} cornerRadius={6} fill="rgba(255,255,255,0.001)" />
-          <Text text="↗" fontSize={13} fontFamily={KONVA_FONT} fill={colors.inkFaint} width={22} height={22} align="center" verticalAlign="middle" />
+          <Text
+            text="↗"
+            fontSize={12.5}
+            fontFamily={KONVA_FONT}
+            fill={colors.inkFaint}
+            width={22}
+            height={22}
+            align="center"
+            verticalAlign="middle"
+            listening={false}
+          />
         </Group>
       )}
       {props.canPlay && !props.isPlaying && (
-        <PlayBadge onTogglePlay={props.onTogglePlay} node={node} small centerY={coverHeight / 2} />
+        <PlayBadge
+          onTogglePlay={props.onTogglePlay}
+          node={node}
+          small
+          centerY={coverHeight / 2}
+          colors={colors}
+        />
       )}
     </>
   )
 }
 
-/** 文字卡：标题 + 正文预览 + 备注行（iOS textCard）。 */
+/**
+ * 文字卡：一张稿纸。
+ *
+ * 与其他三类刻意不同——没有图、没有来源行，靠排版本身站住：顶部一小段
+ * espresso 标记当作章节起头，标题与正文用更松的行距，底部备注压一条细线。
+ * 卡片本身不投影：台面上已经有层级，再加阴影就脏了。
+ */
 function TextCardBody(props: {
   node: CanvasNodeWithRecord
   colors: ReturnType<typeof themeColors>
@@ -2183,66 +2341,75 @@ function TextCardBody(props: {
   const { node, colors } = props
   const { t } = useI18n()
   const hasTitle = !!node.recordTitle.trim()
+  const noteH = node.annotation ? 24 : 0
   return (
     <>
       <Rect
         width={node.width}
         height={node.height}
-        fill={colors.card}
+        fill={colors.canvasNode}
         cornerRadius={props.radius}
-        stroke={props.selected ? colors.sage : colors.hairline}
+        stroke={props.selected ? colors.espresso : colors.canvasRule}
         strokeWidth={props.selected ? 1.5 : 1}
-        shadowColor="#30372f"
-        shadowOpacity={0.06}
-        shadowBlur={8}
-        shadowOffsetY={2}
       />
+      {/* 章节起头：一小段墨线，比图标安静，但让人知道这是一页文字 */}
+      <Rect x={16} y={17} width={18} height={2} cornerRadius={1} fill={colors.espresso} opacity={0.8} listening={false} />
+
       {hasTitle && (
         <Text
-          x={14}
-          y={14}
-          width={node.width - 28}
+          x={16}
+          y={27}
+          width={node.width - 32}
           text={node.recordTitle}
-          fontSize={13}
+          fontSize={13.5}
           fontStyle="600"
           fontFamily={KONVA_FONT}
           fill={colors.ink}
-          lineHeight={1.4}
+          lineHeight={1.45}
           wrap="word"
           ellipsis
-          height={38}
+          height={40}
           listening={false}
         />
       )}
       <Text
-        x={14}
-        y={hasTitle ? 56 : 14}
-        width={node.width - 28}
-        height={node.height - (hasTitle ? 92 : 48)}
+        x={16}
+        y={hasTitle ? 72 : 30}
+        width={node.width - 32}
+        height={node.height - (hasTitle ? 72 : 30) - 16 - noteH}
         text={node.recordNote || t.canvas.textCard.noBody}
         fontSize={12}
         fontFamily={KONVA_FONT}
         fill={colors.inkSoft}
-        lineHeight={1.55}
+        lineHeight={1.65}
         wrap="word"
         ellipsis
         listening={false}
       />
       {node.annotation && (
-        <Text
-          x={14}
-          y={node.height - 30}
-          width={node.width - 28}
-          text={`❝ ${node.annotation}`}
-          fontSize={10}
-          fontStyle="italic"
-          fontFamily={KONVA_FONT}
-          fill={colors.inkFaint}
-          wrap="word"
-          ellipsis
-          height={22}
-          listening={false}
-        />
+        <>
+          <Rect
+            x={16}
+            y={node.height - 26}
+            width={node.width - 32}
+            height={1}
+            fill={colors.canvasRule}
+            listening={false}
+          />
+          <Text
+            x={16}
+            y={node.height - 21}
+            width={node.width - 32}
+            text={node.annotation}
+            fontSize={9.5}
+            fontStyle="italic"
+            fontFamily={KONVA_FONT}
+            fill={colors.inkFaint}
+            ellipsis
+            height={16}
+            listening={false}
+          />
+        </>
       )}
     </>
   )
@@ -2262,9 +2429,9 @@ function MissingMediaBody(props: {
       <Rect
         width={node.width}
         height={node.height}
-        fill={colors.well}
+        fill={colors.canvasChip}
         cornerRadius={props.radius}
-        stroke={colors.hairline}
+        stroke={colors.canvasRule}
         strokeWidth={1}
       />
       <Text
@@ -2306,7 +2473,9 @@ function PlayBadge(props: {
   small?: boolean
   /** 覆盖默认的整卡中心：链接卡放封面区中心，避免压住标题行。 */
   centerY?: number
+  colors?: ReturnType<typeof themeColors>
 }) {
+  const colors = props.colors ?? themeColors()
   const size = props.small ? 34 : 44
   return (
     <Group
@@ -2322,12 +2491,13 @@ function PlayBadge(props: {
       }}
     >
       <Rect width={size} height={size} cornerRadius={size / 2} fill="rgba(255,255,255,0.001)" />
-      <Rect width={size} height={size} cornerRadius={size / 2} fill="#ffffff" opacity={0.92} listening={false} />
+      {/* 压在封面上的控件永远是浅底深字：图片自己会亮，跟着主题翻转就看不清了 */}
+      <Rect width={size} height={size} cornerRadius={size / 2} fill={colors.mediaControl} opacity={0.94} listening={false} />
       <Text
         text="▶"
         fontSize={size * 0.32}
         fontFamily={KONVA_FONT}
-        fill="#30372f"
+        fill={colors.mediaControlInk}
         width={size}
         height={size}
         align="center"
@@ -2416,6 +2586,16 @@ function roundedRectPath(ctx: Context, x: number, y: number, width: number, heig
 }
 
 /** 点阵：世界坐标网格，屏幕间距钳在 16–44px，淡墨低透明度。 */
+/**
+ * 工作台点阵。
+ *
+ * 两层：一层均匀细点负责定位，一层每 5 格一个稍大的点给尺度感——
+ * 放大到很远时人容易失去比例，那一点节奏能帮上忙，但它比细点更暗，
+ * 只在余光里存在，不会盖过内容。
+ *
+ * 屏幕点距钳在 18–40px：缩放时「看起来的密度」不变，节点的相对关系
+ * 才不会因为点阵跳动而失真。
+ */
 function DotGrid(props: { width: number; height: number; viewport: CanvasViewport }) {
   const { width, height, viewport } = props
   return (
@@ -2424,20 +2604,35 @@ function DotGrid(props: { width: number; height: number; viewport: CanvasViewpor
         const colors = themeColors()
         const { scale, offsetX, offsetY } = viewport
         if (scale <= 0) return
-        let spacing = 26
-        while (spacing * scale < 16) spacing *= 2
-        while (spacing * scale > 44) spacing /= 2
+        let spacing = 28
+        while (spacing * scale < 18) spacing *= 2
+        while (spacing * scale > 40) spacing /= 2
         const x0 = -offsetX / scale
         const y0 = -offsetY / scale
         const x1 = (width - offsetX) / scale
         const y1 = (height - offsetY) / scale
-        const radius = 1.1 / scale
-        context.fillStyle = colors.inkFaint
-        context.globalAlpha = 0.32
-        for (let wx = Math.floor(x0 / spacing) * spacing; wx <= x1; wx += spacing) {
-          for (let wy = Math.floor(y0 / spacing) * spacing; wy <= y1; wy += spacing) {
+        const dot = 1 / scale
+        const startX = Math.floor(x0 / spacing) * spacing
+        const startY = Math.floor(y0 / spacing) * spacing
+        context.fillStyle = colors.canvasDot
+
+        context.globalAlpha = 0.9
+        for (let wx = startX; wx <= x1; wx += spacing) {
+          for (let wy = startY; wy <= y1; wy += spacing) {
             context.beginPath()
-            context.arc(wx, wy, radius, 0, Math.PI * 2)
+            context.arc(wx, wy, dot, 0, Math.PI * 2)
+            context.fill()
+          }
+        }
+
+        context.globalAlpha = 0.55
+        const step = spacing * 5
+        const majorX = Math.floor(x0 / step) * step
+        const majorY = Math.floor(y0 / step) * step
+        for (let wx = majorX; wx <= x1; wx += step) {
+          for (let wy = majorY; wy <= y1; wy += step) {
+            context.beginPath()
+            context.arc(wx, wy, dot * 1.9, 0, Math.PI * 2)
             context.fill()
           }
         }

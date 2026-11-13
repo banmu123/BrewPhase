@@ -33,6 +33,25 @@
   /* 视频纸笺的冷绿纸，与 --sheet-warm 成对。 */
   --sheet-cool: #f3f6ef;
   --sheet-cool-deep: #e2e8d9;
+
+  /* ---------- Canvas：个人工作台 ----------
+     画布是应用里唯一有自己"台面"的地方，所以它有一套独立令牌：
+     页面是冷白 studio，画布是暖一档的 paper（Latte 极淡的一层），
+     两者拉开差别但不冲突。全部颜色仍然只有这一处来源。
+     注意：这几个值会经 shared/tokens.ts 交给 Konva，改这里就够了。 */
+  --canvas-paper: #fbf8f2; /* 台面：暖白纸，不是奶油黄 */
+  --canvas-dot: #c9b8a4; /* 点阵：latte 压到很淡，只做定位参考 */
+  --canvas-node: #fffdf9; /* 节点纸：比台面更白一档，靠这一点分层 */
+  --canvas-chip: #f4ede2; /* 来源标签底：暖灰，不用饱和彩 */
+  --canvas-rule: #e6ddd0; /* 节点内的分隔线与引文竖线 */
+
+  /* 压在封面/图片上的那一层：无论明暗都是深底浅字、浅底深字，
+     否则深色模式下会变成白字压亮图，直接看不见。所以这两个值不随主题翻转。 */
+  --media-ink: #fdfaf5;
+  --media-ink-soft: rgba(253, 250, 245, 0.82);
+  --media-scrim: rgba(24, 20, 16, 0.78);
+  --media-control: #fdfcf9;
+  --media-control-ink: #2b241d;
   /* 弹窗背后那层：浅色下是磨砂，深色下必须加重，否则浮层和页面糊在一起。 */
   --backdrop: rgba(48, 55, 47, 0.22);
   /* 空态装饰件的暖色笔触：深色下要压到很低，否则一片暖光浮在黑底上。 */
@@ -140,6 +159,19 @@
   --sheet-cool: #1f241c;
   --sheet-cool-deep: #1a1e17;
   --backdrop: rgba(0, 0, 0, 0.55);
+  /* Canvas：深色下台面比页面再亮一档，节点又比台面亮一档——
+     黑底上投影不可见，层级只能靠亮度差（与全站深色规则一致）。 */
+  --canvas-paper: #1b1714;
+  --canvas-dot: #55473a;
+  --canvas-node: #241f1a;
+  --canvas-chip: #2e2721;
+  --canvas-rule: #3a322a;
+  /* 与浅色同值：这几层永远压在图片上，不跟随主题翻转 */
+  --media-ink: #fdfaf5;
+  --media-ink-soft: rgba(253, 250, 245, 0.82);
+  --media-scrim: rgba(24, 20, 16, 0.82);
+  --media-control: #fdfcf9;
+  --media-control-ink: #2b241d;
   --sketch-strong: rgba(214, 200, 180, 0.14);
   --sketch-soft: rgba(190, 174, 152, 0.08);
   --sketch-warm: rgba(233, 226, 214, 0.06);
@@ -2025,7 +2057,8 @@ textarea {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  background: var(--paper);
+  /* 台面用画布自己的暖纸色，而不是页面底：一眼能看出「换了个工作面」 */
+  background: var(--canvas-paper);
 }
 
 .canvas-panel {
@@ -2287,28 +2320,35 @@ textarea {
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 8px;
+  gap: 6px;
+  padding: 6px;
   background: var(--card);
-  border: 1px solid var(--hairline);
-  border-radius: 999px;
+  border: 1px solid var(--hairline-strong);
+  /* 不是胶囊：胶囊属于通用白板，圆角矩形更像台面上的一件工具 */
+  border-radius: 14px;
   box-shadow: var(--shadow-lifted);
   z-index: 6;
 }
 
+.studio-toolbar__group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .studio-toolbar__tool {
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   justify-content: center;
   display: inline-flex;
   align-items: center;
   border: 0;
   background: transparent;
-  border-radius: var(--radius-small);
+  border-radius: 9px;
   color: var(--ink-soft);
   font-size: 15px;
-  transition: background 0.16s ease, color 0.16s ease;
+  transition: background 0.14s ease, color 0.14s ease;
 }
 
 .studio-toolbar__tool:hover {
@@ -2317,54 +2357,59 @@ textarea {
   box-shadow: none;
 }
 
+/* 当前工具用 espresso 填实：这一条里唯一允许"反过来"的元素，
+   其余一律靠底色深浅说话。深色下 espresso 翻成暖亮色，图标随之变深。 */
 .studio-toolbar__tool[data-active='true'] {
-  background: var(--well-deep);
+  background: var(--espresso);
+  color: var(--on-espresso);
+}
+
+.studio-toolbar__tool:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 主操作（添加记录）：常年一点底色，不必 hover 才被发现 */
+.studio-toolbar__tool--primary {
+  background: var(--cream);
   color: var(--ink);
 }
 
-.studio-toolbar__tool--wide {
-  width: auto;
-  padding: 0 12px;
-  font-size: var(--fs-caption);
-  font-weight: 500;
+.studio-toolbar__tool--primary:hover {
+  background: var(--well-deep);
 }
 
 .studio-toolbar__divider {
   width: 1px;
-  height: 20px;
-  background: var(--hairline);
-  margin: 0 4px;
+  height: 18px;
+  background: var(--hairline-strong);
+  margin: 0 2px;
 }
 
 .studio-toolbar__colors {
   display: inline-flex;
   gap: 6px;
   align-items: center;
+  padding: 0 4px;
 }
 
 .studio-toolbar__color {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   border: 2px solid var(--card);
-  box-shadow: 0 0 0 1px var(--hairline);
+  box-shadow: 0 0 0 1px var(--hairline-strong);
   padding: 0;
+  cursor: pointer;
+  transition: box-shadow 0.14s ease;
+}
+
+.studio-toolbar__color:hover {
+  box-shadow: 0 0 0 1px var(--ink-faint);
 }
 
 .studio-toolbar__color[data-active='true'] {
-  box-shadow: 0 0 0 2px var(--focus);
-}
-
-/* 画布工作区：全局顶栏退场，画布自己的工具栏顶到窗口上沿
-   （它自带 88px 左侧留白，正好让开红绿灯）。 */
-body.canvas-workspace .topbar {
-  display: none;
-}
-
-/* 沉浸模式：全局顶栏与画布顶条退场，画布即全部 */
-body.canvas-focus .topbar,
-body.canvas-focus .canvas-topbar {
-  display: none;
+  box-shadow: 0 0 0 2px var(--espresso);
 }
 
 .canvas-save {

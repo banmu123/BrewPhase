@@ -25,6 +25,14 @@ const DESKTOP_ROOT = join(__dirname, '../..')
 const EXTENSION_ROOT = join(__dirname, '../../../ChromeExtension')
 const PNPM = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 
+/**
+ * Windows 上 Node ≥20.12 禁止不带 shell 地 spawn `.cmd`（EINVAL），
+ * 所以这里必须走 shell。参数都是写死的常量，没有注入面。
+ */
+function runPnpm(args: string[], cwd: string): void {
+  execFileSync(PNPM, args, { cwd, stdio: 'inherit', shell: process.platform === 'win32' })
+}
+
 function requireFile(path: string, hint: string): void {
   if (existsSync(path)) return
   throw new Error(`[e2e] missing build output: ${path}\n[e2e] run: ${hint}`)
@@ -36,14 +44,11 @@ export default function globalSetup(): void {
 
   if (!existsSync(join(EXTENSION_ROOT, 'node_modules'))) {
     console.log('[e2e] ChromeExtension deps missing — installing (one time)')
-    execFileSync(PNPM, ['install', '--frozen-lockfile'], {
-      cwd: EXTENSION_ROOT,
-      stdio: 'inherit'
-    })
+    runPnpm(['install', '--frozen-lockfile'], EXTENSION_ROOT)
   }
 
   console.log('[e2e] building ChromeExtension (loadable dist for install test)')
-  execFileSync(PNPM, ['build'], { cwd: EXTENSION_ROOT, stdio: 'inherit' })
+  runPnpm(['build'], EXTENSION_ROOT)
   requireFile(
     join(EXTENSION_ROOT, 'dist', 'manifest.json'),
     'cd ChromeExtension && pnpm build'
