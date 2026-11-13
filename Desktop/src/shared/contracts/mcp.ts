@@ -57,21 +57,26 @@ export const MCP_SCOPE_GROUPS: Array<{ group: McpScopeGroup; scopes: McpScope[] 
 ]
 
 /**
- * 推荐权限预设。
+ * 权限预设。第一项就是默认值，顺序即梯度：默认全给，往下逐级收紧。
  *
- * 「个人成长」是 Life Path 场景的默认组合：读现状/方向/阶段、读工作上下文、
- * 读记录——足以支撑一次完整分析，但一个写权限都不给。
+ * 默认给全量 14 项，是因为这是用户自己电脑上的 Agent、读的是用户自己的数据：
+ * 一个连记录都改不了的助手，每次都要人转述，实际帮不上忙。这里的安全边界
+ * 不靠「少给权限」，而靠三件更硬的事：
  *
- * 「个人成长协作」只多一个 `direction:propose`：让 Agent 能写**草稿**，
- * 仍需用户在应用内确认。这里永远不会有 `direction:confirm`——
- * 那个能力在 MCP 侧根本不存在（见 personal-direction 的设计说明）。
+ *   1. Agent 写的一律是草稿或普通记录，**用户的人生方向只能由本人在应用内确认**
+ *      （MCP 侧根本没有 confirm 这个能力，不是靠默认不勾来省）。
+ *   2. 每个 Agent 独立 Token、可在设置里随时撤销。
+ *   3. 写入类权限在界面上逐项可见，想收紧随时往下点一档。
+ *
+ * 「个人成长协作」与「个人成长」是降级档：只读 + 写草稿、纯只读。
  */
 export const MCP_SCOPE_PRESETS = [
-  { key: 'personalGrowth', scopes: ['direction:read', 'work_context:read', 'records:read'] },
+  { key: 'fullAccess', scopes: [...MCP_SCOPES] },
   {
     key: 'personalGrowthCollab',
     scopes: ['direction:read', 'work_context:read', 'records:read', 'direction:propose']
   },
+  { key: 'personalGrowth', scopes: ['direction:read', 'work_context:read', 'records:read'] },
   { key: 'recordsOnly', scopes: ['records:read'] }
 ] as const satisfies ReadonlyArray<{ key: string; scopes: readonly McpScope[] }>
 

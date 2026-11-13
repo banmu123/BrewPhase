@@ -31,6 +31,8 @@ export const onboarding = {
   agent: {
     title: '连接 AI Agent',
     lead: '选一个 Agent，BrewPhase 会为它单独创建一个客户端，只授予你勾选的权限。',
+    bridgeDownTitle: '本地连接还没就绪',
+    bridgeDownBody: 'BrewPhase 的本地 Bridge 尚未启动，Agent 现在连不上。稍等片刻，或到 设置 → AI 连接 看状态。',
     back: '返回',
     kindTitle: '用哪个 Agent',
     kinds: {
@@ -48,22 +50,38 @@ export const onboarding = {
       '本地 Bridge 在当前平台不可用，Agent 无法连上 BrewPhase。你仍然可以正常使用应用。',
     scopeTitle: '授予的权限',
     presets: {
-      personalGrowth: '个人成长（推荐）',
-      personalGrowthCollab: '个人成长协作',
+      fullAccess: '全部权限（推荐）',
+      personalGrowthCollab: '只读 + 草稿',
+      personalGrowth: '仅核心只读',
       recordsOnly: '只看记录'
     },
     presetHints: {
-      personalGrowth: '读取现状、方向、阶段、工作上下文与记录。不含任何写权限。',
-      personalGrowthCollab: '在推荐基础上，允许 Agent 写待你确认的草稿——确认仍然只能由你在应用内完成。',
+      fullAccess: '默认给全：读现状、方向、阶段、工作上下文、记录、豆子与画布，也能整理记录、摆画布、写草稿。人生方向的确认永远只能由你在应用内完成。',
+      personalGrowthCollab: '能读，也能写待你确认的草稿；不改动你已有的记录与画布。',
+      personalGrowth: '读现状、方向、阶段、工作上下文与记录。不含任何写权限。',
       recordsOnly: '只读你的记录。'
     },
     scopeLabel: {
-      'direction:read': '读取你确认过的现状、方向和阶段',
-      'work_context:read': '读取持续工作上下文',
       'records:read': '读取你保存的记录',
+      'records:create': '新建记录',
+      'records:update': '修改已有记录',
+      'tags:read': '读取标签',
+      'tags:create': '新建标签',
+      'coffee:read': '读取豆子、冲煮与品鉴',
+      'canvas:read': '读取画布内容',
+      'canvas:write': '在画布上添加与移动内容',
+      'work_context:read': '读取持续工作上下文',
+      'work_context:create': '新建工作上下文',
+      'work_context:update': '更新工作上下文',
+      'work_context:link': '把记录、画布与链接关联到工作上下文',
+      'direction:read': '读取你确认过的现状、方向和阶段',
       'direction:propose': '创建待你确认的方向草稿（不能确认）'
     },
     custom: '自定义权限',
+    scopeCount: (picked: number, total: number) => `已选 ${picked} / ${total} 项`,
+    scopeSummaryAll: (total: number) => `全部 ${total} 项，可随时收紧`,
+    scopeAdjust: '调整',
+    scopeCollapse: '收起',
     create: '创建客户端',
     creating: '正在创建…',
 
@@ -86,6 +104,30 @@ export const onboarding = {
       '还没检测到调用。请确认：配置已保存、Agent 已重启、BrewPhase 仍开着。',
     verifyRetry: '再检测一次',
     revokeHint: '这个客户端随时可以在 设置 → AI 连接 里撤销。',
+    auto: {
+      badgeReady: '可一键配置',
+      badgeConfigured: '已配置',
+      badgeUnknown: '配置路径未知',
+      badgeNotDetected: '未检测到',
+      badgeInvalid: '配置无法解析',
+      oneClick: '一键写入配置',
+      manual: '改为手动复制',
+      planTitle: '确认写入配置',
+      planPath: '配置文件',
+      planBackup: '备份位置',
+      planConflict: '已存在 brewphase 配置，将被替换；其他 MCP Server 不受影响。',
+      planNoConflict: '将新增一条 brewphase 配置，文件其他内容保持不变。',
+      confirm: '确认写入',
+      cancel: '取消',
+      writing: '正在写入…',
+      successTitle: '配置已写入',
+      successHint: (name: string) => `重启 ${name} 后生效。`,
+      backupHint: (path: string) => `原文件已备份：${path}`,
+      failed: '写入失败，已尝试恢复原文件。',
+      rollbackFailed: '写入失败且自动恢复也失败了，请手动还原备份后再使用该 Agent。',
+      fallback: '改为手动配置'
+    },
+
     done: '完成'
   }
 }

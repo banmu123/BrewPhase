@@ -30,6 +30,8 @@ export const onboarding = {
   agent: {
     title: 'Connect an AI agent',
     lead: 'Pick an agent. BrewPhase creates a separate client for it, scoped to exactly what you tick.',
+    bridgeDownTitle: 'The local connection is not ready',
+    bridgeDownBody: 'BrewPhase’s local bridge is not running yet, so an agent cannot connect right now. Wait a moment, or check Settings → AI connections.',
     back: 'Back',
     kindTitle: 'Which agent',
     kinds: {
@@ -47,22 +49,38 @@ export const onboarding = {
       'The local bridge is not available on this platform, so an agent cannot reach BrewPhase. The app still works normally.',
     scopeTitle: 'Permissions',
     presets: {
-      personalGrowth: 'Personal growth (recommended)',
-      personalGrowthCollab: 'Personal growth with drafts',
+      fullAccess: 'Everything (recommended)',
+      personalGrowthCollab: 'Read + drafts',
+      personalGrowth: 'Core reads only',
       recordsOnly: 'Records only'
     },
     presetHints: {
+      fullAccess: 'Everything by default: read state, directions, stages, work context, records, coffee and canvas, and also organize records, arrange the canvas and write drafts. Confirming a direction stays yours alone, in the app.',
+      personalGrowthCollab: 'Can read, and can write drafts you confirm. Does not modify your existing records or canvas.',
       personalGrowth: 'Read your current state, directions, stages, work context and records. No write access at all.',
-      personalGrowthCollab: 'Adds one capability: the agent may write drafts you confirm in the app. Confirmation stays with you.',
       recordsOnly: 'Read your records only.'
     },
     scopeLabel: {
-      'direction:read': 'Read your confirmed current state, directions and stages',
-      'work_context:read': 'Read ongoing work contexts',
       'records:read': 'Read the records you saved',
+      'records:create': 'Create records',
+      'records:update': 'Edit existing records',
+      'tags:read': 'Read tags',
+      'tags:create': 'Create tags',
+      'coffee:read': 'Read beans, brews and tastings',
+      'canvas:read': 'Read canvas content',
+      'canvas:write': 'Add and move things on the canvas',
+      'work_context:read': 'Read ongoing work contexts',
+      'work_context:create': 'Create work contexts',
+      'work_context:update': 'Update work contexts',
+      'work_context:link': 'Link records, canvas nodes and URLs to a work context',
+      'direction:read': 'Read your confirmed current state, directions and stages',
       'direction:propose': 'Create direction drafts for you to confirm (cannot confirm)'
     },
     custom: 'Custom permissions',
+    scopeCount: (picked: number, total: number) => `${picked} of ${total} selected`,
+    scopeSummaryAll: (total: number) => `all ${total}, tighten anytime`,
+    scopeAdjust: 'Adjust',
+    scopeCollapse: 'Hide',
     create: 'Create client',
     creating: 'Creating…',
 
@@ -86,6 +104,30 @@ export const onboarding = {
       'No call detected yet. Check that the config was saved, the agent was restarted, and BrewPhase is still running.',
     verifyRetry: 'Check again',
     revokeHint: 'You can revoke this client any time in Settings → AI connections.',
+    auto: {
+      badgeReady: 'Ready to configure',
+      badgeConfigured: 'Already configured',
+      badgeUnknown: 'Config path unknown',
+      badgeNotDetected: 'Not detected',
+      badgeInvalid: 'Config cannot be parsed',
+      oneClick: 'Write config for me',
+      manual: 'Copy config manually',
+      planTitle: 'Confirm the write',
+      planPath: 'Config file',
+      planBackup: 'Backup',
+      planConflict: 'An existing brewphase entry will be replaced; your other MCP servers are untouched.',
+      planNoConflict: 'A new brewphase entry will be added; nothing else in the file changes.',
+      confirm: 'Write it',
+      cancel: 'Cancel',
+      writing: 'Writing…',
+      successTitle: 'Config written',
+      successHint: (name: string) => `Restart ${name} to pick it up.`,
+      backupHint: (path: string) => `Original backed up to: ${path}`,
+      failed: 'The write failed; the original file was restored.',
+      rollbackFailed: 'The write failed and the automatic restore failed too. Restore the backup manually before using this agent.',
+      fallback: 'Configure manually instead'
+    },
+
     done: 'Done'
   }
 }

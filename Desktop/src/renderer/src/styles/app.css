@@ -6211,6 +6211,33 @@ body.canvas-focus .canvas-topbar {
   width: min(720px, 100%);
 }
 
+/*
+   接入这一屏的内容会随权限档位和逐项清单变长，主按钮不该被顶到滚动区之外。
+   卡片底部留白改由按钮区自己撑出来，视觉与原来一致。
+*/
+.onboarding__card--wide {
+  padding-bottom: 0;
+}
+
+.onboarding__card--wide .onboarding__actions {
+  position: sticky;
+  bottom: 0;
+  padding: 12px 0 40px;
+  background: var(--card);
+}
+
+/* 滚动时卡片被按钮压住的那一截要淡出去；16px 太短，仍会切掉半张卡。 */
+.onboarding__card--wide .onboarding__actions::before {
+  content: '';
+  position: absolute;
+  top: -34px;
+  right: 0;
+  left: 0;
+  height: 34px;
+  background: linear-gradient(to top, var(--card) 30%, transparent);
+  pointer-events: none;
+}
+
 /* 入口三选：整块可点，不是一排小按钮 */
 .onboarding__choices {
   display: flex;
@@ -6289,6 +6316,34 @@ body.canvas-focus .canvas-topbar {
   line-height: 1.45;
 }
 
+/* 权限摘要：默认就是全给，一行说清；点「调整」才展开档位 */
+.scope-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--well);
+}
+
+.scope-summary__text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.scope-summary .onboarding-subtitle {
+  margin: 0;
+}
+
+.scope-summary__value {
+  color: var(--ink);
+  font-size: var(--fs-body);
+}
+
 /* 权限预设 */
 .preset-list {
   display: flex;
@@ -6324,6 +6379,14 @@ body.canvas-focus .canvas-topbar {
   font-size: var(--fs-caption);
   color: var(--ink-soft);
   line-height: 1.5;
+}
+
+/*
+   只有选中档展开说明。四档全带两行解释会把主按钮挤出视口——而这一屏
+   真正要人做的决定只有一个：给不给全。想看别的档点了就展开。
+*/
+.preset-list__item:not([data-selected='true']) .preset-list__hint {
+  display: none;
 }
 
 /* 自定义权限 */
@@ -6429,4 +6492,20 @@ body.canvas-focus .canvas-topbar {
   color: var(--ink);
   font-size: var(--fs-callout);
   line-height: 1.6;
+}
+
+.agent-picker__badge {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  color: var(--ink-faint);
+}
+
+.agent-picker__badge[data-tone='ok'] {
+  color: var(--sage);
+  border-color: color-mix(in srgb, var(--sage) 42%, transparent);
 }

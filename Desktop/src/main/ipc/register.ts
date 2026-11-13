@@ -58,6 +58,11 @@ import type {
   UpdateStageGoalPatch
 } from '../database/repositories/personal-direction'
 import type { CurrentStateDraft, ProposalKind } from '../../shared/contracts/personal-direction'
+import { ApplicationError } from '../application/errors'
+import { detectAgents } from '../integrations/ai-agents/detection-service'
+import { applyAgentConfig, planAgentConfig } from '../integrations/ai-agents/config-service'
+import type { AgentKind } from '../integrations/ai-agents/types'
+import type { McpScope } from '../../shared/contracts/mcp'
 
 /**
  * IPC 注册表：**每一个通道**都先校验来源、再校验参数，最后才碰数据库。
@@ -287,6 +292,82 @@ export function registerIpc(params: {
   handle(IPC.mcpClientCreate, (input) => services.clients.create(input as never))
   handle(IPC.mcpClientRevoke, (input) => services.clients.revoke((input as { id: string }).id))
   handle(IPC.mcpBridgeStatus, () => bridgeStatus())
+
+  // MARK: - AI Agent 自动配置
+  //
+  // 目标路径由这里的 bridgeStatus 解析，Renderer 只能传 Agent 类型与 scope。
+  // 用户确认之前不会创建 Client；写入失败必须撤销刚建的 Client，否则会留下
+  // 一个永远不会被使用的授权。
+
+  handle(IPC.agentsDetect, () => {
+    const status = bridgeStatus()
+    const target =
+      status.mcpEntryPath && status.userDataDir
+        ? { entryPath: status.mcpEntryPath, userDataDir: status.userDataDir }
+        : null
+    return detectAgents(target)
+  })
+
+  handle(IPC.agentsPlan, (input) => {
+    const status = bridgeStatus()
+    if (!status.running) {
+      throw new ApplicationError('VALIDATION_ERROR', 'MCP bridge is not running')
+    }
+    return planAgentConfig((input as { kind: AgentKind }).kind, {
+      entryPath: status.mcpEntryPath,
+      userDataDir: status.userDataDir
+    })
+  })
+
+  handle(IPC.agentsApply, (input) => {
+    const value = input as {
+      kind: AgentKind
+      name: string
+      scopes: McpScope[]
+      replaceExisting: boolean
+    }
+    const status = bridgeStatus()
+    if (!status.running) {
+      throw new ApplicationError('VALIDATION_ERROR', 'MCP bridge is not running')
+    }
+
+    const target = { entryPath: status.mcpEntryPath, userDataDir: status.userDataDir }
+    const plan = planAgentConfig(value.kind, target)
+    if (plan.conflict && !value.replaceExisting) {
+      throw new ApplicationError(
+        'VALIDATION_ERROR',
+        'an existing brewphase entry requires explicit replacement'
+      )
+    }
+
+    const client = services.clients.create({ name: value.name, scopes: value.scopes })
+    try {
+      const result = applyAgentConfig(value.kind, target, client.token)
+      if (!result.ok) {
+        // 配置没写成功：撤销刚创建的客户端，不留无用授权。
+        services.clients.revoke(client.id)
+        return {
+          ok: false as const,
+          kind: value.kind,
+          configPath: result.configPath,
+          backupPath: result.backupPath,
+          rollbackFailed: result.error?.includes('rollback failed') ?? false
+        }
+      }
+      return {
+        ok: true as const,
+        kind: value.kind,
+        clientId: client.id,
+        clientName: client.name,
+        configPath: result.configPath,
+        backupPath: result.backupPath,
+        requiresRestart: result.requiresRestart
+      }
+    } catch (error) {
+      services.clients.revoke(client.id)
+      throw error
+    }
+  })
 
   // MARK: - 内置浏览器 · Chrome 书签
 

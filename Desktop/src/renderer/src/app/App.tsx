@@ -64,12 +64,13 @@ export function App() {
       markOnboardingSeen()
       return
     }
-    void api.sync
-      .status()
-      .then((status) => {
-        // 已经配对过的用户不需要引导，也不该被突然拦住；
-        // 补上标记后，他们仍可从 设置 → AI 连接 主动进入。
-        if (status.devices.length > 0) {
+    // 已经配过对、或已经建过 MCP Client 的用户，都不需要被首次引导拦住。
+    // 两件事都是「这个人在配置上已经动过手」的证据，任一成立就静默补标记；
+    // 之后仍可从 设置 → AI 连接 主动重新打开。
+    void Promise.all([api.sync.status(), api.mcp.listClients()])
+      .then(([sync, clients]) => {
+        const hasActiveClient = clients.some((client) => client.revokedAt === null)
+        if (sync.devices.length > 0 || hasActiveClient) {
           markOnboardingSeen()
           return
         }

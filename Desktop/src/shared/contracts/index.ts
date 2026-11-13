@@ -1,6 +1,12 @@
 import type { Bean, BeanDraft, Brew, BrewDraft, PhaseRule, Tasting, TastingDraft } from './entities/coffee'
 import type { WorkContextStudioItem } from './work-context'
 import type {
+  AgentApplyOutcome,
+  AgentConfigPlan,
+  AgentDetection,
+  AgentKind
+} from './agents'
+import type {
   CurrentState,
   CurrentStateDraft,
   Direction,
@@ -15,7 +21,13 @@ import type {
 import type { Canvas, CanvasNode, CanvasNodeWithRecord, CanvasNote, CanvasStroke } from './entities/canvas'
 import type { ImportImageResult, RecordDraft, RecordItem, RecordQuery, RecordTag } from './entities/records'
 import type { SyncStatus, SyncConflictItem, WipeResult } from './sync'
-import type { McpBridgeStatus, McpClientCreateInput, McpClientCreated, McpClientInfo } from './mcp'
+import type {
+  McpBridgeStatus,
+  McpClientCreateInput,
+  McpClientCreated,
+  McpClientInfo,
+  McpScope
+} from './mcp'
 import type { BrowserBounds, BrowserOpenInput, BrowserState } from './browser'
 import type {
   BookmarkImportResult,
@@ -42,6 +54,7 @@ export * from './bookmarks'
 export * from './chrome-bridge'
 export * from './work-context'
 export * from './personal-direction'
+export * from './agents'
 export * from './data-location'
 export * from './validation/ipc'
 
@@ -193,6 +206,17 @@ export interface RendererApi {
    * AI 连接（MCP）。token 只在 createClient 的返回值里出现一次，
    * listClients 永远不会返回 token 或哈希。
    */
+  /** AI Agent 自动配置：检测 → 预览 → 用户确认后写入。 */
+  agents: {
+    detect: () => Promise<AgentDetection[]>
+    plan: (kind: AgentKind) => Promise<AgentConfigPlan>
+    apply: (input: {
+      kind: AgentKind
+      name: string
+      scopes: McpScope[]
+      replaceExisting: boolean
+    }) => Promise<AgentApplyOutcome>
+  }
   mcp: {
     listClients: () => Promise<McpClientInfo[]>
     createClient: (input: McpClientCreateInput) => Promise<McpClientCreated>

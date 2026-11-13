@@ -2,9 +2,10 @@ import { z } from 'zod'
 import { beanDraftSchema, brewDraftSchema } from '../entities/coffee'
 import { recordDraftSchema, recordQuerySchema } from '../entities/records'
 import { canvasNodeMoveSchema, canvasNodeResizeSchema, canvasNoteSchema, canvasStrokeSchema } from '../entities/canvas'
-import { mcpClientCreateInputSchema } from '../mcp'
+import { mcpClientCreateInputSchema, mcpScopeSchema } from '../mcp'
 import { browserBoundsUpdateSchema, browserNavigateSchema, browserOpenSchema } from '../browser'
 import { chromeProfileRequestSchema } from '../bookmarks'
+import { agentKindSchema } from '../agents'
 import {
   currentStateDraftSchema,
   directionInputSchema,
@@ -130,7 +131,12 @@ export const IPC = {
   directionCreateStage: 'direction:stage:create',
   directionUpdateStage: 'direction:stage:update',
   directionDeleteStage: 'direction:stage:delete',
-  directionResolveProposal: 'direction:proposal:resolve'
+  directionResolveProposal: 'direction:proposal:resolve',
+
+  // AI Agent 自动配置：检测、预览、写入。目标路径永远由主进程解析。
+  agentsDetect: 'agents:detect',
+  agentsPlan: 'agents:plan',
+  agentsApply: 'agents:apply'
 } as const
 
 export const ipcRequestSchemas = {
@@ -254,6 +260,17 @@ export const ipcRequestSchemas = {
     kind: proposalKindSchema,
     id: z.string().uuid(),
     action: z.enum(['confirm', 'discard'])
+  }),
+
+  // Agent 自动配置
+  [IPC.agentsDetect]: z.void(),
+  [IPC.agentsPlan]: z.object({ kind: agentKindSchema }),
+  [IPC.agentsApply]: z.object({
+    kind: agentKindSchema,
+    name: z.string().trim().min(1).max(80),
+    scopes: z.array(mcpScopeSchema).min(1),
+    /** 已存在同名条目时，必须显式传 true 才允许替换。 */
+    replaceExisting: z.boolean().default(false)
   })
 } as const
 

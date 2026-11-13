@@ -42,6 +42,12 @@ const api: RendererApi = {
     deleteStage: (id) => invoke(IPC.directionDeleteStage, { id }),
     resolveProposal: (kind, id, action) => invoke(IPC.directionResolveProposal, { kind, id, action })
   },
+  // AI Agent 自动配置：目标路径由主进程解析，这里只传类型与 scope。
+  agents: {
+    detect: () => invoke(IPC.agentsDetect),
+    plan: (kind) => invoke(IPC.agentsPlan, { kind }),
+    apply: (input) => invoke(IPC.agentsApply, input)
+  },
   coffee: {
     listBeans: () => invoke(IPC.beansList),
     createBean: (draft) => invoke(IPC.beanCreate, draft),

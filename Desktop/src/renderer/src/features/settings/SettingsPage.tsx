@@ -1046,8 +1046,7 @@ function McpSection() {
   /** 入口路径与数据目录都齐了才谈得上生成配置。 */
   const configTarget = configTargetFrom(status)
   const [name, setName] = useState('')
-  // 默认给「个人成长」预设：Life Path 的主要场景要读方向与工作上下文，
-  // 而 records/coffee/canvas 那一组既不覆盖它，又默认带上了无关权限。
+  // 默认跟随预设第一档（全量）：装 Agent 是为了让它干活，不是让人先勾权限。
   const [scopes, setScopes] = useState<McpScope[]>([...MCP_SCOPE_PRESETS[0].scopes])
   const openAgentOnboarding = useAppStore((state) => state.openAgentOnboarding)
   const [created, setCreated] = useState<McpClientCreated | null>(null)
