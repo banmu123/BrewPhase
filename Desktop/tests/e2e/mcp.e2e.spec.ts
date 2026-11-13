@@ -6,6 +6,7 @@ import { pinLocale } from './locale'
 import { openSpace } from './nav'
 import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
+import { TOOL_DEFINITIONS } from '../../src/shared/mcp/tool-schemas'
 
 /**
  * MCP E2E：真实 Electron + 真实 Unix socket + 真实 MCP 子进程。
@@ -70,7 +71,13 @@ test('MCP：Bridge 随 App 启停、Agent 写入、UI 刷新、撤销即失效',
   await client.connect(transport)
 
   const tools = await client.listTools()
-  expect(tools.tools.length).toBe(23)
+  /*
+   * 不写死数量（历史上写过 18、23，每加一个工具就假红一次）：
+   * 直接对照 `TOOL_DEFINITIONS` —— 那是 MCP Server 注册、Main 二次校验与
+   * scope 映射共用的同一份清单。这里同时断言**名字集合**，比数量更严格：
+   * 漏注册、注册了清单外的工具都会被抓到。
+   */
+  expect(tools.tools.map((tool) => tool.name).sort()).toEqual(Object.keys(TOOL_DEFINITIONS).sort())
 
   const title = `E2E 记录 ${Date.now()}`
   const createdRecord = await client.callTool({

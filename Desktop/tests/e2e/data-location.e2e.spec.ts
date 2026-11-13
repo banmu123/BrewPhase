@@ -1,7 +1,7 @@
 import { test, expect, _electron as electronLauncher } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pinLocale } from './locale'
 import { seedStudioDatabase } from './studio-seed'
@@ -14,7 +14,17 @@ import { seedStudioDatabase } from './studio-seed'
  * 随后手动重启同一个 userData，确认应用真的从新目录打开数据库。
  *
  * 不碰真实库：userData 与目标目录都是临时目录。
+ *
+ * **目标目录不能建在 `os.tmpdir()` 下**：macOS 的临时目录是
+ * `/var/folders/…`，而 `/var` 正是产品明确拒绝的系统目录，`choose()` 会
+ * 合法地返回 `ok:false`，界面永远进不到「正在重启」状态。这里改用家目录下
+ * 的临时目录，任何平台的系统目录前缀都不覆盖它（与 data-location 单测同规）。
  */
+
+/** 迁移目标：必须落在产品认可的用户目录里。 */
+function tempTargetRoot(prefix: string): string {
+  return mkdtempSync(join(homedir(), prefix))
+}
 
 function launchEnv(userData: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
@@ -47,7 +57,7 @@ async function launch(
 test('更改数据位置：复制 db 与 media，重启后从新目录打开', async () => {
   test.setTimeout(150_000)
   const userData = mkdtempSync(join(tmpdir(), 'bp-data-e2e-'))
-  const targetRoot = mkdtempSync(join(tmpdir(), 'bp-data-target-'))
+  const targetRoot = tempTargetRoot('.brewphase-e2e-data-target-')
   const target = join(targetRoot, 'moved')
   seedStudioDatabase(userData)
 
@@ -96,7 +106,7 @@ test('更改数据位置：复制 db 与 media，重启后从新目录打开', a
 test('恢复默认位置：删除配置后重启回到默认目录', async () => {
   test.setTimeout(120_000)
   const userData = mkdtempSync(join(tmpdir(), 'bp-data-reset-'))
-  const targetRoot = mkdtempSync(join(tmpdir(), 'bp-data-reset-target-'))
+  const targetRoot = tempTargetRoot('.brewphase-e2e-data-reset-')
   const target = join(targetRoot, 'moved')
   seedStudioDatabase(userData)
 

@@ -131,7 +131,10 @@ test('详情里的播放器：按内容 ID 播放、放大、非法 ID 不出现
   await expect(page.locator('.link-player--zoomed')).toHaveCount(0)
   await expect(youtubeFrame).toHaveCount(1)
 
-  // 3) 切到 B 站：组件按记录重建，不继承上一条的播放态
+  // 3) 切到 B 站：先关掉详情抽屉——它是 fixed 浮层，会盖住右侧列表，
+  //    真实用户也是先关再选；不关就点列表是在跟浮层抢命中区。
+  await page.getByRole('button', { name: '关闭详情' }).click()
+  await expect(page.locator('.float-panel')).toHaveCount(0)
   await page.locator('.record-tile', { hasText: '手冲咖啡入门到进阶' }).click()
   await expect(page.locator('.detail-title')).toHaveText('手冲咖啡入门到进阶')
   await expect(page.locator('.link-player__frame')).toHaveCount(0)
@@ -141,7 +144,10 @@ test('详情里的播放器：按内容 ID 播放、放大、非法 ID 不出现
     /player\.bilibili\.com\/player\.html\?bvid=BV1xx411c7mD/
   )
 
-  // 4) 非法内容 ID：没有播放器，但记录本身照常可看
+  // 4) 非法内容 ID：没有播放器，但记录本身照常可看。
+  //    同样先关掉上一条的详情，避免抽屉里的 iframe 挡住列表点击。
+  await page.getByRole('button', { name: '关闭详情' }).click()
+  await expect(page.locator('.float-panel')).toHaveCount(0)
   await page.locator('.record-tile', { hasText: 'Broken video id' }).click()
   await expect(page.locator('.detail-title')).toHaveText('Broken video id')
   await expect(page.locator('.link-player')).toHaveCount(0)

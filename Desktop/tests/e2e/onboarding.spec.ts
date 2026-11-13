@@ -38,8 +38,15 @@ test.describe('首次启动：干净数据 + 配对引导', () => {
       await expect(page.locator('.studio-space--coffee .studio-empty')).toContainText('咖啡架还在等')
       await expect(page.locator('.shelf-card')).toHaveCount(0)
 
-      // 引导只讲配对：三步 + 两个出口，不写功能清单。
+      // 引导首屏是统一入口：连接 AI / 配对移动设备 / 先进入，三条路都可选。
       await expect(page.locator('.onboarding__card')).toBeVisible()
+      await expect(page.locator('.onboarding__title')).toHaveText(
+        '你的个人空间，也可以连接你信任的 AI 工具。'
+      )
+      await expect(page.getByRole('button', { name: '连接 AI Agent' })).toBeVisible()
+
+      // 进入配对分支才是三步说明——「引导只讲配对」的断言放在这里。
+      await page.getByRole('button', { name: '配对移动设备' }).click()
       await expect(page.locator('.onboarding__title')).toHaveText('把你的个人空间，延伸到桌面')
       await expect(page.locator('.onboarding__step')).toHaveCount(3)
 
@@ -67,6 +74,11 @@ test.describe('首次启动：干净数据 + 配对引导', () => {
     try {
       const page = await app.firstWindow()
       await pinLocale(page, 'en-US')
+      // 首屏统一入口；英文文案必须是自然表达，不能漏中文。
+      await expect(page.locator('.onboarding__title')).toHaveText(
+        'Your personal space, connected to the tools you trust.'
+      )
+      await page.getByRole('button', { name: 'Pair a mobile device' }).click()
       await expect(page.locator('.onboarding__title')).toHaveText(
         'Extend your personal space to the desktop'
       )

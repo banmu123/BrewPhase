@@ -18,5 +18,9 @@ export default defineConfig({
   timeout: 40_000,
   workers: 1,
   reporter: [['list']],
+  // 显式准备：检查 out/ 产物、重建 ChromeExtension 的 dist。
+  // 没有这一步时，chrome-companion 的安装用例会因为开发机没手工 build
+  // 扩展而失败，看起来像产品问题，实际是环境没准备。
+  globalSetup: './tests/e2e/global-setup.ts',
   use: { actionTimeout: 10_000 }
 })
