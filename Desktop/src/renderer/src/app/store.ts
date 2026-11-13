@@ -22,6 +22,10 @@ type AppState = {
    */
   openSettingsCategory: SettingsCategory | null
   openSettings: (category: SettingsCategory) => void
+  /** 设置页「重新打开接入向导」：直接进 AI 分支，不走欢迎页。 */
+  agentOnboarding: boolean
+  openAgentOnboarding: () => void
+  closeAgentOnboarding: () => void
   consumeOpenSettings: () => SettingsCategory | null
   /** 顶栏快速添加 → 切到对应空间并请求打开它已有的新建表单。 */
   pendingCreate: CreateKind | null
@@ -45,6 +49,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   openSettingsCategory: null,
   openSettings: (category) => set({ module: 'settings', openSettingsCategory: category }),
+  agentOnboarding: false,
+  openAgentOnboarding: () => set({ agentOnboarding: true }),
+  closeAgentOnboarding: () => set({ agentOnboarding: false }),
   consumeOpenSettings: () => {
     const category = get().openSettingsCategory
     if (category) set({ openSettingsCategory: null })

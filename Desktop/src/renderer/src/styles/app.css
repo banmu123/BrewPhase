@@ -6204,3 +6204,229 @@ body.canvas-focus .canvas-topbar {
   line-height: 1.6;
   white-space: pre-wrap;
 }
+
+/* ---------- 首次引导：统一入口与 AI 接入 ---------- */
+
+.onboarding__card--wide {
+  width: min(720px, 100%);
+}
+
+/* 入口三选：整块可点，不是一排小按钮 */
+.onboarding__choices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.onboarding-choice {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 14px 18px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--ink);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.onboarding-choice:hover {
+  border-color: var(--ink-faint);
+  background: var(--well);
+}
+
+.onboarding-choice__label {
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.onboarding-subtitle {
+  margin: 4px 0 0;
+  font-size: var(--fs-caption);
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* Agent 三选 */
+.agent-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.agent-picker__item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--ink);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-picker__item[data-selected='true'] {
+  border-color: var(--espresso);
+  background: var(--well);
+}
+
+.agent-picker__name {
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.agent-picker__hint {
+  font-size: var(--fs-micro);
+  color: var(--ink-faint);
+  line-height: 1.45;
+}
+
+/* 权限预设 */
+.preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.preset-list__item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 11px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--ink);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.preset-list__item[data-selected='true'] {
+  border-color: var(--espresso);
+  background: var(--well);
+}
+
+.preset-list__name {
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.preset-list__hint {
+  font-size: var(--fs-caption);
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+/* 自定义权限 */
+.scope-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--well);
+}
+
+.scope-checklist__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--fs-caption);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.scope-checklist__label {
+  display: block;
+  margin-top: 2px;
+  color: var(--ink-faint);
+  line-height: 1.45;
+}
+
+/* 状态提示 */
+.onboarding-note {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 2px solid var(--hairline-strong);
+  background: var(--well);
+  color: var(--ink-soft);
+  font-size: var(--fs-caption);
+  line-height: 1.6;
+}
+
+.onboarding-note p {
+  margin: 4px 0 0;
+}
+
+.onboarding-note[data-tone='warn'] {
+  border-left-color: var(--phase-rest);
+  color: var(--ink);
+}
+
+.onboarding-note[data-tone='ok'] {
+  border-left-color: var(--sage);
+  color: var(--ink);
+}
+
+.onboarding-note[data-tone='error'] {
+  border-left-color: var(--priority);
+  color: var(--priority);
+}
+
+.onboarding-hint {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: var(--fs-caption);
+  line-height: 1.6;
+}
+
+.onboarding-token {
+  padding: 10px 12px;
+  border-radius: var(--radius-small);
+  background: var(--well);
+  font-size: 11px;
+  line-height: 1.6;
+  word-break: break-all;
+  user-select: all;
+}
+
+.onboarding-copy-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.onboarding-config {
+  /* 卡片是 flex column，pre 默认 flex-shrink:1 会被压成一行高。 */
+  flex: 0 0 auto;
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-small);
+  background: var(--well);
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.onboarding-prompt {
+  margin: 0;
+  padding: 10px 14px;
+  border-left: 2px solid var(--hairline-strong);
+  color: var(--ink);
+  font-size: var(--fs-callout);
+  line-height: 1.6;
+}

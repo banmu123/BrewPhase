@@ -16,13 +16,14 @@ import type {
   SyncConflictItem,
   SyncStatus
 } from '@shared/contracts'
-import { MCP_SCOPE_GROUPS } from '@shared/contracts'
+import { MCP_SCOPE_GROUPS, MCP_SCOPE_PRESETS } from '@shared/contracts'
 import { api } from '../../shared/api'
 import { SUPPORTED_LOCALES, useI18n } from '../../i18n'
 import { THEMES } from '../../shared/theme'
 import { useTheme } from '../../shared/useTheme'
 import { useAppStore, type SettingsCategory } from '../../app/store'
 import { confirmAction } from '../../shared/ConfirmDialog'
+import { codexConfig, configTargetFrom, workbuddyConfig } from './mcp-config'
 
 /**
  * 更多 / Settings。
@@ -1042,8 +1043,13 @@ function McpSection() {
   const { t, formatDateTime } = useI18n()
   const [clients, setClients] = useState<McpClientInfo[]>([])
   const [status, setStatus] = useState<McpBridgeStatus | null>(null)
+  /** 入口路径与数据目录都齐了才谈得上生成配置。 */
+  const configTarget = configTargetFrom(status)
   const [name, setName] = useState('')
-  const [scopes, setScopes] = useState<McpScope[]>(['records:read', 'coffee:read', 'canvas:read'])
+  // 默认给「个人成长」预设：Life Path 的主要场景要读方向与工作上下文，
+  // 而 records/coffee/canvas 那一组既不覆盖它，又默认带上了无关权限。
+  const [scopes, setScopes] = useState<McpScope[]>([...MCP_SCOPE_PRESETS[0].scopes])
+  const openAgentOnboarding = useAppStore((state) => state.openAgentOnboarding)
   const [created, setCreated] = useState<McpClientCreated | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -1113,6 +1119,9 @@ function McpSection() {
     <div className="settings-section">
       <h2 className="settings-section__title">{t.settings.nav.mcp}</h2>
       <p className="settings-lead">{t.mcp.headline}</p>
+      <button className="button" style={{ marginBottom: 10 }} onClick={openAgentOnboarding}>
+        {t.mcp.reopenGuide}
+      </button>
       <p className="note" style={{ marginBottom: 8 }}>
         {t.mcp.intro}
       </p>
@@ -1141,13 +1150,13 @@ function McpSection() {
             </button>
             <button
               className="button"
-              onClick={() => void copy(codexConfig(status, created.token), t.mcp.created.copyCodex)}
+              onClick={() => void copy(configTarget ? codexConfig(configTarget, created.token) : '', t.mcp.created.copyCodex)}
             >
               {t.mcp.created.copyCodex}
             </button>
             <button
               className="button"
-              onClick={() => void copy(workbuddyConfig(status, created.token), t.mcp.created.copyWorkBuddy)}
+              onClick={() => void copy(configTarget ? workbuddyConfig(configTarget, created.token) : '', t.mcp.created.copyWorkBuddy)}
             >
               {t.mcp.created.copyWorkBuddy}
             </button>
@@ -1160,7 +1169,7 @@ function McpSection() {
             className="note mono"
             style={{ fontSize: 10, whiteSpace: 'pre-wrap', background: 'rgba(0,0,0,0.03)', padding: 10 }}
           >
-            {codexConfig(status, created.token)}
+            {configTarget ? codexConfig(configTarget, created.token) : ''}
           </pre>
         </div>
       ) : (
@@ -1287,35 +1296,4 @@ function McpSection() {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
-}
-
-function codexConfig(status: McpBridgeStatus | null, token: string): string {
-  return `[mcp_servers.brewphase]
-command = "node"
-args = ["${status?.mcpEntryPath ?? '<Desktop>/out/mcp/stdio.mjs'}"]
-
-[mcp_servers.brewphase.env]
-BREWPHASE_MCP_TOKEN = "${token}"
-BREWPHASE_MCP_USER_DATA_DIR = "${status?.userDataDir ?? '<BrewPhase userData>'}"`
-}
-
-function workbuddyConfig(status: McpBridgeStatus | null, token: string): string {
-  return JSON.stringify(
-    {
-      mcpServers: {
-        brewphase: {
-          type: 'stdio',
-          command: 'node',
-          args: [status?.mcpEntryPath ?? '<Desktop>/out/mcp/stdio.mjs'],
-          env: {
-            BREWPHASE_MCP_TOKEN: token,
-            BREWPHASE_MCP_USER_DATA_DIR: status?.userDataDir ?? '<BrewPhase userData>'
-          },
-          timeout: 30000
-        }
-      }
-    },
-    null,
-    2
-  )
 }

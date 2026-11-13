@@ -56,6 +56,27 @@ export const MCP_SCOPE_GROUPS: Array<{ group: McpScopeGroup; scopes: McpScope[] 
   { group: 'direction', scopes: ['direction:read', 'direction:propose'] }
 ]
 
+/**
+ * 推荐权限预设。
+ *
+ * 「个人成长」是 Life Path 场景的默认组合：读现状/方向/阶段、读工作上下文、
+ * 读记录——足以支撑一次完整分析，但一个写权限都不给。
+ *
+ * 「个人成长协作」只多一个 `direction:propose`：让 Agent 能写**草稿**，
+ * 仍需用户在应用内确认。这里永远不会有 `direction:confirm`——
+ * 那个能力在 MCP 侧根本不存在（见 personal-direction 的设计说明）。
+ */
+export const MCP_SCOPE_PRESETS = [
+  { key: 'personalGrowth', scopes: ['direction:read', 'work_context:read', 'records:read'] },
+  {
+    key: 'personalGrowthCollab',
+    scopes: ['direction:read', 'work_context:read', 'records:read', 'direction:propose']
+  },
+  { key: 'recordsOnly', scopes: ['records:read'] }
+] as const satisfies ReadonlyArray<{ key: string; scopes: readonly McpScope[] }>
+
+export type McpScopePresetKey = (typeof MCP_SCOPE_PRESETS)[number]['key']
+
 export const MCP_ERROR_CODES = [
   'APP_NOT_RUNNING',
   'UNAUTHORIZED',
