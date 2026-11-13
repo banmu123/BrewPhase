@@ -321,6 +321,7 @@ Tools/                     # 本地化 · 模拟器/截图 · 分析脚本
 | MCP 架构 | [Desktop/docs/MCP_ARCHITECTURE.md](Desktop/docs/MCP_ARCHITECTURE.md) |
 | MCP 工具（18 个） | [Desktop/docs/MCP_TOOLS.md](Desktop/docs/MCP_TOOLS.md) |
 | MCP 安全 | [Desktop/docs/MCP_SECURITY.md](Desktop/docs/MCP_SECURITY.md) |
+| Life Path Skill（跨 Agent） | [skills/brewphase-life-path/README.zh-CN.md](skills/brewphase-life-path/README.zh-CN.md) |
 | 路线图 | [Desktop/docs/ROADMAP.md](Desktop/docs/ROADMAP.md) |
 | 两端功能对齐审计 | [Desktop/docs/FEATURE_PARITY_AUDIT.md](Desktop/docs/FEATURE_PARITY_AUDIT.md) |
 | 设计系统 | [docs/design/BrewPhase-Design-System-v1.md](docs/design/BrewPhase-Design-System-v1.md) |

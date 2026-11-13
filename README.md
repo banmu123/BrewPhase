@@ -382,6 +382,7 @@ only in **[Project status](docs/PROJECT_STATUS.md)**. Everything else is here:
 | MCP architecture | [Desktop/docs/MCP_ARCHITECTURE.md](Desktop/docs/MCP_ARCHITECTURE.md) |
 | MCP tools (18) | [Desktop/docs/MCP_TOOLS.md](Desktop/docs/MCP_TOOLS.md) |
 | MCP security | [Desktop/docs/MCP_SECURITY.md](Desktop/docs/MCP_SECURITY.md) |
+| Life Path skill (cross-agent) | [skills/brewphase-life-path/README.md](skills/brewphase-life-path/README.md) |
 | Roadmap | [Desktop/docs/ROADMAP.md](Desktop/docs/ROADMAP.md) |
 | Feature parity audit | [Desktop/docs/FEATURE_PARITY_AUDIT.md](Desktop/docs/FEATURE_PARITY_AUDIT.md) |
 | Design system | [docs/design/BrewPhase-Design-System-v1.md](docs/design/BrewPhase-Design-System-v1.md) |
