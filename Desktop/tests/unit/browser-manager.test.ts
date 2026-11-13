@@ -134,7 +134,8 @@ const fake = vi.hoisted(() => {
     id: 1,
     isDestroyed: () => false,
     getContentSize: (): [number, number] => [1280, 800],
-    contentView: { addChildView: () => undefined },
+    // 多标签后 view 的挂载/摘除走 contentView；fake 记录调用供断言。
+    contentView: { addChildView: () => undefined, removeChildView: () => undefined },
     webContents: { send: () => undefined }
   }
 
@@ -152,7 +153,8 @@ const fake = vi.hoisted(() => {
 })
 
 vi.mock('electron', () => ({
-  BrowserWindow: class {},
+  // 多标签后 BrowserTabManager 用 fromId 找目标窗口；fake 主窗口 id=1。
+  BrowserWindow: Object.assign(class {}, { fromId: (id: number) => (id === 1 ? fake.window : null) }),
   session: { fromPartition: () => fake.session },
   shell: { openExternal: () => undefined },
   WebContentsView: fake.WebContentsView
@@ -173,7 +175,8 @@ describe('BrowserManager 起始页与恢复', () => {
     db = drizzle(sqlite, { schema })
     manager = new BrowserManager({
       db,
-      getWindow: () => fake.window as never
+      getWindow: () => fake.window as never,
+      devServerUrl: null
     })
   })
 
@@ -281,7 +284,7 @@ describe('BrowserManager 起始页与恢复', () => {
     recordBrowserVisit(db, 'https://last.example/', '上次的网页')
     // recent 在构造时读入，重建一次才能拿到刚写进去的那条。
     manager.dispose()
-    manager = new BrowserManager({ db, getWindow: () => fake.window as never })
+    manager = new BrowserManager({ db, getWindow: () => fake.window as never, devServerUrl: null })
 
     const opened = manager.open()
 

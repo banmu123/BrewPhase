@@ -42,6 +42,36 @@ const api: RendererApi = {
     deleteStage: (id) => invoke(IPC.directionDeleteStage, { id }),
     resolveProposal: (kind, id, action) => invoke(IPC.directionResolveProposal, { kind, id, action })
   },
+  // 可拆卸浏览器窗口：拖动归属由主进程裁定，这里只报意图与坐标。
+  browserTabs: {
+    create: () => invoke(IPC.browserCreateTab),
+    activate: (tabId) => invoke(IPC.browserActivateTab, { tabId }),
+    closeTab: (tabId) => invoke(IPC.browserCloseTab, { tabId }),
+    reorder: (tabId, beforeTabId) => invoke(IPC.browserReorderTab, { tabId, beforeTabId }),
+    resolveDrop: (tabId, screenX, screenY) => invoke(IPC.browserResolveDrop, { tabId, screenX, screenY }),
+    dragProbe: (screenX, screenY) => invoke(IPC.browserDragProbe, { screenX, screenY }),
+    reattach: (tabId) => invoke(IPC.browserReattach, { tabId }),
+    floatActivate: (windowId, tabId) => invoke(IPC.browserFloatActivate, { windowId, tabId }),
+    floatBounds: (windowId, bounds) => invoke(IPC.browserFloatBounds, { windowId, bounds }),
+    executeOnTab: (tabId, script) => invoke(IPC.browserExecuteOnTab, { tabId, script })
+  },
+  // AI Workspace：Multi-AI 并行提问。自动化全在主进程，这里只有意图。
+  aiChat: {
+    statuses: () => invoke(IPC.aiChatStatus),
+    ask: (input) => invoke(IPC.aiChatAsk, input),
+    cancel: () => invoke(IPC.aiChatCancel),
+    lastTask: () => invoke(IPC.aiChatLastTask),
+    openLogin: (provider) => invoke(IPC.aiChatOpenLogin, provider),
+    viewURL: (provider) => invoke(IPC.aiChatViewURL, provider),
+    conversations: () => invoke(IPC.aiChatConversations),
+    conversation: (id) => invoke(IPC.aiChatConversation, { id }),
+    deleteConversation: (id) => invoke(IPC.aiChatDeleteConversation, { id }),
+    onChanged: (listener) => {
+      const channel = IPC.aiChatStatus + ':changed'
+      ipcRenderer.on(channel, (_event, payload) => listener(payload))
+      return () => ipcRenderer.removeAllListeners(channel)
+    }
+  },
   // AI Agent 自动配置：目标路径由主进程解析，这里只传类型与 scope。
   agents: {
     detect: () => invoke(IPC.agentsDetect),

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import type { AppInfo } from '@shared/contracts'
 import { api } from '../shared/api'
 import { CanvasPage } from '../features/canvas/CanvasPage'
+import { AIWorkspacePage } from '../features/ai-workspace/AIWorkspacePage'
+import { BrowserFloatWindow } from '../features/browser/BrowserFloatWindow'
 import { CoffeePage } from '../features/coffee/CoffeePage'
 import { RecordsPage } from '../features/records/RecordsPage'
 import { SettingsPage } from '../features/settings/SettingsPage'
@@ -90,6 +92,13 @@ export function App() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
+  // 独立浏览器窗口：同一份应用，#bpFloat=<windowId> 时只渲染浮窗壳。
+  const floatWindowId = Number(/bpFloat=(\d+)/.exec(window.location.hash)?.[1]) || null
+
+  if (floatWindowId) {
+    return <BrowserFloatWindow windowId={floatWindowId} />
+  }
+
   return (
     <>
       <div className="app">
@@ -107,6 +116,8 @@ export function App() {
             <RecordsPage />
           ) : module === 'canvas' ? (
             <CanvasPage />
+          ) : module === 'ai' ? (
+            <AIWorkspacePage />
           ) : module === 'settings' ? (
             <SettingsPage info={info} />
           ) : (

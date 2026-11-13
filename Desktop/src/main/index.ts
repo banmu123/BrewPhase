@@ -21,6 +21,7 @@ import { CoffeeService } from './application/coffee/coffee-service'
 import { CanvasService } from './application/canvas/canvas-service'
 import { McpClientService } from './application/authorization/permission-service'
 import { BrowserManager } from './browser/browser-manager'
+import { AIChatService } from './ai-chat/ai-chat-service'
 import { BookmarkService } from './browser/bookmark-service'
 import { ChromeService } from './integrations/chrome/chrome-service'
 import { resolveDataLocation, setActiveDataDir } from './data-location'
@@ -68,6 +69,9 @@ let syncService: SyncService | null = null
 let bridgeServer: BridgeServer | null = null
 let chromeService: ChromeService | null = null
 let browserManager: BrowserManager | null = null
+/** 主窗口的显式引用：getAllWindows 的顺序不可靠（浮窗加入后尤其如此）。 */
+let mainWindowRef: BrowserWindow | null = null
+let aiChatService: AIChatService | null = null
 let quitting = false
 const devServerUrl = process.env.ELECTRON_RENDERER_URL ?? null
 
@@ -241,7 +245,18 @@ function bootstrap(): void {
   // 否则原生视图会挂在一个已经销毁的父节点上。
   browserManager = new BrowserManager({
     db: db.db,
-    getWindow: () => BrowserWindow.getAllWindows()[0] ?? null
+    getWindow: () => mainWindowRef,
+    devServerUrl
+  })
+
+  // Multi-AI（AI Workspace）：后台页面管理 + 并行调度。通知走主窗口广播，
+  // 与 browser:changed 同一模式——主进程是唯一事实来源。
+  const aiChat = new AIChatService(db.db)
+  aiChatService = aiChat
+  aiChat.setNotifier(() => {
+    const window = BrowserWindow.getAllWindows()[0]
+    if (!window || window.isDestroyed()) return
+    window.webContents.send('ai-chat:status:changed', aiChat.lastTask())
   })
 
   const bookmarkService = new BookmarkService(db.db)
@@ -278,6 +293,8 @@ function bootstrap(): void {
       await server?.stop()
       browserManager?.dispose()
       browserManager = null
+      aiChatService?.dispose()
+      aiChatService = null
       db?.close()
       db = null
     },
@@ -292,6 +309,7 @@ function bootstrap(): void {
     devServerUrl,
     sync: syncService,
     services: { records, clients, workContexts, personalDirection },
+    aiChat: aiChatService,
     bridgeStatus,
     browser: browserManager,
     bookmarks: bookmarkService,
@@ -305,10 +323,14 @@ function bootstrap(): void {
   installApplicationMenu()
 
   const mainWindow = createMainWindow({ devServerUrl })
+  mainWindowRef = mainWindow
+  mainWindow.on('closed', () => {
+    mainWindowRef = null
+  })
   // 窗口尺寸变化：原生视图不归 CSS 管，必须显式收回来。
   // 渲染层也会重新上报 bounds，这里是「渲染层还没来得及报」时的兜底。
   mainWindow.on('resize', () => browserManager?.refit())
-  mainWindow.on('closed', () => browserManager?.dispose())
+  mainWindow.on('closed', () => browserManager?.onMainWindowClosed())
   // 上次运行没跑完的 pending 任务（应用被关掉 / 崩溃）：接着抓，不遗忘
   try {
     for (const job of pendingMetadataJobs(db.db)) metadataQueue.enqueue(job)
@@ -317,7 +339,13 @@ function bootstrap(): void {
   }
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createMainWindow({ devServerUrl })
+    if (BrowserWindow.getAllWindows().length === 0) {
+      const window = createMainWindow({ devServerUrl })
+      mainWindowRef = window
+      window.on('closed', () => {
+        mainWindowRef = null
+      })
+    }
   })
 }
 
@@ -338,6 +366,8 @@ app.on('before-quit', (event) => {
   // 退出过程中可能报「对象已销毁」。
   browserManager?.dispose()
   browserManager = null
+  aiChatService?.dispose()
+  aiChatService = null
   // Bridge 与 Chrome 本地 IPC 的关闭都是异步的（关 socket、删 info / pipe 文件）：
   // 先拦住这一次 quit，清理完再真正退出；第二次进入时 `quitting` 已置位，只关库。
   if ((bridgeServer || chromeService) && !quitting) {

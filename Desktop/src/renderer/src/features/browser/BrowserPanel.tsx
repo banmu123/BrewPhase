@@ -21,6 +21,7 @@ import {
   StopIcon
 } from '../../shared/icons'
 import { BrowserStartPage } from './BrowserStartPage'
+import { BrowserTabStrip } from './BrowserTabStrip'
 import { browserErrorKey, isRetryableError } from './browser-error'
 import { useBrowserStore } from './browser-store'
 
@@ -294,6 +295,24 @@ export function BrowserPanel() {
           ✕
         </button>
       </header>
+
+      {/*
+        * 标签条：全部标签都在这里（含已拆出的——它们显示「已拆出」徽章，
+        * 点击聚焦对应浮窗）。窗口内拖动排序、拖到窗口外拆分，见 TabStrip。
+        */}
+      <BrowserTabStrip
+        tabs={state.tabs}
+        ownWindowId={null}
+        activeTabId={state.activeTabId}
+        onActivate={(tabId) => {
+          if (!tabId) {
+            void store.getState().create()
+          } else {
+            void store.getState().activateTab(tabId)
+          }
+        }}
+        onClose={(tabId) => void store.getState().closeTab(tabId)}
+      />
 
       <div className="browser-panel__toolbar">
         {/* 起始页：网页还在，只是让开。点书签直接接着浏览，Session 不断。 */}

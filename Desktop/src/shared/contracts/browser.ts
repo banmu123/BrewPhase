@@ -61,7 +61,28 @@ export type BrowserLoadError = {
   kind?: 'input' | 'network' | 'crash'
 }
 
+/** 单个标签的信息快照。tabId 是身份：拆分、合并、排序都不改它。 */
+export type BrowserTabInfo = {
+  id: string
+  url: string
+  title: string
+  loading: boolean
+  progress: number
+  error: BrowserLoadError | null
+  /** 挂在哪个窗口上；null = 活着但未挂载。 */
+  windowId: number | null
+  /** 在独立浏览器窗口里（不在主窗口）。 */
+  detached: boolean
+  /** 该标签是否是主窗口浮窗当前显示的那一个。 */
+  active: boolean
+}
+
 export type BrowserState = {
+  /** 全部标签（按展示顺序，含已拆出的——主窗口标签栏要显示它们的位置）。 */
+  tabs: BrowserTabInfo[]
+  /** 主窗口浮窗当前显示的标签。null = 起始页。 */
+  activeTabId: string | null
+
   /** 浮窗是否可见。隐藏时 WebContentsView 只是 `setVisible(false)`，页面还在。 */
   visible: boolean
   /** 网页容器是否已经存在。用于判断「再次打开是复用还是新建」。 */
@@ -102,3 +123,30 @@ export const browserNavigateSchema = z.object({ input: z.string().max(2_048) })
 
 /** 渲染层回报内容区矩形。主进程做一次 clamp，不信任任何越界值。 */
 export const browserBoundsUpdateSchema = browserBoundsSchema
+
+/** 拖动落点判定：渲染层只报屏幕坐标，归属由主进程统一裁定。 */
+export type BrowserDropInput = {
+  screenX: number
+  screenY: number
+  /** 正在拖动的标签。 */
+  tabId: string
+}
+
+export const browserDropSchema = z.object({
+  screenX: z.number().finite(),
+  screenY: z.number().finite(),
+  tabId: z.string().min(1).max(64)
+})
+
+/** 拖出预览：光标当前是否落在某个窗口上（拖动中节流上报）。 */
+export const browserDragProbeSchema = z.object({
+  screenX: z.number().finite(),
+  screenY: z.number().finite()
+})
+
+export type BrowserDragProbe = {
+  /** null = 光标在任何已知窗口之外（松手将拆出独立窗口）。 */
+  windowId: number | null
+  /** 光标所在窗口是否是主窗口。 */
+  mainWindow: boolean
+}

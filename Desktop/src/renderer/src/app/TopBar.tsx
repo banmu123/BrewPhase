@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { BeanIcon, CanvasIcon, GlobeIcon, MenuIcon, RecordsIcon, SearchIcon, SlidersIcon } from '../shared/icons'
+import { BeanIcon, CanvasIcon, GlobeIcon, MenuIcon, RecordsIcon, SearchIcon, SlidersIcon, SparkIcon } from '../shared/icons'
 import { useI18n } from '../i18n'
 import { useBrowserStore } from '../features/browser/browser-store'
 import { api } from '../shared/api'
@@ -20,6 +20,7 @@ export type TitleBarPlatform = 'mac' | 'windows' | 'other'
 export function TopBar(props: { onSearch: () => void; platform: TitleBarPlatform }) {
   const { t } = useI18n()
   const setModule = useAppStore((state) => state.setModule)
+  const module = useAppStore((state) => state.module)
   const requestCreate = useAppStore((state) => state.requestCreate)
   const openBrowser = useBrowserStore((state) => state.open)
   const browserVisible = useBrowserStore((state) => state.state.visible)
@@ -75,6 +76,21 @@ export function TopBar(props: { onSearch: () => void; platform: TitleBarPlatform
       </button>
 
       <div className="topbar__spacer" />
+
+      {/*
+        * AI Workspace 入口：一级导航（Multi-AI 并行提问是默认页）。
+        * 放在品牌之后、搜索之前——它是「工作」而不是「辅助操作」。
+        */}
+      <button
+        type="button"
+        className="topbar__nav"
+        data-active={module === 'ai'}
+        aria-pressed={module === 'ai'}
+        onClick={() => setModule('ai')}
+      >
+        <SparkIcon size={16} />
+        <span>{t.aiWorkspace.title}</span>
+      </button>
 
       <button
         type="button"

@@ -1,13 +1,13 @@
-import { BrowserWindow, session, shell, WebContentsView, type WebContents } from 'electron'
+import { BrowserWindow, shell } from 'electron'
 import type { Db } from '../database/client'
 import {
   BROWSER_CHANGED_CHANNEL,
-  BROWSER_MIN_HEIGHT,
-  BROWSER_MIN_WIDTH,
   type BrowserBounds,
+  type BrowserDragProbe,
   type BrowserLoadError,
   type BrowserOpenInput,
   type BrowserState,
+  type BrowserTabInfo,
   type BrowserVisit
 } from '../../shared/contracts/browser'
 import { isAllowedBrowserURL, normalizeBrowserURL, resolveBrowserInput } from '../../shared/browser-url'
@@ -19,86 +19,123 @@ import {
   retitleBrowserVisit,
   writeBrowserLayout
 } from './history-store'
+import { BrowserTabManager } from './browser-tab-manager'
+import { FloatWindowManager, FLOAT_TITLEBAR_HEIGHT } from './float-window'
 
 /**
- * 内置浏览器浮窗的唯一管理者（主进程）。
+ * 内置浏览器的总管理者（主进程）。
  *
  * 为什么必须收在一个类里：WebContentsView 是**原生视图**，不在 React DOM 里，
  * 它的创建、销毁、bounds、可见性、导航与权限都不能分散到各个页面。渲染层只能
- * 通过 IPC 表达意图（打开/导航/隐藏/关闭/我这边内容区多大），真实状态永远以
- * 这里为准，再广播回去。
+ * 通过 IPC 表达意图，真实状态永远以这里为准，再广播回去。
  *
- * 四条边界：
- * 1. **只有一个页面**：本阶段不做标签页，重复 open 只会复用同一个 view；
- * 2. **关闭 ≠ 登出**：销毁 view 不动 `persist:brewphase-browser` 分区，
- *    Cookie / LocalStorage 由 Chromium 自己落盘，应用层不读也不导出；
- * 3. **网页是外来的**：无 preload、无 Node、sandbox、权限一律拒绝、
- *    导航只认 http/https、`window.open` 一律 deny；
- * 4. **几何单向流入**：渲染层报内容区矩形，这里 clamp 后写进原生 view。
+ * 边界（在此前四条的基础上新增两条）：
+ * 1. **标签制**：一个浏览器里有多个标签；主窗口浮窗显示其中一个（activeTab），
+ *    其余挂载在独立窗口或未挂载。tab 的身份与生死由 `BrowserTabManager` 管，
+ *    这里只管「显示与调度」。
+ * 2. **关闭 ≠ 登出**：销毁 view 不动 `persist:brewphase-browser` 分区。
+ * 3. **网页是外来的**：sandbox、无 preload、权限全拒、只认 http/https。
+ * 4. **几何单向流入**：各窗口的渲染层上报各自的内容区矩形。
+ * 5. **拖动的是页面实例**：拆分/合并 = 改 view 的父窗口，绝不重新 loadURL。
+ * 6. **销毁只发生在 TabManager**：窗口关闭只是「归还」。
  */
-
-export const BROWSER_PARTITION = 'persist:brewphase-browser'
-
-/** `did-fail-load` 里 -3 = ERR_ABORTED：用户主动停止/跳转，不是错误。 */
-const ERR_ABORTED = -3
 
 export type BrowserManagerParams = {
   db: Db
   /** 主窗口按需取：macOS 关窗再激活会换一个 BrowserWindow 实例。 */
   getWindow: () => BrowserWindow | null
+  /** 浮窗壳页与主窗口同一份 React 应用；dev 走 dev server。 */
+  devServerUrl: string | null
 }
+
+/** 主窗口浮窗里网页区的高度预留：标签条画在 React 里，view 从它下面开始。 */
+export const BROWSER_TABBAR_HEIGHT = 40
 
 export class BrowserManager {
   private readonly db: Db
   private readonly getWindow: () => BrowserWindow | null
+  private readonly devServerUrl: string | null
 
-  private view: WebContentsView | null = null
-  /** view 绑在哪个窗口上：窗口换了就必须重建，否则原生视图挂在已销毁的父节点里。 */
-  private boundWindowId: number | null = null
+  private readonly tabs: BrowserTabManager
+  private readonly floats: FloatWindowManager
 
-  /** 浮窗是否被用户打开（与 view 是否绘制是两件事）。 */
+  /** 主窗口浮窗当前显示的标签；null = 起始页。 */
+  private activeTabId: string | null = null
+  /** 主窗口浮窗是否被用户打开。 */
   private panelVisible = false
-  /**
-   * 是否停在起始页。与 `currentURL` 分开：从网页回到起始页时地址仍然保留，
-   * 网页容器也不销毁，只是让原生层让开，由 React 画书签与最近访问。
-   */
+  /** 主窗口浮窗是否停在起始页（activeTab 仍活着，只是被起始页盖住）。 */
   private startPage = true
-  private currentURL = ''
-  private title = ''
-  private loading = false
-  private progress = 0
-  private error: BrowserLoadError | null = null
+
   private bounds: BrowserBounds | null
   private recent: BrowserVisit[]
 
-  /** 同一 tick 内的多次变化合并成一次广播，避免拖动时刷屏。 */
   private emitScheduled = false
-  /** 持久化布局的防抖：拖动/缩放过程中不写库。 */
   private persistTimer: NodeJS.Timeout | null = null
 
   constructor(params: BrowserManagerParams) {
     this.db = params.db
     this.getWindow = params.getWindow
+    this.devServerUrl = params.devServerUrl
     this.bounds = readBrowserLayout(params.db)
     this.recent = readBrowserRecent(params.db)
+
+    this.tabs = new BrowserTabManager({
+      mainWindowId: () => this.getWindow()?.id ?? null,
+      onPageVisited: (url, title) => {
+        this.recent = recordBrowserVisit(this.db, url, title)
+      },
+      onChange: () => this.emit()
+    })
+
+    this.floats = new FloatWindowManager({
+      mainWindowId: () => this.getWindow()?.id ?? null,
+      devServerUrl: this.devServerUrl,
+      onChange: () => this.emit(),
+      onWindowClosed: () => this.emit(),
+      // 浮窗关闭：把标签接回主窗口并设为激活（用户没有关闭页面的意图）。
+      onReattach: (tabId) => {
+        const mainId = this.getWindow()?.id ?? null
+        if (mainId !== null) {
+          this.tabs.moveToWindow(tabId, mainId)
+        }
+        this.activeTabId = tabId
+        this.startPage = false
+        this.panelVisible = true
+      }
+    })
+
   }
 
   // MARK: - 对外状态
 
   state(): BrowserState {
-    const webContents = this.view?.webContents
-    const history = readHistory(webContents)
+    const active = this.activeTab()
+    const history = readHistory(this.webContentsOf(active))
+    const mainWindowId = this.getWindow()?.id ?? null
+    const tabs: BrowserTabInfo[] = this.tabs.list().map((tab) => ({
+      id: tab.id,
+      url: tab.url,
+      title: tab.title,
+      loading: tab.loading,
+      progress: tab.progress,
+      error: tab.error,
+      windowId: tab.windowId,
+      detached: tab.detached,
+      active: tab.id === this.activeTabId && tab.windowId === mainWindowId
+    }))
     return {
+      tabs,
+      activeTabId: this.activeTabId,
       visible: this.panelVisible,
-      alive: this.view !== null && !this.view.webContents.isDestroyed(),
-      url: this.currentURL,
+      alive: this.tabs.list().length > 0,
+      url: active?.url ?? '',
       startPage: this.startPage,
-      title: this.title,
-      loading: this.loading,
-      progress: this.progress,
+      title: active?.title ?? '',
+      loading: active?.loading ?? false,
+      progress: active?.progress ?? 0,
       canGoBack: history.canGoBack,
       canGoForward: history.canGoForward,
-      error: this.error,
+      error: active?.error ?? null,
       layout: this.bounds,
       lastVisit: this.recent[0] ?? null,
       recent: this.recent
@@ -107,62 +144,30 @@ export class BrowserManager {
 
   // MARK: - 打开 / 隐藏 / 关闭
 
-  /**
-   * 打开浮窗：
-   * - 有 `url` → 导航到它（已打开就在同一个 view 里跳，不新建）；
-   * - 没有 → 页还活着就恢复它（不重载），否则停在起始页。
-   *
-   * **不再自动打开 `recent[0]`**：起始页是书签的落点，用户导入完点「打开浏览器」
-   * 却直接被带去上次的网页（可能还要重新登录，网络不好时就是一片白），
-   * 会以为书签没导进来。上次地址仍留在起始页的「继续上次访问」里，一键可达。
-   *
-   * 停在起始页时**不创建网页容器**：那一页完全由 React 画，多开一个
-   * Chromium 进程只会白占内存。第一次真正导航时才 `ensureView()`。
-   */
+  /** 打开浮窗：给了地址就走导航（必要时开新标签），否则恢复/起始页。 */
   open(input?: BrowserOpenInput): BrowserState {
     this.panelVisible = true
     const requested = input?.url?.trim()
     if (requested) return this.navigate(requested)
 
-    // 只是把浮窗藏起来（hide）时，网页容器还活着：恢复显示，不重新加载。
-    const webContents = this.view?.webContents
-    if (this.currentURL && webContents && !webContents.isDestroyed()) {
+    if (this.activeTabId && this.tabs.get(this.activeTabId)) {
       return this.showCurrentPage()
     }
     return this.showStart()
   }
 
-  /**
-   * 回到起始页（看导入的书签、最近访问）。
-   *
-   * 只改显示状态：`WebContentsView` 不销毁、`currentURL` 不清空，用户再点
-   * 书签时直接复用同一个网页容器，加载状态、滚动位置、登录态都还在。
-   */
   showStart(): BrowserState {
     this.panelVisible = true
     this.startPage = true
-    // 只切「显示哪一层」：不动 loading / progress / error。网页可能还在后台
-    // 加载，隐藏视图不等于停止加载；把它们清零会让恢复后的状态说谎。
     this.syncVisibility()
     this.emit()
     return this.state()
   }
 
-  /**
-   * 从起始页恢复到**当前网页实例**。
-   *
-   * 与 `open({ url })` 的本质区别：这里不调用 `loadURL()`，只把原生视图重新
-   * `setVisible(true)`。因此页面不会重新导航，滚动位置、SPA 路由、JS 内存里
-   * 的状态（表单、播放进度、未提交的交互）都还在。
-   *
-   * 没有可恢复的页面（没有 view / view 已销毁 / 没有有效 URL）时安全返回，
-   * 不创建容器、也不改 `startPage`——界面仍停在起始页。
-   */
+  /** 从起始页恢复当前标签（不重新加载）。 */
   showCurrentPage(): BrowserState {
-    const webContents = this.view?.webContents
-    if (!webContents || webContents.isDestroyed() || !this.currentURL) {
-      // 没有可恢复的页面：不要停在「网页态」的白屏上，退回起始页。
-      // 不创建 view、不导航，只是把显示层切回来。
+    const active = this.activeTab()
+    if (!active || !active.url) {
       if (!this.startPage) {
         this.startPage = true
         this.syncVisibility()
@@ -170,19 +175,16 @@ export class BrowserManager {
       }
       return this.state()
     }
-
     this.panelVisible = true
     this.startPage = false
-    // 以真实 webContents 为准修正加载态：隐藏期间事件可能已经把它改成完成，
-    // 也可能仍在加载。恢复时不要沿用起始页里的旧值。
-    this.loading = webContents.isLoading()
-    if (!this.loading && this.error === null) this.progress = 1
+    active.loading = active.view.webContents.isLoading()
+    if (!active.loading && active.error === null) active.progress = 1
     this.syncVisibility()
     this.emit()
     return this.state()
   }
 
-  /** 隐藏：不销毁页面。滚动位置、播放进度、登录态都留着。 */
+  /** 隐藏主窗口浮窗：页面还在（登录态、滚动位置都留着）。 */
   hide(): BrowserState {
     this.panelVisible = false
     this.syncVisibility()
@@ -191,21 +193,21 @@ export class BrowserManager {
   }
 
   /**
-   * 关闭：销毁 view，释放内存；但**保留分区与上次访问地址**。
-   * 下次打开会按 `lastVisit` 恢复，登录状态由 Chromium 分区自己维持。
+   * 关闭主窗口浮窗：**只关闭未拆出的标签**（用户明确要关页面），
+   * 已拆出到独立窗口的标签不受影响——它们有自己的窗口与标签条。
    */
   close(): BrowserState {
     this.panelVisible = false
-    if (this.currentURL) {
-      this.recent = recordBrowserVisit(this.db, this.currentURL, this.title)
+    const active = this.activeTab()
+    if (active && active.url) {
+      this.recent = recordBrowserVisit(this.db, active.url, active.title)
     }
-    this.destroyView()
-    this.currentURL = ''
-    this.title = ''
+    // 只关未拆出的标签；detached 的标签在独立窗口里，有自己的关闭入口。
+    for (const tab of this.tabs.list()) {
+      if (!tab.detached) this.tabs.closeTab(tab.id)
+    }
+    this.activeTabId = null
     this.startPage = true
-    this.loading = false
-    this.progress = 0
-    this.error = null
     this.emit()
     return this.state()
   }
@@ -215,23 +217,22 @@ export class BrowserManager {
   navigate(rawInput: string): BrowserState {
     const resolved = resolveBrowserInput(rawInput)
     if (resolved.kind === 'invalid') {
-      // 危险协议（javascript:/file:/data:）不导航、不搜索，只作为一次错误状态
-      // 回到界面。这里不抛异常：地址栏不该因为一次输错就整块崩掉。
-      this.error = {
-        code: 0,
-        url: rawInput,
-        reason: resolved.reason,
-        kind: 'input',
-        description:
-          resolved.reason === 'blocked-scheme'
-            ? 'blocked scheme (only http / https)'
-            : resolved.reason === 'empty'
-              ? 'empty address'
-              : 'unparseable address'
+      const active = this.activeTab()
+      if (active) {
+        active.error = {
+          code: 0,
+          url: rawInput,
+          reason: resolved.reason,
+          kind: 'input',
+          description:
+            resolved.reason === 'blocked-scheme'
+              ? 'blocked scheme (only http / https)'
+              : resolved.reason === 'empty'
+                ? 'empty address'
+                : 'unparseable address'
+        }
       }
       this.startPage = false
-      this.loading = false
-      this.progress = 0
       this.syncVisibility()
       this.emit()
       return this.state()
@@ -239,43 +240,31 @@ export class BrowserManager {
     return this.loadURL(resolved.url)
   }
 
-  /** 已经解析好的 URL（Records 入口 / 初始页最近访问）走这里。 */
   loadURL(url: string): BrowserState {
     const normalized = normalizeBrowserURL(url)
-    if (!normalized) {
-      this.error = {
-        code: 0,
-        description: 'blocked scheme (only http / https)',
-        url,
-        reason: 'blocked-scheme',
-        kind: 'input'
-      }
-      this.emit()
-      return this.state()
-    }
+    if (!normalized) return this.state()
 
     this.panelVisible = true
-    const view = this.ensureView()
-    if (!view) return this.state()
+    // 没有激活标签就开一个新标签（并挂到主窗口）——「打开浏览器输入地址」
+    // 的第一性语义；已有标签则复用（原单页行为的延续）。
+    let active = this.activeTab()
+    if (!active) {
+      active = this.tabs.createTab(normalized)
+      this.activeTabId = active.id
+      const mainWindowId = this.getWindow()?.id ?? null
+      if (mainWindowId !== null) this.tabs.moveToWindow(active.id, mainWindowId)
+    } else {
+      this.tabs.navigateInTab(active.id, normalized)
+    }
 
-    // 先乐观地切到「加载中」：原生 view 立刻显示，避免初始页/错误态残留一帧。
     this.startPage = false
-    this.currentURL = normalized
-    this.title = ''
-    this.loading = true
-    this.progress = 0.08
-    this.error = null
     this.syncVisibility()
     this.emit()
-
-    // `loadURL` 的失败会同时走 loadURL reject 与 did-fail-load，只处理后者，
-    // 这里吞掉 rejection，避免主进程出现未捕获的 promise。
-    void view.webContents.loadURL(normalized).catch(() => undefined)
     return this.state()
   }
 
   back(): BrowserState {
-    const webContents = this.view?.webContents
+    const webContents = this.webContentsOf(this.activeTab())
     if (webContents && readHistory(webContents).canGoBack) {
       this.traverse(webContents, 'back')
     }
@@ -283,7 +272,7 @@ export class BrowserManager {
   }
 
   forward(): BrowserState {
-    const webContents = this.view?.webContents
+    const webContents = this.webContentsOf(this.activeTab())
     if (webContents && readHistory(webContents).canGoForward) {
       this.traverse(webContents, 'forward')
     }
@@ -291,14 +280,10 @@ export class BrowserManager {
   }
 
   /**
-   * 前进/后退。
-   *
-   * 不能用 `navigationHistory.goBack()`：Electron 45 的 WebContentsView 上
-   * 这个调用是**空操作**——`getAllEntries()` 读得到两条历史、`getActiveIndex()`
-   * 也对，但调完之后 index 一格都不动（实测）。而页面自己的 `history.back()`
-   * 正常。所以主路径走页面内导航，API 只作为兜底（别的版本可能反过来）。
+   * 前进/后退。不能用 `navigationHistory.goBack()`：Electron 45 的
+   * WebContentsView 上它是空操作（实测）；主路径走页面内导航。
    */
-  private traverse(webContents: WebContents, direction: 'back' | 'forward'): void {
+  private traverse(webContents: Electron.WebContents, direction: 'back' | 'forward'): void {
     const script = direction === 'back' ? 'history.back()' : 'history.forward()'
     void webContents
       .executeJavaScript(`${script}; void 0`)
@@ -309,26 +294,201 @@ export class BrowserManager {
   }
 
   reload(): BrowserState {
-    const webContents = this.view?.webContents
+    const webContents = this.webContentsOf(this.activeTab())
     if (!webContents) return this.state()
-    this.error = null
-    this.loading = true
-    this.progress = 0.08
-    this.syncVisibility()
-    this.emit()
+    const active = this.activeTab()
+    if (active) active.error = null
     webContents.reload()
+    this.emit()
     return this.state()
   }
 
   stop(): BrowserState {
-    this.view?.webContents.stop()
+    this.webContentsOf(this.activeTab())?.stop()
     return this.state()
   }
 
-  /** 用户主动选择系统浏览器打开；网页自己的 `window.open` 不会被转到这里。 */
   openExternal(url?: string): void {
-    const target = normalizeBrowserURL(url ?? this.currentURL)
+    const active = this.activeTab()
+    const target = normalizeBrowserURL(url ?? active?.url ?? '')
     if (target) void shell.openExternal(target)
+  }
+
+  /** 关闭某个标签（渲染层标签栏的 ×，或浮窗里最后一个标签）。 */
+  closeTab(tabId: string): BrowserState {
+    const tab = this.tabs.get(tabId)
+    if (!tab) return this.state()
+    // 关闭激活标签：起始页接管（不自动切别的标签，别替用户做决定）。
+    if (this.activeTabId === tabId) {
+      this.activeTabId = null
+      this.startPage = true
+    }
+    this.tabs.closeTab(tabId)
+    this.syncVisibility()
+    this.emit()
+    return this.state()
+  }
+
+  // MARK: - 标签与窗口
+
+  /** 新建标签：挂在主窗口并立即激活——「＋」的第一性语义。 */
+  createTab(): BrowserState {
+    const tab = this.tabs.createTab()
+    this.activeTabId = tab.id
+    this.startPage = false
+    this.panelVisible = true
+    const mainWindowId = this.getWindow()?.id ?? null
+    if (mainWindowId !== null) this.tabs.moveToWindow(tab.id, mainWindowId)
+    this.syncVisibility()
+    this.emit()
+    return this.state()
+  }
+
+  /** 主窗口浮窗内切换标签（点击标签条）。拆出去的标签点击 = 聚焦它的浮窗。 */
+  activateTab(tabId: string): BrowserState {
+    const tab = this.tabs.get(tabId)
+    if (!tab) return this.state()
+    if (tab.detached && tab.windowId !== null) {
+      this.floats.focus(tab.windowId)
+      return this.state()
+    }
+    this.activeTabId = tabId
+    this.startPage = false
+    this.panelVisible = true
+    this.syncVisibility()
+    this.emit()
+    return this.state()
+  }
+
+  /** 浮窗内切换标签（独立窗口自己的标签条）。 */
+  activateInFloat(windowId: number, tabId: string): BrowserState {
+    this.floats.activateIn(windowId, tabId)
+    this.syncVisibility()
+    this.emit()
+    return this.state()
+  }
+
+  /** 独立窗口里标签条的 bounds 上报：激活标签铺满标签条以下区域。 */
+  setFloatBounds(windowId: number, bounds: BrowserBounds): void {
+    const record = this.floats.record(windowId)
+    const activeId = record?.activeTabId
+    if (!record || !activeId) return
+    for (const tabId of record.tabIds) {
+      const tab = this.tabs.get(tabId)
+      if (!tab) continue
+      if (tabId === activeId) {
+        // 浮窗壳自己把标题栏/标签条让开，这里直接对齐它上报的 stage 矩形。
+        tab.view.setBounds(bounds)
+      } else {
+        tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
+      }
+    }
+  }
+
+  /**
+   * 拖动落点判定（渲染层在 pointerup 时上报屏幕坐标）：
+   * - 主窗口内：接回主窗口（或排序——排序由窗口内 DnD 独立完成，不经过这里）；
+   * - 某个浮窗内：移到那个浮窗；
+   * - 窗口之外：新建浮窗并移入。
+   */
+  resolveDrop(tabId: string, screenX: number, screenY: number): BrowserState {
+    const tab = this.tabs.get(tabId)
+    if (!tab) return this.state()
+    const target = this.floats.windowAt(screenX, screenY)
+    const mainId = this.getWindow()?.id ?? null
+
+    if (target.windowId !== null) {
+      // 先记下原窗口再移动：moveToWindow 会改写 tab.windowId，之后就没法
+      // 清旧浮窗的账了（这里错过一次，空浮窗就留在屏幕上）。
+      const fromWindowId = tab.windowId
+      if (target.windowId === mainId) {
+        if (fromWindowId !== mainId) this.tabs.moveToWindow(tabId, mainId)
+        if (fromWindowId !== null && fromWindowId !== mainId) {
+          this.floats.release(fromWindowId, tabId)
+          if (this.floats.record(fromWindowId)?.tabIds.size === 0) {
+            this.floats.closeEmpty(fromWindowId)
+          }
+        }
+        this.activeTabId = tabId
+        this.startPage = false
+        this.panelVisible = true
+      } else {
+        if (fromWindowId !== null && fromWindowId !== target.windowId) {
+          this.floats.release(fromWindowId, tabId)
+          if (this.floats.record(fromWindowId)?.tabIds.size === 0) {
+            this.floats.closeEmpty(fromWindowId)
+          }
+        }
+        this.tabs.moveToWindow(tabId, target.windowId)
+        this.floats.adopt(target.windowId, tabId)
+      }
+    } else {
+      // 窗口之外：拆出独立窗口。浮窗初始位置贴着松手点。
+      this.detachToNewWindow(tabId, { screenX, screenY })
+    }
+    this.syncVisibility()
+    this.emit()
+    return this.state()
+  }
+
+  /** 拆出到新独立窗口。 */
+  detachToNewWindow(tabId: string, near?: { screenX: number; screenY: number }): BrowserState {
+    const tab = this.tabs.get(tabId)
+    if (!tab) return this.state()
+    const window = this.floats.create(tabId, near)
+    if (tab.windowId !== null && tab.windowId !== window.id) {
+      // 从旧位置摘下（浮窗记账），再挂到新窗口。
+      if (this.activeTabId === tabId) {
+        // 拆走的是主窗口正显示的那个：起始页接管。
+        this.activeTabId = null
+        this.startPage = true
+      }
+      this.floats.release(tab.windowId, tabId)
+    }
+    this.tabs.moveToWindow(tabId, window.id)
+    this.floats.adopt(window.id, tabId)
+    this.syncVisibility()
+    this.emit()
+    return this.state()
+  }
+
+  /** 拖回主窗口（独立窗口标签栏触发）；最后一个标签离开后浮窗自动关闭。 */
+  reattach(tabId: string): BrowserState {
+    const tab = this.tabs.get(tabId)
+    if (!tab) return this.state()
+    const mainId = this.getWindow()?.id ?? null
+    const fromWindowId = tab.windowId
+    if (mainId !== null) this.tabs.moveToWindow(tabId, mainId)
+    if (fromWindowId !== null) {
+      this.floats.release(fromWindowId, tabId)
+      // 空浮窗就地关闭：window 触发 close → reattachAll（已空）→ 清账。
+      if (this.floats.record(fromWindowId)?.tabIds.size === 0) {
+        this.floats.closeEmpty(fromWindowId)
+      }
+    }
+    this.activeTabId = tabId
+    this.startPage = false
+    this.panelVisible = true
+    this.syncVisibility()
+    this.emit()
+    return this.state()
+  }
+
+  /** 拖动中节流探测：光标在窗口上还是外（拆分提示用）。 */
+  probeDrag(screenX: number, screenY: number): BrowserDragProbe {
+    return this.floats.windowAt(screenX, screenY)
+  }
+
+  /** 窗口内排序（HTML5 DnD，同一窗口的标签条上）。 */
+  reorderTab(tabId: string, beforeTabId: string | null): BrowserState {
+    this.tabs.reorder(tabId, beforeTabId)
+    this.emit()
+    return this.state()
+  }
+
+  /** 自动化入口：按 tabId 执行脚本（与页面在哪个窗口无关）。 */
+  async executeOnTab(tabId: string, script: string): Promise<unknown> {
+    return this.tabs.executeOnTab(tabId, script)
   }
 
   // MARK: - 几何
@@ -340,18 +500,20 @@ export class BrowserManager {
     this.bounds = clamped
     this.applyBounds(clamped)
     this.schedulePersist(clamped)
-    // 首次打开时 view 是「等一个有效矩形」的状态（宽高为 0 时不绘制），
-    // 这里补一次可见性判断，否则会一直白着。
     this.syncVisibility()
   }
 
-  /** 窗口尺寸变化后的兜底修正（渲染层也会重报，这里保证原生层不会掉队）。 */
   refit(): void {
     if (!this.bounds) return
     const viewport = this.viewport()
     if (!viewport) return
     const clamped = clampBrowserBounds(this.bounds, viewport)
-    if (clamped.x === this.bounds.x && clamped.y === this.bounds.y && clamped.width === this.bounds.width && clamped.height === this.bounds.height) {
+    if (
+      clamped.x === this.bounds.x &&
+      clamped.y === this.bounds.y &&
+      clamped.width === this.bounds.width &&
+      clamped.height === this.bounds.height
+    ) {
       return
     }
     this.bounds = clamped
@@ -360,16 +522,40 @@ export class BrowserManager {
     this.emit()
   }
 
-  /** 窗口销毁时调用：原生视图必须跟着释放，否则会留下孤儿 webContents。 */
+  /**
+   * 生命周期：
+   * - 主窗口关闭（macOS 可后台）：挂载在主窗口的标签全部「未挂载」，tab 都活着；
+   *   浮窗与 detached 标签不受影响。
+   * - 应用退出（dispose）：TabManager 统一销毁一切 webContents，浮窗收掉。
+   */
+  onMainWindowClosed(): void {
+    const mainWindowId = this.getWindow()?.id ?? -1
+    for (const tab of this.tabs.list()) {
+      if (tab.windowId === mainWindowId) this.tabs.moveToWindow(tab.id, null)
+    }
+    this.panelVisible = false
+    this.emit()
+  }
+
   dispose(): void {
     if (this.persistTimer) {
       clearTimeout(this.persistTimer)
       this.persistTimer = null
     }
-    this.destroyView()
+    this.floats.closeAll()
+    this.tabs.disposeAll()
+    this.activeTabId = null
   }
 
-  // MARK: - 内部：view 生命周期
+  // MARK: - 内部
+
+  private activeTab() {
+    return this.activeTabId ? this.tabs.get(this.activeTabId) : null
+  }
+
+  private webContentsOf(tab: ReturnType<BrowserTabManager['get']>): Electron.WebContents | null {
+    return tab?.view.webContents ?? null
+  }
 
   private viewport(): BrowserViewport | null {
     const window = this.getWindow()
@@ -379,99 +565,45 @@ export class BrowserManager {
     return { width, height }
   }
 
-  private ensureView(): WebContentsView | null {
-    const window = this.getWindow()
-    if (!window || window.isDestroyed()) return null
-
-    if (this.view && this.boundWindowId === window.id && !this.view.webContents.isDestroyed()) {
-      return this.view
-    }
-    // 窗口换了（macOS 关窗后重新激活）：旧 view 已随父窗口失效，重建一个。
-    if (this.view) this.destroyView()
-
-    const partition = session.fromPartition(BROWSER_PARTITION)
-    this.hardenSession(partition)
-
-    const view = new WebContentsView({
-      webPreferences: {
-        partition: BROWSER_PARTITION,
-        // 网页是外来的：不给 Node、不给 preload、不给 contextIsolation 之外的任何桥。
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
-        nodeIntegrationInSubFrames: false,
-        nodeIntegrationInWorker: false,
-        webviewTag: false,
-        webSecurity: true,
-        allowRunningInsecureContent: false,
-        experimentalFeatures: false,
-        spellcheck: false
-      }
-    })
-
-    view.setBackgroundColor('#ffffff')
-    window.contentView.addChildView(view)
-    this.view = view
-    this.boundWindowId = window.id
-
-    const webContents = view.webContents
-    this.attachNavigationGuards(webContents)
-    this.attachStateListeners(webContents)
-
-    const viewport = this.viewport()
-    const initial = this.bounds && viewport ? clampBrowserBounds(this.bounds, viewport) : null
-    if (initial) {
-      this.bounds = initial
-      this.applyBounds(initial)
-    }
-    this.syncVisibility()
-    return view
-  }
-
-  private destroyView(): void {
-    const view = this.view
-    this.view = null
-    this.boundWindowId = null
-    if (!view) return
-    try {
-      view.webContents.stop()
-    } catch {
-      // 已经销毁或正在销毁：忽略。
-    }
-    try {
-      view.webContents.close()
-    } catch {
-      // 同上。
-    }
-  }
-
+  /** 激活标签铺满 bounds；其他标签 0×0（Chromium 不会绘制零尺寸视图）。 */
   private applyBounds(bounds: BrowserBounds): void {
-    const view = this.view
-    if (!view) return
-    view.setBounds(bounds)
-    // 圆角是「浮窗」的视觉前提；必须与 `.browser-panel` 的圆角一致，
-    // 否则四角会露出一圈底色。平台不支持时静默跳过，不影响功能。
-    try {
-      view.setBorderRadius(10)
-    } catch {
-      // 老平台没有这个 API。
+    const mainWindowId = this.getWindow()?.id ?? null
+    for (const tab of this.tabs.list()) {
+      if (tab.windowId !== mainWindowId || tab.windowId === null) continue
+      if (tab.id === this.activeTabId && !this.startPage && !tab.error) {
+        tab.view.setBounds({
+          x: bounds.x,
+          y: bounds.y + BROWSER_TABBAR_HEIGHT,
+          width: bounds.width,
+          height: Math.max(0, bounds.height - BROWSER_TABBAR_HEIGHT)
+        })
+      } else {
+        tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
+      }
     }
   }
 
   /**
-   * 可见性由四件事共同决定：用户打开了浮窗、没停在起始页、有要显示的页面、
-   * 且当前不是错误态。起始页与错误页都由 React 画，此时原生 view 必须让开——
-   * 它永远在最上层，任何 z-index 都盖不住。
+   * 可见性：主窗口浮窗打开、不在起始页、有激活标签、无错误态、有有效矩形。
+   * 起始页与错误页由 React 画——原生层永远在最上层，z-index 盖不住它。
    */
   private syncVisibility(): void {
-    const view = this.view
-    if (!view) return
-    // 没有有效矩形时也不要画：此时原生层会以 0×0 出现在左上角，看起来像
-    // 一块贴边的白条。等 setBounds 到达后再显示。
+    const mainWindowId = this.getWindow()?.id ?? null
     const hasArea = this.bounds !== null && this.bounds.width > 0 && this.bounds.height > 0
+    const active = this.activeTab()
     const shouldShow =
-      this.panelVisible && !this.startPage && this.currentURL !== '' && this.error === null && hasArea
-    view.setVisible(shouldShow)
+      this.panelVisible &&
+      !this.startPage &&
+      active !== null &&
+      active.windowId === mainWindowId &&
+      active.error === null &&
+      hasArea
+    if (active && active.windowId === mainWindowId) {
+      active.view.setVisible(shouldShow)
+    }
+    // activeTab 的归属/激活任何变化都可能让 view 停在 0×0（比如拆走激活标签
+    // 又激活另一个），这里统一重算一次 bounds——setBounds 同值代价可忽略。
+    if (hasArea) this.applyBounds(this.bounds!)
   }
 
   private schedulePersist(bounds: BrowserBounds): void {
@@ -482,137 +614,6 @@ export class BrowserManager {
     }, 220)
   }
 
-  // MARK: - 内部：安全
-
-  /**
-   * 分区级策略：只设置一次也幂等。
-   *
-   * 权限**全部拒绝**——摄像头、麦克风、定位、通知、剪贴板读、MIDI……本阶段没有
-   * 任何「用户明确同意」的界面，默认给出去就是漏洞。下载同理：网页不该能往
-   * 用户的下载目录里丢文件。
-   */
-  private hardenSession(partition: Electron.Session): void {
-    if (this.hardenedSessions.has(partition)) return
-    this.hardenedSessions.add(partition)
-
-    partition.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
-    partition.setPermissionCheckHandler(() => false)
-    partition.on('will-download', (event) => event.preventDefault())
-  }
-
-  private readonly hardenedSessions = new WeakSet<Electron.Session>()
-
-  private attachNavigationGuards(webContents: WebContents): void {
-    webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-
-    webContents.on('will-navigate', (event, url) => {
-      if (!isAllowedBrowserURL(url)) event.preventDefault()
-    })
-
-    webContents.on('will-frame-navigate', (event) => {
-      if (!isAllowedBrowserURL(event.url)) event.preventDefault()
-    })
-
-    webContents.on('will-attach-webview', (event) => event.preventDefault())
-  }
-
-  // MARK: - 内部：状态
-
-  private attachStateListeners(webContents: WebContents): void {
-    webContents.on('did-start-loading', () => {
-      this.loading = true
-      // 没有真实进度可用（Chromium 不暴露），用阶段估算：开始 8%、DOM 就绪 70%。
-      this.progress = 0.08
-      this.emit()
-    })
-
-    webContents.on('dom-ready', () => {
-      if (!this.loading) return
-      this.progress = Math.max(this.progress, 0.7)
-      this.emit()
-    })
-
-    webContents.on('did-stop-loading', () => {
-      this.loading = false
-      this.progress = this.error ? 0 : 1
-      this.syncVisibility()
-      this.emit()
-    })
-
-    webContents.on('did-start-navigation', (event) => {
-      if (!event.isMainFrame) return
-      // 页面内的同文档跳转（history.pushState）不重置错误，交给 did-navigate-in-page。
-      if (event.isSameDocument) return
-      if (!isAllowedBrowserURL(event.url)) return
-      this.currentURL = event.url
-      this.error = null
-      this.syncVisibility()
-      this.emit()
-    })
-
-    webContents.on('did-navigate', (_event, url) => {
-      if (!normalizeBrowserURL(url)) return
-      this.currentURL = url
-      this.title = webContents.getTitle()
-      this.error = null
-      this.progress = 1
-      this.recent = recordBrowserVisit(this.db, url, this.title)
-      this.syncVisibility()
-      this.emit()
-    })
-
-    webContents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
-      if (!isMainFrame) return
-      if (!normalizeBrowserURL(url)) return
-      this.currentURL = url
-      this.emit()
-    })
-
-    webContents.on('page-title-updated', (_event, title) => {
-      this.title = title
-      if (this.currentURL) {
-        this.recent = retitleBrowserVisit(this.db, this.currentURL, title)
-      }
-      this.emit()
-    })
-
-    webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      // 子资源失败不该把整页判死；-3 是「被主动中止」，不是错误。
-      if (!isMainFrame || errorCode === ERR_ABORTED) return
-      this.error = {
-        code: errorCode,
-        description: errorDescription,
-        url: validatedURL,
-        kind: 'network'
-      }
-      this.loading = false
-      this.progress = 0
-      this.syncVisibility()
-      this.emit()
-    })
-
-    webContents.on('render-process-gone', () => {
-      this.error = {
-        code: -1,
-        description: 'renderer process gone',
-        url: this.currentURL,
-        kind: 'crash'
-      }
-      this.loading = false
-      this.progress = 0
-      this.syncVisibility()
-      this.emit()
-    })
-
-    webContents.on('destroyed', () => {
-      if (this.view?.webContents === webContents) {
-        this.view = null
-        this.boundWindowId = null
-      }
-      this.emit()
-    })
-  }
-
   private emit(): void {
     if (this.emitScheduled) return
     this.emitScheduled = true
@@ -621,19 +622,18 @@ export class BrowserManager {
       const window = this.getWindow()
       if (!window || window.isDestroyed()) return
       window.webContents.send(BROWSER_CHANGED_CHANNEL, this.state())
+      // 浮窗壳也要同一份状态（它们各自的标签条）。
+      for (const windowId of this.floats.windowIds()) {
+        const target = BrowserWindow.fromId(windowId)
+        if (target && !target.isDestroyed()) {
+          target.webContents.send(BROWSER_CHANGED_CHANNEL, this.state())
+        }
+      }
     })
   }
 }
 
-/**
- * 前后退能力位。
- *
- * 不能直接用 `navigationHistory.canGoBack()`：Electron 45 的 WebContentsView
- * 上它会在历史已经存在时仍返回 false（实测 entries 有两条、activeIndex=1，
- * `canGoBack()` 依然是 false），界面就会把「后退」按钮一直画成禁用。
- * 索引是自己数出来的，和 `getAllEntries()` 对得上，不依赖那个 API 的实现。
- */
-function readHistory(webContents: WebContents | undefined): {
+function readHistory(webContents: Electron.WebContents | null): {
   canGoBack: boolean
   canGoForward: boolean
 } {

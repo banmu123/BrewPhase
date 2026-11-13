@@ -578,3 +578,48 @@ export const stageGoals = sqliteTable(
     index('stage_goals_status_idx').on(table.status)
   ]
 )
+
+/**
+ * Multi-AI 讨论（AI Workspace Phase 1）。
+ *
+ * 一次「同时提问」是一个 conversation：用户问题一条、每个平台回答各一条。
+ * 只记录页面真实显示出来的内容与执行状态——不存 Cookie、不存凭据、
+ * 不存任何能拿到登录态的东西。provider 标来源，账号标识留空位给多账号阶段。
+ */
+export const aiConversations = sqliteTable(
+  'ai_conversations',
+  {
+    id: text('id').primaryKey(),
+    title: text('title').notNull().default(''),
+    /** 发起时的问题文本；也是 UI 列表的主显示。 */
+    prompt: text('prompt').notNull(),
+    /** participating 平台，如 'chatgpt,claude'——列表页不用 join 就能标来源。 */
+    providers: text('providers').notNull().default(''),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (table) => [index('ai_conversations_created_idx').on(table.createdAt)]
+)
+
+export const aiMessages = sqliteTable(
+  'ai_messages',
+  {
+    id: text('id').primaryKey(),
+    conversationId: text('conversation_id')
+      .notNull()
+      .references(() => aiConversations.id, { onDelete: 'cascade' }),
+    /** chatgpt | claude | user */
+    provider: text('provider').notNull(),
+    /** 预留给同一平台多账号；本阶段恒为空串。 */
+    accountId: text('account_id').notNull().default(''),
+    /** user | assistant */
+    role: text('role').notNull(),
+    content: text('content').notNull().default(''),
+    /** completed | failed | timeout | cancelled | empty —— 回答落库时的执行结果 */
+    status: text('status').notNull().default('completed'),
+    /** 失败原因等；不存凭据。 */
+    metadata: text('metadata').notNull().default(''),
+    createdAt: integer('created_at').notNull()
+  },
+  (table) => [index('ai_messages_conversation_idx').on(table.conversationId, table.createdAt)]
+)

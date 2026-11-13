@@ -58,6 +58,9 @@ import type {
   UpdateStageGoalPatch
 } from '../database/repositories/personal-direction'
 import type { CurrentStateDraft, ProposalKind } from '../../shared/contracts/personal-direction'
+import type { AIChatService } from '../ai-chat/ai-chat-service'
+import type { BrowserBounds } from '../../shared/contracts/browser'
+import type { AIProvider } from '../ai-chat/automation/types'
 import { ApplicationError } from '../application/errors'
 import { detectAgents } from '../integrations/ai-agents/detection-service'
 import { applyAgentConfig, planAgentConfig } from '../integrations/ai-agents/config-service'
@@ -84,6 +87,8 @@ export function registerIpc(params: {
     personalDirection: PersonalDirectionService
   }
   bridgeStatus: () => McpBridgeStatus
+  /** Multi-AI：后台页面与并行调度。 */
+  aiChat: AIChatService
   /** 内置浏览器：网页在主进程绘制，IPC 只表达意图。 */
   browser: BrowserManager
   /** Chrome 书签导入：检测 / 预览 / 导入 / 读取本地书签树。 */
@@ -101,6 +106,7 @@ export function registerIpc(params: {
     sync,
     services,
     bridgeStatus,
+    aiChat,
     browser,
     bookmarks,
     chrome,
@@ -369,6 +375,46 @@ export function registerIpc(params: {
     }
   })
 
+  // MARK: - AI Workspace（Multi-AI）
+  //
+  // 自动化全部在主进程：渲染层只能「问、停、看」。这里没有也不需要暴露
+  // executeJavaScript、Cookie 或任意页面操作——能做的动作在 Adapter 里写死。
+  // ask 是长任务：await 它完成才返回最终快照（含持久化的 conversationId），
+  // 期间进度靠 ai-chat:status:changed 广播。
+
+  handle(IPC.aiChatStatus, () => aiChat.platformStatuses())
+
+  handle(IPC.aiChatLastTask, () => aiChat.lastTask())
+
+  handle(IPC.aiChatAsk, async (input) => {
+    const value = input as { prompt: string; providers: AIProvider[] }
+    if (aiChat.isBusy()) {
+      throw new ApplicationError('VALIDATION_ERROR', 'another multi-ai task is running')
+    }
+    return aiChat.ask(value)
+  })
+
+  handle(IPC.aiChatCancel, () => {
+    aiChat.cancel()
+    return null
+  })
+
+  handle(IPC.aiChatOpenLogin, (input) => aiChat.openLogin((input as AIProvider)))
+
+  handle(IPC.aiChatViewURL, (input) => aiChat.viewURL(input as AIProvider))
+
+  handle(IPC.aiChatConversations, () => aiChat.recentConversations(50))
+
+  handle(IPC.aiChatConversation, (input) => {
+    const { id } = input as { id: string }
+    return aiChat.conversation(id)
+  })
+
+  handle(IPC.aiChatDeleteConversation, (input) => {
+    const { id } = input as { id: string }
+    return aiChat.removeConversation(id)
+  })
+
   // MARK: - 内置浏览器 · Chrome 书签
 
   // 入参只有 Profile 目录名，且已由正则白名单校验；文件位置由主进程自己解析，
@@ -492,6 +538,44 @@ export function registerIpc(params: {
   handle(IPC.browserSetBounds, (input) => {
     browser.setBounds(input as { x: number; y: number; width: number; height: number })
     return null
+  })
+
+  // MARK: - 可拆卸浏览器窗口
+  //
+  // 归属判定全在主进程：渲染层只报屏幕坐标，这里决定「排序 / 接回 / 移到浮窗 /
+  // 拆出新窗口」。executeOnTab 是 DOM 自动化的正式入口——按 tabId 定位，
+  // 与页面在哪个窗口无关；脚本内容仍须来自主进程内的 Adapter。
+
+  handle(IPC.browserCreateTab, () => browser.createTab())
+  handle(IPC.browserActivateTab, (input) => browser.activateTab((input as { tabId: string }).tabId))
+  handle(IPC.browserCloseTab, (input) => browser.closeTab((input as { tabId: string }).tabId))
+  handle(IPC.browserReorderTab, (input) => {
+    const { tabId, beforeTabId } = input as { tabId: string; beforeTabId: string | null }
+    return browser.reorderTab(tabId, beforeTabId)
+  })
+  handle(IPC.browserResolveDrop, (input) => {
+    const { tabId, screenX, screenY } = input as { tabId: string; screenX: number; screenY: number }
+    return browser.resolveDrop(tabId, screenX, screenY)
+  })
+  handle(IPC.browserDragProbe, (input) => {
+    const { screenX, screenY } = input as { screenX: number; screenY: number }
+    return browser.probeDrag(screenX, screenY)
+  })
+  handle(IPC.browserReattach, (input) => browser.reattach((input as { tabId: string }).tabId))
+  handle(IPC.browserFloatActivate, (input) => {
+    const { windowId, tabId } = input as { windowId: number; tabId: string }
+    return browser.activateInFloat(windowId, tabId)
+  })
+  handle(IPC.browserFloatBounds, (input) => {
+    const { windowId, bounds } = input as { windowId: number; bounds: BrowserBounds }
+    browser.setFloatBounds(windowId, bounds)
+    return null
+  })
+  // 限制：只放行主进程自家的 Adapter 脚本走这里；Renderer 不传任意脚本的口子
+  // 在 preload 上根本没有暴露 invoke 任意通道的能力，这里再按 tab 存在性收一道。
+  handle(IPC.browserExecuteOnTab, (input) => {
+    const { tabId, script } = input as { tabId: string; script: string }
+    return browser.executeOnTab(tabId, script)
   })
   handle(IPC.browserOpenExternal, (input) => {
     browser.openExternal((input as { url?: string } | undefined)?.url)

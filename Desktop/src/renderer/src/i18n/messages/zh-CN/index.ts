@@ -1,3 +1,4 @@
+import { aiWorkspace } from './ai-workspace'
 import { canvas } from './canvas'
 import { coffee } from './coffee'
 import { common } from './common'
@@ -27,7 +28,8 @@ export const zhCN = {
   onboarding,
   studio,
   browser,
-  direction
+  direction,
+  aiWorkspace
 }
 
 export type Messages = typeof zhCN

@@ -452,6 +452,33 @@ CREATE INDEX IF NOT EXISTS stage_goals_direction_idx ON stage_goals (direction_i
 CREATE INDEX IF NOT EXISTS stage_goals_status_idx ON stage_goals (status);
 `
 
+const AI_CONVERSATIONS_SQL = `
+-- Multi-AI 讨论（AI Workspace Phase 1）：一次「同时提问」一个 conversation。
+-- 只存页面真实显示的回答与执行状态，不存任何登录凭据。
+create table ai_conversations (
+  id text primary key,
+  title text not null default '',
+  prompt text not null,
+  providers text not null default '',
+  created_at integer not null,
+  updated_at integer not null
+);
+create index ai_conversations_created_idx on ai_conversations (created_at);
+
+create table ai_messages (
+  id text primary key,
+  conversation_id text not null references ai_conversations (id) on delete cascade,
+  provider text not null,
+  account_id text not null default '',
+  role text not null,
+  content text not null default '',
+  status text not null default 'completed',
+  metadata text not null default '',
+  created_at integer not null
+);
+create index ai_messages_conversation_idx on ai_messages (conversation_id, created_at);
+`
+
 export const migrations: Migration[] = [
   { version: 1, name: 'init', sql: INIT_SQL },
   { version: 2, name: 'sync-align-ios', sql: SYNC_ALIGN_SQL },
@@ -461,7 +488,8 @@ export const migrations: Migration[] = [
   { version: 6, name: 'canvas-notes', sql: CANVAS_NOTES_SQL },
   { version: 7, name: 'mcp-access', sql: MCP_ACCESS_SQL },
   { version: 8, name: 'work-contexts', sql: WORK_CONTEXT_SQL },
-  { version: 9, name: 'personal-direction', sql: PERSONAL_DIRECTION_SQL }
+  { version: 9, name: 'personal-direction', sql: PERSONAL_DIRECTION_SQL },
+  { version: 10, name: 'ai-conversations', sql: AI_CONVERSATIONS_SQL }
 ]
 
 /**

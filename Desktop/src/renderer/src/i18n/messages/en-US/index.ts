@@ -1,5 +1,6 @@
 import type { Messages } from '../zh-CN'
 import { browser } from './browser'
+import { aiWorkspace } from './ai-workspace'
 import { canvas } from './canvas'
 import { coffee } from './coffee'
 import { common } from './common'
@@ -28,5 +29,6 @@ export const enUS = {
   onboarding,
   studio,
   browser,
-  direction
+  direction,
+  aiWorkspace
 } satisfies Messages

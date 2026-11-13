@@ -159,6 +159,16 @@ export function NoteAddIcon({ size = 20 }: IconProps) {
   )
 }
 
+/** AI Workspace：一枚四角星（不是通用「魔法棒」——星是思考的形状） */
+export function SparkIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M10 3.2c.5 2.9 1.6 4.4 4.4 5.6-2.8 1.2-3.9 2.7-4.4 5.6-.5-2.9-1.6-4.4-4.4-5.6 2.8-1.2 3.9-2.7 4.4-5.6Z" />
+      <path d="M15.6 12.6c.3 1.6.9 2.4 2.4 3.1-1.5.7-2.1 1.5-2.4 3.1-.3-1.6-.9-2.4-2.4-3.1 1.5-.7 2.1-1.5 2.4-3.1Z" />
+    </svg>
+  )
+}
+
 /** 图片：相框 + 山脊线 + 一点光（导入图片） */
 export function ImageIcon({ size = 20 }: IconProps) {
   return (

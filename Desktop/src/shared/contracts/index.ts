@@ -7,6 +7,13 @@ import type {
   AgentKind
 } from './agents'
 import type {
+  AIChatTaskSnapshot,
+  AIConversationDetail,
+  AIConversationSummary,
+  AIPlatformStatus,
+  AIProvider
+} from './ai-chat'
+import type {
   CurrentState,
   CurrentStateDraft,
   Direction,
@@ -28,7 +35,7 @@ import type {
   McpClientInfo,
   McpScope
 } from './mcp'
-import type { BrowserBounds, BrowserOpenInput, BrowserState } from './browser'
+import type { BrowserBounds, BrowserDragProbe, BrowserOpenInput, BrowserState } from './browser'
 import type {
   BookmarkImportResult,
   BookmarkPreview,
@@ -55,6 +62,7 @@ export * from './chrome-bridge'
 export * from './work-context'
 export * from './personal-direction'
 export * from './agents'
+export * from './ai-chat'
 export * from './data-location'
 export * from './validation/ipc'
 
@@ -206,6 +214,42 @@ export interface RendererApi {
    * AI 连接（MCP）。token 只在 createClient 的返回值里出现一次，
    * listClients 永远不会返回 token 或哈希。
    */
+  /**
+   * 可拆卸浏览器窗口。归属判定全在主进程；resolveDrop 传屏幕坐标，
+   * dragProbe 是拖动中的节流探测（窗口内 / 窗口外）。
+   * executeOnTab 只服务于主进程内的 Adapter（DOM 自动化按 tabId 定位）。
+   */
+  browserTabs: {
+    create: () => Promise<BrowserState>
+    activate: (tabId: string) => Promise<BrowserState>
+    closeTab: (tabId: string) => Promise<BrowserState>
+    reorder: (tabId: string, beforeTabId: string | null) => Promise<BrowserState>
+    resolveDrop: (tabId: string, screenX: number, screenY: number) => Promise<BrowserState>
+    dragProbe: (screenX: number, screenY: number) => Promise<BrowserDragProbe>
+    reattach: (tabId: string) => Promise<BrowserState>
+    floatActivate: (windowId: number, tabId: string) => Promise<BrowserState>
+    floatBounds: (windowId: number, bounds: BrowserBounds) => Promise<void>
+    executeOnTab: (tabId: string, script: string) => Promise<unknown>
+  }
+  /**
+   * AI Workspace（Multi-AI）。自动化全部发生在主进程：这里只传意图
+   * （问一句、停一下、看状态），拿回的也只是页面真实显示的结果。
+   */
+  aiChat: {
+    statuses: () => Promise<AIPlatformStatus[]>
+    ask: (input: { prompt: string; providers: AIProvider[] }) => Promise<{
+      conversationId: string
+      snapshot: AIChatTaskSnapshot
+    }>
+    cancel: () => Promise<void>
+    lastTask: () => Promise<AIChatTaskSnapshot | null>
+    openLogin: (provider: AIProvider) => Promise<void>
+    viewURL: (provider: AIProvider) => Promise<string>
+    conversations: (limit?: number) => Promise<AIConversationSummary[]>
+    conversation: (id: string) => Promise<AIConversationDetail | null>
+    deleteConversation: (id: string) => Promise<boolean>
+    onChanged: (listener: (snapshot: AIChatTaskSnapshot) => void) => () => void
+  }
   /** AI Agent 自动配置：检测 → 预览 → 用户确认后写入。 */
   agents: {
     detect: () => Promise<AgentDetection[]>

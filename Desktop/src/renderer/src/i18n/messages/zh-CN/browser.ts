@@ -13,6 +13,13 @@ export const browser = {
   hide: '收起浏览器',
   titlebarHint: '拖动标题栏移动浮窗',
   resizeHint: '拖动边缘或四角调整大小',
+  tabs: {
+    newTab: '新建标签',
+    closeTab: '关闭标签',
+    detachedBadge: '已拆出',
+    backToMain: '拖回主窗口',
+    detachHint: '松手：拆成独立浏览器窗口'
+  },
   toolbar: {
     start: '起始页',
     back: '后退',

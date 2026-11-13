@@ -3,6 +3,8 @@ import { beanDraftSchema, brewDraftSchema } from '../entities/coffee'
 import { recordDraftSchema, recordQuerySchema } from '../entities/records'
 import { canvasNodeMoveSchema, canvasNodeResizeSchema, canvasNoteSchema, canvasStrokeSchema } from '../entities/canvas'
 import { mcpClientCreateInputSchema, mcpScopeSchema } from '../mcp'
+import { aiAskInputSchema, aiProviderSchema } from '../ai-chat'
+import { browserDropSchema, browserDragProbeSchema, browserBoundsSchema } from '../browser'
 import { browserBoundsUpdateSchema, browserNavigateSchema, browserOpenSchema } from '../browser'
 import { chromeProfileRequestSchema } from '../bookmarks'
 import { agentKindSchema } from '../agents'
@@ -136,7 +138,30 @@ export const IPC = {
   // AI Agent 自动配置：检测、预览、写入。目标路径永远由主进程解析。
   agentsDetect: 'agents:detect',
   agentsPlan: 'agents:plan',
-  agentsApply: 'agents:apply'
+  agentsApply: 'agents:apply',
+
+  // AI Workspace：Multi-AI 并行提问
+  aiChatStatus: 'ai-chat:status',
+  aiChatAsk: 'ai-chat:ask',
+  aiChatCancel: 'ai-chat:cancel',
+  aiChatLastTask: 'ai-chat:last-task',
+  aiChatOpenLogin: 'ai-chat:open-login',
+  aiChatViewURL: 'ai-chat:view-url',
+  aiChatConversations: 'ai-chat:conversations',
+  aiChatConversation: 'ai-chat:conversation',
+  aiChatDeleteConversation: 'ai-chat:conversation:delete',
+
+  // 可拆卸浏览器窗口（Phase 0.5）
+  browserCreateTab: 'browser:tab:create',
+  browserActivateTab: 'browser:tab:activate',
+  browserCloseTab: 'browser:tab:close',
+  browserReorderTab: 'browser:tab:reorder',
+  browserResolveDrop: 'browser:tab:drop',
+  browserDragProbe: 'browser:tab:drag-probe',
+  browserReattach: 'browser:tab:reattach',
+  browserFloatActivate: 'browser:float:activate',
+  browserFloatBounds: 'browser:float:bounds',
+  browserExecuteOnTab: 'browser:tab:execute'
 } as const
 
 export const ipcRequestSchemas = {
@@ -271,6 +296,30 @@ export const ipcRequestSchemas = {
     scopes: z.array(mcpScopeSchema).min(1),
     /** 已存在同名条目时，必须显式传 true 才允许替换。 */
     replaceExisting: z.boolean().default(false)
+  }),
+
+  [IPC.aiChatStatus]: z.void(),
+  [IPC.aiChatAsk]: aiAskInputSchema,
+  [IPC.aiChatCancel]: z.void(),
+  [IPC.aiChatLastTask]: z.void(),
+  [IPC.aiChatOpenLogin]: aiProviderSchema,
+  [IPC.aiChatViewURL]: aiProviderSchema,
+  [IPC.aiChatConversations]: z.void(),
+  [IPC.aiChatConversation]: z.object({ id: z.string().uuid() }),
+  [IPC.aiChatDeleteConversation]: z.object({ id: z.string().uuid() }),
+
+  [IPC.browserCreateTab]: z.void(),
+  [IPC.browserActivateTab]: z.object({ tabId: z.string().min(1).max(64) }),
+  [IPC.browserCloseTab]: z.object({ tabId: z.string().min(1).max(64) }),
+  [IPC.browserReorderTab]: z.object({ tabId: z.string().min(1).max(64), beforeTabId: z.string().min(1).max(64).nullable() }),
+  [IPC.browserResolveDrop]: browserDropSchema,
+  [IPC.browserDragProbe]: browserDragProbeSchema,
+  [IPC.browserReattach]: z.object({ tabId: z.string().min(1).max(64) }),
+  [IPC.browserFloatActivate]: z.object({ windowId: z.number().int(), tabId: z.string().min(1).max(64) }),
+  [IPC.browserFloatBounds]: z.object({ windowId: z.number().int(), bounds: browserBoundsSchema }),
+  [IPC.browserExecuteOnTab]: z.object({
+    tabId: z.string().min(1).max(64),
+    script: z.string().min(1).max(32_000)
   })
 } as const
 

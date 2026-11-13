@@ -14,6 +14,8 @@ import { api } from '../../shared/api'
  */
 
 const EMPTY_STATE: BrowserState = {
+  tabs: [],
+  activeTabId: null,
   visible: false,
   alive: false,
   url: '',
@@ -40,6 +42,10 @@ type BrowserStore = {
   open: (input?: BrowserOpenInput) => Promise<void>
   hide: () => Promise<void>
   close: () => Promise<void>
+  /** 标签管理（可拆卸窗口 Phase 0.5）。 */
+  create: () => Promise<void>
+  activateTab: (tabId: string) => Promise<void>
+  closeTab: (tabId: string) => Promise<void>
   showStart: () => Promise<void>
   showCurrentPage: () => Promise<void>
   navigate: (input: string) => Promise<void>
@@ -114,6 +120,27 @@ export const useBrowserStore = create<BrowserStore>((set, get) => ({
     }
   },
 
+  create: async () => {
+    try {
+      set({ state: await api.browserTabs.create() })
+    } catch (error) {
+      report(error)
+    }
+  },
+  activateTab: async (tabId) => {
+    try {
+      set({ state: await api.browserTabs.activate(tabId) })
+    } catch (error) {
+      report(error)
+    }
+  },
+  closeTab: async (tabId) => {
+    try {
+      set({ state: await api.browserTabs.closeTab(tabId) })
+    } catch (error) {
+      report(error)
+    }
+  },
   close: async () => {
     try {
       set({ state: await api.browser.close() })

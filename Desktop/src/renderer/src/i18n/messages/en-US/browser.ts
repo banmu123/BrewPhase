@@ -8,6 +8,13 @@ export const browser: typeof BrowserMessages = {
   hide: 'Collapse browser',
   titlebarHint: 'Drag the title bar to move the window',
   resizeHint: 'Drag an edge or corner to resize',
+  tabs: {
+    newTab: 'New tab',
+    closeTab: 'Close tab',
+    detachedBadge: 'Detached',
+    backToMain: 'Back to main window',
+    detachHint: 'Release: detach into its own window'
+  },
   toolbar: {
     start: 'Start page',
     back: 'Back',
