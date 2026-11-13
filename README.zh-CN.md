@@ -301,6 +301,73 @@ Tools/                     # 本地化 · 模拟器/截图 · 分析脚本
 .github/workflows/         # 桌面端打包工作流
 ```
 
+## 🧩 Life Path Skill（跨 Agent）
+
+`skills/brewphase-life-path/` 是一个独立的 Agent Skill：借真实人物的可验证人生路径
+来理解一个人的处境，而不是给励志语录。任何支持 skill 的 Agent 都能用。BrewPhase
+Desktop 是可选的——接上后它能读你自己已确认的方向与工作上下文。
+
+### 用 npx 装
+
+```bash
+npx skills add banmu123/BrewPhase
+```
+
+### 或者让 Agent 自己装
+
+把这段贴给 Agent：
+
+> 帮我安装 BrewPhase Life Path skill：
+> https://github.com/banmu123/BrewPhase
+> 读 `skills/brewphase-life-path/references/install.md`，按里面的步骤安装。
+
+那份文件是写给 Agent 看的：找 skills 目录、决定用软链还是复制、逐个核对文件是否
+到位，并处理可选的那一步 MCP 接入。
+
+### WorkBuddy
+
+WorkBuddy 从 `~/.workbuddy/skills/`（或 `<workspace>/.workbuddy/skills/`）读 skill：
+
+```bash
+git clone https://github.com/banmu123/BrewPhase ~/BrewPhase
+ln -s ~/BrewPhase/skills/brewphase-life-path ~/.workbuddy/skills/brewphase-life-path
+```
+
+然后重启 WorkBuddy，发一句应该会命中：> 我在现在这份工作里待了六年，说不上差，
+但也不觉得自己在往哪里走。
+
+如果回答里是几个不同地域时代的人、带成立条件和代价，说明装上了。
+
+Windows 上 `ln -s` 需要开发者模式。等价写法、不建软链直接复制的做法、以及失败
+排查表，都在 [adapters/workbuddy](skills/brewphase-life-path/adapters/workbuddy/README.md)。
+
+### Codex
+
+Codex 从 `.agents/skills/`（或 `.codex/skills/`）读仓库级 skill。在仓库根执行：
+
+```bash
+ln -s ../../skills/brewphase-life-path .agents/skills/brewphase-life-path
+```
+
+前提是这个仓库就在该工作区内。详见
+[adapters/codex](skills/brewphase-life-path/adapters/codex/README.md)。
+
+### 接 BrewPhase MCP（可选）
+
+这一步才让 skill 能读**你自己的**方向，而不只是对话里说的话：
+
+1. BrewPhase Desktop → **设置 → AI 连接** → 建客户端 → 授权 `direction:read`
+   （读工作上下文再加 `work_context:read`）
+2. 复制 token（只显示一次），把 stdio server 加进 Agent 的 MCP 配置，
+   `args` 指向 `Desktop/out/mcp/stdio.mjs`
+3. 在 Agent 的连接器设置里**信任**这个 server——新写入的条目不会自己启动
+
+完整 JSON、各 scope 含义与错误码见
+[references/brewphase-mcp.md](skills/brewphase-life-path/references/brewphase-mcp.md)。
+Agent 不能改你已确认的方向，只能写草稿，由你在应用内确认。
+
+skill 的完整文档：[skills/brewphase-life-path/README.zh-CN.md](skills/brewphase-life-path/README.zh-CN.md)。
+
 ## 📚 文档
 
 客观状态——系统要求、发行情况、测试数量、签名、已知限制——只维护在

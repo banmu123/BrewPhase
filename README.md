@@ -362,6 +362,82 @@ Tools/                     # localization · simulator / screenshot · analysis 
 .github/workflows/         # desktop packaging workflow
 ```
 
+## 🧩 Life Path Skill (cross-agent)
+
+`skills/brewphase-life-path/` is a standalone agent skill: it reads a person's
+situation through the verified life paths of real people, rather than through
+motivational quotes. It runs in any agent that supports skills. BrewPhase
+Desktop is optional — with it connected, the analysis can read your own
+confirmed direction and work context.
+
+### Install with npx
+
+```bash
+npx skills add banmu123/BrewPhase
+```
+
+### Or let your agent install it
+
+Paste this into your agent:
+
+> Set up the BrewPhase Life Path skill for me:
+> https://github.com/banmu123/BrewPhase
+> Read `skills/brewphase-life-path/references/install.md` and follow the steps.
+
+That file is written for an agent: it locates the skills directory, picks
+symlink or copy, verifies every file landed, and walks through the optional MCP
+step.
+
+### WorkBuddy
+
+WorkBuddy reads skills from `~/.workbuddy/skills/` (or
+`<workspace>/.workbuddy/skills/`):
+
+```bash
+git clone https://github.com/banmu123/BrewPhase ~/BrewPhase
+ln -s ~/BrewPhase/skills/brewphase-life-path ~/.workbuddy/skills/brewphase-life-path
+```
+
+Then restart WorkBuddy and ask something that should match, e.g. 「我在现在这份
+工作里待了六年，说不上差，但也不觉得自己在往哪里走」. If the answer studies
+several people from different regions and eras with conditions and costs, it is
+loaded.
+
+Windows needs Developer Mode for `ln -s`. The equivalent command, the no-symlink
+fallback, and the failure-triage table are in
+[adapters/workbuddy](skills/brewphase-life-path/adapters/workbuddy/README.md).
+
+### Codex
+
+Codex reads repository-level skills from `.agents/skills/` (or `.codex/skills/`).
+From your repository root:
+
+```bash
+ln -s ../../skills/brewphase-life-path .agents/skills/brewphase-life-path
+```
+
+Requires this repository to be present in that workspace. See
+[adapters/codex](skills/brewphase-life-path/adapters/codex/README.md).
+
+### Connect BrewPhase MCP (optional)
+
+This is what lets the skill read **your own** direction instead of only the
+conversation:
+
+1. BrewPhase Desktop → **设置 → AI 连接** → create a client → grant
+   `direction:read` (add `work_context:read` for work contexts)
+2. Copy the token (shown once), then add the stdio server to your agent's MCP
+   configuration, pointing `args` at `Desktop/out/mcp/stdio.mjs`
+3. **Trust** the server in the agent's connector settings — a new entry does not
+   start by itself
+
+Exact JSON, scope meanings and error codes:
+[references/brewphase-mcp.md](skills/brewphase-life-path/references/brewphase-mcp.md).
+The agent cannot modify your confirmed direction; it can only write drafts that
+you confirm in the app.
+
+Full skill documentation: [skills/brewphase-life-path/README.md](skills/brewphase-life-path/README.md).
+
 ## 📚 Documentation
 
 Objective status — platform requirements, distribution, test counts, signing, limitations — lives
