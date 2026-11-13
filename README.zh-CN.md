@@ -386,7 +386,7 @@ skill 的完整文档：[skills/brewphase-life-path/README.zh-CN.md](skills/brew
 | 安全模型（Electron） | [Desktop/docs/SECURITY_MODEL.md](Desktop/docs/SECURITY_MODEL.md) |
 | 画布规格 | [Desktop/docs/CANVAS_SPEC.md](Desktop/docs/CANVAS_SPEC.md) |
 | MCP 架构 | [Desktop/docs/MCP_ARCHITECTURE.md](Desktop/docs/MCP_ARCHITECTURE.md) |
-| MCP 工具（18 个） | [Desktop/docs/MCP_TOOLS.md](Desktop/docs/MCP_TOOLS.md) |
+| MCP 工具（27 个） | [Desktop/docs/MCP_TOOLS.md](Desktop/docs/MCP_TOOLS.md) |
 | MCP 安全 | [Desktop/docs/MCP_SECURITY.md](Desktop/docs/MCP_SECURITY.md) |
 | Life Path Skill（跨 Agent） | [skills/brewphase-life-path/README.zh-CN.md](skills/brewphase-life-path/README.zh-CN.md) |
 | 路线图 | [Desktop/docs/ROADMAP.md](Desktop/docs/ROADMAP.md) |
