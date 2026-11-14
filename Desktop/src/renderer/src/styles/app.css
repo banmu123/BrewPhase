@@ -6226,14 +6226,16 @@ textarea {
 /* 参与者卡：横向多列，窄窗自然折叠（规格 §8）。 */
 .roundtable__participants {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(236px, 1fr));
   gap: 10px;
 }
 
+/* 成员卡两行结构：上行 = 缩略图 + 名称 + 移除；下行通栏 = 状态 chip + 登录。 */
 .roundtable__participant {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
-  gap: 10px;
+  gap: 4px 10px;
   padding: 10px 12px;
   border: 1px solid var(--hairline);
   border-radius: 9px;
@@ -6407,35 +6409,51 @@ textarea {
   border-color: var(--ink-faint);
 }
 
-/* 成员状态行：AI 可参与 / 需要登录 / 尚未适配 / 普通资料 / 页面不可用。 */
+/* 成员状态行（卡片第二行，通栏）：AI 可参与 / 需要登录 / 尚未适配 /
+   普通资料 / 页面不可用。整体不换行，文字过长省略——绝不再竖排折行。 */
 .roundtable__member-state {
-  display: inline-flex;
+  grid-column: 1 / -1;
+  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  min-width: 0;
   font-size: 10.5px;
+}
+
+.roundtable__member-state-label {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--sheet-warm);
   color: var(--ink-faint);
 }
 
-.roundtable__member-state[data-state='ready'] {
+.roundtable__member-state[data-state='ready'] .roundtable__member-state-label {
   color: var(--sage);
 }
 
-.roundtable__member-state[data-state='login-required'],
-.roundtable__member-state[data-state='not-adapted'],
-.roundtable__member-state[data-state='unavailable'] {
+.roundtable__member-state[data-state='login-required'] .roundtable__member-state-label,
+.roundtable__member-state[data-state='not-adapted'] .roundtable__member-state-label,
+.roundtable__member-state[data-state='unavailable'] .roundtable__member-state-label {
   color: var(--roast);
 }
 
-.roundtable__member-state[data-state='generating'],
-.roundtable__member-state[data-state='sending'],
-.roundtable__member-state[data-state='checking'] {
+.roundtable__member-state[data-state='generating'] .roundtable__member-state-label,
+.roundtable__member-state[data-state='sending'] .roundtable__member-state-label,
+.roundtable__member-state[data-state='checking'] .roundtable__member-state-label {
   color: var(--roast);
 }
 
 .roundtable__member-login {
-  font-size: 10px;
+  flex: none;
+  margin-left: auto;
+  white-space: nowrap;
+  font-size: 10.5px;
   color: var(--roast);
-  padding: 1px 8px;
+  padding: 2px 10px;
   border: 1px dashed var(--hairline-strong);
   border-radius: 999px;
   background: transparent;

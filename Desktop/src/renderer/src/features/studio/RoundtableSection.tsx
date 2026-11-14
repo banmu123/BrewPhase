@@ -278,8 +278,9 @@ export function RoundtableBody(props: { participants: BrowserTabInfo[] }) {
               <article className="roundtable__participant" role="listitem" key={tab.id} data-tab-id={tab.id}>
                 <ParticipantThumb tabId={tab.id} />
                 <span className="roundtable__participant-body">
-                  <span className="roundtable__participant-name">{cardDisplayName(tab, unnamed)}</span>
-                  <MemberStatusLine tab={tab} member={members[tab.id]} loading={membersLoading} />
+                  <span className="roundtable__participant-name" title={cardDisplayName(tab, unnamed)}>
+                    {cardDisplayName(tab, unnamed)}
+                  </span>
                 </span>
                 <button
                   type="button"
@@ -289,6 +290,8 @@ export function RoundtableBody(props: { participants: BrowserTabInfo[] }) {
                 >
                   {t.studio.roundtable.removeAction}
                 </button>
+                {/* 状态行独占整卡宽度：平台识别 + 登录态，窄卡也不再竖排换行 */}
+                <MemberStatusLine tab={tab} member={members[tab.id]} loading={membersLoading} />
               </article>
             ))}
           </div>
@@ -384,7 +387,7 @@ function MemberStatusLine(props: {
 
   return (
     <span className="roundtable__member-state" data-state={dataState}>
-      {label}
+      <span className="roundtable__member-state-label">{label}</span>
       {dataState === 'login-required' && (
         <button
           type="button"

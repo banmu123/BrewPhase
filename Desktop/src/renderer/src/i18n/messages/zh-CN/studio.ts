@@ -100,7 +100,7 @@ export const studio = {
     memberUnknown: (name: string) => `${name} · 状态未知`,
     memberNotAdapted: (name: string) => `${name} · 已识别，尚未适配`,
     memberUnavailable: '页面不可用',
-    memberLoginAction: '去这张卡片登录',
+    memberLoginAction: '去登录',
     answersTitle: '本轮讨论',
     slotBusy: '讨论进行中…',
     slotDone: '本轮讨论已完成',

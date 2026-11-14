@@ -103,7 +103,7 @@ export const studio = {
     memberUnknown: (name: string) => `${name} · status unknown`,
     memberNotAdapted: (name: string) => `${name} · recognized, not adapted yet`,
     memberUnavailable: 'Page unavailable',
-    memberLoginAction: 'Sign in on this card',
+    memberLoginAction: 'Sign in',
     answersTitle: 'This round',
     slotBusy: 'Discussion in progress…',
     slotDone: 'This round is complete',
