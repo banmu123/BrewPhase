@@ -128,6 +128,25 @@ async function setFakeCursor(app: ElectronApplication, point: { x: number; y: nu
   }, point)
 }
 
+/** 浮窗里的原生 WebContentsView 必须真实可见且有内容区宽度。 */
+async function expectFloatViewAlive(app: ElectronApplication): Promise<void> {
+  const floatViewAlive = async (): Promise<boolean> =>
+    app.evaluate(({ BrowserWindow }) => {
+      const floatWin = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes('bpFloat='))
+      if (!floatWin) return false
+      for (const child of floatWin.contentView.children) {
+        const view = child as unknown as {
+          webContents?: unknown
+          getVisible?: () => boolean
+          getBounds?: () => { width: number; height: number }
+        }
+        if (view.webContents && view.getVisible?.() && (view.getBounds?.().width ?? 0) > 300) return true
+      }
+      return false
+    })
+  await expect.poll(floatViewAlive, { timeout: 20_000 }).toBe(true)
+}
+
 test('真实网页卡片：缩略图来自当前页面，点击在主窗口展开，收起不销毁', async () => {
   const { app, page, dataDir } = await launch()
   try {
@@ -225,6 +244,9 @@ test('拖出独立窗口再收回卡片架：同一个页面实例，不重新�
     expect(floatPage).toBeTruthy()
     await expect(floatPage!.locator('.bp-float')).toBeVisible()
     await expect(floatPage!.getByRole('button', { name: '收回卡片架' })).toBeVisible()
+    // 原生视图真实可见（3.4 回归：收纳态拖出曾因 visible=false 内容全空白，
+    // 而 page.screenshot 拍不到原生视图、capturePage 又会用旧帧，全靠这条断言兜住）。
+    await expectFloatViewAlive(app)
 
     await floatPage!.getByRole('button', { name: '收回卡片架' }).click()
 
@@ -464,6 +486,7 @@ test('备用入口：卡片悬浮「独立窗口」按钮走同一个 detach 链
     await card.locator('.web-card__action').first().click()
     await expect.poll(() => app.windows().filter((candidate) => candidate.url().includes('bpFloat=')).length, { timeout: 20_000 }).toBe(1)
     await expect(card).toHaveAttribute('data-presentation', 'detached', { timeout: 20_000 })
+    await expectFloatViewAlive(app)
     const state = await page.evaluate(() => window.brewphase.browser.state())
     expect(state.tabs[0].id).toBe(tabId)
     expect(state.tabs[0].detached).toBe(true)

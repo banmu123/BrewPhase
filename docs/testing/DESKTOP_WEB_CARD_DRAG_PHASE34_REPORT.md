@@ -1,10 +1,28 @@
 # BrewPhase Desktop — Phase 3.4 交付报告：网页卡片拖出修复与添加网页体验
 
-- 功能提交：见本文件所在提交的同系列 `feat(desktop)` commit
+- 功能提交：`0ebc8b3` + 热修复 `fix(desktop): 浮窗视图可见性`（见下 §1.1）
 - 前置：Phase 3 报告 `DESKTOP_MULTI_WINDOW_PHASE3_REPORT.md`（圆桌独立窗口已由用户真实操作验收）
 - 本阶段范围：只修网页卡片拖出 + 重设计「添加网页」输入卡；**不触碰圆桌拖拽机制**
 
 ---
+
+## 1.1 热修复：独立窗口内容全空白（用户实测截图反馈）
+
+拖出链路修通后暴露了一个**一直存在**的显示 bug：独立窗口壳正常（标题栏/标签条），
+但网页内容区全空白。根因：
+
+- 卡片收纳在采集宿主时 `parkTab` 会 `view.setVisible(false)`；
+- 拖出时 `moveToWindow` 只搬父子关系，**可见性标志原样带进新窗口**；
+- 浮窗壳上报 stage 矩形后 `setFloatBounds` 只 `setBounds`、从不 `setVisible(true)`。
+
+于是「从架上拖出」（最常见路径）的视图始终隐藏。自动化没抓到的原因：`page.screenshot`
+拍不到原生 WebContentsView，而 `capturePage` 对「曾画过、有 bounds 的隐藏视图」
+仍返回旧帧（E2E 的 `10-page-in-float.png` 因此一直是好的）。
+
+修复：`setFloatBounds` 对激活标签同时 `setBounds` + `setVisible(true)`（切标签/resize
+同路径覆盖）。新增 E2E 断言 `expectFloatViewAlive`：直接读浮窗 `contentView` 里
+WebContentsView 的 `getVisible()` 与 bounds 宽度——这是唯一能穿透「拍不到原生视图」
+限制的回归护栏，已挂到拖出与备用入口两条用例。
 
 ## 1. 拖出失败的真实根因（差异对比诊断）
 

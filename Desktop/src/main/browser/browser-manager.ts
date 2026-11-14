@@ -443,7 +443,11 @@ export class BrowserManager {
       if (!tab) continue
       if (tabId === activeId) {
         // 浮窗壳自己把标题栏/标签条让开，这里直接对齐它上报的 stage 矩形。
+        // **必须同时恢复可见性**：从架上拖出的标签在采集宿主里是
+        // setVisible(false) 的，moveToWindow 只搬父子关系——漏了这一步，
+        // 独立窗口就是「壳正常、内容全空」（Phase 3.4 用户实测 bug）。
         tab.view.setBounds(bounds)
+        tab.view.setVisible(true)
       } else {
         tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
       }
