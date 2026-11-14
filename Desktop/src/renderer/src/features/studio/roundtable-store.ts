@@ -1,29 +1,20 @@
 import { create } from 'zustand'
-import {
-  addParticipant,
-  clampRoundtable,
-  dockRoundtable,
-  initialRoundtable,
-  removeParticipant,
-  reorderParticipants,
-  retainParticipants,
-  undockRoundtable,
-  type PanelViewport,
-  type Roundtable
-} from '@shared/roundtable'
+import { initialRoundtableSnapshot, type RoundtableSnapshot } from '@shared/roundtable'
 import { moveCardBefore, reconcileCardOrder } from '@shared/web-cards'
 import { api } from '../../shared/api'
 
 /**
- * 网页卡片架 + AI 圆桌的渲染层状态（Phase 2）。
+ * AI 圆桌 + 卡片架的渲染层状态（Phase 3）。
  *
- * **卡片不再是一份数据**：卡片的身份、标题、URL、加载态全部来自
- * `useBrowserStore`（主进程快照），这里只保存两件渲染层自己的事：
- * - `cardOrder`：架上的展示顺序（可持久化，永不改写 tabId）；
- * - `roundtable`：参与者 tabId 与圆桌几何。
+ * **圆桌状态的主进程化**：主窗口与圆桌独立窗口是两个 Renderer，各自的
+ * Zustand 不能互为真相。这里只保存主进程 RoundtableService 广播来的快照
+ * （`snapshot`）与两件渲染层自己的事：架子顺序 `cardOrder`（可持久化，
+ * 永不改 tabId）与拖拽中的临时 UI 状态。
  *
- * 所以 `syncTabs` 必须在浏览器快照变化时被调用：它做顺序对账，并把已关闭
- * 的标签从圆桌里摘掉。关闭卡片 = 关闭真实标签；加入圆桌 = 建立引用。
+ * 所有圆桌动作都是「发意图 → 主进程校验/提交 → 广播回快照」：
+ * - join 会校验 tabId 真实存在，网页关闭时主进程自动摘除参与者；
+ * - setDraft 带 baseVersion 做乐观并发控制，过期写入被拒绝（返回最新快照）；
+ * - detached=true 时主窗口显示占位区，独立窗口渲染完整圆桌。
  */
 
 const ORDER_KEY = 'brewphase.webCards.order'
@@ -59,47 +50,61 @@ function writeStoredOrder(order: string[]): void {
 }
 
 type RoundtableStore = {
-  roundtable: Roundtable
-  /** 架子顺序（tabId 数组）。 */
+  /** 主进程广播的圆桌快照（唯一事实来源的缓存）。 */
+  snapshot: RoundtableSnapshot
+  hydrated: boolean
+  /** 架子顺序（tabId 数组）：纯展示偏好，永不改写 tabId。 */
   cardOrder: string[]
   selectedTabId: string | null
   draggingTabId: string | null
-  /** 拖动中光标已在主窗口之外（卡片显示「松手拆出」）。 */
+  /** 拖动中光标已在所有已知窗口之外（主进程帧广播）。 */
   dragOutside: boolean
-  /** 圆桌提问草稿：停靠 ↔ 浮动切换也不丢。 */
-  draft: string
-  setDraft: (value: string) => void
-  setDragOutside: (outside: boolean) => void
+  /** 拖拽会话是否属于圆桌（区分卡片拖出与圆桌拖出的提示）。 */
+  draggingRoundtable: boolean
 
-  /** 浏览器快照变化时对账：顺序保留、失效标签清理、参与者同步。 */
+  hydrate: () => Promise<void>
+  applySnapshot: (snapshot: RoundtableSnapshot) => void
+
+  /** 浏览器快照变化时对账：架子顺序保留、失效引用清理。 */
   syncTabs: (tabIds: string[]) => void
   /** 「添加网页」：新建真实标签（不抢焦点），卡片进入地址输入态。 */
   createCard: () => Promise<void>
-  /** 关闭卡片 = 关闭真实标签；同时解除圆桌引用。 */
+  /** 关闭卡片 = 关闭真实标签；主进程会同步摘除圆桌参与者。 */
   closeCard: (tabId: string) => Promise<void>
   moveCard: (tabId: string, beforeTabId: string | null) => void
   selectTab: (tabId: string | null) => void
   setDraggingTab: (tabId: string | null) => void
+  setDragOutside: (outside: boolean) => void
+  setDraggingRoundtable: (dragging: boolean) => void
 
-  joinRoundtable: (tabId: string) => void
-  leaveRoundtable: (tabId: string) => void
-  reorderRoundtable: (tabId: string, overId: string) => void
-
-  undock: (viewport: PanelViewport) => void
-  dock: () => void
-  moveFloating: (delta: { dx: number; dy: number }, viewport: PanelViewport) => void
-  resizeFloating: (delta: { dw: number; dh: number }, viewport: PanelViewport) => void
+  joinRoundtable: (tabId: string) => Promise<void>
+  leaveRoundtable: (tabId: string) => Promise<void>
+  setDraft: (value: string) => Promise<void>
+  detachRoundtable: (point?: { screenX: number; screenY: number }) => Promise<void>
+  dockRoundtable: () => Promise<void>
+  focusRoundtable: () => Promise<void>
 }
 
-export const useRoundtableStore = create<RoundtableStore>((set, get) => ({
-  roundtable: initialRoundtable(),
+export const useRoundtableStore = create<RoundtableStore>((set) => ({
+  snapshot: initialRoundtableSnapshot(),
+  hydrated: false,
   cardOrder: readStoredOrder(),
   selectedTabId: null,
   draggingTabId: null,
   dragOutside: false,
-  draft: '',
-  setDraft: (value) => set({ draft: value }),
-  setDragOutside: (outside) => set({ dragOutside: outside }),
+  draggingRoundtable: false,
+
+  hydrate: async () => {
+    try {
+      const snapshot = await api.roundtable.state()
+      set({ snapshot, hydrated: true })
+    } catch (error) {
+      console.error('[roundtable] hydrate failed', error)
+      set({ hydrated: true })
+    }
+  },
+
+  applySnapshot: (snapshot) => set({ snapshot, hydrated: true }),
 
   syncTabs: (tabIds) => {
     set((state) => {
@@ -110,7 +115,7 @@ export const useRoundtableStore = create<RoundtableStore>((set, get) => ({
       const alive = new Set(tabIds)
       return {
         cardOrder,
-        roundtable: retainParticipants(state.roundtable, tabIds),
+        // 参与者的摘除在主进程（syncTabs 广播）；这里只清本窗口的临时选择。
         selectedTabId: state.selectedTabId && alive.has(state.selectedTabId) ? state.selectedTabId : null,
         draggingTabId: state.draggingTabId && alive.has(state.draggingTabId) ? state.draggingTabId : null
       }
@@ -131,7 +136,6 @@ export const useRoundtableStore = create<RoundtableStore>((set, get) => ({
       writeStoredOrder(cardOrder)
       return {
         cardOrder,
-        roundtable: removeParticipant(state.roundtable, tabId),
         selectedTabId: state.selectedTabId === tabId ? null : state.selectedTabId,
         draggingTabId: state.draggingTabId === tabId ? null : state.draggingTabId
       }
@@ -153,58 +157,59 @@ export const useRoundtableStore = create<RoundtableStore>((set, get) => ({
 
   selectTab: (tabId) => set({ selectedTabId: tabId }),
   setDraggingTab: (tabId) => set({ draggingTabId: tabId, dragOutside: false }),
+  setDragOutside: (outside) => set({ dragOutside: outside }),
+  setDraggingRoundtable: (dragging) => set({ draggingRoundtable: dragging, dragOutside: false }),
 
-  joinRoundtable: (tabId) => {
-    set((state) => ({ roundtable: addParticipant(state.roundtable, tabId) }))
+  joinRoundtable: async (tabId) => {
+    try {
+      set({ snapshot: await api.roundtable.join(tabId) })
+    } catch (error) {
+      console.error('[roundtable] join failed', error)
+    }
   },
 
-  leaveRoundtable: (tabId) => {
-    set((state) => ({ roundtable: removeParticipant(state.roundtable, tabId) }))
+  leaveRoundtable: async (tabId) => {
+    try {
+      set({ snapshot: await api.roundtable.leave(tabId) })
+    } catch (error) {
+      console.error('[roundtable] leave failed', error)
+    }
   },
 
-  reorderRoundtable: (tabId, overId) => {
-    set((state) => ({ roundtable: reorderParticipants(state.roundtable, tabId, overId) }))
+  setDraft: async (value) => {
+    try {
+      set({ snapshot: await api.roundtable.setDraft(value) })
+    } catch (error) {
+      console.error('[roundtable] setDraft failed', error)
+    }
   },
 
-  undock: (viewport) => {
-    set((state) => {
-      const next = undockRoundtable(state.roundtable)
-      const { position, size } = clampRoundtable(next.position, next.size, viewport)
-      return { roundtable: { ...next, position, size } }
-    })
+  detachRoundtable: async (point) => {
+    try {
+      set({ snapshot: await api.roundtable.detach(point) })
+    } catch (error) {
+      console.error('[roundtable] detach failed', error)
+    }
   },
 
-  dock: () => {
-    set((state) => ({ roundtable: dockRoundtable(state.roundtable) }))
+  dockRoundtable: async () => {
+    try {
+      set({ snapshot: await api.roundtable.dock() })
+    } catch (error) {
+      console.error('[roundtable] dock failed', error)
+    }
   },
 
-  moveFloating: (delta, viewport) => {
-    set((state) => {
-      const { position } = clampRoundtable(
-        { x: state.roundtable.position.x + delta.dx, y: state.roundtable.position.y + delta.dy },
-        state.roundtable.size,
-        viewport
-      )
-      return { roundtable: { ...state.roundtable, position } }
-    })
-  },
-
-  resizeFloating: (delta, viewport) => {
-    set((state) => {
-      const { position, size } = clampRoundtable(
-        state.roundtable.position,
-        {
-          width: state.roundtable.size.width + delta.dw,
-          height: state.roundtable.size.height + delta.dh
-        },
-        viewport
-      )
-      return { roundtable: { ...state.roundtable, position, size } }
-    })
+  focusRoundtable: async () => {
+    try {
+      set({ snapshot: await api.roundtable.focus() })
+    } catch (error) {
+      console.error('[roundtable] focus failed', error)
+    }
   }
 }))
 
-/** E2E / 单测用：重置成初始状态（清空顺序与参与者，不动真实浏览器）。 */
+/** E2E / 单测用：重置成初始状态（清空顺序，不动主进程状态）。 */
 export function resetRoundtableStoreForTesting(): void {
   try {
     orderStorage()?.removeItem(ORDER_KEY)
@@ -212,11 +217,33 @@ export function resetRoundtableStoreForTesting(): void {
     // ignore
   }
   useRoundtableStore.setState({
-    roundtable: initialRoundtable(),
+    snapshot: initialRoundtableSnapshot(),
     cardOrder: [],
     selectedTabId: null,
     draggingTabId: null,
     dragOutside: false,
-    draft: ''
+    draggingRoundtable: false
+  })
+}
+
+/** 主进程广播 → store。返回解绑函数；在 App 挂载时调一次即可。 */
+export function subscribeRoundtableState(): () => void {
+  return api.roundtable.onSnapshot((snapshot) => {
+    useRoundtableStore.getState().applySnapshot(snapshot)
+  })
+}
+
+/** 主进程拖拽帧 → store（窗口外提示）。 */
+export function subscribeBrowserDragFrames(): () => void {
+  return api.browserDrag.onFrame((frame) => {
+    const store = useRoundtableStore.getState()
+    if (!frame.active) {
+      store.setDragOutside(false)
+      store.setDraggingRoundtable(false)
+      if (frame.kind === 'webcard') store.setDraggingTab(null)
+      return
+    }
+    store.setDragOutside(frame.outside)
+    if (frame.kind === 'roundtable') store.setDraggingRoundtable(true)
   })
 }

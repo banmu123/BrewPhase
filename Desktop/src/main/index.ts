@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { app, BrowserWindow, net, protocol, session } from 'electron'
+import { app, BrowserWindow, net, protocol, screen, session } from 'electron'
 import { installApplicationMenu } from './app-menu'
 import { openDatabase, type DatabaseHandle } from './database/client'
 import { registerIpc } from './ipc/register'
@@ -21,6 +21,10 @@ import { CoffeeService } from './application/coffee/coffee-service'
 import { CanvasService } from './application/canvas/canvas-service'
 import { McpClientService } from './application/authorization/permission-service'
 import { BrowserManager } from './browser/browser-manager'
+import { BrowserDragSessionManager } from './browser/browser-drag'
+import { RoundtableService } from './roundtable/roundtable-service'
+import { RoundtableWindowManager } from './roundtable/roundtable-window-manager'
+import { ROUNDTABLE_CHANGED_CHANNEL, ROUNDTABLE_ID, type RoundtableSnapshot } from '../shared/roundtable'
 import { AIChatService } from './ai-chat/ai-chat-service'
 import { BookmarkService } from './browser/bookmark-service'
 import { ChromeService } from './integrations/chrome/chrome-service'
@@ -243,10 +247,69 @@ function bootstrap(): void {
   // 内置浏览器：先建管理器，再开窗。`getWindow` 是取值函数而不是窗口对象——
   // macOS 关窗后重新激活会换一个 BrowserWindow 实例，浮窗必须跟着走，
   // 否则原生视图会挂在一个已经销毁的父节点上。
+  //
+  // 拖拽会话（Phase 3）：网页卡片与圆桌共用同一个「单鼠标」会话。会话的
+  // 落点判定/广播/拆窗回调都指向下面声明的引用（声明顺序解耦）。
+  let roundtableService: RoundtableService | null = null
+  const dragSession = new BrowserDragSessionManager({
+    cursor: () => screen.getCursorScreenPoint(),
+    classify: (point) => browserManager?.classifyDragPoint(point) ?? { windowId: null, mainWindow: false },
+    onFrame: (frame) => browserManager?.broadcastDragFrame(frame),
+    onReleaseOutside: (kind, tabId, point) => {
+      if (kind === 'webcard' && tabId) {
+        browserManager?.detachTab(tabId, point.x, point.y)
+        return
+      }
+      // 圆桌标题栏拖出：窗口外松手 → 独立窗口贴近松手点（规格 §4.6）。
+      roundtableService?.detach(point)
+    }
+  })
+
   browserManager = new BrowserManager({
     db: db.db,
     getWindow: () => mainWindowRef,
-    devServerUrl
+    devServerUrl,
+    drag: dragSession,
+    // 标签被销毁：圆桌立刻摘除失效参与者（两个窗口同步）。
+    onTabClosed: () => {
+      roundtableService?.syncTabs(browserManager?.liveTabIds() ?? [])
+    }
+  })
+
+  // AI 圆桌（Phase 3）：主进程唯一状态 + 唯一实例的独立窗口。
+  const roundtableManager = new RoundtableWindowManager({
+    devServerUrl,
+    roundtableId: ROUNDTABLE_ID,
+    mainWindowPosition: () => {
+      const main = mainWindowRef
+      if (!main || main.isDestroyed()) return null
+      const [x, y] = main.getPosition()
+      return { x, y }
+    },
+    // 系统 ✕ = 归位（不是删状态）；应用退出时放行（isQuitting）。
+    onUserClose: () => roundtableService?.dock(),
+    // 窗口被外部销毁（崩溃 / destroy）：状态归位，不卡在 detached。
+    onWindowLost: () => roundtableService?.dock(),
+    isQuitting: () => quitting,
+    onChange: () => {
+      // 圆桌窗口消失时拖拽会话可能还挂着（拖回流程里 drop → dock 关窗，
+      // dragend 再也到不了）：强制收尾，否则会话单例会挡住下一次拖动。
+      dragSession.cancel()
+      roundtableService && broadcastRoundtable(roundtableService.snapshot())
+    }
+  })
+  const broadcastRoundtable = (snapshot: RoundtableSnapshot): void => {
+    const main = mainWindowRef
+    if (main && !main.isDestroyed()) main.webContents.send(ROUNDTABLE_CHANGED_CHANNEL, snapshot)
+    roundtableManager.send(ROUNDTABLE_CHANGED_CHANNEL, snapshot)
+  }
+  roundtableService = new RoundtableService({
+    isTabAlive: (tabId) => browserManager?.hasTab(tabId) ?? false,
+    broadcast: broadcastRoundtable,
+    createWindow: (near) => roundtableManager.create(near),
+    closeWindow: () => roundtableManager.close(),
+    focusWindow: () => roundtableManager.focus(),
+    drag: dragSession
   })
 
   // Multi-AI（AI Workspace）：后台页面管理 + 并行调度。通知走主窗口广播，
@@ -291,8 +354,10 @@ function bootstrap(): void {
       const server = bridgeServer
       bridgeServer = null
       await server?.stop()
+      roundtableManager.closeAll()
       browserManager?.dispose()
       browserManager = null
+      roundtableService = null
       aiChatService?.dispose()
       aiChatService = null
       db?.close()
@@ -312,11 +377,20 @@ function bootstrap(): void {
     aiChat: aiChatService,
     bridgeStatus,
     browser: browserManager,
+    roundtable: roundtableService,
     bookmarks: bookmarkService,
     chrome: chromeIntegration,
     dataDir: initialDataLocation.dataDir,
     dataLocation
   })
+
+  // E2E / 单测钩子：注入假光标（拖拽会话的松手位置判定用）。
+  // 打包版没有这个全局对象；真实用户路径永远读系统光标。
+  if (!app.isPackaged) {
+    ;(globalThis as unknown as Record<string, unknown>).__bpTestHooks = {
+      setDragCursor: (point: { x: number; y: number } | null) => browserManager?.setDragCursorOverride(point)
+    }
+  }
 
   // 应用菜单必须在开窗前就位：快捷键（复制/粘贴/缩放…）随 role 注册，
   // Windows/Linux 的传统菜单栏由 autoHideMenuBar 收起，入口在 Renderer 顶栏。
@@ -344,7 +418,10 @@ function bootstrap(): void {
   }
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    // 主窗口不在了就重建——**不能**用 getAllWindows().length 判断：
+    // 圆桌独立窗口活着时它不是 0，但主窗口仍然需要回来（规格 §4.8）。
+    const main = mainWindowRef
+    if (!main || main.isDestroyed()) {
       const window = createMainWindow({ devServerUrl })
       mainWindowRef = window
       window.on('closed', () => {

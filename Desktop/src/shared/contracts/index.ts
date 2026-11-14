@@ -37,12 +37,14 @@ import type {
 } from './mcp'
 import type {
   BrowserBounds,
+  BrowserDragFrame,
   BrowserDragProbe,
   BrowserOpenInput,
   BrowserPreview,
   BrowserPreviewEvent,
   BrowserState
 } from './browser'
+import type { RoundtableSnapshot } from '../roundtable'
 import type {
   BookmarkImportResult,
   BookmarkPreview,
@@ -257,6 +259,42 @@ export interface RendererApi {
     get: (tabId: string) => Promise<BrowserPreview | null>
     request: (tabId: string) => Promise<void>
     onChanged: (listener: (event: BrowserPreviewEvent) => void) => () => void
+  }
+  /**
+   * 拖拽会话（Phase 3）：卡片拖出的三个意图 + 主进程光标帧广播。
+   *
+   * 「窗口外松手」的判定在主进程（`screen.getCursorScreenPoint()` 轮询），
+   * 渲染层只报 dragstart / 内部投放 / dragend——真实桌面上渲染层拿不到
+   * 窗口外的 pointer 事件，这个分工是拖出可靠性的根基。
+   */
+  browserDrag: {
+    begin: (tabId: string) => Promise<boolean>
+    /** 窗口内 drop 被接受（排序 / 加入圆桌）：会话按内部投放收尾，不拆窗。 */
+    dropHandled: (tabId: string) => Promise<void>
+    end: (tabId: string, point?: { screenX: number; screenY: number }) => Promise<void>
+    /** 光标进出窗口边界的帧广播（拆出提示样式用）。 */
+    onFrame: (listener: (frame: BrowserDragFrame) => void) => () => void
+  }
+  /**
+   * AI 圆桌（Phase 3）：主进程唯一状态，主窗口与独立窗口订阅同一份快照。
+   * 写草稿带 `baseVersion` 做乐观并发控制；detach 可带松手点（按钮拆出缺省）。
+   */
+  roundtable: {
+    state: () => Promise<RoundtableSnapshot>
+    join: (tabId: string) => Promise<RoundtableSnapshot>
+    leave: (tabId: string) => Promise<RoundtableSnapshot>
+    reorder: (tabId: string, overId: string) => Promise<RoundtableSnapshot>
+    /** 草稿：后写者胜出，主进程推进版本并广播到两个窗口。 */
+    setDraft: (draft: string) => Promise<RoundtableSnapshot>
+    detach: (point?: { screenX: number; screenY: number }) => Promise<RoundtableSnapshot>
+    dock: () => Promise<RoundtableSnapshot>
+    focus: () => Promise<RoundtableSnapshot>
+    /** 标题栏拖出 / 拖回的会话意图（与卡片共用同一个「单鼠标」会话）。 */
+    dragBegin: () => Promise<boolean>
+    /** 拖回主窗口停靠位的 drop 被接受：按内部投放收尾，不重复归位。 */
+    dragDropHandled: () => Promise<void>
+    dragEnd: (point?: { screenX: number; screenY: number }) => Promise<void>
+    onSnapshot: (listener: (snapshot: RoundtableSnapshot) => void) => () => void
   }
   /**
    * AI Workspace（Multi-AI）。自动化全部发生在主进程：这里只传意图

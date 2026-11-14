@@ -23,6 +23,46 @@ export const BROWSER_CHANGED_CHANNEL = 'browser:changed'
  */
 export const BROWSER_PREVIEW_CHANNEL = 'browser:preview'
 
+/**
+ * 拖拽会话广播通道（Phase 3）。
+ *
+ * 拖动期间主进程用 `screen.getCursorScreenPoint()` 轮询真实光标（它是唯一
+ * 能看到窗口外坐标的一方），把「光标是否在任何窗口之外」推给渲染层做提示；
+ * 渲染层不再依赖窗口外的 pointer 事件——那在真实桌面上不可靠（E2E 用合成
+ * 事件验证不了这一点）。
+ */
+export const BROWSER_DRAG_CHANNEL = 'browser:drag'
+
+/** 拖拽会话的一帧：active=false 表示会话结束（含取消）。 */
+export type BrowserDragFrame = {
+  active: boolean
+  kind: 'webcard' | 'roundtable'
+  /** webcard 会话才有：正在被拖动的标签。 */
+  tabId: string | null
+  /** 光标当前在任何已知窗口之外（松手将拆出）。 */
+  outside: boolean
+}
+
+/** 卡片开始被拖动（HTML5 dragstart 时由渲染层上报）。 */
+export const browserDragBeginSchema = z.object({
+  tabId: z.string().min(1).max(64)
+})
+
+/** 拖动在窗口内被接受（排序 / 加入圆桌）：会话按「内部投放」收尾，不拆窗。 */
+export const browserDragDropHandledSchema = z.object({
+  tabId: z.string().min(1).max(64)
+})
+
+/**
+ * 拖动终态。`screenX/screenY` 是**兜底**：真实拖动以主进程轮询到的光标
+ * 位置为准（渲染层在窗口外拿不到可靠坐标）；测试环境才显式传坐标。
+ */
+export const browserDragEndSchema = z.object({
+  tabId: z.string().min(1).max(64),
+  screenX: z.number().finite().optional(),
+  screenY: z.number().finite().optional()
+})
+
 /** 浮窗在**窗口坐标**里的位置与尺寸，单位是 CSS px（= Electron 的 DIP）。 */
 export type BrowserBounds = {
   x: number

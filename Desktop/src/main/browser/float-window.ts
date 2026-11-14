@@ -1,6 +1,7 @@
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, screen } from 'electron'
 import { join } from 'node:path'
 import { WINDOW_CHROME } from '../appearance'
+import { fitRectIntoBounds } from '../../shared/window-placement'
 
 /**
  * 独立浏览器窗口：标签被拖出主窗口后的新家。
@@ -151,7 +152,12 @@ export class FloatWindowManager {
 
     window.once('ready-to-show', () => window.show())
     if (near) {
-      window.setPosition(Math.max(0, Math.round(near.screenX - width / 2)), Math.max(0, Math.round(near.screenY - 20)))
+      // 落点所在显示器的工作区：扩展屏在主屏左/上时坐标是负的，
+      // 绝不能 Math.max(0, …)——那会把窗口拽到主显示器上（Phase 3 修的真实缺陷）。
+      const point = { x: Math.round(near.screenX), y: Math.round(near.screenY) }
+      const display = screen.getDisplayNearestPoint(point)
+      const rect = fitRectIntoBounds(point, width, height, display.workArea)
+      window.setPosition(rect.x, rect.y)
     } else if (main) {
       window.setPosition(main.x + 60 + offset, main.y + 60 + offset)
     }

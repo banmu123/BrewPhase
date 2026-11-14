@@ -1,373 +1,213 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import type { BrowserTabInfo } from '@shared/contracts'
 import { cardBadgeText, cardDisplayName } from '@shared/web-cards'
-import { clampRoundtable, type PanelViewport } from '@shared/roundtable'
 import { useI18n } from '../../i18n'
+import { api } from '../../shared/api'
 import { useBrowserStore } from '../browser/browser-store'
 import { useBrowserPreviewStore } from '../browser/preview-store'
 import { useRoundtableStore } from './roundtable-store'
+import { WEB_CARD_MIME } from './WebCardShelf'
 
 /**
- * AI 圆桌（Roundtable Phase 1）：Studio Home 底部第二层。
+ * AI 圆桌（Phase 3）：Studio Home 底部第二层。
  *
- * 两副形态、一份状态：
- * - **停靠**：占满内容宽度，位置由文档流决定；标题栏可拖出，也有明确的
- *   「独立展开」按钮（键盘可达）。
- * - **浮动**：fixed 定位的**应用内**浮层（本阶段不创建 Electron BrowserWindow，
- *   规格 §4 明确禁止提前做跨窗口迁移）。可整块拖动、右下角调整尺寸、
- *   「归位」或 Esc 回到停靠位；内部状态（参与者、输入）全程保留。
+ * 两副形态、**主进程一份状态**：
+ * - **停靠**：占满内容宽度；标题栏是 OS 拖拽源——拖出 BrewPhase 窗口外
+ *   松手，主进程创建真正的独立 BrowserWindow（`#bpRoundtable` 路由）。
+ *   「独立窗口」按钮同效（键盘 / 触控板可达）。
+ * - **独立窗口**：主窗口只剩一个轻量占位区（人数 + 重新打开 + 归位），
+ *   不再是 Phase 2 的 `position: fixed` 应用内浮层——那不是真正的多窗口。
  *
- * 拖入接应：卡片架的卡片按住移动进入 `draggingCardId` 状态后，document 级
- * pointerup 判定松手点是否落在圆桌热区内——两边只通过这一个 store 字段
- * 握手，互相不认识（规格 §5 的关系边界）。
- *
- * 拖动边界：只有标题栏（手柄与空白区）触发整块拖动；`closest('button,
- * input, a, select, textarea')` 一律排除，所以拖参与者卡片、点输入框不会
- * 误移动整个圆桌（规格 §4.2）。
+ * 拖入接应（卡片 → 参与者）：卡片架的卡片是 OS 拖拽源；圆桌热区在
+ * `dragover` 时识别 `WEB_CARD_MIME` 并高亮，`drop` 时把 tabId 交给主进程
+ * join（主进程校验标签真实存在）。内部投放会通知拖拽会话 dropHandled，
+ * 主进程不会把这张卡拆成窗口。
  */
 
-type PointerDrag =
-  | { kind: 'pending'; pointerId: number; startX: number; startY: number }
-  | { kind: 'move'; pointerId: number; startX: number; startY: number; origin: { x: number; y: number } }
-  | { kind: 'resize'; pointerId: number; startX: number; startY: number; size: { width: number; height: number } }
-
-const DRAG_THRESHOLD = 5
-
-function viewportSize(): PanelViewport {
-  return {
-    width: document.documentElement.clientWidth,
-    height: document.documentElement.clientHeight
-  }
-}
-
 export function RoundtableSection() {
-  const { t } = useI18n()
-  const roundtable = useRoundtableStore((state) => state.roundtable)
-  const tabs = useBrowserStore((state) => state.state.tabs)
-  const zoneRef = useRef<HTMLDivElement>(null)
-
-  // ---- 拖入接应：只做视觉反馈（热区高亮）----
-  // 投递判定**不在这里**：pointerup 时卡片自己的监听会先 setDraggingCard(null)
-  // 触发重渲染、卸掉这里的 effect——监听还没执行就没了（真实竞态，靠 E2E 抓到）。
-  // 所以「松手落在哪」由卡片的 onUp 统一判定（见 WebCardShelf），
-  // 这里只在 pointermove 时高亮热区，告诉用户可以松手。
-  const draggingTabId = useRoundtableStore((state) => state.draggingTabId)
-  const [dropActive, setDropActive] = useState(false)
-
-  useEffect(() => {
-    if (!draggingTabId) {
-      setDropActive(false)
-      return
-    }
-    const onMove = (event: PointerEvent): void => {
-      const zone = zoneRef.current
-      if (!zone) return
-      const rect = zone.getBoundingClientRect()
-      const inside =
-        event.clientX >= rect.left &&
-        event.clientX <= rect.right &&
-        event.clientY >= rect.top &&
-        event.clientY <= rect.bottom
-      setDropActive(inside)
-    }
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
-      setDropActive(false)
-    }
-    document.addEventListener('pointermove', onMove)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('pointermove', onMove)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [draggingTabId])
-
-  const participants = roundtable.participantTabIds
-    .map((tabId) => tabs.find((tab) => tab.id === tabId))
-    .filter((tab): tab is BrowserTabInfo => Boolean(tab))
-
-  return (
-    <>
-      {/* 停靠位：浮出后留一个轻量占位，说明圆桌去哪了（规格 §4.3）。 */}
-      <div
-        className={roundtable.docked ? 'roundtable' : 'roundtable roundtable--slot'}
-        ref={roundtable.docked ? zoneRef : undefined}
-        data-drop-active={dropActive && roundtable.docked}
-      >
-        {roundtable.docked ? (
-          <DockedRoundtable participants={participants} zoneRef={zoneRef} dropActive={dropActive} />
-        ) : (
-          <p className="roundtable__slot-hint">{t.studio.roundtable.slotHint}</p>
-        )}
-      </div>
-      {!roundtable.docked && (
-        <FloatingRoundtable participants={participants} zoneRef={zoneRef} dropActive={dropActive} />
-      )}
-    </>
-  )
+  const detached = useRoundtableStore((state) => state.snapshot.detached)
+  if (detached) return <RoundtableSlot />
+  return <DockedRoundtable />
 }
 
 /* ============================================================
- * 停靠形态：标题栏拖动 = 拖出浮动；「独立展开」按钮同效（键盘可达）。
+ * 停靠形态：标题栏拖出 = 独立窗口；「独立窗口」按钮同效。
  * ============================================================ */
 
-function DockedRoundtable(props: {
-  participants: BrowserTabInfo[]
-  zoneRef: React.RefObject<HTMLDivElement | null>
-  dropActive: boolean
-}) {
+function DockedRoundtable() {
   const { t } = useI18n()
-  const undock = useRoundtableStore((state) => state.undock)
-  const drag = useRef<PointerDrag | null>(null)
+  const tabs = useBrowserStore((state) => state.state.tabs)
+  const participantTabIds = useRoundtableStore((state) => state.snapshot.participantTabIds)
+  const detachRoundtable = useRoundtableStore((state) => state.detachRoundtable)
+  const setDraggingRoundtable = useRoundtableStore((state) => state.setDraggingRoundtable)
+  const dragOutside = useRoundtableStore((state) => state.dragOutside)
   const [dragArmed, setDragArmed] = useState(false)
 
-  const onHeadPointerDown = (event: React.PointerEvent<HTMLElement>): void => {
-    if (event.button !== 0) return
-    if ((event.target as HTMLElement).closest('button, input, a, select, textarea')) return
-    drag.current = { kind: 'pending', pointerId: event.pointerId, startX: event.clientX, startY: event.clientY }
-    ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  const participants = participantTabIds
+    .map((tabId) => tabs.find((tab) => tab.id === tabId))
+    .filter((tab): tab is BrowserTabInfo => Boolean(tab))
+
+  /** OS 拖拽源：整块圆桌跟着系统拖影走，窗口外松手由主进程拆窗。 */
+  const onHeadDragStart = (event: React.DragEvent<HTMLElement>): void => {
+    if ((event.target as HTMLElement).closest('button, input, a, select, textarea')) {
+      event.preventDefault()
+      return
+    }
+    event.dataTransfer.setData(ROUNDTABLE_MIME, '1')
+    event.dataTransfer.effectAllowed = 'move'
+    // 拖影 = 整块停靠圆桌（像把整张桌子端起来），而不是只有标题条。
+    const source = event.currentTarget.closest('.roundtable') ?? event.currentTarget
+    const rect = source.getBoundingClientRect()
+    event.dataTransfer.setDragImage(source, Math.max(12, event.clientX - rect.left), Math.max(10, event.clientY - rect.top))
+    setDragArmed(true)
+    setDraggingRoundtable(true)
+    void api.roundtable.dragBegin().catch(() => undefined)
   }
 
-  const onHeadPointerMove = (event: React.PointerEvent<HTMLElement>): void => {
-    const state = drag.current
-    if (!state || state.pointerId !== event.pointerId || state.kind !== 'pending') return
-    if (Math.hypot(event.clientX - state.startX, event.clientY - state.startY) < DRAG_THRESHOLD) return
-    // 拖过阈值：整块拖出（undock 后由 FloatingRoundtable 接管后续移动）。
-    drag.current = null
+  const onHeadDragEnd = (event: React.DragEvent<HTMLElement>): void => {
     setDragArmed(false)
-    undock(viewportSize())
-  }
-
-  const endDrag = (event: React.PointerEvent<HTMLElement>): void => {
-    if (drag.current?.pointerId !== event.pointerId) return
-    drag.current = null
-    setDragArmed(false)
+    setDraggingRoundtable(false)
+    void api.roundtable.dragEnd({ screenX: event.screenX, screenY: event.screenY }).catch(() => undefined)
   }
 
   return (
-    <>
+    <div className="roundtable">
       <header
         className="roundtable__head"
-        onPointerDown={onHeadPointerDown}
-        onPointerMove={onHeadPointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-        title={t.studio.roundtable.dragHint}
+        draggable
+        onDragStart={onHeadDragStart}
+        onDragEnd={onHeadDragEnd}
         data-armed={dragArmed}
+        title={t.studio.roundtable.dragHint}
       >
         <span className="roundtable__grip" aria-hidden="true">
           ⠿
         </span>
         <h2 className="roundtable__title">{t.studio.roundtable.title}</h2>
-        {props.participants.length > 0 && (
-          <span className="roundtable__count">{t.studio.roundtable.count(props.participants.length)}</span>
+        {participants.length > 0 && (
+          <span className="roundtable__count">{t.studio.roundtable.count(participants.length)}</span>
+        )}
+        {dragArmed && (
+          <span className="roundtable__detach-hint" data-outside={dragOutside} role="status">
+            {dragOutside ? t.studio.roundtable.detachHint : t.studio.roundtable.dragHint}
+          </span>
         )}
         <button
           type="button"
           className="roundtable__undock"
           aria-label={t.studio.roundtable.undock}
           title={t.studio.roundtable.undock}
-          onClick={() => undock(viewportSize())}
+          onClick={() => void detachRoundtable()}
         >
           <span aria-hidden="true">↗</span>
           <span>{t.studio.roundtable.undockAction}</span>
         </button>
       </header>
-      <RoundtableBody participants={props.participants} dropActive={props.dropActive} />
-    </>
+      <RoundtableBody participants={participants} />
+    </div>
   )
 }
 
 /* ============================================================
- * 浮动形态：fixed 浮层 + 标题栏拖动 + 右下角 resize + 归位 / 关闭。
+ * 独立窗口占位：轻量状态区，不出现大块空白（规格 §5/§8）。
+ * 同时是拖回归位的热区：圆桌窗口的标题栏拖到这里松手 = 归位。
  * ============================================================ */
 
-function FloatingRoundtable(props: {
-  participants: BrowserTabInfo[]
-  zoneRef: React.RefObject<HTMLDivElement | null>
-  dropActive: boolean
-}) {
+/** 圆桌拖拽的数据类型；主窗口占位区用它识别「来的是整个圆桌」。 */
+export const ROUNDTABLE_MIME = 'application/x-brewphase-roundtable'
+
+function RoundtableSlot() {
   const { t } = useI18n()
-  const roundtable = useRoundtableStore((state) => state.roundtable)
-  const moveFloating = useRoundtableStore((state) => state.moveFloating)
-  const resizeFloating = useRoundtableStore((state) => state.resizeFloating)
-  const dock = useRoundtableStore((state) => state.dock)
-  const drag = useRef<PointerDrag | null>(null)
-  const [dragging, setDragging] = useState(false)
-
-  const geom = clampRoundtable(roundtable.position, roundtable.size, viewportSize())
-
-  // Esc：归位（浮动圆桌最自然的取消路径）。输入框聚焦且有内容时先失焦。
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return
-      const active = document.activeElement
-      if (active instanceof HTMLInputElement && active.value !== '') {
-        active.blur()
-        return
-      }
-      event.preventDefault()
-      dock()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [dock])
-
-  // 窗口尺寸变化：几何重新收进视口（clamp 在 shared 收口，这里只触发）。
-  useEffect(() => {
-    const onResize = (): void => {
-      const current = useRoundtableStore.getState().roundtable
-      const next = clampRoundtable(current.position, current.size, viewportSize())
-      useRoundtableStore.setState({ roundtable: { ...current, ...next } })
-    }
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
-
-  const onHeadPointerDown = (event: React.PointerEvent<HTMLElement>): void => {
-    if (event.button !== 0) return
-    if ((event.target as HTMLElement).closest('button, input, a, select, textarea')) return
-    drag.current = {
-      kind: 'move',
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      origin: { x: roundtable.position.x, y: roundtable.position.y }
-    }
-    ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
-    event.preventDefault()
-  }
-
-  const onHeadPointerMove = (event: React.PointerEvent<HTMLElement>): void => {
-    const state = drag.current
-    if (!state || state.pointerId !== event.pointerId || state.kind !== 'move') return
-    moveFloating({ dx: event.clientX - state.startX, dy: event.clientY - state.startY }, viewportSize())
-    setDragging(true)
-  }
-
-  const endDrag = (event: React.PointerEvent<HTMLElement>): void => {
-    if (drag.current?.pointerId !== event.pointerId) return
-    drag.current = null
-    setDragging(false)
-  }
-
-  const onResizeDown = (event: React.PointerEvent<HTMLElement>): void => {
-    if (event.button !== 0) return
-    event.preventDefault()
-    event.stopPropagation()
-    drag.current = {
-      kind: 'resize',
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      size: { width: roundtable.size.width, height: roundtable.size.height }
-    }
-    ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
-  }
-
-  const onResizeMove = (event: React.PointerEvent<HTMLElement>): void => {
-    const state = drag.current
-    if (!state || state.pointerId !== event.pointerId || state.kind !== 'resize') return
-    resizeFloating({ dw: event.clientX - state.startX, dh: event.clientY - state.startY }, viewportSize())
-  }
+  const tabs = useBrowserStore((state) => state.state.tabs)
+  const participantTabIds = useRoundtableStore((state) => state.snapshot.participantTabIds)
+  const focusRoundtable = useRoundtableStore((state) => state.focusRoundtable)
+  const dockRoundtable = useRoundtableStore((state) => state.dockRoundtable)
+  const [dropActive, setDropActive] = useState(false)
 
   return (
-    <section
-      className="roundtable roundtable--floating"
-      style={{
-        left: `${geom.position.x}px`,
-        top: `${geom.position.y}px`,
-        width: `${geom.size.width}px`,
-        height: `${geom.size.height}px`
+    <div
+      className="roundtable roundtable--slot"
+      data-drop-active={dropActive}
+      onDragOver={(event) => {
+        if (!event.dataTransfer.types.includes(ROUNDTABLE_MIME)) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'move'
+        setDropActive(true)
       }}
-      data-dragging={dragging}
-      role="dialog"
-      aria-label={t.studio.roundtable.title}
-      ref={props.zoneRef}
+      onDragLeave={() => setDropActive(false)}
+      onDrop={(event) => {
+        if (!event.dataTransfer.types.includes(ROUNDTABLE_MIME)) return
+        event.preventDefault()
+        setDropActive(false)
+        // 内部投放：会话按 dropHandled 收尾；随后显式归位。
+        void api.roundtable.dragDropHandled().catch(() => undefined)
+        void dockRoundtable()
+      }}
     >
-      <header
-        className="roundtable__head roundtable__head--floating"
-        onPointerDown={onHeadPointerDown}
-        onPointerMove={onHeadPointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-        title={t.studio.roundtable.dragHint}
-      >
-        <span className="roundtable__grip" aria-hidden="true">
-          ⠿
-        </span>
-        <h2 className="roundtable__title">{t.studio.roundtable.title}</h2>
-        {props.participants.length > 0 && (
-          <span className="roundtable__count">{t.studio.roundtable.count(props.participants.length)}</span>
-        )}
-        <span className="roundtable__float-actions">
-          <button
-            type="button"
-            className="roundtable__float-btn"
-            onClick={dock}
-            aria-label={t.studio.roundtable.dock}
-            title={t.studio.roundtable.dock}
-          >
-            {t.studio.roundtable.dockAction}
-          </button>
-          <button
-            type="button"
-            className="roundtable__float-btn roundtable__float-btn--close"
-            aria-label={t.studio.roundtable.close}
-            title={t.studio.roundtable.close}
-            onClick={dock}
-          >
-            ✕
-          </button>
-        </span>
-      </header>
-
-      <RoundtableBody participants={props.participants} dropActive={props.dropActive} />
-
-      <div
-        className="roundtable__resize"
-        aria-hidden="true"
-        title={t.studio.roundtable.resizeHint}
-        onPointerDown={onResizeDown}
-        onPointerMove={onResizeMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-      />
-    </section>
+      <p className="roundtable__slot-hint">{t.studio.roundtable.slotHint}</p>
+      {participantTabIds.length > 0 && (
+        <p className="roundtable__slot-count">{t.studio.roundtable.count(participantTabIds.length)}</p>
+      )}
+      <div className="roundtable__slot-actions">
+        <button type="button" className="roundtable__slot-btn" onClick={() => void focusRoundtable()}>
+          {t.studio.roundtable.reopen}
+        </button>
+        <button type="button" className="roundtable__slot-btn roundtable__slot-btn--dock" onClick={() => void dockRoundtable()}>
+          {t.studio.roundtable.dockAction}
+        </button>
+      </div>
+      {participantTabIds.length > 0 && (
+        <p className="roundtable__slot-names">
+          {participantTabIds
+            .map((tabId) => tabs.find((tab) => tab.id === tabId))
+            .filter((tab): tab is BrowserTabInfo => Boolean(tab))
+            .map((tab) => cardDisplayName(tab, t.studio.webShelf.unnamed))
+            .join(' · ')}
+        </p>
+      )}
+    </div>
   )
 }
 
 /* ============================================================
- * 参与者身份：优先用同一份缩略图（不复制、不额外采集），
- * 没有预览时退回首字母徽章。
+ * 圆桌正文（停靠与独立窗口共用）：参与区 + 统一提问输入。
  * ============================================================ */
 
-function ParticipantThumb(props: { tabId: string }) {
+export function RoundtableBody(props: { participants: BrowserTabInfo[] }) {
   const { t } = useI18n()
-  const preview = useBrowserPreviewStore((state) => state.previews[props.tabId])
-  const tab = useBrowserStore((state) => state.state.tabs.find((item) => item.id === props.tabId))
-  if (preview) {
-    return <img className="roundtable__participant-thumb" src={preview.dataUrl} alt="" draggable={false} referrerPolicy="no-referrer" />
-  }
-  return (
-    <span className="roundtable__participant-badge" aria-hidden="true">
-      {tab ? cardBadgeText(tab, t.studio.webShelf.unnamed) : '·'}
-    </span>
-  )
-}
-
-function RoundtableBody(props: { participants: BrowserTabInfo[]; dropActive: boolean }) {
-  const { t } = useI18n()
-  const question = useRoundtableStore((state) => state.draft)
-  const setQuestion = useRoundtableStore((state) => state.setDraft)
+  const snapshot = useRoundtableStore((state) => state.snapshot)
+  const setDraft = useRoundtableStore((state) => state.setDraft)
   const leaveRoundtable = useRoundtableStore((state) => state.leaveRoundtable)
+  const joinRoundtable = useRoundtableStore((state) => state.joinRoundtable)
+  const [dropActive, setDropActive] = useState(false)
   const unnamed = t.studio.webShelf.unnamed
 
   const ready = props.participants.length > 0
 
   return (
     <>
-      <div className="roundtable__stage" data-drop-active={props.dropActive}>
+      <div
+        className="roundtable__stage"
+        data-drop-active={dropActive}
+        onDragOver={(event) => {
+          if (!event.dataTransfer.types.includes(WEB_CARD_MIME)) return
+          event.preventDefault()
+          event.dataTransfer.dropEffect = 'move'
+          setDropActive(true)
+        }}
+        onDragLeave={() => setDropActive(false)}
+        onDrop={(event) => {
+          if (!event.dataTransfer.types.includes(WEB_CARD_MIME)) return
+          event.preventDefault()
+          setDropActive(false)
+          const tabId = event.dataTransfer.getData(WEB_CARD_MIME)
+          if (!tabId) return
+          // 内部投放（加入圆桌）：先标记会话，再建参与关系——两步都是
+          // 主进程收口，顺序保证 dropHandled 先于 dragend 到达。
+          void api.browserDrag.dropHandled(tabId).catch(() => undefined)
+          void joinRoundtable(tabId)
+        }}
+      >
         {props.participants.length === 0 ? (
           <div className="roundtable__empty">
             <p className="roundtable__empty-title">{t.studio.roundtable.emptyTitle}</p>
@@ -390,7 +230,7 @@ function RoundtableBody(props: { participants: BrowserTabInfo[]; dropActive: boo
                   type="button"
                   className="roundtable__remove"
                   aria-label={t.studio.roundtable.remove(cardDisplayName(tab, unnamed))}
-                  onClick={() => leaveRoundtable(tab.id)}
+                  onClick={() => void leaveRoundtable(tab.id)}
                 >
                   {t.studio.roundtable.removeAction}
                 </button>
@@ -404,7 +244,7 @@ function RoundtableBody(props: { participants: BrowserTabInfo[]; dropActive: boo
         <form
           className="roundtable__ask-form"
           onSubmit={(event) => {
-            // Phase 1：不发起真实提问（规格 §3 / §9），只保留输入。
+            // Phase 3：不发起真实提问（规格 §7），只保留输入与草稿同步。
             event.preventDefault()
           }}
         >
@@ -412,19 +252,39 @@ function RoundtableBody(props: { participants: BrowserTabInfo[]; dropActive: boo
             className="roundtable__ask-input"
             placeholder={ready ? t.studio.roundtable.askPlaceholder : t.studio.roundtable.askPlaceholderIdle}
             aria-label={t.studio.roundtable.askLabel}
-            value={question}
-            onChange={(event) => setQuestion(event.target.value)}
+            value={snapshot.draft}
+            maxLength={2_000}
+            onChange={(event) => void setDraft(event.target.value)}
             disabled={!ready}
           />
           <button
             type="submit"
             className="roundtable__ask-submit"
-            disabled={!ready || question.trim() === ''}
+            disabled={!ready || snapshot.draft.trim() === ''}
           >
             {t.studio.roundtable.start}
           </button>
         </form>
       </footer>
     </>
+  )
+}
+
+/* ============================================================
+ * 参与者身份：优先用同一份缩略图（不复制、不额外采集），
+ * 没有预览时退回首字母徽章。
+ * ============================================================ */
+
+function ParticipantThumb(props: { tabId: string }) {
+  const { t } = useI18n()
+  const preview = useBrowserPreviewStore((state) => state.previews[props.tabId])
+  const tab = useBrowserStore((state) => state.state.tabs.find((item) => item.id === props.tabId))
+  if (preview) {
+    return <img className="roundtable__participant-thumb" src={preview.dataUrl} alt="" draggable={false} referrerPolicy="no-referrer" />
+  }
+  return (
+    <span className="roundtable__participant-badge" aria-hidden="true">
+      {tab ? cardBadgeText(tab, t.studio.webShelf.unnamed) : '·'}
+    </span>
   )
 }

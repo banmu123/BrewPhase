@@ -43,6 +43,7 @@ import { resolveRecordMetadata } from '../metadata'
 import type { SyncService } from '../sync/sync-service'
 import type { BrowserManager } from '../browser/browser-manager'
 import type { BookmarkService } from '../browser/bookmark-service'
+import type { RoundtableService } from '../roundtable/roundtable-service'
 import type { ChromeService } from '../integrations/chrome/chrome-service'
 import type { DataLocationService } from '../data-location-service'
 import { DEFAULT_PHASE_RULES } from '../../shared/domain/phase'
@@ -91,6 +92,8 @@ export function registerIpc(params: {
   aiChat: AIChatService
   /** 内置浏览器：网页在主进程绘制，IPC 只表达意图。 */
   browser: BrowserManager
+  /** AI 圆桌：主进程唯一状态（Phase 3）。 */
+  roundtable: RoundtableService
   /** Chrome 书签导入：检测 / 预览 / 导入 / 读取本地书签树。 */
   bookmarks: BookmarkService
   /** Chrome Companion：查看本地 IPC 与 Native Host 的安装状态。 */
@@ -108,6 +111,7 @@ export function registerIpc(params: {
     bridgeStatus,
     aiChat,
     browser,
+    roundtable,
     bookmarks,
     chrome,
     dataDir,
@@ -597,6 +601,48 @@ export function registerIpc(params: {
   handle(IPC.browserPreviewGet, (input) => browser.previewFor((input as { tabId: string }).tabId))
   handle(IPC.browserPreviewRequest, (input) => {
     browser.requestPreview((input as { tabId: string }).tabId)
+    return null
+  })
+
+  // ---- 拖拽会话（Phase 3）：渲染层只报意图，归属与松手位置主进程裁定。----
+  handle(IPC.browserDragBegin, (input) => browser.beginCardDrag((input as { tabId: string }).tabId))
+  handle(IPC.browserDragDropHandled, (input) => {
+    browser.cardDropHandled((input as { tabId: string }).tabId)
+    return null
+  })
+  handle(IPC.browserDragEnd, (input) => {
+    const { tabId, screenX, screenY } = input as { tabId: string; screenX?: number; screenY?: number }
+    browser.endCardDrag(tabId, screenX !== undefined && screenY !== undefined ? { x: screenX, y: screenY } : undefined)
+    return null
+  })
+
+  // ---- AI 圆桌（Phase 3）：主进程唯一状态，两个 Renderer 订阅同一份快照。----
+  handle(IPC.roundtableState, () => roundtable.snapshot())
+  handle(IPC.roundtableJoin, (input) => roundtable.join((input as { tabId: string }).tabId))
+  handle(IPC.roundtableLeave, (input) => roundtable.leave((input as { tabId: string }).tabId))
+  handle(IPC.roundtableReorder, (input) => {
+    const { tabId, overId } = input as { tabId: string; overId: string }
+    return roundtable.reorder(tabId, overId)
+  })
+  handle(IPC.roundtableSetDraft, (input) => roundtable.setDraft((input as { draft: string }).draft))
+  handle(IPC.roundtableDetach, (input) => {
+    const point = input as { screenX?: number; screenY?: number } | undefined
+    const near =
+      point?.screenX !== undefined && point?.screenY !== undefined ? { x: point.screenX, y: point.screenY } : undefined
+    return roundtable.detach(near)
+  })
+  handle(IPC.roundtableDock, () => roundtable.dock())
+  handle(IPC.roundtableFocus, () => roundtable.focus())
+  handle(IPC.roundtableDragBegin, () => roundtable.beginDrag())
+  handle(IPC.roundtableDragDropHandled, () => {
+    roundtable.markDragDropHandled()
+    return null
+  })
+  handle(IPC.roundtableDragEnd, (input) => {
+    const point = input as { screenX?: number; screenY?: number } | undefined
+    roundtable.endDrag(
+      point?.screenX !== undefined && point?.screenY !== undefined ? { x: point.screenX, y: point.screenY } : undefined
+    )
     return null
   })
 }

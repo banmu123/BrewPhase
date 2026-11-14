@@ -8132,3 +8132,239 @@ textarea {
 .bp-float__ident[data-over-main='true'] .bp-float__recall-hint {
   color: var(--sage);
 }
+
+/* ============ Phase 3：原生多窗口（拖拽会话 / 圆桌独立窗口） ============ */
+/* 附加在 Phase 2 卡片样式之后：同选择器按层叠顺序接管新形态。 */
+
+/* 卡片拖拽：OS 拖影接管「影子」，本体降透明度；提示条替代 JS ghost。 */
+.web-card[draggable='true'] {
+  cursor: grab;
+  user-select: none;
+}
+
+.web-card[data-dragging='true'] {
+  opacity: 0.4;
+}
+
+.web-shelf__drag-hint {
+  margin: 8px 2px 0;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.web-shelf__drag-hint[data-outside='true'] {
+  color: var(--sage);
+}
+
+/* 停靠圆桌标题栏：OS 拖拽源 + 拆出提示。 */
+.roundtable__head[draggable='true'] {
+  cursor: grab;
+}
+
+.roundtable__head[draggable='true']:active {
+  cursor: grabbing;
+}
+
+.roundtable__detach-hint {
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.roundtable__detach-hint[data-outside='true'] {
+  color: var(--sage);
+}
+
+/* 独立窗口占位区：轻量状态 + 重新打开 / 归位 + 拖回热区。 */
+.roundtable--slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 22px 18px;
+  border: 1px dashed var(--hairline-strong);
+  border-radius: 12px;
+  background: var(--well);
+  text-align: center;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.roundtable--slot[data-drop-active='true'] {
+  border-color: var(--sage);
+  background: var(--canvas-chip);
+}
+
+.roundtable__slot-hint {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.roundtable__slot-count {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.roundtable__slot-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.roundtable__slot-btn {
+  font-size: 11.5px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline-strong);
+  background: var(--card);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.roundtable__slot-btn:hover {
+  border-color: var(--sage);
+}
+
+.roundtable__slot-btn--dock {
+  background: var(--espresso);
+  color: var(--on-espresso);
+  border-color: transparent;
+}
+
+.roundtable__slot-names {
+  margin: 4px 0 0;
+  max-width: 90%;
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 圆桌独立窗口：品牌标题栏 + 圆桌正文（与浮窗同一套 chrome 视觉）。 */
+.rt-window {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  /* 与停靠圆桌同一张纸面（--sheet）：独立窗口不是「舞台」，是同一张桌子。 */
+  background: var(--sheet);
+}
+
+.rt-window__titlebar {
+  flex: none;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  padding-left: 78px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--card);
+  cursor: grab;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+.rt-window__titlebar:active {
+  cursor: grabbing;
+}
+
+.rt-window__titlebar button,
+.rt-window__titlebar [role='status'] {
+  -webkit-app-region: no-drag;
+}
+
+.rt-window__brand {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  font-weight: 700;
+  color: var(--ink-faint);
+}
+
+.rt-window__title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.rt-window__count {
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.rt-window__hint {
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rt-window__hint[data-outside='true'] {
+  color: var(--sage);
+}
+
+.rt-window__dock {
+  font-size: 11.5px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline-strong);
+  background: var(--card);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.rt-window__dock:hover {
+  border-color: var(--sage);
+}
+
+.rt-window__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 14px;
+  overflow: auto;
+}
+
+.rt-window__body .roundtable__stage {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.rt-window__body .roundtable__ask {
+  background: var(--sheet);
+}
+
+.rt-window__body .roundtable__ask {
+  flex: none;
+}
+
+/* 拖回手柄：标题栏里唯一接受 OS 拖拽源的区域（no-drag 才能让 dragstart 生效）。 */
+.rt-window__grip {
+  -webkit-app-region: no-drag;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--ink-faint);
+  cursor: grab;
+}
+
+.rt-window__grip:hover {
+  color: var(--ink);
+  background: var(--well);
+}
+
+.rt-window__grip:active {
+  cursor: grabbing;
+}

@@ -10,9 +10,13 @@ import {
   browserBoundsSchema,
   browserDetachTabSchema,
   browserNavigateTabSchema,
-  browserPreviewRequestSchema
+  browserPreviewRequestSchema,
+  browserDragBeginSchema,
+  browserDragDropHandledSchema,
+  browserDragEndSchema
 } from '../browser'
 import { browserBoundsUpdateSchema, browserNavigateSchema, browserOpenSchema } from '../browser'
+import { ROUNDTABLE_DRAFT_MAX } from '../../roundtable'
 import { chromeProfileRequestSchema } from '../bookmarks'
 import { agentKindSchema } from '../agents'
 import {
@@ -176,7 +180,25 @@ export const IPC = {
   browserRecallTab: 'browser:tab:recall-shelf',
   browserPreviewList: 'browser:preview:list',
   browserPreviewGet: 'browser:preview:get',
-  browserPreviewRequest: 'browser:preview:request'
+  browserPreviewRequest: 'browser:preview:request',
+  // Phase 3：拖拽会话。主进程轮询系统光标做「窗口外」判定，
+  // 渲染层只报 dragstart / 内部投放 / dragend 三个意图。
+  browserDragBegin: 'browser:drag:begin',
+  browserDragDropHandled: 'browser:drag:drop-handled',
+  browserDragEnd: 'browser:drag:end',
+  // Phase 3：AI 圆桌独立窗口。主进程是唯一状态持有者，两个 Renderer
+  // 订阅同一份快照；写草稿带 baseVersion 做乐观并发控制。
+  roundtableState: 'roundtable:state',
+  roundtableJoin: 'roundtable:join',
+  roundtableLeave: 'roundtable:leave',
+  roundtableReorder: 'roundtable:reorder',
+  roundtableSetDraft: 'roundtable:set-draft',
+  roundtableDetach: 'roundtable:detach',
+  roundtableDock: 'roundtable:dock',
+  roundtableFocus: 'roundtable:focus',
+  roundtableDragBegin: 'roundtable:drag:begin',
+  roundtableDragDropHandled: 'roundtable:drag:drop-handled',
+  roundtableDragEnd: 'roundtable:drag:end'
 } as const
 
 export const ipcRequestSchemas = {
@@ -342,7 +364,35 @@ export const ipcRequestSchemas = {
   [IPC.browserRecallTab]: z.object({ tabId: z.string().min(1).max(64) }),
   [IPC.browserPreviewList]: z.void(),
   [IPC.browserPreviewGet]: browserPreviewRequestSchema,
-  [IPC.browserPreviewRequest]: browserPreviewRequestSchema
+  [IPC.browserPreviewRequest]: browserPreviewRequestSchema,
+
+  // Phase 3：拖拽会话（卡片）。松手位置由主进程轮询的系统光标裁定，
+  // dragEnd 的坐标只是无轮询读数时的兜底。
+  [IPC.browserDragBegin]: browserDragBeginSchema,
+  [IPC.browserDragDropHandled]: browserDragDropHandledSchema,
+  [IPC.browserDragEnd]: browserDragEndSchema,
+
+  // Phase 3：AI 圆桌。主进程唯一状态；detach 可带松手点（按钮拆出则缺省）。
+  [IPC.roundtableState]: z.void(),
+  [IPC.roundtableJoin]: z.object({ tabId: z.string().min(1).max(64) }),
+  [IPC.roundtableLeave]: z.object({ tabId: z.string().min(1).max(64) }),
+  [IPC.roundtableReorder]: z.object({
+    tabId: z.string().min(1).max(64),
+    overId: z.string().min(1).max(64)
+  }),
+  [IPC.roundtableSetDraft]: z.object({
+    draft: z.string().max(ROUNDTABLE_DRAFT_MAX)
+  }),
+  [IPC.roundtableDetach]: z
+    .object({ screenX: z.number().finite().optional(), screenY: z.number().finite().optional() })
+    .optional(),
+  [IPC.roundtableDock]: z.void(),
+  [IPC.roundtableFocus]: z.void(),
+  [IPC.roundtableDragBegin]: z.void(),
+  [IPC.roundtableDragDropHandled]: z.void(),
+  [IPC.roundtableDragEnd]: z
+    .object({ screenX: z.number().finite().optional(), screenY: z.number().finite().optional() })
+    .optional()
 } as const
 
 export type IpcChannel = keyof typeof ipcRequestSchemas

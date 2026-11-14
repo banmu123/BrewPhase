@@ -1,9 +1,11 @@
-import { BrowserWindow, shell } from 'electron'
+import { BrowserWindow, screen, shell } from 'electron'
 import type { Db } from '../database/client'
 import {
   BROWSER_CHANGED_CHANNEL,
+  BROWSER_DRAG_CHANNEL,
   BROWSER_PREVIEW_CHANNEL,
   type BrowserBounds,
+  type BrowserDragFrame,
   type BrowserDragProbe,
   type BrowserLoadError,
   type BrowserOpenInput,
@@ -25,6 +27,7 @@ import {
 import { BrowserTabManager } from './browser-tab-manager'
 import { FloatWindowManager, FLOAT_TITLEBAR_HEIGHT } from './float-window'
 import { BrowserCaptureHost } from './capture-host'
+import { BrowserDragSessionManager, type DragPoint } from './browser-drag'
 import {
   BrowserPreviewService,
   PREVIEW_CAPTURE_HEIGHT,
@@ -59,6 +62,13 @@ export type BrowserManagerParams = {
   getWindow: () => BrowserWindow | null
   /** 浮窗壳页与主窗口同一份 React 应用；dev 走 dev server。 */
   devServerUrl: string | null
+  /**
+   * 共享拖拽会话（Phase 3）：由装配层传入，圆桌与网页卡片共用同一个
+   * 「单鼠标」会话；不传则内部自建一个（仅网页卡片用）。
+   */
+  drag?: BrowserDragSessionManager
+  /** 标签被销毁时的旁路通知（圆桌用它摘除失效参与者）。 */
+  onTabClosed?: (tabId: string) => void
 }
 
 /** 主窗口浮窗里网页区的对齐以渲染层上报的 stage 矩形为准（见 applyBounds）。 */
@@ -74,6 +84,8 @@ export class BrowserManager {
   private readonly previews: BrowserPreviewService
   /** 收纳在架子上的标签挂在这里：透明、不可点、不抢焦点，但有绘制表面。 */
   private readonly captureHost: BrowserCaptureHost
+  /** 拖拽会话（卡片拖出 / 圆桌拆出的权威裁判）。 */
+  private readonly drag: BrowserDragSessionManager
 
   /** 主窗口浮窗当前显示的标签；null = 起始页。 */
   private activeTabId: string | null = null
@@ -112,9 +124,15 @@ export class BrowserManager {
       onPageVisited: (url, title) => {
         this.recent = recordBrowserVisit(this.db, url, title)
       },
-      // 页面加载/导航/标题变化 → 合并后重新采集缩略图；标签销毁 → 清缓存。
+      // 页面加载/导航/标题变化 → 合并后重新采集缩略图；标签销毁 → 清缓存
+      // 并通知旁路订阅者（圆桌摘除失效参与者）。
       onPageSettled: (tabId) => this.previews.schedule(tabId),
-      onTabClosed: (tabId) => this.previews.forget(tabId),
+      onTabClosed: (tabId) => {
+        // 拖动中的标签被关闭：会话立刻收尾，绝不给死标签拆窗口。
+        if (this.drag.active()?.tabId === tabId) this.drag.cancel()
+        this.previews.forget(tabId)
+        params.onTabClosed?.(tabId)
+      },
       onChange: () => this.emit()
     })
 
@@ -123,18 +141,23 @@ export class BrowserManager {
       devServerUrl: this.devServerUrl,
       onChange: () => this.emit(),
       onWindowClosed: () => this.emit(),
-      // 浮窗关闭：把标签接回主窗口并设为激活（用户没有关闭页面的意图）。
-      onReattach: (tabId) => {
-        const mainId = this.getWindow()?.id ?? null
-        if (mainId !== null) {
-          this.tabs.moveToWindow(tabId, mainId)
-        }
-        this.activeTabId = tabId
-        this.startPage = false
-        this.panelVisible = true
-      }
+      // 浮窗关闭（系统 ✕）：用户没有「关闭网页」的意图——标签收回到
+      // 卡片架（采集宿主），**不**打开主窗口 BrowserPanel，不销毁页面。
+      // 生杀仍只在 TabManager 手里（卡片架的 ✕ 才是真正的关闭）。
+      onReattach: (tabId) => this.recallToShelf(tabId)
     })
 
+    // 拖拽会话：装配层传入共享实例（圆桌同用）；缺省时自建，仅供卡片用。
+    this.drag =
+      params.drag ??
+      new BrowserDragSessionManager({
+        cursor: () => screen.getCursorScreenPoint(),
+        classify: (point) => this.floats.windowAt(point.x, point.y),
+        onFrame: () => undefined,
+        onReleaseOutside: (kind, tabId, point) => {
+          if (kind === 'webcard' && tabId) this.detachTab(tabId, point.x, point.y)
+        }
+      })
   }
 
   // MARK: - 对外状态
@@ -561,8 +584,67 @@ export class BrowserManager {
 
   /** 卡片拖出主窗口：直接拆成独立窗口（不经过浮窗、不打开面板）。 */
   detachTab(tabId: string, screenX: number, screenY: number): BrowserState {
-    if (!this.tabs.get(tabId)) return this.state()
+    const tab = this.tabs.get(tabId)
+    if (!tab) return this.state()
+    // 已经在独立窗口里：再拆 = 聚焦现有窗口，绝不创建第二个副本（规格 §3）。
+    if (tab.detached && tab.windowId !== null) {
+      this.floats.focus(tab.windowId)
+      return this.state()
+    }
     return this.detachToNewWindow(tabId, { screenX, screenY })
+  }
+
+  // MARK: - 拖拽会话（Phase 3）
+
+  /** tabId 是否是活着的真实标签（圆桌 join 校验 / syncTabs 对账用）。 */
+  hasTab(tabId: string): boolean {
+    return this.tabs.get(tabId) !== null
+  }
+
+  /** 活着的全部 tabId（圆桌对账用，不构造完整快照）。 */
+  liveTabIds(): string[] {
+    return this.tabs.list().map((tab) => tab.id)
+  }
+
+  /** 拖拽落点判定（装配层把共享会话的 classify 接到这里）。 */
+  classifyDragPoint(point: DragPoint): { windowId: number | null; mainWindow: boolean } {
+    return this.floats.windowAt(point.x, point.y)
+  }
+
+  /** 卡片开始拖动（HTML5 dragstart）。返回 false = 已有会话在跑（拒绝双开）。 */
+  beginCardDrag(tabId: string): boolean {
+    if (!this.tabs.get(tabId)) return false
+    return this.drag.begin('webcard', tabId)
+  }
+
+  /** 窗口内的 drop 被接受（排序 / 加入圆桌）：会话按内部投放收尾，不拆窗。 */
+  cardDropHandled(tabId: string): void {
+    if (!this.tabs.get(tabId)) return
+    this.drag.markDropHandled()
+  }
+
+  /** 卡片拖动终态（dragend / Esc / 异常）。松手位置以主进程轮询光标为准。 */
+  endCardDrag(tabId: string, fallback?: DragPoint): void {
+    if (!this.tabs.get(tabId)) {
+      this.drag.cancel()
+      return
+    }
+    this.drag.end(fallback)
+  }
+
+  /** 拖动中标签被关闭 / 会话被打断：强制收尾，不拆窗。 */
+  cancelDrag(): void {
+    this.drag.cancel()
+  }
+
+  /** E2E / 单测注入假光标（打包版不可达，见 index.ts 的测试钩子）。 */
+  setDragCursorOverride(point: DragPoint | null): void {
+    this.drag.overrideCursor(point)
+  }
+
+  /** 拖拽帧广播（装配层把 onFrame 接到这里）。 */
+  broadcastDragFrame(frame: BrowserDragFrame): void {
+    this.sendToAllKnownShells(BROWSER_DRAG_CHANNEL, frame)
   }
 
   /** 从独立窗口收回卡片架：接进采集宿主，收起浮窗；页面实例不动。 */
@@ -760,6 +842,7 @@ export class BrowserManager {
       clearTimeout(this.persistTimer)
       this.persistTimer = null
     }
+    this.drag.cancel()
     this.floats.closeAll()
     this.tabs.disposeAll()
     this.previews.dispose()
@@ -837,17 +920,22 @@ export class BrowserManager {
     this.emitScheduled = true
     queueMicrotask(() => {
       this.emitScheduled = false
-      const window = this.getWindow()
-      if (!window || window.isDestroyed()) return
-      window.webContents.send(BROWSER_CHANGED_CHANNEL, this.state())
-      // 浮窗壳也要同一份状态（它们各自的标签条）。
-      for (const windowId of this.floats.windowIds()) {
-        const target = BrowserWindow.fromId(windowId)
-        if (target && !target.isDestroyed()) {
-          target.webContents.send(BROWSER_CHANGED_CHANNEL, this.state())
-        }
-      }
+      this.sendToAllKnownShells(BROWSER_CHANGED_CHANNEL, this.state())
     })
+  }
+
+  /** 给主窗口 + 全部独立浏览器窗口的壳页广播；销毁中的窗口跳过。 */
+  private sendToAllKnownShells(channel: string, payload: unknown): void {
+    const window = this.getWindow()
+    if (window && !window.isDestroyed()) {
+      window.webContents.send(channel, payload)
+    }
+    for (const windowId of this.floats.windowIds()) {
+      const target = BrowserWindow.fromId(windowId)
+      if (target && !target.isDestroyed()) {
+        target.webContents.send(channel, payload)
+      }
+    }
   }
 }
 

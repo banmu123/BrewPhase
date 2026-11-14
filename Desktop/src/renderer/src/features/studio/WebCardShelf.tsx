@@ -16,31 +16,23 @@ import { useRoundtableStore } from './roundtable-store'
 /**
  * 网页卡片架（「正在使用」）：Studio Home 底部第一层。
  *
- * Phase 2 起一张卡 = BrowserTabManager 的一个真实标签：
- * - 预览是主进程用 `capturePage()` 采的真实截图（内存缓存，不落库）；
- * - 标题 / 地址 / 加载态 / 是否独立窗口全部来自 browser-store 快照；
- * - 点击卡片在浏览器浮窗里展开同一个页面（tabId 不变）；
- * - 按住拖出主窗口 → 主进程把**同一个 WebContentsView** 迁到新窗口；
- * - 拖到圆桌 → 只建立 tabId 引用，不复制网页状态。
+ * 一张卡 = BrowserTabManager 的一个真实标签（Phase 2 铁律不变）：
+ * 预览是主进程采的真实截图，标题/地址/加载态/窗口归属全部来自快照。
  *
- * 这里没有任何「本地网页数据」：卡片消失只可能是标签被关闭。
+ * 拖拽（Phase 3 重做）：**OS 原生 HTML5 Drag and Drop**。
+ * Phase 2 用 pointer 事件 + document 监听模拟拖动，但真实桌面上光标离开
+ * BrowserWindow 后渲染层收不到可靠的 pointermove/pointerup——pointerup
+ * 丢失时整个会话挂死，这就是「卡片拖不出去」的根因。HTML5 拖拽是操作
+ * 系统级的拖拽会话：拖影由 OS 渲染（窗口外也可见），**终态事件 dragend
+ * 必达**（窗口外松手、落到别的应用、Esc 取消都会触发）。
+ *
+ * 「松手点在不在窗口外」由主进程判定：dragstart 上报会话开始，主进程
+ * 轮询 `screen.getCursorScreenPoint()`；dragend 时主进程按最后轮询到的
+ * 光标位置决定拆出独立窗口还是取消（渲染层只报意图与兜底坐标）。
  */
 
-const DRAG_THRESHOLD = 5
-const PROBE_INTERVAL_MS = 140
-
-type DragState = {
-  tabId: string
-  pointerId: number
-  startX: number
-  startY: number
-  offsetX: number
-  offsetY: number
-  width: number
-  height: number
-  outside: boolean
-  lastProbe: number
-}
+/** 卡片拖拽的数据类型；圆桌热区用它识别「来的是一张网页卡片」。 */
+export const WEB_CARD_MIME = 'application/x-brewphase-webcard'
 
 export function WebCardShelf() {
   const { t } = useI18n()
@@ -48,184 +40,88 @@ export function WebCardShelf() {
   const createCard = useRoundtableStore((state) => state.createCard)
   const syncTabs = useRoundtableStore((state) => state.syncTabs)
   const cardOrder = useRoundtableStore((state) => state.cardOrder)
-  const participants = useRoundtableStore((state) => state.roundtable.participantTabIds)
+  const participants = useRoundtableStore((state) => state.snapshot.participantTabIds)
   const draggingTabId = useRoundtableStore((state) => state.draggingTabId)
-  const setDraggingTab = useRoundtableStore((state) => state.setDraggingTab)
-  const setDragOutside = useRoundtableStore((state) => state.setDragOutside)
   const dragOutside = useRoundtableStore((state) => state.dragOutside)
+  const setDraggingTab = useRoundtableStore((state) => state.setDraggingTab)
   const moveCard = useRoundtableStore((state) => state.moveCard)
-  const joinRoundtable = useRoundtableStore((state) => state.joinRoundtable)
 
-  const dragRef = useRef<DragState | null>(null)
-  const suppressClick = useRef(false)
-  const [ghost, setGhost] = useState<{ tabId: string; x: number; y: number } | null>(null)
+  const rowRef = useRef<HTMLDivElement>(null)
 
-  // 浏览器快照变化 → 顺序对账 + 圆桌参与者清理。
+  // 浏览器快照变化 → 顺序对账（参与者的摘除在主进程完成并广播回来）。
   useEffect(() => {
     syncTabs(tabs.map((tab) => tab.id))
   }, [tabs, syncTabs])
 
   const cards = toWebCardModels(tabs, cardOrder, participants)
-  const draggingCard = draggingTabId ? cards.find((card) => card.tabId === draggingTabId) ?? null : null
-  // 拖动过程中卡片顺序/列表会重渲染；落点判定要读最新顺序，但不该因数组身份
-  // 变化反复重挂 document 监听（那会丢掉手指抬起的那一帧）。
-  const cardsRef = useRef(cards)
-  cardsRef.current = cards
 
-  // 拖动投递：整只架子只有这一处 document 级 pointerup（Phase 1 的竞态教训：
-  // 两处监听会因先清状态触发的重渲染而互相卸掉）。
-  useEffect(() => {
-    if (!draggingTabId) return
-
-    const onMove = (event: PointerEvent): void => {
-      const drag = dragRef.current
-      if (!drag || drag.pointerId !== event.pointerId) return
-      setGhost({ tabId: drag.tabId, x: event.clientX - drag.offsetX, y: event.clientY - drag.offsetY })
-
-      const now = Date.now()
-      if (now - drag.lastProbe > PROBE_INTERVAL_MS) {
-        drag.lastProbe = now
-        void api.browserTabs
-          .dragProbe(event.screenX, event.screenY)
-          .then((probe) => {
-            const outside = probe.windowId === null
-            if (outside !== drag.outside) {
-              drag.outside = outside
-              setDragOutside(outside)
-            }
-          })
-          .catch(() => undefined)
-      }
-
-      const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null
-      const over = target?.closest<HTMLElement>('.web-card:not([data-dragging="true"])') ?? null
-      document.querySelectorAll<HTMLElement>('.web-card[data-insert]').forEach((element) => {
-        if (element !== over) element.removeAttribute('data-insert')
-      })
-      if (!over) return
-      const rect = over.getBoundingClientRect()
-      over.setAttribute('data-insert', event.clientX < rect.left + rect.width / 2 ? 'before' : 'after')
-    }
-
-    const onUp = (event: PointerEvent): void => {
-      const drag = dragRef.current
-      dragRef.current = null
-      document.querySelectorAll<HTMLElement>('.web-card[data-insert]').forEach((element) => {
-        element.removeAttribute('data-insert')
-      })
-      if (!drag || drag.pointerId !== event.pointerId) {
-        setDraggingTab(null)
-        setGhost(null)
-        return
-      }
-      suppressClick.current = true
-
-      const target = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null
-      const zone = target?.closest<HTMLElement>('.roundtable__stage') ?? null
-      const overCard = target?.closest<HTMLElement>('.web-card') ?? null
-
-      void (async () => {
-        try {
-          const probe = await api.browserTabs.dragProbe(event.screenX, event.screenY)
-          const outside = probe.windowId === null
-          if (outside) {
-            // 拖出客户端：主进程把同一个 view 迁进新窗口；卡片仍然留在架上。
-            await api.browserTabs.detach(drag.tabId, event.screenX, event.screenY)
-          } else if (zone) {
-            joinRoundtable(drag.tabId)
-          } else if (overCard && !overCard.classList.contains('web-card--editing')) {
-            const overId = overCard.dataset.tabId ?? ''
-            if (overId && overId !== drag.tabId) {
-              const rect = overCard.getBoundingClientRect()
-              const after = event.clientX >= rect.left + rect.width / 2
-              const ids = cardsRef.current.map((card) => card.tabId).filter((id) => id !== drag.tabId)
-              const at = ids.indexOf(overId)
-              const beforeId = after ? (ids[at + 1] ?? null) : overId
-              moveCard(drag.tabId, beforeId)
-            }
-          }
-        } catch (error) {
-          console.error('[web-cards] drop failed', error)
-        } finally {
-          setDraggingTab(null)
-          setDragOutside(false)
-          setGhost(null)
-          // 拖完会紧跟一次 click：短暂吞掉它，避免“松手即打开”；
-          // 即使没有 click 也会自动恢复，不会吞掉下一次真实点击。
-          setTimeout(() => {
-            suppressClick.current = false
-          }, 250)
-        }
-      })()
-    }
-
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
-      dragRef.current = null
-      document.querySelectorAll<HTMLElement>('.web-card[data-insert]').forEach((element) => {
-        element.removeAttribute('data-insert')
-      })
-      setDraggingTab(null)
-      setDragOutside(false)
-      setGhost(null)
-    }
-
-    document.addEventListener('pointermove', onMove)
-    document.addEventListener('pointerup', onUp)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('pointermove', onMove)
-      document.removeEventListener('pointerup', onUp)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [draggingTabId, joinRoundtable, moveCard, setDragOutside, setDraggingTab])
-
-  /** 点击卡片 = 在浏览器浮窗里展开同一个页面；拖动结束后的那次 click 不算。 */
+  /** 点击卡片 = 在浏览器浮窗里展开同一个页面（tabId 不变）。 */
   const openCard = (tabId: string): void => {
-    if (suppressClick.current) return
     const state = useRoundtableStore.getState()
     state.selectTab(state.selectedTabId === tabId ? null : tabId)
     void api.browserTabs.activate(tabId)
   }
 
-  const onCardDragStart = (event: React.PointerEvent<HTMLElement>): void => {
-    if (event.button !== 0) return
-    if ((event.target as HTMLElement).closest('button, input, a, textarea, select')) return
-    const element = event.currentTarget
-    const tabId = element.dataset.tabId ?? ''
-    if (!tabId) return
-    const rect = element.getBoundingClientRect()
-    // 先记起点再 capture：capture 抛异常不能把起点一起丢掉（Phase 1 踩过）。
-    dragRef.current = {
-      tabId,
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      offsetX: event.clientX - rect.left,
-      offsetY: event.clientY - rect.top,
-      width: rect.width,
-      height: rect.height,
-      outside: false,
-      lastProbe: 0
-    }
-    event.preventDefault()
-    try {
-      element.setPointerCapture(event.pointerId)
-    } catch {
-      // 无指针环境：拖动退化为不可用，点击仍正常。
-    }
+  /** 架内移动：把拖动的卡插到落点卡的前/后（data-insert 指示线已在 dragover 算好）。 */
+  const dropOnCard = (draggedTabId: string, overCard: HTMLElement): void => {
+    const overId = overCard.dataset.tabId ?? ''
+    if (!overId || overId === draggedTabId) return
+    const rect = overCard.getBoundingClientRect()
+    const side = overCard.dataset.insert ?? (rect ? 'before' : 'before')
+    const ids = cards.map((card) => card.tabId).filter((id) => id !== draggedTabId)
+    const at = ids.indexOf(overId)
+    const beforeId = side === 'after' ? (ids[at + 1] ?? null) : overId
+    moveCard(draggedTabId, beforeId)
   }
 
-  const onCardPointerMove = (event: React.PointerEvent<HTMLElement>): void => {
-    const drag = dragRef.current
-    if (!drag || drag.pointerId !== event.pointerId) return
-    if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < DRAG_THRESHOLD) return
-    dragRef.current = { ...drag, startX: event.clientX, startY: event.clientY }
-    // 每帧都 set 会无意义地重渲染整只架子；只在第一次进入拖动态时写。
-    if (useRoundtableStore.getState().draggingTabId !== drag.tabId) {
-      setDraggingTab(drag.tabId)
+  const clearInsertMarkers = (): void => {
+    document.querySelectorAll<HTMLElement>('.web-card[data-insert]').forEach((element) => {
+      element.removeAttribute('data-insert')
+    })
+  }
+
+  /** HTML5 dragstart：登记会话（主进程开始轮询光标）+ OS 拖影。 */
+  const onCardDragStart = (event: React.DragEvent<HTMLElement>, tabId: string): void => {
+    if ((event.target as HTMLElement).closest('button, input, a, textarea, select')) {
+      // 按钮上的按压不是「拿起卡片」：阻止进入拖拽会话，让 click 正常发生。
+      event.preventDefault()
+      return
     }
-    setGhost({ tabId: drag.tabId, x: event.clientX - drag.offsetX, y: event.clientY - drag.offsetY })
+    event.dataTransfer.setData(WEB_CARD_MIME, tabId)
+    event.dataTransfer.effectAllowed = 'move'
+    const rect = event.currentTarget.getBoundingClientRect()
+    event.dataTransfer.setDragImage(event.currentTarget, Math.max(8, event.clientX - rect.left), Math.max(8, event.clientY - rect.top))
+    clearInsertMarkers()
+    setDraggingTab(tabId)
+    void api.browserDrag.begin(tabId).catch(() => undefined)
+  }
+
+  /** HTML5 dragend：会话终态。拆不拆窗由主进程按轮询光标裁定。 */
+  const onCardDragEnd = (event: React.DragEvent<HTMLElement>, tabId: string): void => {
+    clearInsertMarkers()
+    setDraggingTab(null)
+    void api.browserDrag.end(tabId, { screenX: event.screenX, screenY: event.screenY }).catch(() => undefined)
+  }
+
+  const onCardDragOver = (event: React.DragEvent<HTMLElement>): void => {
+    if (!event.dataTransfer.types.includes(WEB_CARD_MIME)) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    const rect = event.currentTarget.getBoundingClientRect()
+    event.currentTarget.setAttribute('data-insert', event.clientX < rect.left + rect.width / 2 ? 'before' : 'after')
+  }
+
+  const onCardDrop = (event: React.DragEvent<HTMLElement>): void => {
+    if (!event.dataTransfer.types.includes(WEB_CARD_MIME)) return
+    event.preventDefault()
+    event.stopPropagation()
+    const draggedTabId = event.dataTransfer.getData(WEB_CARD_MIME)
+    clearInsertMarkers()
+    if (draggedTabId) {
+      dropOnCard(draggedTabId, event.currentTarget)
+      // 内部投放：会话按「dropHandled」收尾，主进程不会拆窗。
+      void api.browserDrag.dropHandled(draggedTabId).catch(() => undefined)
+    }
   }
 
   return (
@@ -250,49 +146,41 @@ export function WebCardShelf() {
           </span>
         </button>
       ) : (
-        <div className="web-shelf__row" role="list">
+        <div className="web-shelf__row" role="list" ref={rowRef}>
           {cards.map((card) => (
             <WebCardItem
               key={card.tabId}
               card={card}
               dragging={draggingTabId === card.tabId}
+              onOpenClick={openCard}
               onDragStart={onCardDragStart}
-              onPointerMove={onCardPointerMove}
-              onOpen={openCard}
+              onDragEnd={onCardDragEnd}
+              onDragOver={onCardDragOver}
+              onDrop={onCardDrop}
+              onDragLeave={clearInsertMarkers}
             />
           ))}
         </div>
       )}
 
-      {draggingCard && ghost && (
-        <div
-          className="web-card-ghost"
-          style={{ left: `${ghost.x}px`, top: `${ghost.y}px`, width: `${dragRef.current?.width ?? 200}px` }}
-          data-outside={dragOutside}
-          aria-hidden="true"
-        >
-          <CardPreview tabId={draggingCard.tabId} card={draggingCard} />
-          <span className="web-card-ghost__meta">
-            <span className="web-card__name">{displayName(draggingCard, t.studio.webShelf.unnamed)}</span>
-            <span className="web-card__domain">{draggingCard.domain || t.studio.webShelf.emptyDomain}</span>
-          </span>
-          {dragOutside && <span className="web-card-ghost__hint">{t.studio.webShelf.detachHint}</span>}
-        </div>
+      {draggingTabId && (
+        <p className="web-shelf__drag-hint" data-outside={dragOutside} role="status">
+          {dragOutside ? t.studio.webShelf.detachHint : t.studio.webShelf.dragHint}
+        </p>
       )}
     </section>
   )
 }
 
-function displayName(card: WebCardModel, fallback: string): string {
-  return cardDisplayName({ title: card.title, url: card.url }, fallback)
-}
-
 function WebCardItem(props: {
   card: WebCardModel
   dragging: boolean
-  onDragStart: (event: React.PointerEvent<HTMLElement>) => void
-  onPointerMove: (event: React.PointerEvent<HTMLElement>) => void
-  onOpen: (tabId: string) => void
+  onOpenClick: (tabId: string) => void
+  onDragStart: (event: React.DragEvent<HTMLElement>, tabId: string) => void
+  onDragEnd: (event: React.DragEvent<HTMLElement>, tabId: string) => void
+  onDragOver: (event: React.DragEvent<HTMLElement>) => void
+  onDrop: (event: React.DragEvent<HTMLElement>) => void
+  onDragLeave: () => void
 }) {
   const { card } = props
   const { t } = useI18n()
@@ -367,16 +255,17 @@ function WebCardItem(props: {
       data-loading={card.loading}
       aria-label={`${name} — ${status}`}
       tabIndex={0}
-      onClick={() => {
-        if (props.dragging) return
-        props.onOpen(card.tabId)
-      }}
-      onPointerDown={props.onDragStart}
-      onPointerMove={props.onPointerMove}
+      draggable
+      onClick={() => props.onOpenClick(card.tabId)}
+      onDragStart={(event) => props.onDragStart(event, card.tabId)}
+      onDragEnd={(event) => props.onDragEnd(event, card.tabId)}
+      onDragOver={props.onDragOver}
+      onDrop={props.onDrop}
+      onDragLeave={props.onDragLeave}
       onKeyDown={(event) => {
         if (event.key === 'Enter') {
           event.preventDefault()
-          props.onOpen(card.tabId)
+          props.onOpenClick(card.tabId)
         }
         if (event.key === 'Escape') selectTab(null)
       }}
@@ -469,6 +358,10 @@ function CardPreview(props: { tabId: string; card: WebCardModel }) {
       {props.card.error && <span className="web-card__preview-error">{t.studio.webShelf.status.error}</span>}
     </div>
   )
+}
+
+function displayName(card: WebCardModel, fallback: string): string {
+  return cardDisplayName({ title: card.title, url: card.url }, fallback)
 }
 
 function cardStatus(card: WebCardModel, t: ReturnType<typeof useI18n>['t']): string {

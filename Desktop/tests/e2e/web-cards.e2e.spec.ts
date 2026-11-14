@@ -7,14 +7,15 @@ import { pinLocale } from './locale'
 import { startWebFixture, type WebFixture } from './web-fixture'
 
 /**
- * 网页卡片 Phase 2 的端到端验收：真实缩略图、主窗口展开、拖出独立窗口、
- * 收回卡片架且页面不重载。
+ * 网页卡片 Phase 3 的端到端验收：真实缩略图、主窗口展开、拖出独立窗口
+ * （OS 拖拽会话）、收回卡片架且页面不重载、关闭独立窗口=归位不销毁。
  *
- * 说明：Playwright 的鼠标坐标不能离开窗口，所以「拖出客户端边界」用
- * **屏幕坐标的 PointerEvent** 走同一条 UI 链路（pointerdown → 阈值 →
- * document pointerup → 主进程 dragProbe/resolve）。它仍然经过卡片自己的
- * 判定与主进程窗口几何，不是直接调 resolveDrop 造假。
- * OS 级真实拖动另有人工验收清单。
+ * 说明：Playwright 的鼠标坐标不能离开窗口，也无法产生真实的 OS 拖拽会话。
+ * 所以这里的「拖出」用**合成 DragEvent 走渲染层完整链路**（dragstart →
+ * 主进程会话开始 → dragend → 主进程裁定拆窗），「窗口外松手」通过主进程
+ * 测试钩子注入假光标（`__bpTestHooks.setDragCursor`，打包版不存在）——
+ * 松手位置的判定逻辑（轮询光标 > 兜底坐标）与真实拖动完全同一条路径。
+ * OS 级真实鼠标拖动另有人工验收清单。
  */
 
 let fixture: WebFixture
@@ -67,72 +68,64 @@ async function waitForPreview(card: Locator): Promise<{ width: number; height: n
   return size
 }
 
-/** 用屏幕坐标的 pointer 事件把卡片拖出窗口（真实 UI 链路，不直接调 IPC）。 */
-async function dragCardOutOfWindow(page: Page, card: Locator): Promise<void> {
+/** 合成 OS 拖拽会话：dragstart → 主进程会话 → 窗口外 dragend（假光标）。 */
+async function dragCardOutOfWindow(page: Page, app: ElectronApplication, card: Locator): Promise<void> {
   await page.locator('.web-shelf').evaluate((element) => element.scrollIntoView({ block: 'center' }))
   await page.waitForTimeout(160)
-  const box = await card.boundingBox()
-  expect(box).not.toBeNull()
-  const start = { x: Math.round(box!.x + 30), y: Math.round(box!.y + 30) }
+  const tabId = await card.getAttribute('data-tab-id')
+  expect(tabId).toMatch(/^tab-/)
 
-  await page.evaluate(
-    ({ x, y }) => {
-      const element = document.elementFromPoint(x, y) as HTMLElement | null
-      const target = element?.closest<HTMLElement>('.web-card')
-      if (!target) throw new Error('card not found at point')
-      const base = {
+  // 松手点：主窗口左边界再往左 200px——几何上不可能落在任何已知窗口内。
+  const release = await app.evaluate(({ BrowserWindow }) => {
+    const main = BrowserWindow.getAllWindows()[0]
+    const bounds = main?.getBounds() ?? { x: 100, y: 100 }
+    return { x: bounds.x - 200, y: bounds.y + 240 }
+  })
+  await setFakeCursor(app, release)
+
+  await page.evaluate((id) => {
+    const target = document.querySelector<HTMLElement>(`.web-card[data-tab-id="${id}"]`)
+    if (!target) throw new Error('card not found')
+    const rect = target.getBoundingClientRect()
+    target.dispatchEvent(
+      new DragEvent('dragstart', {
         bubbles: true,
         cancelable: true,
-        pointerId: 41,
-        pointerType: 'mouse',
-        isPrimary: true,
-        button: 0,
-        buttons: 1
-      }
-      target.dispatchEvent(
-        new PointerEvent('pointerdown', {
-          ...base,
-          clientX: x,
-          clientY: y,
-          screenX: window.screenX + x,
-          screenY: window.screenY + y
-        })
-      )
-      target.dispatchEvent(
-        new PointerEvent('pointermove', {
-          ...base,
-          clientX: x + 24,
-          clientY: y + 24,
-          screenX: window.screenX + x + 24,
-          screenY: window.screenY + y + 24
-        })
-      )
-    },
-    start
-  )
+        clientX: rect.left + 30,
+        clientY: rect.top + 30,
+        screenX: window.screenX + rect.left + 30,
+        screenY: window.screenY + rect.top + 30,
+        dataTransfer: new DataTransfer()
+      })
+    )
+  }, tabId)
 
-  // 等 React 进入 dragging、document 监听挂好。
+  // 会话开始：卡片进入拖拽态（主进程开始轮询光标）。
   await expect(card).toHaveAttribute('data-dragging', 'true', { timeout: 5_000 })
-  await page.waitForTimeout(120)
+  await page.waitForTimeout(80)
 
-  await page.evaluate(() => {
-    const base = {
-      bubbles: true,
-      cancelable: true,
-      pointerId: 41,
-      pointerType: 'mouse',
-      isPrimary: true,
-      button: 0,
-      buttons: 0,
-      // 窗口左上角再往左上：几何上不可能落在任何已知窗口内。
-      clientX: 2,
-      clientY: 2,
-      screenX: window.screenX - 600,
-      screenY: window.screenY - 600
-    }
-    document.dispatchEvent(new PointerEvent('pointermove', { ...base, buttons: 1 }))
-    document.dispatchEvent(new PointerEvent('pointerup', base))
-  })
+  await page.evaluate((id) => {
+    const target = document.querySelector<HTMLElement>(`.web-card[data-tab-id="${id}"]`)
+    if (!target) throw new Error('card gone before dragend')
+    target.dispatchEvent(
+      new DragEvent('dragend', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: new DataTransfer()
+      })
+    )
+  }, tabId)
+}
+
+/** 注入 / 清除假光标（仅打包版之外的构建存在这个钩子）。 */
+async function setFakeCursor(app: ElectronApplication, point: { x: number; y: number } | null): Promise<void> {
+  await app.evaluate((_, value) => {
+    const hooks = (globalThis as unknown as {
+      __bpTestHooks?: { setDragCursor: (p: { x: number; y: number } | null) => void }
+    }).__bpTestHooks
+    if (!hooks) throw new Error('test hooks missing (packaged build?)')
+    hooks.setDragCursor(value)
+  }, point)
 }
 
 test('真实网页卡片：缩略图来自当前页面，点击在主窗口展开，收起不销毁', async () => {
@@ -195,7 +188,9 @@ test('拖出独立窗口再收回卡片架：同一个页面实例，不重新�
       tabId!
     )
 
-    await dragCardOutOfWindow(page, card)
+    await dragCardOutOfWindow(page, app, card)
+    // 松手位置已消费：清掉假光标，后续拖动回归真实光标语义。
+    await setFakeCursor(app, null)
 
     // 新窗口出现，标签被标记为 detached；卡片仍在架上。
     // 注意：Playwright 的 windows() 也包含 WebContentsView 里的真实网页，
@@ -249,6 +244,71 @@ test('拖出独立窗口再收回卡片架：同一个页面实例，不重新�
     )
     expect(bornAfter).toBe(bornBefore)
     expect(Number(ticks)).toBeGreaterThan(0)
+  } finally {
+    await app.close()
+    rmSync(dataDir, { recursive: true, force: true })
+  }
+})
+
+test('关闭独立窗口 = 收回卡片架：页面不销毁、不打开主窗口面板', async () => {
+  const { app, page, dataDir } = await launch()
+  try {
+    const card = await addCard(page, '/c')
+    const tabId = await card.getAttribute('data-tab-id')
+    await waitForPreview(card)
+    const bornBefore = await page.evaluate(
+      async (id) => window.brewphase.browserTabs.executeOnTab(id, 'window.__born'),
+      tabId!
+    )
+
+    await dragCardOutOfWindow(page, app, card)
+    await setFakeCursor(app, null)
+
+    const floatShells = (): number =>
+      app.windows().filter((candidate) => candidate.url().includes('bpFloat=')).length
+    await expect.poll(floatShells, { timeout: 20_000 }).toBe(1)
+
+    // 用户点系统 ✕：从主进程走 BrowserWindow.close()（与系统关闭按钮同路径，
+    // 必须经由 'close' 事件的归还语义；Playwright 的 page.close() 不保证这个）。
+    const floatPage = app.windows().find((candidate) => candidate !== page && candidate.url().includes('bpFloat'))
+    expect(floatPage).toBeTruthy()
+    const floatWindowId = await app.evaluate(({ BrowserWindow }) => {
+      const found = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getURL().includes('bpFloat='))
+      if (!found) throw new Error('float window not found')
+      return found.id
+    })
+    await app.evaluate(({ BrowserWindow }, id) => {
+      BrowserWindow.fromId(id)?.close()
+    }, floatWindowId)
+
+    // 浮窗消失；标签收回架子（parked），不是销毁。
+    await expect.poll(floatShells, { timeout: 20_000 }).toBe(0)
+    await expect(card).toHaveAttribute('data-presentation', 'shelved', { timeout: 20_000 })
+    await expect(card.locator('.web-card__chip')).toHaveText('已收纳', { timeout: 20_000 })
+    // 规格 §3：关闭独立窗口**不能**意外打开主窗口 BrowserPanel。
+    await expect(page.locator('.browser-panel')).toHaveCount(0)
+    const state = await page.evaluate(() => window.brewphase.browser.state())
+    expect(state.tabs).toHaveLength(1)
+    expect(state.tabs[0].parked).toBe(true)
+    expect(state.visible).toBe(false)
+    // 页面实例仍是同一个：born 不变、心跳继续。
+    const bornAfter = await page.evaluate(
+      async (id) => window.brewphase.browserTabs.executeOnTab(id, 'window.__born'),
+      tabId!
+    )
+    const ticks = await page.evaluate(
+      async (id) => window.brewphase.browserTabs.executeOnTab(id, 'window.__ticks'),
+      tabId!
+    )
+    expect(bornAfter).toBe(bornBefore)
+    expect(Number(ticks)).toBeGreaterThan(0)
+
+    // 卡片架的 ✕ 才是真正的关闭：标签销毁，卡片消失。
+    await card.hover()
+    await card.locator('.web-card__close').click()
+    await expect(page.locator('.web-card')).toHaveCount(0, { timeout: 20_000 })
+    const afterClose = await page.evaluate(() => window.brewphase.browser.state())
+    expect(afterClose.tabs).toHaveLength(0)
   } finally {
     await app.close()
     rmSync(dataDir, { recursive: true, force: true })

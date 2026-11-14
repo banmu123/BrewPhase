@@ -7,7 +7,13 @@ import { CoffeePage } from '../features/coffee/CoffeePage'
 import { RecordsPage } from '../features/records/RecordsPage'
 import { SettingsPage } from '../features/settings/SettingsPage'
 import { StudioHome } from '../features/studio/StudioHome'
+import { RoundtableWindow } from '../features/studio/RoundtableWindow'
 import { BrowserPanel } from '../features/browser/BrowserPanel'
+import {
+  subscribeBrowserDragFrames,
+  subscribeRoundtableState,
+  useRoundtableStore
+} from '../features/studio/roundtable-store'
 import { subscribeBrowserState, useBrowserStore } from '../features/browser/browser-store'
 import { subscribeBrowserPreviews, useBrowserPreviewStore } from '../features/browser/preview-store'
 import { useI18n } from '../i18n'
@@ -57,9 +63,15 @@ export function App() {
     // 缩略图是独立通道：首次补齐 + 之后只接收 update/clear。
     const unsubscribePreviews = subscribeBrowserPreviews()
     void useBrowserPreviewStore.getState().hydrate()
+    // 圆桌快照与拖拽帧：主窗口和圆桌独立窗口都订阅同一份广播。
+    const unsubscribeRoundtable = subscribeRoundtableState()
+    void useRoundtableStore.getState().hydrate()
+    const unsubscribeDragFrames = subscribeBrowserDragFrames()
     return () => {
       unsubscribe()
       unsubscribePreviews()
+      unsubscribeRoundtable()
+      unsubscribeDragFrames()
     }
   }, [])
 
@@ -99,6 +111,13 @@ export function App() {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
+
+  // 独立圆桌窗口：同一份应用，#bpRoundtable=<id> 时只渲染圆桌壳。
+  // 判定放在 bpFloat 之前：两个路由互不冲突，但都要先于主应用。
+  const roundtableWindow = /bpRoundtable=/.test(window.location.hash)
+  if (roundtableWindow) {
+    return <RoundtableWindow />
+  }
 
   // 独立浏览器窗口：同一份应用，#bpFloat=<windowId> 时只渲染浮窗壳。
   const floatWindowId = Number(/bpFloat=(\d+)/.exec(window.location.hash)?.[1]) || null

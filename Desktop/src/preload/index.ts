@@ -2,10 +2,13 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/contracts/validation/ipc'
 import {
   BROWSER_CHANGED_CHANNEL,
+  BROWSER_DRAG_CHANNEL,
   BROWSER_PREVIEW_CHANNEL,
+  type BrowserDragFrame,
   type BrowserPreviewEvent,
   type BrowserState
 } from '../shared/contracts/browser'
+import { ROUNDTABLE_CHANGED_CHANNEL, type RoundtableSnapshot } from '../shared/roundtable'
 import type { RendererApi } from '../shared/contracts'
 
 /**
@@ -73,6 +76,38 @@ const api: RendererApi = {
       const wrapped = (_event: unknown, payload: BrowserPreviewEvent) => listener(payload)
       ipcRenderer.on(BROWSER_PREVIEW_CHANNEL, wrapped)
       return () => ipcRenderer.removeListener(BROWSER_PREVIEW_CHANNEL, wrapped)
+    }
+  },
+  // 拖拽会话（Phase 3）：只报三个意图；「窗口外」判定在主进程轮询系统光标。
+  browserDrag: {
+    begin: (tabId) => invoke(IPC.browserDragBegin, { tabId }),
+    dropHandled: (tabId) => invoke(IPC.browserDragDropHandled, { tabId }),
+    end: (tabId, point) => invoke(IPC.browserDragEnd, { tabId, screenX: point?.screenX, screenY: point?.screenY }),
+    onFrame: (listener) => {
+      const wrapped = (_event: unknown, frame: BrowserDragFrame) => listener(frame)
+      ipcRenderer.on(BROWSER_DRAG_CHANNEL, wrapped)
+      return () => ipcRenderer.removeListener(BROWSER_DRAG_CHANNEL, wrapped)
+    }
+  },
+  // AI 圆桌（Phase 3）：主进程唯一状态；这里只转发意图与快照。
+  roundtable: {
+    state: () => invoke(IPC.roundtableState),
+    join: (tabId) => invoke(IPC.roundtableJoin, { tabId }),
+    leave: (tabId) => invoke(IPC.roundtableLeave, { tabId }),
+    reorder: (tabId, overId) => invoke(IPC.roundtableReorder, { tabId, overId }),
+    setDraft: (draft) => invoke(IPC.roundtableSetDraft, { draft }),
+    detach: (point) =>
+      invoke(IPC.roundtableDetach, point ? { screenX: point.screenX, screenY: point.screenY } : undefined),
+    dock: () => invoke(IPC.roundtableDock),
+    focus: () => invoke(IPC.roundtableFocus),
+    dragBegin: () => invoke(IPC.roundtableDragBegin),
+    dragDropHandled: () => invoke(IPC.roundtableDragDropHandled),
+    dragEnd: (point) =>
+      invoke(IPC.roundtableDragEnd, point ? { screenX: point.screenX, screenY: point.screenY } : undefined),
+    onSnapshot: (listener) => {
+      const wrapped = (_event: unknown, snapshot: RoundtableSnapshot) => listener(snapshot)
+      ipcRenderer.on(ROUNDTABLE_CHANGED_CHANNEL, wrapped)
+      return () => ipcRenderer.removeListener(ROUNDTABLE_CHANGED_CHANNEL, wrapped)
     }
   },
   // AI Workspace：Multi-AI 并行提问。自动化全在主进程，这里只有意图。
