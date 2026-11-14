@@ -8,22 +8,24 @@ import { join } from 'node:path'
 
 const visual = Boolean(process.env.VISUAL_CHECK)
 
-async function shoot(page: import('@playwright/test').Page, name: string): Promise<void> {
-  if (!visual) return
-  await page.addStyleTag({ content: '*{transition:none !important;animation:none !important}' })
-  await page.waitForTimeout(200)
-  await page.screenshot({ path: `/tmp/ai-${name}.png` })
-}
-
 /**
- * AI Workspace 的 UI 冒烟测试（不依赖外网）。
+ * AI Workspace 的入口回归（Roundtable Phase 1 之后）。
  *
- * Multi-AI 的执行行为（并行、失败、超时）由调度器单测覆盖；真实 GPT/Claude
- * 的登录与回答只能用真实账号人工验收——CI 里假装连过真实网站是造假。
- * 这里验证的是壳：导航、状态卡、账号页与记录页的空态。
+ * 背景：顶栏的 AI Workspace 一级入口与 `module === 'ai'` 路由已按规格移除，
+ * AI 讨论改由 Studio Home 底部的圆桌承载。**底层能力（ai-chat 服务、
+ * MultiAI / Conversations / Accounts 组件、migration 10）全部保留**，
+ * 只是暂时没有导航入口——后续阶段会以圆桌的形式重新接入。
+ *
+ * 这个 spec 验证移除本身没有留下残渣：
+ * - 顶栏不再出现 AI Workspace；
+ * - Studio Home 上不再有旧的独立页面壳（settings-shell 导航）；
+ * - 新的承载方式（网页卡片架 + 圆桌）就位。
+ *
+ * Multi-AI 的执行行为由调度器单测覆盖；真实 GPT/Claude 的登录与回答只能
+ * 用真实账号人工验收——CI 里假装连过真实网站是造假。
  */
 
-test('AI Workspace：一级入口、默认 Multi-AI、三个区块的空态', async () => {
+test('AI Workspace 一级入口已移除，圆桌成为 AI 讨论的承载位', async () => {
   test.setTimeout(90_000)
   const dir = mkdtempSync(join(tmpdir(), 'bp-ai-workspace-'))
   seedEmptyDatabase(dir)
@@ -37,43 +39,22 @@ test('AI Workspace：一级入口、默认 Multi-AI、三个区块的空态', as
   await page.waitForLoadState('domcontentloaded')
 
   try {
-    // 顶栏一级入口存在且能进入
-    await page.getByRole('button', { name: 'AI Workspace' }).click()
-    await expect(page.locator('.settings-nav__item')).toHaveCount(3)
-    await expect(page.locator('.multi-ai')).toBeVisible()
+    // 顶栏一级入口不存在（规格 §7.1–7.3）。
+    await expect(page.getByRole('button', { name: 'AI Workspace' })).toHaveCount(0)
 
-    // 平台状态卡：两个平台都「页面未打开」，且默认都被选中
-    const cards = page.locator('.multi-ai__provider')
-    await expect(cards).toHaveCount(2)
-    await expect(cards.first()).toContainText('GPT')
-    await expect(cards.nth(1)).toContainText('Claude')
-    await expect(page.locator('.multi-ai__provider[data-selected="true"]')).toHaveCount(2)
-    await expect(page.locator('.multi-ai__provider-state').first()).toHaveText('页面未打开')
-    await shoot(page, '1-multi')
+    // 旧页面的 settings-shell 导航不再出现在首页（规格 §7.2）。
+    await expect(page.locator('.settings-nav')).toHaveCount(0)
 
-    // 结果区有两张并排卡片（空态文案）
-    await expect(page.locator('.multi-ai__card')).toHaveCount(2)
+    // 新承载：卡片架与圆桌都在 Studio Home 上。
+    await expect(page.locator('.web-shelf')).toBeVisible()
+    await expect(page.locator('.roundtable')).toBeVisible()
+    await expect(page.locator('.roundtable__title')).toHaveText('圆桌')
 
-    // 平台可以取消选择（多选语义）
-    await cards.first().click()
-    await expect(page.locator('.multi-ai__provider[data-selected="true"]')).toHaveCount(1)
-    await cards.first().click()
-
-    // 讨论记录：空态
-    await page.getByRole('button', { name: '讨论记录' }).click()
-    await expect(page.locator('.ai-conversations')).toBeVisible()
-    await expect(page.locator('.ai-conversations__empty')).toHaveText('还没有记录。第一次讨论从 Multi-AI 开始。')
-    await shoot(page, '2-conversations')
-
-    // 账号页：两张卡 + 打开登录页按钮
-    await page.getByRole('button', { name: '账号' }).click()
-    await expect(page.locator('.ai-accounts__card')).toHaveCount(2)
-    await expect(page.getByRole('button', { name: '打开登录页' })).toHaveCount(2)
-    await shoot(page, '3-accounts')
-
-    // 回到 Multi-AI 仍是默认选中状态
-    await page.getByRole('button', { name: 'Multi-AI' }).click()
-    await expect(page.locator('.multi-ai')).toBeVisible()
+    if (visual) {
+      await page.addStyleTag({ content: '*{transition:none !important;animation:none !important}' })
+      await page.waitForTimeout(200)
+      await page.screenshot({ path: '/tmp/ai-roundtable-replacement.png' })
+    }
   } finally {
     await app.close().catch(() => undefined)
     rmSync(dir, { recursive: true, force: true })

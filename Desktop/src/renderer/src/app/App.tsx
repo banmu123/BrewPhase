@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import type { AppInfo } from '@shared/contracts'
 import { api } from '../shared/api'
 import { CanvasPage } from '../features/canvas/CanvasPage'
-import { AIWorkspacePage } from '../features/ai-workspace/AIWorkspacePage'
 import { BrowserFloatWindow } from '../features/browser/BrowserFloatWindow'
 import { CoffeePage } from '../features/coffee/CoffeePage'
 import { RecordsPage } from '../features/records/RecordsPage'
@@ -23,7 +22,9 @@ import { titleBarPlatform } from '../shared/platform'
  *
  * 没有固定侧栏、也没有三空间的全局 Tab——默认落在 Studio Home，三个空间
  * 只从首页的内容入口进入（返回入口在各自页头）。顶栏只负责品牌、搜索、
- * 快速添加与设置，不承担空间切换。
+ * 快速添加与设置，不承担空间切换。AI 讨论不再有独立一级页面（Roundtable
+ * Phase 1 起由 Studio Home 底部的圆桌承载；AIWorkspacePage 及 ai-chat
+ * 服务保留在代码里，等待后续阶段重新接入）。
  */
 export function App() {
   const { module } = useAppStore()
@@ -116,8 +117,6 @@ export function App() {
             <RecordsPage />
           ) : module === 'canvas' ? (
             <CanvasPage />
-          ) : module === 'ai' ? (
-            <AIWorkspacePage />
           ) : module === 'settings' ? (
             <SettingsPage info={info} />
           ) : (

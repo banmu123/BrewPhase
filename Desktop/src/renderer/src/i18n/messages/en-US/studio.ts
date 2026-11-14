@@ -42,6 +42,49 @@ export const studio = {
     counts: (records: number, canvases: number, urls: number) =>
       `${records} records · ${canvases} canvases · ${urls} links`
   },
+  /** Web card shelf ("In use"): the first layer under the studio desk. */
+  webShelf: {
+    overline: 'IN USE',
+    title: 'In use',
+    add: 'Add a page',
+    unnamed: 'Untitled page',
+    emptyDomain: 'No address yet',
+    editHint: 'Double-click to edit; hold and drag to reorder or drop into the roundtable',
+    inRoundtable: 'At the table',
+    close: 'Close web card',
+    namePlaceholder: 'Name (e.g. ChatGPT)',
+    urlPlaceholder: 'Address (e.g. https://chatgpt.com)',
+    save: 'Save',
+    cancel: 'Cancel',
+    status: {
+      empty: 'Blank',
+      ready: 'Ready',
+      loading: 'Loading',
+      error: 'Failed'
+    }
+  },
+  /** AI roundtable: the second layer under the studio desk. */
+  roundtable: {
+    title: 'Roundtable',
+    count: (n: number) => `${n} participant${n === 1 ? '' : 's'}`,
+    emptyTitle: 'Drop web cards here',
+    emptyHint: 'Choose the AI pages you want in the discussion',
+    joined: 'Joined the table',
+    remove: (name: string) => `Remove ${name}`,
+    removeAction: 'Remove',
+    askLabel: 'Discussion question',
+    askPlaceholder: 'Ask a question for everyone at the table…',
+    askPlaceholderIdle: 'Drop participants first, then start',
+    start: 'Start roundtable',
+    undock: 'Open roundtable as a floating panel',
+    undockAction: 'Float',
+    dock: 'Return roundtable to its dock',
+    dockAction: 'Dock',
+    close: 'Dismiss floating roundtable (docks it)',
+    slotHint: 'The roundtable is working on its own',
+    dragHint: 'Drag the title bar to move; drag the docked title bar to float it out',
+    resizeHint: 'Drag to resize the roundtable'
+  },
   coffee: {
     overline: 'COFFEE / SHELF',
     hint: 'Like bags on a shelf, kept one layer at a time.',

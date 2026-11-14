@@ -10,6 +10,8 @@ import { RecordsStack } from './RecordsStack'
 import { CanvasStack } from './CanvasStack'
 import { StackSection } from './StackSection'
 import { useTimeGreeting } from './useTimeGreeting'
+import { WebCardShelf } from './WebCardShelf'
+import { RoundtableSection } from './RoundtableSection'
 
 /**
  * Studio Home：应用默认首页，也是三个空间的唯一入口。
@@ -102,6 +104,11 @@ export function StudioHome() {
             <RecordsStack items={records} />
           </StackSection>
         </div>
+
+        {/* 桌面之下是「正在用的网页 + 圆桌」：两张新工作层（Roundtable Phase 1）。
+            网页卡片架在上（当前打开的网页），AI 圆桌在下（把卡片拖进去讨论）。 */}
+        <WebCardShelf />
+        <RoundtableSection />
 
         {/* 先方向（要去哪），再手头的工作（现在在做什么）——
             这是规格 §8 的顺序：My Direction 在 Current Activity 之上。 */}

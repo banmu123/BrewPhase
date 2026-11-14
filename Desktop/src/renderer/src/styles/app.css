@@ -5805,6 +5805,637 @@ textarea {
   padding: 5px 10px;
 }
 
+/* ============ Studio Home · 网页卡片架与 AI 圆桌（Roundtable Phase 1） ============ */
+/*
+ * 桌面之下的两张新工作层：卡片架（「正在使用」）在上，圆桌在下。
+ * 视觉延续「一张桌子」的语言：发丝线分层、纸面令牌、无高饱和色。
+ * 圆桌允许比卡片架略突出（规格 §6.4），但只靠 1px 边框与留白，不加大投影。
+ */
+
+.web-shelf {
+  margin-top: 30px;
+}
+
+.web-shelf__head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding-top: 11px;
+  border-top: 1px solid var(--hairline);
+}
+
+.web-shelf__head .overline {
+  margin: 0;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: var(--ink-faint);
+}
+
+.web-shelf__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.web-shelf__add {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: var(--card);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.web-shelf__add:hover {
+  color: var(--ink);
+  border-color: var(--ink-faint);
+  background: var(--well);
+}
+
+.web-shelf__add:active {
+  background: var(--well-deep);
+}
+
+.web-shelf__add:focus-visible,
+.web-card:focus-visible,
+.roundtable__remove:focus-visible,
+.roundtable__undock:focus-visible,
+.roundtable__float-btn:focus-visible,
+.web-card__close:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* 卡片排：窄窗横向滚动（规格 §8），不折行、不换列。 */
+.web-shelf__row {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scroll-snap-type: x proximity;
+}
+
+.web-card {
+  position: relative;
+  flex: 0 0 196px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  background: var(--card);
+  cursor: grab;
+  user-select: none;
+  scroll-snap-align: start;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s, opacity 0.15s;
+}
+
+.web-card:hover {
+  border-color: var(--hairline-strong);
+  background: var(--sheet);
+}
+
+.web-card[data-selected='true'] {
+  border-color: var(--sage);
+}
+
+.web-card[data-dragging='true'] {
+  opacity: 0.45;
+  cursor: grabbing;
+  border-style: dashed;
+}
+
+/* 拖动插入线：目标卡左/右缘 2px 鼠尾草线。 */
+.web-card[data-insert='before'] {
+  box-shadow: -2px 0 0 0 var(--sage);
+}
+
+.web-card[data-insert='after'] {
+  box-shadow: 2px 0 0 0 var(--sage);
+}
+
+.web-card[data-in-roundtable='true'] {
+  border-color: var(--roast);
+}
+
+.web-card__badge {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--ink);
+  background: var(--canvas-chip);
+  border-radius: 7px;
+}
+
+.web-card__body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.web-card__name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.web-card__domain {
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.web-card__state {
+  margin-left: auto;
+  flex: none;
+}
+
+.web-card__chip {
+  font-size: 10px;
+  color: var(--ink-soft);
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--well);
+  white-space: nowrap;
+}
+
+.web-card__chip[data-tone='roundtable'] {
+  color: var(--roast);
+  background: var(--sheet-warm);
+}
+
+.web-card__chip[data-tone='empty'] {
+  color: var(--ink-faint);
+  background: transparent;
+  border: 1px dashed var(--hairline-strong);
+}
+
+.web-card__close {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  color: var(--ink-faint);
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+
+.web-card:hover .web-card__close,
+.web-card:focus-visible .web-card__close {
+  opacity: 1;
+}
+
+.web-card__close:hover {
+  color: var(--ink);
+  background: var(--well-deep);
+}
+
+/* 空白卡的内联编辑表单。 */
+.web-card--editing {
+  cursor: default;
+}
+
+.web-card__form {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: 100%;
+}
+
+.web-card__input {
+  width: 100%;
+  font-size: 12px;
+  padding: 5px 8px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.web-card__input:focus {
+  outline: none;
+  border-color: var(--sage);
+}
+
+.web-card__form-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.web-card__form-ok {
+  font-size: 11.5px;
+  padding: 4px 10px;
+  color: var(--on-espresso);
+  background: var(--espresso);
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.web-card__form-ok:hover {
+  background: var(--espresso-hover);
+}
+
+.web-card__form-cancel {
+  font-size: 11.5px;
+  padding: 4px 10px;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.web-card__form-cancel:hover {
+  color: var(--ink);
+  background: var(--well);
+}
+
+/* ---------- 圆桌：停靠形态 ---------- */
+
+.roundtable {
+  margin-top: 18px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 12px;
+  background: var(--sheet);
+  overflow: hidden;
+}
+
+/* 浮出后的停靠占位：轻量、安静（规格 §4.3）。 */
+.roundtable--slot {
+  border-style: dashed;
+  border-color: var(--hairline-strong);
+  background: transparent;
+  min-height: 64px;
+  display: grid;
+  place-items: center;
+}
+
+.roundtable__slot-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.roundtable__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--sheet-deep);
+}
+
+/* 停靠态：标题栏整条可拖出（data-armed 在按下时给一点反馈）。 */
+.roundtable__head {
+  cursor: grab;
+}
+
+.roundtable__head[data-armed='true'] {
+  background: var(--well);
+}
+
+.roundtable__grip {
+  font-size: 13px;
+  color: var(--ink-faint);
+  letter-spacing: 2px;
+  user-select: none;
+}
+
+.roundtable__title {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 650;
+}
+
+.roundtable__count {
+  font-size: 11px;
+  color: var(--roast);
+  background: var(--sheet-warm);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.roundtable__undock {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  padding: 4px 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: var(--card);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.roundtable__undock:hover {
+  color: var(--ink);
+  border-color: var(--ink-faint);
+}
+
+/* 拖入热区：默认就是整个舞台；拖动悬停时给一层鼠尾草底与虚线框。 */
+.roundtable__stage {
+  position: relative;
+  padding: 22px 18px;
+  min-height: 148px;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+
+.roundtable__stage[data-drop-active='true'] {
+  background: var(--sheet-cool);
+  box-shadow: inset 0 0 0 2px var(--sage);
+}
+
+.roundtable__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 0 4px;
+  text-align: center;
+}
+
+.roundtable__empty-title {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 17px;
+  color: var(--ink-soft);
+}
+
+.roundtable__empty-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+/* 参与者位置的视觉暗示：两枚安静的发丝线座位。 */
+.roundtable__seats {
+  display: flex;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.roundtable__seat {
+  width: 148px;
+  height: 58px;
+  border: 1px dashed var(--hairline-strong);
+  border-radius: 9px;
+  background: var(--sheet-deep);
+}
+
+/* 参与者卡：横向多列，窄窗自然折叠（规格 §8）。 */
+.roundtable__participants {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.roundtable__participant {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  background: var(--card);
+}
+
+.roundtable__participant-badge {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--ink);
+  background: var(--canvas-chip);
+  border-radius: 8px;
+}
+
+.roundtable__participant-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.roundtable__participant-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.roundtable__participant-state {
+  font-size: 10.5px;
+  color: var(--sage);
+}
+
+.roundtable__remove {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  color: var(--ink-faint);
+  padding: 4px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.roundtable__remove:hover {
+  color: var(--ink);
+  background: var(--well);
+}
+
+/* 提问区：输入与动作收在圆桌底部。 */
+.roundtable__ask {
+  padding: 12px 14px;
+  border-top: 1px solid var(--hairline);
+  background: var(--sheet-deep);
+}
+
+.roundtable__ask-form {
+  display: flex;
+  gap: 10px;
+}
+
+.roundtable__ask-input {
+  flex: 1;
+  font-size: 12.5px;
+  padding: 8px 12px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+}
+
+.roundtable__ask-input:focus {
+  outline: none;
+  border-color: var(--sage);
+}
+
+.roundtable__ask-input:disabled {
+  color: var(--ink-faint);
+  background: var(--sheet-deep);
+  cursor: not-allowed;
+}
+
+.roundtable__ask-submit {
+  flex: none;
+  font-size: 12.5px;
+  padding: 8px 16px;
+  color: var(--on-espresso);
+  background: var(--espresso);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.roundtable__ask-submit:hover:not(:disabled) {
+  background: var(--espresso-hover);
+}
+
+.roundtable__ask-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* ---------- 圆桌：浮动形态（应用内浮层，规格 §4：不是 BrowserWindow） ---------- */
+
+.roundtable--floating {
+  position: fixed;
+  z-index: 70; /* BrowserPanel 之下（浏览器是更全局的工具），Modal(100) 之下 */
+  margin-top: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  box-shadow:
+    0 0 0 1px var(--hairline),
+    0 24px 60px -20px rgba(48, 55, 47, 0.32),
+    0 6px 16px -8px rgba(48, 55, 47, 0.14);
+  will-change: left, top, width, height;
+}
+
+.roundtable--floating[data-dragging='true'] {
+  box-shadow:
+    0 0 0 1px var(--hairline-strong),
+    0 32px 72px -18px rgba(48, 55, 47, 0.4),
+    0 10px 22px -8px rgba(48, 55, 47, 0.18);
+}
+
+.roundtable--floating .roundtable__stage {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.roundtable--floating .roundtable__ask {
+  flex: none;
+}
+
+.roundtable__head--floating {
+  cursor: grab;
+  background: var(--sheet-deep);
+}
+
+.roundtable__head--floating:active {
+  cursor: grabbing;
+}
+
+.roundtable__float-actions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.roundtable__float-btn {
+  font-size: 11px;
+  color: var(--ink-soft);
+  padding: 4px 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: var(--card);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.roundtable__float-btn:hover {
+  color: var(--ink);
+  border-color: var(--ink-faint);
+}
+
+.roundtable__float-btn--close {
+  padding: 4px 8px;
+}
+
+/* 右下角缩放手柄：一条安静的对角发丝线。 */
+.roundtable__resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 20px;
+  height: 20px;
+  cursor: nwse-resize;
+}
+
+.roundtable__resize::after {
+  content: '';
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid var(--hairline-strong);
+  border-bottom: 2px solid var(--hairline-strong);
+  border-radius: 0 0 3px 0;
+}
+
+.roundtable__resize:hover::after {
+  border-color: var(--ink-faint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .web-card,
+  .web-card__close,
+  .roundtable__stage,
+  .roundtable--floating {
+    transition: none;
+  }
+}
+
 /* ============ Studio Home · 继续工作（Work Context V1） ============ */
 /* 极轻量区块：不是一级页面；延续首页同一张纸 + 发丝线的语言。 */
 .work-context {

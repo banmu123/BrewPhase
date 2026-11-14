@@ -39,6 +39,49 @@ export const studio = {
     counts: (records: number, canvases: number, urls: number) =>
       `${records} 条记录 · ${canvases} 块画布 · ${urls} 个链接`
   },
+  /** 网页卡片架（「正在使用」）：Studio Home 底部第一层。 */
+  webShelf: {
+    overline: 'IN USE',
+    title: '正在使用',
+    add: '添加网页',
+    unnamed: '未命名网页',
+    emptyDomain: '还没有地址',
+    editHint: '双击编辑；按住拖动可排序或拖入圆桌',
+    inRoundtable: '在圆桌上',
+    close: '关闭网页卡片',
+    namePlaceholder: '名称（如 ChatGPT）',
+    urlPlaceholder: '网址（如 https://chatgpt.com）',
+    save: '保存',
+    cancel: '取消',
+    status: {
+      empty: '空白',
+      ready: '已就绪',
+      loading: '加载中',
+      error: '加载失败'
+    }
+  },
+  /** AI 圆桌：Studio Home 底部第二层。 */
+  roundtable: {
+    title: '圆桌',
+    count: (n: number) => `${n} 位参与者`,
+    emptyTitle: '把网页卡片放到这里',
+    emptyHint: '选择你想参与讨论的 AI 网页',
+    joined: '已加入圆桌',
+    remove: (name: string) => `移除 ${name}`,
+    removeAction: '移除',
+    askLabel: '讨论问题',
+    askPlaceholder: '输入一个问题，让参与者一起讨论…',
+    askPlaceholderIdle: '先拖入参与者，再开始讨论',
+    start: '开启圆桌',
+    undock: '独立展开圆桌',
+    undockAction: '独立展开',
+    dock: '圆桌归位',
+    dockAction: '归位',
+    close: '收起浮动圆桌（归位）',
+    slotHint: '圆桌正在独立工作',
+    dragHint: '拖动标题栏移动圆桌；拖动停靠位标题栏可拆出浮动',
+    resizeHint: '拖动调整圆桌大小'
+  },
   coffee: {
     overline: 'COFFEE / SHELF',
     hint: '像书架上的包装袋，一层一层收着。',
