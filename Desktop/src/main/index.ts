@@ -25,7 +25,9 @@ import { BrowserDragSessionManager } from './browser/browser-drag'
 import { RoundtableService } from './roundtable/roundtable-service'
 import { RoundtableWindowManager } from './roundtable/roundtable-window-manager'
 import { ROUNDTABLE_CHANGED_CHANNEL, ROUNDTABLE_ID, type RoundtableSnapshot } from '../shared/roundtable'
+import { ROUNDTABLE_AI_TASK_CHANGED_CHANNEL } from '../shared/contracts/roundtable-ai'
 import { AIChatService } from './ai-chat/ai-chat-service'
+import { ParticipantService } from './ai-chat/participant-service'
 import { BookmarkService } from './browser/bookmark-service'
 import { ChromeService } from './integrations/chrome/chrome-service'
 import { resolveDataLocation, setActiveDataDir } from './data-location'
@@ -305,14 +307,36 @@ function bootstrap(): void {
     if (main && !main.isDestroyed()) main.webContents.send(ROUNDTABLE_CHANGED_CHANNEL, snapshot)
     roundtableManager.send(ROUNDTABLE_CHANGED_CHANNEL, snapshot)
   }
+  // 圆桌真实 WebCard 问答（Phase 4.2）：tabId 是身份，页面就是用户拖进来
+  // 的那张。resolveTabForAI 只读解析真实 WebContents；成员被移出圆桌时，
+  // 对应参与者的任务立即终止（cancelParticipant）。
+  // 声明顺序解耦：RoundtableService 的回调与 ParticipantService 的
+  // isParticipant 都通过闭包晚绑定到对方。
+  let participantServiceRef: ParticipantService | null = null
   roundtableService = new RoundtableService({
     isTabAlive: (tabId) => browserManager?.hasTab(tabId) ?? false,
     broadcast: broadcastRoundtable,
     createWindow: (near) => roundtableManager.create(near),
     closeWindow: () => roundtableManager.close(),
     focusWindow: () => roundtableManager.focus(),
-    drag: dragSession
+    drag: dragSession,
+    onParticipantsChanged: ({ removed }) => {
+      for (const tabId of removed) participantServiceRef?.cancelParticipant(tabId)
+    }
   })
+
+  const participantService = new ParticipantService({
+    db: db.db,
+    resolver: { resolve: (tabId) => browserManager?.resolveTabForAI(tabId) ?? null },
+    isParticipant: (tabId) => roundtableService?.hasParticipant(tabId) ?? false,
+    broadcast: (snapshot) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (window.isDestroyed()) continue
+        window.webContents.send(ROUNDTABLE_AI_TASK_CHANGED_CHANNEL, snapshot)
+      }
+    }
+  })
+  participantServiceRef = participantService
 
   // Multi-AI（AI Workspace / 圆桌 Phase 4.1）：后台页面管理 + 并行调度。
   // 通知必须**广播给所有窗口**——圆桌独立窗口（#bpRoundtable）也是合法的
@@ -382,6 +406,7 @@ function bootstrap(): void {
     sync: syncService,
     services: { records, clients, workContexts, personalDirection },
     aiChat: aiChatService,
+    roundtableAI: participantService,
     bridgeStatus,
     browser: browserManager,
     roundtable: roundtableService,

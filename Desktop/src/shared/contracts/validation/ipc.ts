@@ -4,6 +4,7 @@ import { recordDraftSchema, recordQuerySchema } from '../entities/records'
 import { canvasNodeMoveSchema, canvasNodeResizeSchema, canvasNoteSchema, canvasStrokeSchema } from '../entities/canvas'
 import { mcpClientCreateInputSchema, mcpScopeSchema } from '../mcp'
 import { aiAskInputSchema, aiProviderSchema } from '../ai-chat'
+import { roundtableAIAskInputSchema, roundtableAIDescribeInputSchema } from '../roundtable-ai'
 import {
   browserDropSchema,
   browserDragProbeSchema,
@@ -198,7 +199,14 @@ export const IPC = {
   roundtableFocus: 'roundtable:focus',
   roundtableDragBegin: 'roundtable:drag:begin',
   roundtableDragDropHandled: 'roundtable:drag:drop-handled',
-  roundtableDragEnd: 'roundtable:drag:end'
+  roundtableDragEnd: 'roundtable:drag:end',
+  // Phase 4.2：真实 WebCard 驱动的圆桌问答。tabId 是参与者身份，主进程
+  // 负责「校验成员 → 解析真实 WebContents → Registry 识别 → 执行」。
+  roundtableAIAsk: 'roundtable-ai:ask',
+  roundtableAICancel: 'roundtable-ai:cancel',
+  roundtableAICancelParticipant: 'roundtable-ai:cancel-participant',
+  roundtableAILastTask: 'roundtable-ai:last-task',
+  roundtableAIDescribe: 'roundtable-ai:describe'
 } as const
 
 export const ipcRequestSchemas = {
@@ -344,6 +352,14 @@ export const ipcRequestSchemas = {
   [IPC.aiChatConversations]: z.void(),
   [IPC.aiChatConversation]: z.object({ id: z.string().uuid() }),
   [IPC.aiChatDeleteConversation]: z.object({ id: z.string().uuid() }),
+
+  // Phase 4.2：圆桌真实 WebCard 问答。Renderer 只传 tabId；平台识别、
+  // WebContents 解析与执行全部在主进程。
+  [IPC.roundtableAIAsk]: roundtableAIAskInputSchema,
+  [IPC.roundtableAICancel]: z.void(),
+  [IPC.roundtableAICancelParticipant]: z.object({ tabId: z.string().min(1).max(64) }),
+  [IPC.roundtableAILastTask]: z.void(),
+  [IPC.roundtableAIDescribe]: roundtableAIDescribeInputSchema,
 
   [IPC.browserCreateTab]: z.void(),
   [IPC.browserActivateTab]: z.object({ tabId: z.string().min(1).max(64) }),

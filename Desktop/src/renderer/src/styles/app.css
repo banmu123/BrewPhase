@@ -6375,23 +6375,17 @@ textarea {
   color: var(--sage);
 }
 
-/* ---------- 圆桌：AI 平台选择（Phase 4.1） ---------- */
+/* ---------- 圆桌成员识别（Phase 4.2）：成员 = 真实 WebCard ---------- */
 
-.roundtable__platforms {
-  padding: 10px 14px 12px;
-  border-top: 1px solid var(--hairline);
-  background: var(--sheet-deep);
-}
-
-.roundtable__platforms-head {
+.roundtable__members-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
-.roundtable__platforms-title {
+.roundtable__members-title {
   font-size: 11px;
   letter-spacing: 0.08em;
   color: var(--ink-faint);
@@ -6413,92 +6407,35 @@ textarea {
   border-color: var(--ink-faint);
 }
 
-.roundtable__platform-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 10px;
-}
-
-/* 平台卡：整卡是选择按钮；选中态用鼠尾草描边 + 右上角勾。 */
-.roundtable__platform {
-  display: flex;
+/* 成员状态行：AI 可参与 / 需要登录 / 尚未适配 / 普通资料 / 页面不可用。 */
+.roundtable__member-state {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 12px;
-  border: 1px solid var(--hairline);
-  border-radius: 9px;
-  background: var(--card);
-  cursor: pointer;
-  text-align: left;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-
-.roundtable__platform[data-selected='true'] {
-  border-color: var(--sage);
-  box-shadow: inset 0 0 0 1px var(--sage);
-}
-
-.roundtable__platform-main {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.roundtable__platform-name {
-  font-size: 12.5px;
-  font-weight: 650;
-}
-
-.roundtable__platform-state {
+  gap: 6px;
   font-size: 10.5px;
   color: var(--ink-faint);
 }
 
-.roundtable__platform-state[data-state='logged_in'],
-.roundtable__platform-state[data-state='completed'] {
+.roundtable__member-state[data-state='ready'] {
   color: var(--sage);
 }
 
-.roundtable__platform-state[data-state='logged_out'],
-.roundtable__platform-state[data-state='failed'],
-.roundtable__platform-state[data-state='timeout'],
-.roundtable__platform-state[data-state='cancelled'],
-.roundtable__platform-state[data-state='login_required'],
-.roundtable__platform-state[data-state='unsupported_page'] {
+.roundtable__member-state[data-state='login-required'],
+.roundtable__member-state[data-state='not-adapted'],
+.roundtable__member-state[data-state='unavailable'] {
   color: var(--roast);
 }
 
-.roundtable__platform-pick {
-  margin-left: auto;
-  flex: none;
-  width: 18px;
-  height: 18px;
-  display: grid;
-  place-items: center;
-  font-size: 11px;
-  color: var(--on-espresso);
-  background: var(--sage);
-  border-radius: 999px;
-  visibility: hidden;
-}
-
-.roundtable__platform[data-selected='true'] .roundtable__platform-pick {
-  visibility: visible;
-}
-
-/* 登录引导：平台未打开 / 未登录时出现，指向可见浏览器完成登录。 */
-.roundtable__login-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.roundtable__login-link {
-  font-size: 11px;
+.roundtable__member-state[data-state='generating'],
+.roundtable__member-state[data-state='sending'],
+.roundtable__member-state[data-state='checking'] {
   color: var(--roast);
-  padding: 3px 10px;
+}
+
+.roundtable__member-login {
+  font-size: 10px;
+  color: var(--roast);
+  padding: 1px 8px;
   border: 1px dashed var(--hairline-strong);
   border-radius: 999px;
   background: transparent;
@@ -6506,7 +6443,7 @@ textarea {
   transition: color 0.15s, border-color 0.15s;
 }
 
-.roundtable__login-link:hover {
+.roundtable__member-login:hover {
   color: var(--ink);
   border-color: var(--ink-faint);
 }
@@ -6568,6 +6505,23 @@ textarea {
 .roundtable__answer-name {
   font-size: 12.5px;
   font-weight: 650;
+}
+
+/* 回答卡的来源区分：平台名 + 卡片标题 + tabId（内部诊断信息）。 */
+.roundtable__answer-title {
+  min-width: 0;
+  flex: 1;
+  font-size: 11px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.roundtable__answer-tabid {
+  font-size: 10px;
+  color: var(--ink-faint);
+  opacity: 0.75;
 }
 
 .roundtable__answer-state {

@@ -14,6 +14,10 @@ import type {
   AIProvider
 } from './ai-chat'
 import type {
+  AIRoundtableParticipantStatus,
+  AIRoundtableTaskSnapshot
+} from './roundtable-ai'
+import type {
   CurrentState,
   CurrentStateDraft,
   Direction,
@@ -72,6 +76,7 @@ export * from './work-context'
 export * from './personal-direction'
 export * from './agents'
 export * from './ai-chat'
+export * from './roundtable-ai'
 export * from './data-location'
 export * from './validation/ipc'
 
@@ -315,6 +320,25 @@ export interface RendererApi {
     deleteConversation: (id: string) => Promise<boolean>
     /** 广播当前任务快照（无任务时是 null）；主窗口与圆桌独立窗口都会收到。 */
     onChanged: (listener: (snapshot: AIChatTaskSnapshot | null) => void) => () => void
+  }
+  /**
+   * 圆桌真实 WebCard 问答（Phase 4.2）：tabId 是参与者身份。
+   * Renderer 只传 tabId 与问题文本；平台识别与执行全在主进程。
+   */
+  roundtableAI: {
+    /** 把同一份问题并行发给所有「可自动交互」的成员（主进程筛选）。 */
+    ask: (input: { prompt: string; participantTabIds: string[] }) => Promise<{
+      conversationId: string
+      snapshot: AIRoundtableTaskSnapshot
+    }>
+    cancel: () => Promise<void>
+    /** 取消单个成员的任务（成员被移出圆桌时由主进程自动调用）。 */
+    cancelParticipant: (tabId: string) => Promise<void>
+    lastTask: () => Promise<AIRoundtableTaskSnapshot | null>
+    /** 识别圆桌成员：平台、能力、登录态（成员卡的状态来源）。 */
+    describe: (tabIds: string[]) => Promise<AIRoundtableParticipantStatus[]>
+    /** 广播当前任务快照（无任务时是 null）；两个圆桌窗口都收到。 */
+    onChanged: (listener: (snapshot: AIRoundtableTaskSnapshot | null) => void) => () => void
   }
   /** AI Agent 自动配置：检测 → 预览 → 用户确认后写入。 */
   agents: {

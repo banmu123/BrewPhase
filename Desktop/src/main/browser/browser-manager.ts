@@ -611,6 +611,31 @@ export class BrowserManager {
     return this.tabs.list().map((tab) => tab.id)
   }
 
+  /**
+   * 主进程内部 AI 自动化的页面解析入口（Phase 4.2）。
+   *
+   * 严格只读：按 tabId 找到 TabManager 里的真实页面，URL / title 从
+   * WebContents **实时**读取（渲染层快照可能过期）。绝不创建视图、绝不
+   * reload、绝不改父子关系——圆桌自动化用的就是用户拖进来的那张原始网页，
+   * WebContents 已销毁时返回 null，调用方必须停止。
+   *
+   * **只供主进程内部使用**：不允许通过 IPC 把 WebContents 或「任意脚本
+   * 执行」能力暴露给 Renderer；自动化脚本只能由 Registry 校验过的
+   * Adapter 在自己的域名范围内执行。
+   */
+  resolveTabForAI(tabId: string): { tabId: string; webContents: Electron.WebContents; url: string; title: string } | null {
+    const tab = this.tabs.get(tabId)
+    if (!tab) return null
+    const webContents = tab.view.webContents
+    if (webContents.isDestroyed()) return null
+    return {
+      tabId,
+      webContents,
+      url: webContents.getURL(),
+      title: webContents.getTitle()
+    }
+  }
+
   /** 拖拽落点判定（装配层把共享会话的 classify 接到这里）。 */
   classifyDragPoint(point: DragPoint): { windowId: number | null; mainWindow: boolean } {
     return this.floats.windowAt(point.x, point.y)

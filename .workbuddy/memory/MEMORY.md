@@ -161,27 +161,32 @@
   表单内显示错误行。Playwright `dragAndDrop` 在 Electron 下不可靠，拖拽回归
   用合成 DragEvent + 结构断言，真实鼠标走人工清单。
 
-## Desktop：圆桌 Multi-AI 问答（Phase 4.1）
+## Desktop：圆桌 Multi-AI 问答（Phase 4.1 / 4.2）
 
-* **复用而非复刻**：圆桌提问就是 `aiChat.ask({ prompt: 圆桌草稿, providers })`；
-  不造第二套调度/页面管理。AI 平台参与者与网页资料参与者是两套状态，
-  provider ID **永不**写入 `participantTabIds`。
-* aiChat 任务通知**广播全部窗口**（`getAllWindows()` 遍历）——[0] 顺序漂移，
-  圆桌独立窗口会永远看不到进度。快照带 `conversationId`（任务开始即落库）。
-* **持久化时序**：问题先行 → 平台一 completed 立刻写库（notifier 捎带，
-  persisted Set 去重）→ 落定补写剩余终态。忙时抛错撤孤儿 conversation。
-* Adapter 铁律：回答基线在**点击发送之前**统计；写入后校验
-  `__bpNormalize` 相等（textarea→value、contenteditable→innerText），
-  不等不点发送。用户文本只走 JSON.stringify 注入。
-* E2E 接缝 `BREWPHASE_AI_TEST_HOST`：homeURL→`http://<host>/<provider>`，
-  ownsURL 按段匹配 + 端口一致；夹具页回显真实输入证明写入链路。
-  平台仿真回答用 `<br>` 换行——textContent 的 `\n` 被 innerText 折叠成空格。
-* 极简 Markdown：`##`→h4、`#`→h3、列表项 `p.md-ul`（非 li）；断言别按标准层级。
-* 平台登录态只探测**后台代理页**：可见浏览器登录后、首次 ask 前，状态仍是
-  「页面未打开」——如实显示，不做假检测；「去登录」用可见浏览器打开
-  （`api.browser.open`），session 共享给代理页。
-* `browser.e2e`「拖动与缩放」（真指针拖 se 手柄）在无 GPU 环境会拖不到位，
-  干净 HEAD 也挂——先 stash 验证再定性，别当回归修。
+* **4.2 起 tabId 是身份**：圆桌成员 = 真实 WebCard（participantTabIds），provider 只是
+  能力标签。Renderer 只传 tabId；平台识别在主进程 Registry（`ai-chat/adapters/`，
+  严格主机匹配）对实时 URL 判定；自动化用 `BrowserManager.resolveTabForAI` 解析的
+  **原始 WebContents**——绝不建隐藏副本（AgentPageManager 仅遗留栈使用）。
+* 探测/轮询算法单一来源：`automation/poll-engine.ts`；adapter 提交纪律不变（基线
+  先于发送、写入校验、JSON-only）。已识别 ≠ 可自动交互：无 adapter 的描述符
+  （Gemini 等）显示「已识别·尚未适配」，绝不假装可提问。
+* 极简 Markdown 渲染层级：`#`→h3、`##`→h4、列表项是 `p.md-ul`（非 li）；断言别按
+  标准 HTML 层级。innerText 陷阱：textContent 里的 `\n` 被 white-space:normal
+  折叠成空格——夹具页构造换行要用 `<br>`。
+* 持久化按 **tabId** 去重；metadata = `{ note, url, tabId, displayName }`；provider 列
+  存平台 id（旧记录兼容，无 schema 变更）。
+* **服务型广播必须真正接线**：ParticipantService 的 notify 要在构造时接到
+  params.broadcast——只传参不接线的广播是静默 no-op（被 shell 自身的 ask 返回值
+  掩盖，只有跨窗口同步测试能抓到）。cancel 必须同时设 `run.cancelled` 标志与
+  状态（标志驱动轮询循环退出，状态只是展示）。
+* 移出成员 / 关闭页面 → 立即终止对应参与者（RoundtableService 的
+  onParticipantsChanged diff → cancelParticipant；每轮轮询重新 resolve tabId）。
+* E2E：`BREWPHASE_AI_TEST_HOST` 接缝让 WebCard 直接建在夹具 URL 上（按段匹配 +
+  端口校验）；**惰性 locator 陷阱**——`.last()` 在动作时重新解析，多卡场景必须在
+  每张卡创建后立即取 data-tab-id。
+* 4.1 遗留：aiChat 任务通知广播全部窗口；`##`→h4、列表 `p.md-ul`；平台登录态只
+  探测代理页（4.2 起探测的就是卡片本身）；`browser.e2e`「拖动与缩放」无 GPU
+  环境会拖不到位（干净 HEAD 同样失败，先 stash 验证再定性）。
 
 ## 代码风格与工作流
 

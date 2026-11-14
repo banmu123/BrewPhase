@@ -45,6 +45,12 @@ export type RoundtableServiceParams = {
    * 缺省时拖拽意图退化为 no-op——单元测试不依赖 Electron。
    */
   drag?: BrowserDragSessionManager
+  /**
+   * 参与成员发生变化（Phase 4.2）：移出成员的自动化任务必须立刻终止。
+   * 装配层把 removed 交给 ParticipantService.cancelParticipant；
+   * added 目前无人消费（识别是拉取式的），留作后续推送入口。
+   */
+  onParticipantsChanged?: (change: { added: string[]; removed: string[] }) => void
   /** 测试可注入时钟；缺省 Date.now。 */
   now?: () => number
 }
@@ -140,6 +146,11 @@ export class RoundtableService {
     return this.commit(retainParticipants(this.state, liveTabIds))
   }
 
+  /** tabId 是否是当前圆桌成员（圆桌问答的成员校验唯一入口）。 */
+  hasParticipant(tabId: string): boolean {
+    return this.state.participantTabIds.includes(tabId)
+  }
+
   /** 重置为初始状态（仅测试用）。 */
   resetForTesting(): void {
     this.state = initialRoundtableSnapshot()
@@ -148,11 +159,23 @@ export class RoundtableService {
   /** 真实变更才提交：版本 +1、时间刷新、广播。 */
   private commit(next: RoundtableSnapshot | null): RoundtableSnapshot {
     if (!next) return this.state
+    const before = new Set(this.state.participantTabIds)
+    const after = new Set(next.participantTabIds)
+    const added = next.participantTabIds.filter((id) => !before.has(id))
+    const removed = this.state.participantTabIds.filter((id) => !after.has(id))
     this.state = {
       ...next,
       id: ROUNDTABLE_ID,
       version: this.state.version + 1,
       updatedAt: this.params.now?.() ?? Date.now()
+    }
+    if (added.length > 0 || removed.length > 0) {
+      try {
+        this.params.onParticipantsChanged?.({ added, removed })
+      } catch (error) {
+        // 回调失败不能影响成员状态本身。
+        console.error('[roundtable] onParticipantsChanged failed', error)
+      }
     }
     this.params.broadcast(this.state)
     return this.state

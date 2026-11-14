@@ -119,6 +119,14 @@ function __bpFixtureSend() {
 }
 </script></body></html>`
 
+const GPT_LOGIN_PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>ChatGPT fixture · login</title></head>
+<body>
+<main>
+  <h1>Sign in to ChatGPT fixture</h1>
+  <a href="/auth/login">Log in</a>
+</main>
+</body></html>`
+
 const CLAUDE_PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>Claude fixture</title></head>
 <body>
 <div id="stream" data-is-streaming="false">
@@ -148,10 +156,12 @@ function __bpFixtureSend() {
 
 export async function startAIFixture(): Promise<AIFixture> {
   const server: Server = createServer((request, response) => {
-    const path = (request.url ?? '/').split('?')[0]
+    const parsed = new URL(request.url ?? '/', 'http://fixture.local')
+    const path = parsed.pathname
+    const mode = parsed.searchParams.get('mode')
     response.setHeader('content-type', 'text/html; charset=utf-8')
-    if (path.startsWith('/chatgpt')) response.end(GPT_PAGE)
-    else if (path.startsWith('/claude')) response.end(CLAUDE_PAGE)
+    if (path.startsWith('/chatgpt')) response.end(mode === 'login' ? GPT_LOGIN_PAGE : GPT_PAGE)
+    else if (path.startsWith('/claude')) response.end(mode === 'login' ? GPT_LOGIN_PAGE : CLAUDE_PAGE)
     else response.end('<!doctype html><html><body><main>ai fixture root</main></body></html>')
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))

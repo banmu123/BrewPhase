@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  isAIChatTaskBusy,
-  type AIChatTaskSnapshot,
-  type AIPlatformStatus,
+  isRoundtableAITaskBusy,
+  type AIRoundtableParticipantStatus,
+  type AIRoundtableTaskSnapshot,
   type BrowserTabInfo
 } from '@shared/contracts'
 import { cardBadgeText, cardDisplayName } from '@shared/web-cards'
@@ -16,24 +16,19 @@ import { useRoundtableStore } from './roundtable-store'
 import { WEB_CARD_MIME } from './WebCardShelf'
 
 /**
- * AI 圆桌（Phase 3 + 4.1）：Studio Home 底部第二层。
+ * AI 圆桌（Phase 3 框架 + Phase 4.2 真实 WebCard 问答）。
  *
  * 两副形态、**主进程一份状态**：
  * - **停靠**：占满内容宽度；标题栏是 OS 拖拽源——拖出 BrewPhase 窗口外
  *   松手，主进程创建真正的独立 BrowserWindow（`#bpRoundtable` 路由）。
- *   「独立窗口」按钮同效（键盘 / 触控板可达）。
- * - **独立窗口**：主窗口只剩一个轻量占位区（人数 + 任务状态 + 重新打开
- *   + 归位），不再是 Phase 2 的 `position: fixed` 应用内浮层。
+ * - **独立窗口**：主窗口只剩轻量占位区（人数 + 任务状态 + 重新打开 + 归位）。
  *
- * 拖入接应（卡片 → 参与者）：卡片架的卡片是 OS 拖拽源；圆桌热区在
- * `dragover` 时识别 `WEB_CARD_MIME` 并高亮，`drop` 时把 tabId 交给主进程
- * join（主进程校验标签真实存在）。内部投放会通知拖拽会话 dropHandled，
- * 主进程不会把这张卡拆成窗口。
- *
- * Phase 4.1 的 AI 问答（平台选择 → 并行提问 → 回答区）直接内嵌在圆桌正文里：
- * **AI 平台参与者与网页资料参与者是两套状态**——平台选择是渲染层本地 UI
- * 状态（默认全选），绝不写入 participantTabIds；没有网页资料也能直接提问。
- * 任务状态来自主进程广播（roundtable-ai-store），两个窗口看到同一份。
+ * Phase 4.2 的核心变化：**不再有固定的 ChatGPT / Claude 选择器**。
+ * 圆桌成员就是用户拖进来的真实 WebCard（tabId 是身份）：
+ * - 平台身份由主进程 Registry 对实时 URL 识别，渲染层无从伪造；
+ * - 支持自动问答的 AI 网页默认参与本轮讨论，普通网页继续作为资料；
+ * - 用户移除某个成员即可把它排除出本轮；
+ * - 自动化使用原始 WebContents——不创建隐藏副本，登录就在卡片里完成。
  */
 
 export function RoundtableSection() {
@@ -67,7 +62,6 @@ function DockedRoundtable() {
     }
     event.dataTransfer.setData(ROUNDTABLE_MIME, '1')
     event.dataTransfer.effectAllowed = 'move'
-    // 拖影 = 整块停靠圆桌（像把整张桌子端起来），而不是只有标题条。
     const source = event.currentTarget.closest('.roundtable') ?? event.currentTarget
     const rect = source.getBoundingClientRect()
     event.dataTransfer.setDragImage(source, Math.max(12, event.clientX - rect.left), Math.max(10, event.clientY - rect.top))
@@ -121,10 +115,8 @@ function DockedRoundtable() {
 }
 
 /* ============================================================
- * 独立窗口占位：轻量状态区，不出现大块空白（规格 §5/§8）。
- * 同时是拖回归位的热区：圆桌窗口的标题栏拖到这里松手 = 归位。
- * Phase 4.1：任务状态也在这里给一行摘要——独立窗口提问时，
- * 主窗口同样能看到进度（§4.1.5 的双窗口同步）。
+ * 独立窗口占位：轻量状态区 + 拖回归位热区。
+ * 任务状态在这里给一行摘要——独立窗口提问时主窗口同样看得到进度。
  * ============================================================ */
 
 /** 圆桌拖拽的数据类型；主窗口占位区用它识别「来的是整个圆桌」。 */
@@ -139,7 +131,7 @@ function RoundtableSlot() {
   const task = useRoundtableAIStore((state) => state.task)
   const [dropActive, setDropActive] = useState(false)
 
-  const busy = isAIChatTaskBusy(task)
+  const busy = isRoundtableAITaskBusy(task)
   const done = task !== null && !busy
 
   return (
@@ -157,7 +149,6 @@ function RoundtableSlot() {
         if (!event.dataTransfer.types.includes(ROUNDTABLE_MIME)) return
         event.preventDefault()
         setDropActive(false)
-        // 内部投放：会话按 dropHandled 收尾；随后显式归位。
         void api.roundtable.dragDropHandled().catch(() => undefined)
         void dockRoundtable()
       }}
@@ -199,7 +190,7 @@ function RoundtableSlot() {
 
 /* ============================================================
  * 圆桌正文（停靠与独立窗口共用）：
- *   参与区（网页资料） → AI 平台选择 → 提问行 → 本轮回答。
+ *   圆桌成员（真实 WebCard） → 提问行 → 本轮回答。
  * ============================================================ */
 
 export function RoundtableBody(props: { participants: BrowserTabInfo[] }) {
@@ -209,29 +200,34 @@ export function RoundtableBody(props: { participants: BrowserTabInfo[] }) {
   const leaveRoundtable = useRoundtableStore((state) => state.leaveRoundtable)
   const joinRoundtable = useRoundtableStore((state) => state.joinRoundtable)
   const task = useRoundtableAIStore((state) => state.task)
+  const members = useRoundtableAIStore((state) => state.members)
+  const membersLoading = useRoundtableAIStore((state) => state.membersLoading)
+  const aiError = useRoundtableAIStore((state) => state.error)
+  const refreshMembers = useRoundtableAIStore((state) => state.refreshMembers)
   const askTask = useRoundtableAIStore((state) => state.ask)
   const stopTask = useRoundtableAIStore((state) => state.stop)
   const [dropActive, setDropActive] = useState(false)
-  // 平台选择是本轮的 UI 状态（默认全选）——独立于网页资料参与者。
-  const [selected, setSelected] = useState<Set<'chatgpt' | 'claude'>>(new Set(['chatgpt', 'claude']))
   const unnamed = t.studio.webShelf.unnamed
 
-  const busy = isAIChatTaskBusy(task)
-  const canAsk = selected.size > 0 && snapshot.draft.trim() !== '' && !busy
+  const busy = isRoundtableAITaskBusy(task)
+  // 「可参与」= 已识别 + 已适配 + 已登录（主进程会在提交时再做一次同样的筛选）。
+  const capableCount = props.participants.filter((tab) => {
+    const member = members[tab.id]
+    return member?.adapted && member.login === 'logged_in'
+  }).length
+  const canAsk = capableCount > 0 && snapshot.draft.trim() !== '' && !busy
 
-  function toggle(provider: 'chatgpt' | 'claude'): void {
-    setSelected((current) => {
-      const next = new Set(current)
-      if (next.has(provider)) next.delete(provider)
-      else next.add(provider)
-      return next
-    })
-  }
+  // 成员识别是拉取式：成员增减、页面导航（URL 变化）时重新识别。
+  const memberSignature = props.participants.map((tab) => `${tab.id}:${tab.url}`).join('|')
+  useEffect(() => {
+    const tabIds = memberSignature.split('|').map((item) => item.split(':')[0]).filter(Boolean)
+    void refreshMembers(tabIds)
+  }, [memberSignature, refreshMembers])
 
   function submit(event: React.FormEvent): void {
     event.preventDefault()
     if (!canAsk) return
-    void askTask([...selected])
+    void askTask()
   }
 
   return (
@@ -252,12 +248,21 @@ export function RoundtableBody(props: { participants: BrowserTabInfo[] }) {
           setDropActive(false)
           const tabId = event.dataTransfer.getData(WEB_CARD_MIME)
           if (!tabId) return
-          // 内部投放（加入圆桌）：先标记会话，再建参与关系——两步都是
-          // 主进程收口，顺序保证 dropHandled 先于 dragend 到达。
           void api.browserDrag.dropHandled(tabId).catch(() => undefined)
           void joinRoundtable(tabId)
         }}
       >
+        <header className="roundtable__members-head">
+          <span className="roundtable__members-title">{t.studio.roundtable.membersTitle}</span>
+          <button
+            type="button"
+            className="roundtable__recheck"
+            onClick={() => void refreshMembers(snapshot.participantTabIds)}
+            title={t.studio.roundtable.recheck}
+          >
+            {t.studio.roundtable.recheck}
+          </button>
+        </header>
         {props.participants.length === 0 ? (
           <div className="roundtable__empty">
             <p className="roundtable__empty-title">{t.studio.roundtable.emptyTitle}</p>
@@ -270,11 +275,11 @@ export function RoundtableBody(props: { participants: BrowserTabInfo[] }) {
         ) : (
           <div className="roundtable__participants" role="list">
             {props.participants.map((tab) => (
-              <article className="roundtable__participant" role="listitem" key={tab.id}>
+              <article className="roundtable__participant" role="listitem" key={tab.id} data-tab-id={tab.id}>
                 <ParticipantThumb tabId={tab.id} />
                 <span className="roundtable__participant-body">
                   <span className="roundtable__participant-name">{cardDisplayName(tab, unnamed)}</span>
-                  <span className="roundtable__participant-state">{t.studio.roundtable.joined}</span>
+                  <MemberStatusLine tab={tab} member={members[tab.id]} loading={membersLoading} />
                 </span>
                 <button
                   type="button"
@@ -290,18 +295,12 @@ export function RoundtableBody(props: { participants: BrowserTabInfo[] }) {
         )}
       </div>
 
-      {/* AI 平台参与者：与网页资料无关，没有卡片也能直接提问。 */}
-      <RoundtablePlatforms selected={selected} onToggle={toggle} />
-
       <footer className="roundtable__ask">
-        <form
-          className="roundtable__ask-form"
-          onSubmit={submit}
-        >
+        <form className="roundtable__ask-form" onSubmit={submit}>
           <input
             className="roundtable__ask-input"
             placeholder={
-              selected.size === 0
+              props.participants.length === 0
                 ? t.studio.roundtable.askPlaceholderNoAI
                 : t.studio.roundtable.askPlaceholder
             }
@@ -321,12 +320,14 @@ export function RoundtableBody(props: { participants: BrowserTabInfo[] }) {
           )}
         </form>
         <div className="roundtable__ask-meta" role="status">
-          {selected.size === 0 ? (
-            <span className="roundtable__ask-warning">{t.studio.roundtable.noneSelected}</span>
+          {busy ? (
+            <span className="roundtable__ask-busy">{t.studio.roundtable.askBusyHint}</span>
+          ) : capableCount > 0 ? (
+            <span>{t.studio.roundtable.capableCount(capableCount)}</span>
           ) : (
-            <span>{t.studio.roundtable.selectedCount(selected.size)}</span>
+            <span className="roundtable__ask-warning">{t.studio.roundtable.noCapableHint}</span>
           )}
-          {busy && <span className="roundtable__ask-busy">{t.studio.roundtable.askBusyHint}</span>}
+          {aiError && <span className="roundtable__ask-warning">{aiError}</span>}
         </div>
       </footer>
 
@@ -336,106 +337,75 @@ export function RoundtableBody(props: { participants: BrowserTabInfo[] }) {
 }
 
 /* ============================================================
- * AI 平台选择：名称 + 登录状态 + 本轮选中 + 任务状态。
- * 未登录 / 未打开的入口是「去登录」：用现有可见浏览器打开平台首页，
- * 登录态经共享 session（persist:brewphase-browser）回到后台代理页。
+ * 成员状态行：按主进程识别结果显示能力与登录态。
+ * AI 成员任务中的实时状态来自任务广播，优先于静态识别结果。
  * ============================================================ */
 
-function RoundtablePlatforms(props: {
-  selected: Set<'chatgpt' | 'claude'>
-  onToggle: (provider: 'chatgpt' | 'claude') => void
+function MemberStatusLine(props: {
+  tab: BrowserTabInfo
+  member?: AIRoundtableParticipantStatus
+  loading: boolean
 }) {
   const { t } = useI18n()
-  const statuses = useRoundtableAIStore((state) => state.statuses)
   const task = useRoundtableAIStore((state) => state.task)
-  const refreshStatuses = useRoundtableAIStore((state) => state.refreshStatuses)
-  const busy = isAIChatTaskBusy(task)
+  const busy = isRoundtableAITaskBusy(task)
+  const live = task?.results.find((item) => item.tabId === props.tab.id)
+  const liveState = Boolean(busy && live && !['completed', 'failed', 'timeout', 'cancelled', 'login_required', 'unsupported_page', 'page_unavailable'].includes(live.state))
 
-  const statusOf = (provider: 'chatgpt' | 'claude'): AIPlatformStatus | null =>
-    statuses?.find((item) => item.provider === provider) ?? null
+  let label = t.studio.roundtable.memberDetecting
+  let dataState = 'detecting'
+  if (liveState && live) {
+    label = t.aiWorkspace.taskState[live.state as keyof typeof t.aiWorkspace.taskState]
+    dataState = live.state
+  } else if (!props.member) {
+    if (!props.loading) {
+      label = t.studio.roundtable.memberUnavailable
+      dataState = 'unavailable'
+    }
+  } else if (props.member.login === 'unavailable') {
+    label = t.studio.roundtable.memberUnavailable
+    dataState = 'unavailable'
+  } else if (props.member.platformId === null) {
+    label = t.studio.roundtable.memberReference
+    dataState = 'reference'
+  } else if (!props.member.adapted) {
+    label = t.studio.roundtable.memberNotAdapted(props.member.platformName ?? props.member.platformId ?? '')
+    dataState = 'not-adapted'
+  } else if (props.member.login === 'logged_in') {
+    label = t.studio.roundtable.memberReady(props.member.platformName ?? props.member.platformId ?? '')
+    dataState = 'ready'
+  } else if (props.member.login === 'logged_out') {
+    label = t.studio.roundtable.memberLoginRequired(props.member.platformName ?? props.member.platformId ?? '')
+    dataState = 'login-required'
+  } else {
+    label = t.studio.roundtable.memberUnknown(props.member.platformName ?? props.member.platformId ?? '')
+    dataState = 'unknown'
+  }
 
   return (
-    <section className="roundtable__platforms" aria-label={t.studio.roundtable.platformsTitle}>
-      <header className="roundtable__platforms-head">
-        <span className="roundtable__platforms-title">{t.studio.roundtable.platformsTitle}</span>
+    <span className="roundtable__member-state" data-state={dataState}>
+      {label}
+      {dataState === 'login-required' && (
         <button
           type="button"
-          className="roundtable__recheck"
-          onClick={() => void refreshStatuses()}
-          title={t.studio.roundtable.recheck}
+          className="roundtable__member-login"
+          onClick={() => void api.browserTabs.activate(props.tab.id)}
         >
-          {t.studio.roundtable.recheck}
+          {t.studio.roundtable.memberLoginAction}
         </button>
-      </header>
-      <div className="roundtable__platform-row" role="group">
-        {(['chatgpt', 'claude'] as const).map((provider) => {
-          const status = statusOf(provider)
-          const result = task?.results.find((item) => item.provider === provider)
-          // 忙碌时展示实时任务状态；空闲时展示登录状态。
-          const stateLabel = busy && result
-            ? t.aiWorkspace.taskState[result.state as keyof typeof t.aiWorkspace.taskState]
-            : !status || !status.pageAlive
-              ? t.aiWorkspace.login.not_open
-              : t.aiWorkspace.login[status.login]
-          const needsLogin = !busy && (!status || !status.pageAlive || status.login === 'logged_out')
-          return (
-            <button
-              key={provider}
-              type="button"
-              className="roundtable__platform"
-              data-selected={props.selected.has(provider)}
-              aria-pressed={props.selected.has(provider)}
-              onClick={() => props.onToggle(provider)}
-            >
-              <span className="roundtable__platform-main">
-                <span className="roundtable__platform-name">{t.aiWorkspace.providers[provider]}</span>
-                <span className="roundtable__platform-state" data-state={busy && result ? result.state : status?.login ?? 'not_open'}>
-                  {stateLabel}
-                </span>
-              </span>
-              <span className="roundtable__platform-pick" aria-hidden="true">
-                {props.selected.has(provider) ? '✓' : ''}
-              </span>
-            </button>
-          )
-        })}
-      </div>
-      {(['chatgpt', 'claude'] as const).some((provider) => {
-        const status = statusOf(provider)
-        return !busy && (!status || !status.pageAlive || status.login === 'logged_out')
-      }) && (
-        <div className="roundtable__login-row">
-          {(['chatgpt', 'claude'] as const).map((provider) => {
-            const status = statusOf(provider)
-            if (status?.pageAlive && status.login !== 'logged_out') return null
-            return (
-              <button
-                key={provider}
-                type="button"
-                className="roundtable__login-link"
-                onClick={() => {
-                  void api.aiChat.viewURL(provider).then((url) => {
-                    if (url) void api.browser.open({ url })
-                  })
-                }}
-              >
-                {t.studio.roundtable.goLogin(t.aiWorkspace.providers[provider])}
-              </button>
-            )
-          })}
-        </div>
       )}
-    </section>
+    </span>
   )
 }
 
 /* ============================================================
- * 本轮回答：每个平台一张卡，先完成先显示，互不覆盖。
+ * 本轮回答：每个参与者一张卡（tabId 区分，同平台多卡互不混淆）。
  * 复用 Markdown 组件；复制与查看原网页都只作用于单张卡。
  * ============================================================ */
 
-function RoundtableAnswers(props: { task: AIChatTaskSnapshot | null }) {
+function RoundtableAnswers(props: { task: AIRoundtableTaskSnapshot | null }) {
   const { t } = useI18n()
+  const tabs = useBrowserStore((state) => state.state.tabs)
   const [copied, setCopied] = useState<string | null>(null)
   const copyTimer = useRef<number | null>(null)
 
@@ -443,17 +413,13 @@ function RoundtableAnswers(props: { task: AIChatTaskSnapshot | null }) {
     if (copyTimer.current !== null) window.clearTimeout(copyTimer.current)
   }, [])
 
-  const providers = useMemo(() => props.task?.results.map((item) => item.provider) ?? [], [props.task])
-  const results = useMemo(() => {
-    const byProvider = new Map(props.task?.results.map((item) => [item.provider, item]) ?? [])
-    return providers.map((provider) => byProvider.get(provider)!).filter(Boolean)
-  }, [props.task, providers])
+  const results = useMemo(() => props.task?.results ?? [], [props.task])
 
-  if (!props.task) return null
+  if (!props.task || results.length === 0) return null
 
-  function copyAnswer(provider: string, content: string): void {
+  function copyAnswer(tabId: string, content: string): void {
     void navigator.clipboard.writeText(content).then(() => {
-      setCopied(provider)
+      setCopied(tabId)
       if (copyTimer.current !== null) window.clearTimeout(copyTimer.current)
       copyTimer.current = window.setTimeout(() => setCopied(null), 1_600)
     })
@@ -471,10 +437,13 @@ function RoundtableAnswers(props: { task: AIChatTaskSnapshot | null }) {
           const showAnswer = state === 'completed' && result.content.length > 0
           const showFailure =
             state !== 'idle' && state !== 'completed' && state !== 'generating' && state !== 'checking' && state !== 'sending'
+          const sourceTab = tabs.find((tab) => tab.id === result.tabId)
+          const cardTitle = sourceTab ? cardDisplayName(sourceTab, t.studio.webShelf.unnamed) : result.title
           return (
-            <article key={result.provider} className="roundtable__answer" data-state={state}>
+            <article key={result.tabId} className="roundtable__answer" data-state={state}>
               <header className="roundtable__answer-head">
-                <span className="roundtable__answer-name">{t.aiWorkspace.providers[result.provider as 'chatgpt' | 'claude']}</span>
+                <span className="roundtable__answer-name">{result.displayName}</span>
+                <span className="roundtable__answer-title">{cardTitle}</span>
                 <span className="roundtable__answer-state" data-state={state}>
                   {t.aiWorkspace.taskState[state as keyof typeof t.aiWorkspace.taskState]}
                 </span>
@@ -494,20 +463,21 @@ function RoundtableAnswers(props: { task: AIChatTaskSnapshot | null }) {
               </div>
               {showAnswer && (
                 <footer className="roundtable__answer-foot">
+                  {/* 打开原网页 = 定位回答所属的那张原始卡片（tabId），
+                      绝不重新创建一张平台页面。 */}
                   <button
                     type="button"
                     className="roundtable__answer-action"
-                    onClick={() => {
-                      void api.aiChat.viewURL(result.provider as 'chatgpt' | 'claude').then((url) => {
-                        if (url) void api.browser.open({ url })
-                      })
-                    }}
+                    onClick={() => void api.browserTabs.activate(result.tabId)}
                   >
                     {t.aiWorkspace.result.viewSource}
                   </button>
-                  <button type="button" className="roundtable__answer-action" onClick={() => copyAnswer(result.provider, result.content)}>
-                    {copied === result.provider ? t.aiWorkspace.result.copied : t.aiWorkspace.result.copy}
+                  <button type="button" className="roundtable__answer-action" onClick={() => copyAnswer(result.tabId, result.content)}>
+                    {copied === result.tabId ? t.aiWorkspace.result.copied : t.aiWorkspace.result.copy}
                   </button>
+                  <span className="roundtable__answer-tabid" title={result.url}>
+                    {result.tabId}
+                  </span>
                 </footer>
               )}
             </article>

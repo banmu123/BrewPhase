@@ -60,6 +60,7 @@ import type {
 } from '../database/repositories/personal-direction'
 import type { CurrentStateDraft, ProposalKind } from '../../shared/contracts/personal-direction'
 import type { AIChatService } from '../ai-chat/ai-chat-service'
+import type { ParticipantService } from '../ai-chat/participant-service'
 import type { BrowserBounds } from '../../shared/contracts/browser'
 import type { AIProvider } from '../ai-chat/automation/types'
 import { ApplicationError } from '../application/errors'
@@ -90,6 +91,8 @@ export function registerIpc(params: {
   bridgeStatus: () => McpBridgeStatus
   /** Multi-AI：后台页面与并行调度。 */
   aiChat: AIChatService
+  /** 圆桌真实 WebCard 问答（Phase 4.2）：tabId 驱动的参与者执行。 */
+  roundtableAI: ParticipantService
   /** 内置浏览器：网页在主进程绘制，IPC 只表达意图。 */
   browser: BrowserManager
   /** AI 圆桌：主进程唯一状态（Phase 3）。 */
@@ -110,6 +113,7 @@ export function registerIpc(params: {
     services,
     bridgeStatus,
     aiChat,
+    roundtableAI,
     browser,
     roundtable,
     bookmarks,
@@ -644,6 +648,36 @@ export function registerIpc(params: {
       point?.screenX !== undefined && point?.screenY !== undefined ? { x: point.screenX, y: point.screenY } : undefined
     )
     return null
+  })
+
+  // ---- 圆桌真实 WebCard 问答（Phase 4.2）----
+  // Renderer 只传 tabId 与问题文本；成员校验、WebContents 解析、平台识别、
+  // 执行与持久化全在主进程。这里没有也不允许出现「对任意 tab 执行任意脚本」
+  // 的通道——自动化只发生在 Registry 校验过的 Adapter 里。
+  // ask 是长任务：await 到全部参与者落定才返回；进度走广播。
+  handle(IPC.roundtableAIAsk, async (input) => {
+    const value = input as { prompt: string; participantTabIds: string[] }
+    if (roundtableAI.isBusy()) {
+      throw new ApplicationError('VALIDATION_ERROR', 'another roundtable task is running')
+    }
+    return roundtableAI.ask(value)
+  })
+
+  handle(IPC.roundtableAICancel, () => {
+    roundtableAI.cancel()
+    return null
+  })
+
+  handle(IPC.roundtableAICancelParticipant, (input) => {
+    roundtableAI.cancelParticipant((input as { tabId: string }).tabId)
+    return null
+  })
+
+  handle(IPC.roundtableAILastTask, () => roundtableAI.lastTask())
+
+  handle(IPC.roundtableAIDescribe, (input) => {
+    const { tabIds } = input as { tabIds: string[] }
+    return roundtableAI.describeParticipants(tabIds)
   })
 }
 

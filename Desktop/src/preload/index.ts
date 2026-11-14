@@ -9,6 +9,7 @@ import {
   type BrowserState
 } from '../shared/contracts/browser'
 import { ROUNDTABLE_CHANGED_CHANNEL, type RoundtableSnapshot } from '../shared/roundtable'
+import { ROUNDTABLE_AI_TASK_CHANGED_CHANNEL } from '../shared/contracts/roundtable-ai'
 import type { RendererApi } from '../shared/contracts'
 
 /**
@@ -128,6 +129,20 @@ const api: RendererApi = {
       // 订阅者（圆桌与 Multi-AI），退订一个不能牵连其他。
       ipcRenderer.on(channel, wrapped)
       return () => ipcRenderer.removeListener(channel, wrapped)
+    }
+  },
+  // 圆桌真实 WebCard 问答（Phase 4.2）：tabId 是参与者身份。
+  // Renderer 只传 tabId 与文本；识别、解析与执行全在主进程。
+  roundtableAI: {
+    ask: (input) => invoke(IPC.roundtableAIAsk, input),
+    cancel: () => invoke(IPC.roundtableAICancel),
+    cancelParticipant: (tabId) => invoke(IPC.roundtableAICancelParticipant, { tabId }),
+    lastTask: () => invoke(IPC.roundtableAILastTask),
+    describe: (tabIds) => invoke(IPC.roundtableAIDescribe, { tabIds }),
+    onChanged: (listener) => {
+      const wrapped = (_event: unknown, payload: unknown) => listener(payload as never)
+      ipcRenderer.on(ROUNDTABLE_AI_TASK_CHANGED_CHANNEL, wrapped)
+      return () => ipcRenderer.removeListener(ROUNDTABLE_AI_TASK_CHANGED_CHANNEL, wrapped)
     }
   },
   // AI Agent 自动配置：目标路径由主进程解析，这里只传类型与 scope。

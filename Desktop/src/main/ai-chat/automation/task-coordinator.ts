@@ -3,6 +3,7 @@ import {
   AI_ADAPTERS,
   type PlatformAdapter
 } from './adapters'
+import { pollUntilAnswerStable, probeWithRetry, type EngineTuning } from './poll-engine'
 import type {
   AIAskInput,
   AIChatTaskSnapshot,
@@ -27,8 +28,6 @@ import type { AgentPageManager } from '../agent-page-manager'
  */
 
 const POLL_INTERVAL_MS = 900
-const STABLE_ROUNDS_REQUIRED = 2
-const EMPTY_ANSWER_GRACE_ROUNDS = 4
 const TIMEOUT_MS = 180_000
 
 /** 调度参数；只有测试会传，生产用默认值。 */
@@ -228,27 +227,21 @@ export class TaskCoordinator {
 
   /**
    * SPA 首次打开要等 CDN 与框架挂载，输入框不是 loadURL 返回就存在的。
-   * 探测未就绪时小步重试（login_page 除外——那是确定性结论，不用等）。
+   * 探测/轮询的判定算法在共享引擎（poll-engine.ts）里——遗留路径与圆桌
+   * tabId 路径共用同一套完成判定，行为永不漂移。
    */
   private async probeWithRetry(
     run: ProviderRun,
     adapter: PlatformAdapter,
     webContents: Electron.WebContents
   ): Promise<PageProbe> {
-    const attempts = 10
-    let last: PageProbe = { loggedIn: false, reason: 'probe failed', inputReady: false, generating: false, answer: '', answerSeq: 0 }
-    for (let i = 0; i < attempts; i += 1) {
-      if (run.cancelled) break
-      try {
-        const probe = (await webContents.executeJavaScript(adapter.probeScript())) as PageProbe
-        if (probe.inputReady || probe.reason === 'login_page') return probe
-        last = probe
-      } catch (error) {
-        last = { ...last, reason: String(error instanceof Error ? error.message : error) }
-      }
-      await sleep(700)
-    }
-    return last
+    return probeWithRetry(
+      {
+        isCancelled: () => run.cancelled,
+        readProbe: async () => (await webContents.executeJavaScript(adapter.probeScript())) as PageProbe
+      },
+      this.engineTuning()
+    )
   }
 
   private async pollUntilDone(
@@ -258,63 +251,21 @@ export class TaskCoordinator {
     webContents: Electron.WebContents,
     baseline: number
   ): Promise<{ state: AIChatTaskState; content: string; note: string }> {
-    const deadline = Date.now() + this.timeoutMs
-    let lastAnswer = ''
-    let stableRounds = 0
-    let emptyRounds = 0
+    void record
+    return pollUntilAnswerStable(
+      {
+        isCancelled: () => run.cancelled,
+        currentURL: () => webContents.getURL(),
+        ownsURL: (url) => adapter.ownsURL(url),
+        readProbe: async () => (await webContents.executeJavaScript(adapter.pollScript())) as PageProbe
+      },
+      baseline,
+      this.engineTuning()
+    )
+  }
 
-    while (Date.now() < deadline) {
-      if (run.cancelled) {
-        return { state: 'cancelled', content: '', note: 'cancelled by user' }
-      }
-
-      const url = webContents.getURL()
-      if (!adapter.ownsURL(url)) {
-        return { state: 'failed', content: '', note: `page navigated away: ${url}` }
-      }
-
-      let probe: PageProbe
-      try {
-        probe = (await webContents.executeJavaScript(adapter.pollScript())) as PageProbe
-      } catch (error) {
-        // 单轮执行失败不判死：页面可能正在跳转。连续失败由超时兜底。
-        void error
-        await sleep(this.pollIntervalMs)
-        continue
-      }
-
-      const isNewAnswer = probe.answerSeq > baseline
-      if (isNewAnswer && !probe.generating && probe.answer.length > 0) {
-        if (probe.answer === lastAnswer) {
-          stableRounds += 1
-        } else {
-          stableRounds = 0
-          lastAnswer = probe.answer
-        }
-        if (stableRounds >= STABLE_ROUNDS_REQUIRED) {
-          return { state: 'completed', content: probe.answer, note: '' }
-        }
-        emptyRounds = 0
-      } else if (isNewAnswer && !probe.generating && probe.answer.length === 0) {
-        // 已有新回答出现、已停止生成、却提取不到文本：多半是改版。
-        emptyRounds += 1
-        if (emptyRounds >= EMPTY_ANSWER_GRACE_ROUNDS) {
-          return { state: 'failed', content: '', note: 'answer_empty (layout may have changed)' }
-        }
-      } else {
-        stableRounds = 0
-        emptyRounds = 0
-        if (isNewAnswer && probe.answer.length > 0) lastAnswer = probe.answer
-      }
-
-      await sleep(this.pollIntervalMs)
-    }
-
-    return {
-      state: 'timeout',
-      content: lastAnswer,
-      note: `no stable completion within ${Math.round(this.timeoutMs / 1000)}s`
-    }
+  private engineTuning(): EngineTuning {
+    return { pollIntervalMs: this.pollIntervalMs, timeoutMs: this.timeoutMs }
   }
 
   // MARK: - 状态与结果
@@ -337,8 +288,4 @@ export class TaskCoordinator {
     void record
     this.notify()
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }
