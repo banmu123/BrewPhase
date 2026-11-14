@@ -107,6 +107,24 @@
 * `.onboarding__card--wide` 底部不留白，由 sticky 的 actions 自己撑（含顶部渐隐），
   否则内容一长主按钮就被顶出视口。
 
+## Desktop：网页卡片（Phase 2）
+
+* **卡片 = 真实 tabId**。`tab-N` 是唯一身份；排序存 `cardOrder`，圆桌存
+  `participantTabIds`。禁止再出现第二套 `webcard-N` 或第二份网页实例。
+* 预览只走 `browser:preview` 通道（update/clear），不搭在 `browser:changed`
+  快照上；内存缓存 ≤12 张，标签关闭必须 `forget`，失败保留最后一张。
+* **capturePage 需要绘制表面**：隐藏 / 窗口外的 WebContentsView 返回空图。
+  收纳中的标签挂在透明采集宿主（`BaseWindow`，opacity 0、不可点、不抢焦点、
+  `showInactive`）里，视口固定 1280×800；截图时临时 `setVisible(true)`。
+  Linux 不支持窗口 opacity，宿主返回 null，预览降级为「显示过才有图」。
+* 原生层对齐以渲染层上报的 **stage 矩形**为准，`applyBounds` 不能再加
+  tabbar 高度（曾整体下沉 40px）。
+* 浏览器面板 ✕ = **收起回到卡片架**（park），不是关闭；关闭只在卡片/标签的 ✕。
+* 卡片与标签条都用 `data-tab-id`：任何落点查询必须 `stripRef` 内 scoped，
+  全局 `querySelector` 会命中架子卡片，排序静默失效。
+* Playwright `app.windows()` 会把 WebContentsView 里的网页也当页面返回；
+  判断独立窗口只认壳页 URL 里的 `#bpFloat=`。`page.screenshot()` 拍不到原生网页。
+
 ## 代码风格与工作流
 
 * 阈值集中 `RAG/Rules/IntelligenceConfig.swift`；中文词表放 `Resources/*.json`。
