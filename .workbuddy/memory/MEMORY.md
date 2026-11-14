@@ -161,6 +161,28 @@
   表单内显示错误行。Playwright `dragAndDrop` 在 Electron 下不可靠，拖拽回归
   用合成 DragEvent + 结构断言，真实鼠标走人工清单。
 
+## Desktop：圆桌 Multi-AI 问答（Phase 4.1）
+
+* **复用而非复刻**：圆桌提问就是 `aiChat.ask({ prompt: 圆桌草稿, providers })`；
+  不造第二套调度/页面管理。AI 平台参与者与网页资料参与者是两套状态，
+  provider ID **永不**写入 `participantTabIds`。
+* aiChat 任务通知**广播全部窗口**（`getAllWindows()` 遍历）——[0] 顺序漂移，
+  圆桌独立窗口会永远看不到进度。快照带 `conversationId`（任务开始即落库）。
+* **持久化时序**：问题先行 → 平台一 completed 立刻写库（notifier 捎带，
+  persisted Set 去重）→ 落定补写剩余终态。忙时抛错撤孤儿 conversation。
+* Adapter 铁律：回答基线在**点击发送之前**统计；写入后校验
+  `__bpNormalize` 相等（textarea→value、contenteditable→innerText），
+  不等不点发送。用户文本只走 JSON.stringify 注入。
+* E2E 接缝 `BREWPHASE_AI_TEST_HOST`：homeURL→`http://<host>/<provider>`，
+  ownsURL 按段匹配 + 端口一致；夹具页回显真实输入证明写入链路。
+  平台仿真回答用 `<br>` 换行——textContent 的 `\n` 被 innerText 折叠成空格。
+* 极简 Markdown：`##`→h4、`#`→h3、列表项 `p.md-ul`（非 li）；断言别按标准层级。
+* 平台登录态只探测**后台代理页**：可见浏览器登录后、首次 ask 前，状态仍是
+  「页面未打开」——如实显示，不做假检测；「去登录」用可见浏览器打开
+  （`api.browser.open`），session 共享给代理页。
+* `browser.e2e`「拖动与缩放」（真指针拖 se 手柄）在无 GPU 环境会拖不到位，
+  干净 HEAD 也挂——先 stash 验证再定性，别当回归修。
+
 ## 代码风格与工作流
 
 * 阈值集中 `RAG/Rules/IntelligenceConfig.swift`；中文词表放 `Resources/*.json`。

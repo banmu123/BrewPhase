@@ -14,6 +14,7 @@ import {
   subscribeRoundtableState,
   useRoundtableStore
 } from '../features/studio/roundtable-store'
+import { subscribeRoundtableAI, useRoundtableAIStore } from '../features/studio/roundtable-ai-store'
 import { subscribeBrowserState, useBrowserStore } from '../features/browser/browser-store'
 import { subscribeBrowserPreviews, useBrowserPreviewStore } from '../features/browser/preview-store'
 import { useI18n } from '../i18n'
@@ -67,11 +68,15 @@ export function App() {
     const unsubscribeRoundtable = subscribeRoundtableState()
     void useRoundtableStore.getState().hydrate()
     const unsubscribeDragFrames = subscribeBrowserDragFrames()
+    // 圆桌的 Multi-AI 任务状态（Phase 4.1）：同一份广播，两个窗口同态。
+    const unsubscribeAI = subscribeRoundtableAI()
+    void useRoundtableAIStore.getState().hydrate()
     return () => {
       unsubscribe()
       unsubscribePreviews()
       unsubscribeRoundtable()
       unsubscribeDragFrames()
+      unsubscribeAI()
     }
   }, [])
 

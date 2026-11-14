@@ -123,8 +123,11 @@ const api: RendererApi = {
     deleteConversation: (id) => invoke(IPC.aiChatDeleteConversation, { id }),
     onChanged: (listener) => {
       const channel = IPC.aiChatStatus + ':changed'
-      ipcRenderer.on(channel, (_event, payload) => listener(payload))
-      return () => ipcRenderer.removeAllListeners(channel)
+      const wrapped = (_event: unknown, payload: unknown) => listener(payload as never)
+      // removeListener（而不是 removeAllListeners）：同一窗口里可能有多个
+      // 订阅者（圆桌与 Multi-AI），退订一个不能牵连其他。
+      ipcRenderer.on(channel, wrapped)
+      return () => ipcRenderer.removeListener(channel, wrapped)
     }
   },
   // AI Agent 自动配置：目标路径由主进程解析，这里只传类型与 scope。

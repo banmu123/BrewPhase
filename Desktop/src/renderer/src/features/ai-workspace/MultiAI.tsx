@@ -36,6 +36,7 @@ export function MultiAI() {
       if (task) setSnapshot(task)
     })
     return api.aiChat.onChanged((next) => {
+      if (!next) return
       setSnapshot(next)
       const running = next.results.some((item) => !['completed', 'failed', 'timeout', 'cancelled', 'login_required', 'page_unavailable', 'unsupported_page'].includes(item.state))
       setBusy(running)

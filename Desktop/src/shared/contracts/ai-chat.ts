@@ -67,3 +67,27 @@ export type AIConversationDetail = {
 }
 
 export type { AIChatTaskSnapshot, AIPlatformStatus, AIChatTaskState }
+
+/**
+ * 渲染层的终态判断（与主进程 isTerminalTaskState 同一份语义）：
+ * busy = 任一平台处于非终态。放在共享层是因为圆桌与 Multi-AI 都要
+ * 从广播快照里推导忙碌状态，不应该各写一份终态清单。
+ */
+const TERMINAL_AI_STATES = new Set([
+  'completed',
+  'login_required',
+  'page_unavailable',
+  'unsupported_page',
+  'timeout',
+  'failed',
+  'cancelled'
+])
+
+export function isTerminalAIState(state: string): boolean {
+  return TERMINAL_AI_STATES.has(state)
+}
+
+export function isAIChatTaskBusy(snapshot: AIChatTaskSnapshot | null): boolean {
+  if (!snapshot) return false
+  return snapshot.results.some((result) => !isTerminalAIState(result.state))
+}

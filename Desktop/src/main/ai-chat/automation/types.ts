@@ -81,6 +81,12 @@ export type AIChatTaskSnapshot = {
   prompt: string
   createdAt: number
   results: AIProviderResult[]
+  /**
+   * 本轮讨论记录的 id（Phase 4.1 起随广播携带）。
+   * 任务开始时就落库（问题先行），所以广播里从头就有它；圆桌 UI 用它
+   * 关联「讨论记录」。直接读 coordinator 快照时可能没有——所以是可选。
+   */
+  conversationId?: string
 }
 
 /**

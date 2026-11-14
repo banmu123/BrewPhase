@@ -313,7 +313,8 @@ export interface RendererApi {
     conversations: (limit?: number) => Promise<AIConversationSummary[]>
     conversation: (id: string) => Promise<AIConversationDetail | null>
     deleteConversation: (id: string) => Promise<boolean>
-    onChanged: (listener: (snapshot: AIChatTaskSnapshot) => void) => () => void
+    /** 广播当前任务快照（无任务时是 null）；主窗口与圆桌独立窗口都会收到。 */
+    onChanged: (listener: (snapshot: AIChatTaskSnapshot | null) => void) => () => void
   }
   /** AI Agent 自动配置：检测 → 预览 → 用户确认后写入。 */
   agents: {

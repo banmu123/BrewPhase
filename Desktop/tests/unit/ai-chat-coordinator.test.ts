@@ -30,6 +30,8 @@ type FakeWorld = {
   submitOverride?: Partial<Record<AIProvider, { ok: boolean; reason: string }>>
   /** probe 的干预（默认登录且就绪）。 */
   probeOverride?: Partial<Record<AIProvider, { loggedIn: boolean; reason: string; inputReady: boolean }>>
+  /** 收集真实提交的脚本（验 prompt 原样到达、是否被提交过）。 */
+  submittedScripts?: string[]
 }
 
 function fakeWebContents(provider: AIProvider, world: FakeWorld) {
@@ -47,6 +49,7 @@ function fakeWebContents(provider: AIProvider, world: FakeWorld) {
       }
       if (script.includes('baseline')) {
         // 提交脚本：返回基线并登记一次真实提交
+        world.submittedScripts?.push(script)
         submitCount += 1
         const override = world.submitOverride?.[provider]
         if (override) return Promise.resolve({ ...override, baseline: 0 })
@@ -99,7 +102,7 @@ function fakeAdapter(provider: AIProvider): PlatformAdapter {
     homeURL: `https://example.test/${provider}`,
     ownsURL: (url) => URL_BY_PROVIDER[provider].startsWith(url.split('/c')[0].split('/chat')[0]) || url.includes('example.test'),
     probeScript: () => `/* probeScript-marker ${provider} */`,
-    submitScript: () => `/* submit with baseline ${provider} */`,
+    submitScript: (prompt) => `/* submit with baseline ${provider} */ ${JSON.stringify(prompt)}`,
     pollScript: () => `/* poll-marker ${provider} */`
   }
 }
@@ -205,5 +208,37 @@ describe('Multi-AI 并行调度', () => {
     const snapshot = await coordinator.ask({ prompt: '写一句', providers: ['chatgpt'] })
     expect(snapshot.results[0].content).toBe('完整回答')
     expect(snapshot.results[0].state).toBe('completed')
+  })
+
+  it('只选一个平台：只提交给选中的那家，另一家的页面完全不被触碰', async () => {
+    const world: FakeWorld = {
+      answers: { chatgpt: ['GPT 的回答', 'GPT 的回答'], claude: [] },
+      generating: { chatgpt: [true, false, false], claude: [] }
+    }
+    const counts = new Map<AIProvider, number>()
+    const coordinator = new TaskCoordinator(fakePages(world, counts), makeAdapters(), { pollIntervalMs: 1, timeoutMs: 5_000 })
+
+    const snapshot = await coordinator.ask({ prompt: '只问 GPT', providers: ['chatgpt'] })
+    expect(snapshot.results).toHaveLength(1)
+    expect(snapshot.results[0].provider).toBe('chatgpt')
+    expect(counts.has('claude')).toBe(false)
+  })
+
+  it('同一份问题原样到达每个平台（并行不串改）', async () => {
+    const world: FakeWorld = {
+      answers: { chatgpt: ['A', 'A'], claude: ['B', 'B'] },
+      generating: { chatgpt: [true, false, false], claude: [true, false, false] },
+      submittedScripts: []
+    }
+    const counts = new Map<AIProvider, number>()
+    const coordinator = new TaskCoordinator(fakePages(world, counts), makeAdapters(), { pollIntervalMs: 1, timeoutMs: 5_000 })
+
+    const prompt = '同一个问题：圆桌的并行规则是什么？'
+    await coordinator.ask({ prompt, providers: ['chatgpt', 'claude'] })
+    expect(world.submittedScripts).toHaveLength(2)
+    // submitScript 用 JSON.stringify 注入 prompt：两个平台的脚本都包含原样的字面量。
+    for (const script of world.submittedScripts!) {
+      expect(script).toContain(JSON.stringify(prompt))
+    }
   })
 })

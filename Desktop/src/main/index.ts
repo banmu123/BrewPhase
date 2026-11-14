@@ -314,14 +314,19 @@ function bootstrap(): void {
     drag: dragSession
   })
 
-  // Multi-AI（AI Workspace）：后台页面管理 + 并行调度。通知走主窗口广播，
-  // 与 browser:changed 同一模式——主进程是唯一事实来源。
+  // Multi-AI（AI Workspace / 圆桌 Phase 4.1）：后台页面管理 + 并行调度。
+  // 通知必须**广播给所有窗口**——圆桌独立窗口（#bpRoundtable）也是合法的
+  // 提交入口，getAllWindows()[0] 的顺序不可靠（浮窗、圆桌窗口加入后漂移），
+  // 只发第一个窗口会让另一个窗口的任务状态永远停在旧值。
+  // 与 browser:changed / roundtable:changed 同一模式：主进程是唯一事实来源。
   const aiChat = new AIChatService(db.db)
   aiChatService = aiChat
   aiChat.setNotifier(() => {
-    const window = BrowserWindow.getAllWindows()[0]
-    if (!window || window.isDestroyed()) return
-    window.webContents.send('ai-chat:status:changed', aiChat.lastTask())
+    const payload = aiChat.lastTask()
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (window.isDestroyed()) continue
+      window.webContents.send('ai-chat:status:changed', payload)
+    }
   })
 
   const bookmarkService = new BookmarkService(db.db)
