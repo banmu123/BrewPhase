@@ -34,6 +34,10 @@ export type BrowserDragSessionParams = {
   onReleaseOutside: (kind: DragKind, tabId: string | null, point: DragPoint) => void
   /** 轮询间隔；默认 32ms（约两帧）。 */
   pollIntervalMs?: number
+  /** 看门狗上限：begin 后超过这个毫秒数还没有 end/cancel，强制收尾。 */
+  watchdogMs?: number
+  /** 链路埋点（开发期排障用；缺省不打）。 */
+  log?: (message: string) => void
 }
 
 type ActiveSession = {
@@ -42,6 +46,7 @@ type ActiveSession = {
   outside: boolean
   dropHandled: boolean
   timer: ReturnType<typeof setInterval>
+  watchdog: ReturnType<typeof setTimeout>
   /** 最近一次轮询到的光标位置；end() 无兜底坐标时用它。 */
   lastCursor: DragPoint | null
 }
@@ -49,9 +54,13 @@ type ActiveSession = {
 export class BrowserDragSessionManager {
   private session: ActiveSession | null = null
   private readonly pollIntervalMs: number
+  private readonly watchdogMs: number
+  private readonly log: (message: string) => void
 
   constructor(private readonly params: BrowserDragSessionParams) {
     this.pollIntervalMs = Math.max(8, params.pollIntervalMs ?? 32)
+    this.watchdogMs = Math.max(this.pollIntervalMs * 4, params.watchdogMs ?? 45_000)
+    this.log = params.log ?? (() => undefined)
   }
 
   /** 是否有进行中的会话（供测试与调试）。 */
@@ -66,7 +75,10 @@ export class BrowserDragSessionManager {
    * 产生一个 dragstart；竞态下宁可不响应，也不能双开窗口。
    */
   begin(kind: DragKind, tabId: string | null): boolean {
-    if (this.session) return false
+    if (this.session) {
+      this.log(`begin rejected: session ${this.session.kind}/${this.session.tabId ?? '-'} still active`)
+      return false
+    }
     const point = this.readCursor()
     const outside = this.params.classify(point).windowId === null
     const session: ActiveSession = {
@@ -75,9 +87,16 @@ export class BrowserDragSessionManager {
       outside,
       dropHandled: false,
       lastCursor: point,
-      timer: setInterval(() => this.poll(), this.pollIntervalMs)
+      timer: setInterval(() => this.poll(), this.pollIntervalMs),
+      watchdog: setTimeout(() => {
+        // dragend 丢失（原生会话被外部打断）时的兜底：强制收尾，
+        // 否则单例会挡住之后每一次拖动（「永远拖不出来」的次生灾害）。
+        this.log(`watchdog fired: session ${kind}/${tabId ?? '-'} exceeded ${this.watchdogMs}ms`)
+        this.cancel()
+      }, this.watchdogMs)
     }
     this.session = session
+    this.log(`begin ${kind}/${tabId ?? '-'} at (${Math.round(point.x)}, ${Math.round(point.y)}) outside=${outside}`)
     this.params.onFrame({ active: true, kind, tabId, outside })
     return true
   }
@@ -92,12 +111,25 @@ export class BrowserDragSessionManager {
    *
    * 松手位置的优先级：主进程轮询的光标（真实拖动，窗口外也可靠）>
    * 渲染层兜底坐标（合成事件 / 单测）> 最后一次轮询读数。
+   * `expectedTabId` 用于识别**过期会话**：上报的 tabId 与会话里的不一致
+   * （上一次 dragend 丢失留下的残会话）时，只取消、绝不拆错窗口。
    */
-  end(fallbackPoint?: DragPoint): void {
+  end(fallbackPoint?: DragPoint, expectedTabId?: string): void {
     const session = this.session
-    if (!session) return
+    if (!session) {
+      this.log('end ignored: no active session')
+      return
+    }
+    if (expectedTabId !== undefined && session.tabId !== expectedTabId) {
+      this.log(`end mismatch: session ${session.kind}/${session.tabId ?? '-'} ≠ reported ${expectedTabId}, cancel stale`)
+      this.cancel()
+      return
+    }
     this.teardown()
-    if (session.dropHandled) return
+    if (session.dropHandled) {
+      this.log(`end ${session.kind}/${session.tabId ?? '-'}: drop handled inside, no detach`)
+      return
+    }
     // 松手位置优先级：end() 时实时读一次光标（最准）> 会话期间最后一次
     // 轮询读数 > 渲染层兜底坐标。真实拖动里渲染层在窗口外拿到的坐标不可信
     // （可能停在窗口边缘），所以兜底只在前两者都拿不到时使用。
@@ -106,14 +138,23 @@ export class BrowserDragSessionManager {
       Number.isFinite(live.x) && Number.isFinite(live.y)
         ? live
         : (this.lastCursorOf(session) ?? (fallbackPoint ?? null))
-    if (!released) return
-    if (this.params.classify(released).windowId !== null) return
+    if (!released) {
+      this.log(`end ${session.kind}/${session.tabId ?? '-'}: no usable cursor reading, cancel`)
+      return
+    }
+    const target = this.params.classify(released)
+    if (target.windowId !== null) {
+      this.log(`end ${session.kind}/${session.tabId ?? '-'}: released inside window ${target.windowId}, cancel`)
+      return
+    }
+    this.log(`release outside ${session.kind}/${session.tabId ?? '-'} at (${Math.round(released.x)}, ${Math.round(released.y)})`)
     this.params.onReleaseOutside(session.kind, session.tabId, released)
   }
 
   /** 强制收尾（标签被关闭、窗口销毁、应用退出）：不拆窗、只广播结束。 */
   cancel(): void {
     if (!this.session) return
+    this.log(`cancel ${this.session.kind}/${this.session.tabId ?? '-'}`)
     this.teardown()
   }
 
@@ -161,6 +202,7 @@ export class BrowserDragSessionManager {
     if (!session) return
     this.session = null
     clearInterval(session.timer)
+    clearTimeout(session.watchdog)
     this.params.onFrame({ active: false, kind: session.kind, tabId: session.tabId, outside: session.outside })
   }
 }

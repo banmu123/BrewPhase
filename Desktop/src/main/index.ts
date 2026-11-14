@@ -262,7 +262,9 @@ function bootstrap(): void {
       }
       // 圆桌标题栏拖出：窗口外松手 → 独立窗口贴近松手点（规格 §4.6）。
       roundtableService?.detach(point)
-    }
+    },
+    // 链路埋点：开发终端可见，用户排障时按 [drag] 过滤即可确认断在哪一环。
+    log: (message) => console.log(`[drag] ${message}`)
   })
 
   browserManager = new BrowserManager({

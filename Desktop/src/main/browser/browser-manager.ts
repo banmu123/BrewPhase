@@ -156,7 +156,8 @@ export class BrowserManager {
         onFrame: () => undefined,
         onReleaseOutside: (kind, tabId, point) => {
           if (kind === 'webcard' && tabId) this.detachTab(tabId, point.x, point.y)
-        }
+        },
+        log: (message) => console.log(`[drag] ${message}`)
       })
   }
 
@@ -629,7 +630,8 @@ export class BrowserManager {
       this.drag.cancel()
       return
     }
-    this.drag.end(fallback)
+    // 带上 tabId：会话与上报不一致（过期残会话）时只取消，不拆错窗口。
+    this.drag.end(fallback, tabId)
   }
 
   /** 拖动中标签被关闭 / 会话被打断：强制收尾，不拆窗。 */

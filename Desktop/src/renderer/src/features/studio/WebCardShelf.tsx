@@ -7,7 +7,7 @@ import {
   type WebCardModel
 } from '@shared/web-cards'
 import { useI18n } from '../../i18n'
-import { PlusIcon } from '../../shared/icons'
+import { GlobeIcon, PlusIcon } from '../../shared/icons'
 import { api } from '../../shared/api'
 import { useBrowserStore } from '../browser/browser-store'
 import { useBrowserPreviewStore } from '../browser/preview-store'
@@ -47,6 +47,8 @@ export function WebCardShelf() {
   const moveCard = useRoundtableStore((state) => state.moveCard)
 
   const rowRef = useRef<HTMLDivElement>(null)
+  /** 拖动结束后的那次 click 不算「打开」：原生拖拽本会抑制 click，这里是双保险。 */
+  const suppressClick = useRef(false)
 
   // 浏览器快照变化 → 顺序对账（参与者的摘除在主进程完成并广播回来）。
   useEffect(() => {
@@ -57,6 +59,7 @@ export function WebCardShelf() {
 
   /** 点击卡片 = 在浏览器浮窗里展开同一个页面（tabId 不变）。 */
   const openCard = (tabId: string): void => {
+    if (suppressClick.current) return
     const state = useRoundtableStore.getState()
     state.selectTab(state.selectedTabId === tabId ? null : tabId)
     void api.browserTabs.activate(tabId)
@@ -87,19 +90,33 @@ export function WebCardShelf() {
       event.preventDefault()
       return
     }
+    // dataTransfer 的设置必须同步、最先做。整个处理器里**任何**异常都会让
+    // Chromium 直接取消原生拖拽——所以后续步骤全部包进 try。
     event.dataTransfer.setData(WEB_CARD_MIME, tabId)
     event.dataTransfer.effectAllowed = 'move'
-    const rect = event.currentTarget.getBoundingClientRect()
-    event.dataTransfer.setDragImage(event.currentTarget, Math.max(8, event.clientX - rect.left), Math.max(8, event.clientY - rect.top))
-    clearInsertMarkers()
-    setDraggingTab(tabId)
-    void api.browserDrag.begin(tabId).catch(() => undefined)
+    try {
+      const rect = event.currentTarget.getBoundingClientRect()
+      event.dataTransfer.setDragImage(event.currentTarget, Math.max(8, event.clientX - rect.left), Math.max(8, event.clientY - rect.top))
+      clearInsertMarkers()
+      // 双保险：即使某些平台在拖拽结束后仍补发 click，也不误开主窗口面板。
+      suppressClick.current = true
+      setTimeout(() => {
+        suppressClick.current = false
+      }, 400)
+      setDraggingTab(tabId)
+      console.info(`[drag:card] dragstart tab=${tabId}`)
+      void api.browserDrag.begin(tabId).catch((error) => console.error('[drag:card] begin failed', error))
+    } catch (error) {
+      // 拖影/状态失败不中止原生拖拽：OS 拖影兜底可用，会话随后由 dragend 收尾。
+      console.error('[drag:card] dragstart side-effects failed', error)
+    }
   }
 
   /** HTML5 dragend：会话终态。拆不拆窗由主进程按轮询光标裁定。 */
   const onCardDragEnd = (event: React.DragEvent<HTMLElement>, tabId: string): void => {
     clearInsertMarkers()
     setDraggingTab(null)
+    console.info(`[drag:card] dragend tab=${tabId} at (${Math.round(event.screenX)}, ${Math.round(event.screenY)})`)
     void api.browserDrag.end(tabId, { screenX: event.screenX, screenY: event.screenY }).catch(() => undefined)
   }
 
@@ -107,6 +124,10 @@ export function WebCardShelf() {
     if (!event.dataTransfer.types.includes(WEB_CARD_MIME)) return
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
+    // 关键：**不给正在被拖动的那张卡做插入标记**——对拖拽源做 DOM 变更会干扰
+    // 原生拖拽会话（macOS 上表现就是拖到一半会话消失）。圆桌标题栏没有这个
+    // 行为，因此它的真实鼠标拖出一直是好的；这是两者唯一的结构性差异之一。
+    if (event.currentTarget.dataset.tabId === useRoundtableStore.getState().draggingTabId) return
     const rect = event.currentTarget.getBoundingClientRect()
     event.currentTarget.setAttribute('data-insert', event.clientX < rect.left + rect.width / 2 ? 'before' : 'after')
   }
@@ -188,8 +209,11 @@ function WebCardItem(props: {
   const selected = useRoundtableStore((state) => state.selectedTabId === card.tabId)
   const closeCard = useRoundtableStore((state) => state.closeCard)
   const [draft, setDraft] = useState('')
+  const [submitting, setSubmitting] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const awaitingAddress = isCardAwaitingAddress({ url: card.url })
+  // 编辑态里导航失败（错误页）时标签仍是空地址：把主进程的错误如实带进表单。
+  const tabError = useBrowserStore((state) => state.state.tabs.find((item) => item.id === card.tabId)?.error ?? null)
 
   useEffect(() => {
     if (awaitingAddress) inputRef.current?.focus()
@@ -200,11 +224,12 @@ function WebCardItem(props: {
 
   const submitAddress = (): void => {
     const value = draft.trim()
-    if (!value) return
-    void api.browserTabs.navigate(card.tabId, value).catch((error) => {
-      console.error('[web-cards] navigate failed', error)
-    })
-    setDraft('')
+    if (!value || submitting) return
+    setSubmitting(true)
+    void api.browserTabs
+      .navigate(card.tabId, value)
+      .catch((error) => console.error('[web-cards] navigate failed', error))
+      .finally(() => setSubmitting(false))
   }
 
   if (awaitingAddress) {
@@ -216,25 +241,55 @@ function WebCardItem(props: {
             event.preventDefault()
             submitAddress()
           }}
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape') return
+            event.stopPropagation()
+            void closeCard(card.tabId)
+          }}
         >
-          <span className="web-card__form-title">{t.studio.webShelf.newCardTitle}</span>
-          <input
-            ref={inputRef}
-            className="web-card__input"
-            placeholder={t.studio.webShelf.urlPlaceholder}
-            aria-label={t.studio.webShelf.urlPlaceholder}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            spellCheck={false}
-            autoComplete="off"
-            autoCorrect="off"
-          />
+          <span className="web-card__form-head">
+            <span className="web-card__form-icon" aria-hidden="true">
+              <ExternalGlyph />
+            </span>
+            <span className="web-card__form-title">{t.studio.webShelf.newCardTitle}</span>
+          </span>
+          <label className="web-card__form-label" htmlFor={`web-card-input-${card.tabId}`}>
+            {t.studio.webShelf.formLabel}
+          </label>
+          <div className="web-card__input-wrap">
+            <span className="web-card__input-icon" aria-hidden="true">
+              <GlobeIcon size={14} />
+            </span>
+            <input
+              ref={inputRef}
+              id={`web-card-input-${card.tabId}`}
+              className="web-card__input"
+              placeholder={t.studio.webShelf.urlPlaceholder}
+              aria-label={t.studio.webShelf.urlPlaceholder}
+              value={draft}
+              maxLength={2_048}
+              onChange={(event) => setDraft(event.target.value)}
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
+            />
+          </div>
+          <p className="web-card__form-hint">{t.studio.webShelf.formHint}</p>
+          {tabError && <p className="web-card__form-error">{t.studio.webShelf.formInvalid}</p>}
           <div className="web-card__form-actions">
-            <button type="submit" className="web-card__form-ok" disabled={draft.trim() === ''}>
-              {t.studio.webShelf.open}
-            </button>
-            <button type="button" className="web-card__form-cancel" onClick={() => void closeCard(card.tabId)}>
+            <button
+              type="button"
+              className="web-card__form-cancel"
+              onClick={() => void closeCard(card.tabId)}
+            >
               {t.studio.webShelf.cancel}
+            </button>
+            <button
+              type="submit"
+              className="web-card__form-ok"
+              disabled={draft.trim() === '' || submitting}
+            >
+              {submitting ? t.studio.webShelf.formOpening : t.studio.webShelf.open}
             </button>
           </div>
         </form>
@@ -271,6 +326,10 @@ function WebCardItem(props: {
       }}
       title={t.studio.webShelf.editHint}
     >
+      {/* 低调的六点握把：说明这张卡「可以拿起来」；纯装饰，不拦指针。 */}
+      <span className="web-card__grip" aria-hidden="true">
+        ⠿
+      </span>
       <CardPreview tabId={card.tabId} card={card} />
 
       <div className="web-card__meta">
@@ -302,6 +361,24 @@ function WebCardItem(props: {
             {t.studio.webShelf.recallAction}
           </button>
         )}
+        {card.presentation !== 'detached' && (
+          <button
+            type="button"
+            className="web-card__action"
+            title={t.studio.webShelf.detachAction}
+            aria-label={t.studio.webShelf.detachAction}
+            onClick={(event) => {
+              event.stopPropagation()
+              // 备用入口：与拖出共用同一个主进程 detach（同一页面实例迁移）。
+              const rect = (event.currentTarget.closest('.web-card') as HTMLElement | null)?.getBoundingClientRect()
+              const screenX = window.screenX + (rect ? Math.round(rect.right + 56) : 240)
+              const screenY = window.screenY + (rect ? Math.round(rect.top + 90) : 240)
+              void api.browserTabs.detach(card.tabId, screenX, screenY).catch((error) => console.error('[web-cards] detach failed', error))
+            }}
+          >
+            {t.studio.webShelf.detachAction}
+          </button>
+        )}
         <button
           type="button"
           className="web-card__close"
@@ -316,6 +393,16 @@ function WebCardItem(props: {
         </button>
       </span>
     </article>
+  )
+}
+
+/** 表单头的小图标（内联 SVG，避免为一张表单引入新图标依赖）。 */
+function ExternalGlyph() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M6.5 3.5H3.8A1.3 1.3 0 0 0 2.5 4.8v7.4a1.3 1.3 0 0 0 1.3 1.3h7.4a1.3 1.3 0 0 0 1.3-1.3V9.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M9.5 2.5h4v4M13.2 2.8 7.8 8.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   )
 }
 

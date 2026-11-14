@@ -138,6 +138,46 @@ describe('拖拽会话：终态裁定', () => {
     session.end()
     expect(released).toEqual([{ kind: 'webcard', tabId: 'tab-1', point: { x: 700, y: 200 } }])
   })
+
+  it('tabId 不匹配（过期残会话）：只取消，绝不拆错窗口', () => {
+    const { session, released, setCursor } = makeSession()
+    session.begin('webcard', 'tab-old')
+    setCursor({ x: 900, y: 300 })
+    // 新的一次拖动上报的是 tab-new，会话里还是 tab-old：按过期处理。
+    session.end(undefined, 'tab-new')
+    expect(released).toHaveLength(0)
+    expect(session.active()).toBeNull()
+    // 残会话清掉之后，下一次拖动正常。
+    expect(session.begin('webcard', 'tab-new')).toBe(true)
+    session.cancel()
+  })
+
+  it('看门狗：dragend 丢失时强制收尾（单例不再被挡），且不拆窗', () => {
+    vi.useFakeTimers()
+    const { session, released } = makeSession({ cursor: { x: 900, y: 300 } })
+    session.begin('webcard', 'tab-1')
+    vi.advanceTimersByTime(50_000)
+    expect(session.active()).toBeNull()
+    expect(released).toHaveLength(0)
+    expect(session.begin('webcard', 'tab-2')).toBe(true)
+    session.cancel()
+    vi.useRealTimers()
+  })
+
+  it('log 埋点：begin / release outside / cancel 都有记录', () => {
+    const logs: string[] = []
+    const session = new BrowserDragSessionManager({
+      cursor: () => ({ x: 100, y: 100 }),
+      classify: () => ({ windowId: null, mainWindow: false }),
+      onFrame: () => undefined,
+      onReleaseOutside: () => undefined,
+      log: (message) => logs.push(message)
+    })
+    session.begin('webcard', 'tab-1')
+    session.end()
+    expect(logs.some((line) => line.includes('begin webcard/tab-1'))).toBe(true)
+    expect(logs.some((line) => line.includes('release outside'))).toBe(true)
+  })
 })
 
 describe('拖拽会话：帧广播', () => {

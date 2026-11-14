@@ -250,8 +250,7 @@ test('拖出独立窗口再收回卡片架：同一个页面实例，不重新�
   }
 })
 
-test('关闭独立窗口 = 收回卡片架：页面不销毁、不打开主窗口面板', async () => {
-  const { app, page, dataDir } = await launch()
+test('关闭独立窗口 = 收回卡片架：页面不销毁、不打开主窗口面板', async () => {  const { app, page, dataDir } = await launch()
   try {
     const card = await addCard(page, '/c')
     const tabId = await card.getAttribute('data-tab-id')
@@ -339,6 +338,179 @@ test('加载中与加载失败：状态如实显示，不伪造预览', async ()
     await expect(brokenCard.locator('.web-card__chip')).toHaveText('加载失败', { timeout: 20_000 })
     await expect(brokenCard.locator('.web-card__image')).toHaveCount(0)
     await expect(brokenCard.locator('.web-card__preview-error')).toHaveText('加载失败')
+  } finally {
+    await app.close()
+    rmSync(dataDir, { recursive: true, force: true })
+  }
+})
+
+test('添加网页编辑卡：自动聚焦、Enter 提交、Esc 取消、错误如实显示', async () => {
+  const { app, page, dataDir } = await launch()
+  try {
+    // 自动聚焦 + 空输入禁用主按钮。
+    await page.getByRole('button', { name: '添加网页' }).click()
+    const form = page.locator('.web-card--editing')
+    await expect(form).toBeVisible()
+    await expect(form.locator('input')).toBeFocused()
+    await expect(form.getByRole('button', { name: '打开' })).toBeDisabled()
+
+    // Enter 提交：编辑态退出，出现真实卡片（标题来自页面 <title>）。
+    await form.locator('input').fill(fixture.url('/a'))
+    await page.keyboard.press('Enter')
+    const card = page.locator('.web-card:not(.web-card--editing)')
+    await expect(card).toHaveCount(1, { timeout: 20_000 })
+    await expect(card).toContainText('fixture a', { timeout: 20_000 })
+
+    // Esc 取消：不留空白编辑卡。
+    await page.getByRole('button', { name: '添加网页' }).click()
+    await expect(page.locator('.web-card--editing')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.locator('.web-card--editing')).toHaveCount(0)
+    await expect(page.locator('.web-card')).toHaveCount(1)
+
+    // 输入级拒绝（协议被安全校验拦下）：标签仍是空地址，错误显示在表单内，可取消无残留。
+    await page.getByRole('button', { name: '添加网页' }).click()
+    const blockedForm = page.locator('.web-card--editing')
+    await blockedForm.locator('input').fill('ftp://example.com/file')
+    await blockedForm.getByRole('button', { name: '打开' }).click()
+    await expect(blockedForm.locator('.web-card__form-error')).toBeVisible({ timeout: 20_000 })
+    await blockedForm.getByRole('button', { name: '取消' }).click()
+    await expect(page.locator('.web-card--editing')).toHaveCount(0)
+    await expect(page.locator('.web-card')).toHaveCount(1)
+    const afterBlocked = await page.evaluate(() => window.brewphase.browser.state())
+    expect(afterBlocked.tabs).toHaveLength(1)
+
+    // 网络级失败（地址合法但连不上）：卡片退出编辑态，错误如实显示在卡片上。
+    await page.getByRole('button', { name: '添加网页' }).click()
+    const brokenForm = page.locator('.web-card--editing')
+    await brokenForm.locator('input').fill('http://127.0.0.1:1/unreachable')
+    await brokenForm.getByRole('button', { name: '打开' }).click()
+    const brokenCard = page.locator('.web-card:not(.web-card--editing)').last()
+    await expect(page.locator('.web-card:not(.web-card--editing)')).toHaveCount(2, { timeout: 20_000 })
+    await expect(brokenCard.locator('.web-card__chip')).toHaveText('加载失败', { timeout: 20_000 })
+    await expect(brokenCard.locator('.web-card__preview-error')).toHaveText('加载失败')
+  } finally {
+    await app.close()
+    rmSync(dataDir, { recursive: true, force: true })
+  }
+})
+
+test('窗口内松手（无落点）：不拆窗、不误触发 click 打开面板', async () => {
+  const { app, page, dataDir } = await launch()
+  try {
+    const card = await addCard(page, '/a')
+    const tabId = (await card.getAttribute('data-tab-id'))!
+
+    // 合成拖拽会话：dragstart → dragend，中间没有任何 drop（窗口内空白处松手）。
+    await page.evaluate((id) => {
+      const target = document.querySelector<HTMLElement>(`.web-card[data-tab-id="${id}"]`)
+      if (!target) throw new Error('card not found')
+      target.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() }))
+      target.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() }))
+    }, tabId)
+
+    // 主进程按轮询光标裁定「窗口内」→ 取消：不拆窗；click 也不误开面板。
+    await expect.poll(() => app.windows().filter((candidate) => candidate.url().includes('bpFloat=')).length, { timeout: 8_000 }).toBe(0)
+    await expect(page.locator('.browser-panel')).toHaveCount(0)
+    await expect(card).toHaveAttribute('data-presentation', 'shelved')
+  } finally {
+    await app.close()
+    rmSync(dataDir, { recursive: true, force: true })
+  }
+})
+
+test('重复拖出同一个标签：只聚焦已有窗口，绝不双开', async () => {
+  const { app, page, dataDir } = await launch()
+  try {
+    const card = await addCard(page, '/b')
+    const tabId = (await card.getAttribute('data-tab-id'))!
+    await waitForPreview(card)
+
+    await dragCardOutOfWindow(page, app, card)
+    await setFakeCursor(app, null)
+    await expect.poll(() => app.windows().filter((candidate) => candidate.url().includes('bpFloat=')).length, { timeout: 20_000 }).toBe(1)
+
+    // 同一个 tabId 再拆一次（假光标在窗口外）→ 只聚焦。
+    await app.evaluate((_, point) => {
+      const hooks = (globalThis as unknown as { __bpTestHooks?: { setDragCursor: (p: { x: number; y: number } | null) => void } }).__bpTestHooks
+      hooks?.setDragCursor(point)
+    }, { x: -500, y: 200 })
+    await page.evaluate((id) => {
+      const target = document.querySelector<HTMLElement>(`.web-card[data-tab-id="${id}"]`)
+      if (!target) throw new Error('card gone')
+      target.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() }))
+      target.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() }))
+    }, tabId)
+    await app.evaluate((_, point) => {
+      const hooks = (globalThis as unknown as { __bpTestHooks?: { setDragCursor: (p: { x: number; y: number } | null) => void } }).__bpTestHooks
+      hooks?.setDragCursor(null)
+    }, null)
+    await expect.poll(() => app.windows().filter((candidate) => candidate.url().includes('bpFloat=')).length, { timeout: 10_000 }).toBe(1)
+    await expect(card).toHaveAttribute('data-presentation', 'detached')
+  } finally {
+    await app.close()
+    rmSync(dataDir, { recursive: true, force: true })
+  }
+})
+
+test('备用入口：卡片悬浮「独立窗口」按钮走同一个 detach 链路', async () => {
+  const { app, page, dataDir } = await launch()
+  try {
+    const card = await addCard(page, '/c')
+    const tabId = (await card.getAttribute('data-tab-id'))!
+    await waitForPreview(card)
+
+    await card.hover()
+    await card.locator('.web-card__action').first().click()
+    await expect.poll(() => app.windows().filter((candidate) => candidate.url().includes('bpFloat=')).length, { timeout: 20_000 }).toBe(1)
+    await expect(card).toHaveAttribute('data-presentation', 'detached', { timeout: 20_000 })
+    const state = await page.evaluate(() => window.brewphase.browser.state())
+    expect(state.tabs[0].id).toBe(tabId)
+    expect(state.tabs[0].detached).toBe(true)
+
+    // 收回仍是同一套语义。
+    const floatPage = app.windows().find((candidate) => candidate !== page && candidate.url().includes('bpFloat='))
+    await floatPage!.getByRole('button', { name: '收回卡片架' }).click()
+    await expect.poll(() => app.windows().filter((candidate) => candidate.url().includes('bpFloat=')).length, { timeout: 20_000 }).toBe(0)
+    await expect(card).toHaveAttribute('data-presentation', 'shelved', { timeout: 20_000 })
+  } finally {
+    await app.close()
+    rmSync(dataDir, { recursive: true, force: true })
+  }
+})
+
+test('拖拽面收敛：装饰子元素不拦截指针，按住缩略图区命中的是卡片本体', async () => {
+  const { app, page, dataDir } = await launch()
+  try {
+    const card = await addCard(page, '/a')
+    await waitForPreview(card)
+
+    // 整张卡 = 一张拖拽面：从缩略图（<img>）、文字上按住拖动时，指针目标
+    // 必须是可拖拽的卡片本身——排除 macOS Chromium 的图片拖拽劫持与子元素歧义
+    // （这是与「真实鼠标已验收」的圆桌标题栏之间最大的行为差异）。
+    const surface = await page.evaluate((id) => {
+      const cardEl = document.querySelector<HTMLElement>(`.web-card[data-tab-id="${id}"]`)
+      if (!cardEl) throw new Error('card not found')
+      const image = cardEl.querySelector<HTMLElement>('.web-card__image')
+      const meta = cardEl.querySelector<HTMLElement>('.web-card__meta')
+      const rect = cardEl.getBoundingClientRect()
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 3)
+      return {
+        imagePointerEvents: image ? getComputedStyle(image).pointerEvents : null,
+        metaPointerEvents: meta ? getComputedStyle(meta).pointerEvents : null,
+        hitClass: hit instanceof HTMLElement ? hit.className : String(hit?.constructor.name ?? 'null')
+      }
+    }, (await card.getAttribute('data-tab-id'))!)
+    expect(surface.imagePointerEvents).toBe('none')
+    expect(surface.metaPointerEvents).toBe('none')
+    // 缩略图中心命中的是卡片本体（或其非拦截容器），而不是 <img> 自身。
+    expect(surface.hitClass).not.toContain('web-card__image')
+
+    // 悬浮操作层：非悬浮时不可点，悬浮时按钮可点。
+    const actions = card.locator('.web-card__actions')
+    expect(await actions.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe('none')
+    await card.hover()
+    expect(await actions.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe('auto')
   } finally {
     await app.close()
     rmSync(dataDir, { recursive: true, force: true })

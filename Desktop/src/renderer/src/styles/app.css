@@ -8368,3 +8368,205 @@ textarea {
 .rt-window__grip:active {
   cursor: grabbing;
 }
+
+/* ============ Phase 3.4：卡片拖拽面收敛 + 「添加网页」编辑卡 ============ */
+
+/*
+ * 整张卡 = 一张拖拽面。装饰性子元素全部不再接收指针事件：
+ * 1) 从缩略图（<img>）或文字上开始按住拖动时，拖拽目标永远是卡片本身——
+ *    排除 macOS Chromium 对图片拖拽的劫持与子元素歧义；
+ * 2) 这是圆桌标题栏（真实鼠标拖出已验收）与卡片之间最大的行为差异之一。
+ * 按钮（.web-card__actions 内）保持可点。
+ */
+.web-card__preview,
+.web-card__image,
+.web-card__placeholder,
+.web-card__meta,
+.web-card__identity,
+.web-card__state,
+.web-card__roundtable-dot,
+.web-card__grip {
+  pointer-events: none;
+}
+
+.web-card__image {
+  -webkit-user-drag: none;
+}
+
+/* 悬浮操作层：默认透明且不接收指针（否则盖住预览区一角）；悬浮/聚焦时才可点。 */
+.web-card__actions {
+  pointer-events: none;
+}
+
+.web-card:hover .web-card__actions,
+.web-card:focus-visible .web-card__actions,
+.web-card__actions:focus-within {
+  pointer-events: auto;
+}
+
+/* 低调六点握把：只在悬浮时出现，说明这张卡「可以拿起来」。 */
+.web-card__grip {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  font-size: 10px;
+  color: var(--ink-soft);
+  background: var(--scrim-chip);
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 2;
+}
+
+.web-card:hover .web-card__grip,
+.web-card:focus-visible .web-card__grip {
+  opacity: 0.85;
+}
+
+/* 「添加网页」编辑卡：不受 208px 卡宽限制，独立成一张精致的输入卡。 */
+.web-card--editing {
+  flex: 0 0 344px;
+  border: 1px solid var(--hairline-strong);
+  background: var(--card);
+  box-shadow: 0 10px 26px -20px rgba(58, 40, 22, 0.45);
+}
+
+.web-card__form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 16px 14px;
+}
+
+.web-card__form-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.web-card__form-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--canvas-chip);
+  color: var(--ink);
+}
+
+.web-card__form-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.web-card__form-label {
+  font-size: 11.5px;
+  color: var(--ink-soft);
+}
+
+.web-card__input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  background: var(--well);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.web-card__input-wrap:focus-within {
+  border-color: var(--sage);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sage) 18%, transparent);
+  background: var(--card);
+}
+
+.web-card__input-icon {
+  display: inline-flex;
+  color: var(--ink-faint);
+}
+
+.web-card__input-wrap:focus-within .web-card__input-icon {
+  color: var(--sage);
+}
+
+.web-card__input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font-size: 13.5px;
+  color: var(--ink);
+  outline: none;
+  padding: 0;
+  height: 100%;
+}
+
+.web-card__input::placeholder {
+  color: var(--ink-faint);
+}
+
+.web-card__form-hint {
+  margin: -2px 2px 0;
+  font-size: 10.5px;
+  color: var(--ink-faint);
+}
+
+.web-card__form-error {
+  margin: -2px 2px 0;
+  font-size: 10.5px;
+  color: var(--roast);
+}
+
+.web-card__form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.web-card__form-cancel {
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.web-card__form-cancel:hover {
+  color: var(--ink);
+  background: var(--well);
+}
+
+.web-card__form-ok {
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: var(--espresso);
+  color: var(--on-espresso);
+  cursor: pointer;
+}
+
+.web-card__form-ok:hover {
+  filter: brightness(1.06);
+}
+
+.web-card__form-ok:disabled {
+  opacity: 0.45;
+  cursor: default;
+  filter: none;
+}
