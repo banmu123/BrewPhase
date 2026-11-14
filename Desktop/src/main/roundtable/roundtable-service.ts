@@ -7,6 +7,7 @@ import {
   reorderParticipants,
   retainParticipants,
   setDetached,
+  setWorkspaceOpen,
   writeDraft,
   type RoundtableSnapshot
 } from '../../shared/roundtable'
@@ -102,6 +103,9 @@ export class RoundtableService {
     // 主窗口的占位区也立刻出现——不存在「窗口已开、两边都还显示停靠位」的空档。
     this.commit(setDetached(this.state, true))
     this.params.createWindow(near)
+    // 窗口建好后重新广播：视图托管按新宿主迁移（resolveHostWindow 此时
+    // 才能解析到独立窗口）；不重新 commit，只重发快照。
+    this.params.broadcast(this.state)
     return this.state
   }
 
@@ -109,8 +113,21 @@ export class RoundtableService {
   dock(): RoundtableSnapshot {
     if (!this.state.detached) return this.state
     const next = this.commit(setDetached(this.state, false))
+    // 归位后主窗口不再处于工作空间形态（用户回 Studio 首页的圆桌区块）。
+    this.commit(setWorkspaceOpen(this.state, false))
     this.params.closeWindow()
     return next
+  }
+
+  /** 打开主窗口的工作空间 overlay（停靠形态专属；detached 时是 no-op）。 */
+  enterWorkspace(): RoundtableSnapshot {
+    if (this.state.detached) return this.state
+    return this.commit(setWorkspaceOpen(this.state, true))
+  }
+
+  /** 关闭工作空间 overlay：视图由装配层隐藏，成员与布局原样保留。 */
+  exitWorkspace(): RoundtableSnapshot {
+    return this.commit(setWorkspaceOpen(this.state, false))
   }
 
   /** 聚焦独立窗口（主窗口占位区的「重新打开」）。 */

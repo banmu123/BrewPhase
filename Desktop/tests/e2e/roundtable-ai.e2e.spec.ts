@@ -218,10 +218,11 @@ test('多平台并行：先完成者先显示；拆出独立窗口同步，归�
     await expect(claudeAnswer).toHaveAttribute('data-state', 'completed', { timeout: 25_000 })
     await expect(claudeAnswer).toContainText('CLAUDE-FIXTURE')
 
-    // —— 拆出：独立窗口拿到同一份成员与回答（广播 + hydration）——
+    // —— 拆出：独立窗口主体是自由布局工作空间（面板 = 成员）；回答在讨论抽屉里 ——
     await page.getByRole('button', { name: '拆出为独立窗口' }).click()
     const shell = await roundtableShell(app)
-    await expect(shell.locator('.roundtable__participant')).toHaveCount(2, { timeout: 15_000 })
+    await expect(shell.locator('.rt-panel')).toHaveCount(2, { timeout: 15_000 })
+    await shell.locator('.rt-window__ask-toggle').click()
     await expect(shell.locator('.roundtable__answer')).toHaveCount(2, { timeout: 25_000 })
     await expect(shell.locator('.roundtable__answer[data-state="completed"]')).toHaveCount(2)
     await expect(page.locator('.roundtable--slot')).toContainText('本轮讨论已完成', { timeout: 15_000 })
@@ -248,14 +249,15 @@ test('独立窗口发起提问：主窗口占位区同步进度；成员状态�
     await dragCardToRoundtable(page, gptTabId)
     await expect(page.locator('.roundtable__participant .roundtable__member-state[data-state="ready"]')).toHaveCount(1, { timeout: 15_000 })
 
-    // 拆出前先写好草稿；拆出后成员状态与草稿在独立窗口原样出现。
+    // 拆出前先写好草稿；拆出后成员（工作空间面板）与草稿在独立窗口原样出现。
     await page.locator('.roundtable__ask-input').fill('独立窗口发起的问题')
     await page.getByRole('button', { name: '拆出为独立窗口' }).click()
     const shell = await roundtableShell(app)
-    await expect(shell.locator('.roundtable__participant .roundtable__member-state[data-state="ready"]')).toHaveCount(1, { timeout: 15_000 })
+    await expect(shell.locator('.rt-panel')).toHaveCount(1, { timeout: 15_000 })
     await expect(shell.locator('.roundtable__ask-input')).toHaveValue('独立窗口发起的问题', { timeout: 15_000 })
 
-    // 独立窗口发起：主窗口占位区同步进度与完成。
+    // 打开讨论抽屉；独立窗口发起：主窗口占位区同步进度与完成。
+    await shell.locator('.rt-window__ask-toggle').click()
     await shell.locator('.roundtable__ask-submit').click()
     await expect(page.locator('.roundtable--slot')).toContainText('讨论进行中', { timeout: 20_000 })
     await expect(shell.locator('.roundtable__answer[data-state="completed"]')).toHaveCount(1, { timeout: 30_000 })

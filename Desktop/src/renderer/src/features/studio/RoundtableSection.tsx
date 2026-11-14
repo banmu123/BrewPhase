@@ -12,6 +12,7 @@ import { useBrowserStore } from '../browser/browser-store'
 import { useBrowserPreviewStore } from '../browser/preview-store'
 import { Markdown } from '../ai-workspace/markdown'
 import { useRoundtableAIStore } from './roundtable-ai-store'
+import { useRoundtableLayoutStore } from './roundtable-layout-store'
 import { useRoundtableStore } from './roundtable-store'
 import { WEB_CARD_MIME } from './WebCardShelf'
 
@@ -98,6 +99,16 @@ function DockedRoundtable() {
             {dragOutside ? t.studio.roundtable.detachHint : t.studio.roundtable.dragHint}
           </span>
         )}
+        <button
+          type="button"
+          className="roundtable__undock"
+          aria-label={t.studio.roundtable.enterWorkspace}
+          title={t.studio.roundtable.enterWorkspace}
+          onClick={() => void useRoundtableLayoutStore.getState().enterWorkspace()}
+        >
+          <span aria-hidden="true">⧉</span>
+          <span>{t.studio.roundtable.enterWorkspace}</span>
+        </button>
         <button
           type="button"
           className="roundtable__undock"
@@ -406,7 +417,7 @@ function MemberStatusLine(props: {
  * 复用 Markdown 组件；复制与查看原网页都只作用于单张卡。
  * ============================================================ */
 
-function RoundtableAnswers(props: { task: AIRoundtableTaskSnapshot | null }) {
+export function RoundtableAnswers(props: { task: AIRoundtableTaskSnapshot | null }) {
   const { t } = useI18n()
   const tabs = useBrowserStore((state) => state.state.tabs)
   const [copied, setCopied] = useState<string | null>(null)

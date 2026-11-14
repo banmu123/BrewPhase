@@ -623,3 +623,24 @@ export const aiMessages = sqliteTable(
   },
   (table) => [index('ai_messages_conversation_idx').on(table.conversationId, table.createdAt)]
 )
+
+/**
+ * 圆桌自由布局（Phase 4.2 workspace，migration 11）：每个成员面板在圆桌
+ * 工作区里的位置 / 尺寸 / 层级。坐标是工作区局部坐标，恢复时按工作区
+ * 尺寸 clamp。tabId 唯一身份；圆桌关闭布局保留，标签关闭时清理对应行。
+ */
+export const roundtablePanels = sqliteTable(
+  'roundtable_panels',
+  {
+    roundtableId: text('roundtable_id').notNull(),
+    tabId: text('tab_id').notNull(),
+    url: text('url').notNull().default(''),
+    x: integer('x').notNull(),
+    y: integer('y').notNull(),
+    width: integer('width').notNull(),
+    height: integer('height').notNull(),
+    zIndex: integer('z_index').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (table) => [primaryKey({ columns: [table.roundtableId, table.tabId] })]
+)

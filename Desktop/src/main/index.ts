@@ -24,10 +24,18 @@ import { BrowserManager } from './browser/browser-manager'
 import { BrowserDragSessionManager } from './browser/browser-drag'
 import { RoundtableService } from './roundtable/roundtable-service'
 import { RoundtableWindowManager } from './roundtable/roundtable-window-manager'
-import { ROUNDTABLE_CHANGED_CHANNEL, ROUNDTABLE_ID, type RoundtableSnapshot } from '../shared/roundtable'
+import {
+  ROUNDTABLE_CHANGED_CHANNEL,
+  ROUNDTABLE_ID,
+  ROUNDTABLE_LAYOUT_CHANGED_CHANNEL,
+  type RoundtableLayoutSnapshot,
+  type RoundtableSnapshot
+} from '../shared/roundtable'
 import { ROUNDTABLE_AI_TASK_CHANGED_CHANNEL } from '../shared/contracts/roundtable-ai'
 import { AIChatService } from './ai-chat/ai-chat-service'
 import { ParticipantService } from './ai-chat/participant-service'
+import { RoundtableLayoutManager } from './roundtable/roundtable-layout-manager'
+import { RoundtableViewManager } from './roundtable/roundtable-view-manager'
 import { BookmarkService } from './browser/bookmark-service'
 import { ChromeService } from './integrations/chrome/chrome-service'
 import { resolveDataLocation, setActiveDataDir } from './data-location'
@@ -75,6 +83,10 @@ let syncService: SyncService | null = null
 let bridgeServer: BridgeServer | null = null
 let chromeService: ChromeService | null = null
 let browserManager: BrowserManager | null = null
+// 圆桌工作空间管理器（在 bootstrap 里创建；before-quit / 测试钩子要用，
+// 所以放在模块作用域）。
+let roundtableLayoutManagerRef: RoundtableLayoutManager | null = null
+let roundtableViewManagerRef: RoundtableViewManager | null = null
 /** 主窗口的显式引用：getAllWindows 的顺序不可靠（浮窗加入后尤其如此）。 */
 let mainWindowRef: BrowserWindow | null = null
 let aiChatService: AIChatService | null = null
@@ -274,9 +286,23 @@ function bootstrap(): void {
     getWindow: () => mainWindowRef,
     devServerUrl,
     drag: dragSession,
-    // 标签被销毁：圆桌立刻摘除失效参与者（两个窗口同步）。
-    onTabClosed: () => {
+    // 标签被销毁：圆桌立刻摘除失效参与者（两个窗口同步），并清理布局行
+    // 与原生视图托管账本。
+    onTabClosed: (tabId) => {
+      roundtableLayoutManagerRef?.handleTabClosed(tabId)
+      roundtableViewManagerRef?.handleTabClosed(tabId)
       roundtableService?.syncTabs(browserManager?.liveTabIds() ?? [])
+    },
+    // 页面加载完成：回填圆桌面板 URL（join 时导航可能尚未完成）。
+    onPageSettled: (tabId) => {
+      const url = browserManager?.resolveTabForAI(tabId)?.url
+      if (url) roundtableLayoutManagerRef?.updateUrl(tabId, url)
+    },
+    // 用户尝试激活圆桌托管的标签：聚焦工作空间 / 独立窗口，绝不抢 view。
+    onRoundtableTabFocus: (tabId) => {
+      const snapshot = roundtableService?.snapshot()
+      if (snapshot?.detached) roundtableManager.focus()
+      else if (snapshot && !snapshot.workspaceOpen) roundtableService?.enterWorkspace()
     }
   })
 
@@ -306,6 +332,21 @@ function bootstrap(): void {
     const main = mainWindowRef
     if (main && !main.isDestroyed()) main.webContents.send(ROUNDTABLE_CHANGED_CHANNEL, snapshot)
     roundtableManager.send(ROUNDTABLE_CHANGED_CHANNEL, snapshot)
+    // 工作空间可见性 / 宿主变化的收口：overlay 开关、拆出、归位都在这里
+    // 收敛（原生视图只在可见时托管；不可见时 hideAll，成员身份与布局不动）。
+    // visible 期间每次广播都 retarget + 对账——宿主可能刚变化（拆出时
+    // 窗口是 commit 之后才创建的，resolveHostWindow 那时还解析不到）。
+    const viewManager = roundtableViewManagerRef
+    if (!viewManager) return
+    const visible = snapshot.detached || snapshot.workspaceOpen
+    const wasVisible = viewManager.isWorkspaceVisible()
+    if (visible !== wasVisible) {
+      viewManager.setWorkspaceVisible(visible)
+    }
+    if (visible) {
+      viewManager.retargetHost()
+      viewManager.syncMembers(snapshot.participantTabIds)
+    }
   }
   // 圆桌真实 WebCard 问答（Phase 4.2）：tabId 是身份，页面就是用户拖进来
   // 的那张。resolveTabForAI 只读解析真实 WebContents；成员被移出圆桌时，
@@ -321,9 +362,55 @@ function bootstrap(): void {
     focusWindow: () => roundtableManager.focus(),
     drag: dragSession,
     onParticipantsChanged: ({ removed }) => {
+      const snapshot = roundtableService?.snapshot()
+      if (!snapshot) return
+      const memberIds = snapshot.participantTabIds
+      // 布局数据永远跟随成员（新成员给默认位、离场清行）；原生视图只在
+      // 工作空间可见时托管——不打开工作空间的加入不动原 view。
+      roundtableLayoutManagerRef?.syncMembers(memberIds)
+      if (snapshot.detached || snapshot.workspaceOpen) {
+        roundtableViewManagerRef?.syncMembers(memberIds)
+      }
       for (const tabId of removed) participantServiceRef?.cancelParticipant(tabId)
     }
   })
+
+  // 圆桌自由布局工作空间（Phase 4.2）：布局（纯数据）与原生视图（托管）
+  // 分成两个管理器——LayoutManager 只碰数字与 SQLite，ViewManager 只碰
+  // WebContentsView 的父容器 / bounds / 可见性 / z-order；页面生命周期
+  // 权威仍是 BrowserManager。
+  const broadcastRoundtableLayout = (snapshot: RoundtableLayoutSnapshot): void => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (window.isDestroyed()) continue
+      window.webContents.send(ROUNDTABLE_LAYOUT_CHANGED_CHANNEL, snapshot)
+    }
+  }
+  const roundtableLayoutManager = new RoundtableLayoutManager({
+    db: db.db,
+    broadcast: broadcastRoundtableLayout,
+    getTabUrl: (tabId) => browserManager?.resolveTabForAI(tabId)?.url ?? null
+  })
+  roundtableLayoutManagerRef = roundtableLayoutManager
+
+  const resolveRoundtableHostWindow = (): BrowserWindow | null => {
+    const snapshot = roundtableService?.snapshot()
+    if (snapshot?.detached) {
+      const id = roundtableManager.windowId()
+      return id !== null ? BrowserWindow.fromId(id) : null
+    }
+    return mainWindowRef
+  }
+  const roundtableViewManager = new RoundtableViewManager({
+    getView: (tabId) => browserManager?.resolveTabView(tabId) ?? null,
+    resolveHostWindow: resolveRoundtableHostWindow,
+    layout: () => {
+      const snapshot = roundtableLayoutManagerRef?.snapshot()
+      return { panels: snapshot?.panels ?? [], snapEnabled: snapshot?.snapEnabled ?? true }
+    },
+    hostTab: (tabId, hostWindowId) => browserManager?.hostTabInRoundtable(tabId, hostWindowId) ?? false,
+    releaseTab: (tabId) => browserManager?.releaseTabFromRoundtable(tabId)
+  })
+  roundtableViewManagerRef = roundtableViewManager
 
   const participantService = new ParticipantService({
     db: db.db,
@@ -407,6 +494,8 @@ function bootstrap(): void {
     services: { records, clients, workContexts, personalDirection },
     aiChat: aiChatService,
     roundtableAI: participantService,
+    roundtableLayout: roundtableLayoutManager,
+    roundtableViews: roundtableViewManager,
     bridgeStatus,
     browser: browserManager,
     roundtable: roundtableService,
@@ -420,7 +509,11 @@ function bootstrap(): void {
   // 打包版没有这个全局对象；真实用户路径永远读系统光标。
   if (!app.isPackaged) {
     ;(globalThis as unknown as Record<string, unknown>).__bpTestHooks = {
-      setDragCursor: (point: { x: number; y: number } | null) => browserManager?.setDragCursorOverride(point)
+      setDragCursor: (point: { x: number; y: number } | null) => browserManager?.setDragCursorOverride(point),
+      // E2E 的 expectRoundtableViewsAlive：原生视图存活 / bounds / 宿主 /
+      // z-order 的唯一可靠观测入口（page.screenshot 拍不到 WebContentsView）。
+      roundtableViews: () => roundtableViewManagerRef?.infos() ?? [],
+      roundtableLayout: () => roundtableLayoutManagerRef?.snapshot() ?? null
     }
   }
 
@@ -482,6 +575,13 @@ app.on('before-quit', (event) => {
   browserManager = null
   aiChatService?.dispose()
   aiChatService = null
+  // 圆桌布局：退出前把防抖中的最后一次状态落库。
+  try {
+    roundtableLayoutManagerRef?.flushPersist()
+  } catch (error) {
+    console.error('[roundtable-layout] flush on quit failed', error)
+  }
+  roundtableLayoutManagerRef?.dispose()
   // Bridge 与 Chrome 本地 IPC 的关闭都是异步的（关 socket、删 info / pipe 文件）：
   // 先拦住这一次 quit，清理完再真正退出；第二次进入时 `quitting` 已置位，只关库。
   if ((bridgeServer || chromeService) && !quitting) {

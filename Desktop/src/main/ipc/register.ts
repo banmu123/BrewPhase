@@ -61,9 +61,12 @@ import type {
 import type { CurrentStateDraft, ProposalKind } from '../../shared/contracts/personal-direction'
 import type { AIChatService } from '../ai-chat/ai-chat-service'
 import type { ParticipantService } from '../ai-chat/participant-service'
+import type { RoundtableLayoutManager } from '../roundtable/roundtable-layout-manager'
+import type { RoundtableViewManager } from '../roundtable/roundtable-view-manager'
 import type { BrowserBounds } from '../../shared/contracts/browser'
 import type { AIProvider } from '../ai-chat/automation/types'
 import { ApplicationError } from '../application/errors'
+import { normalizeBrowserURL } from '../../shared/browser-url'
 import { detectAgents } from '../integrations/ai-agents/detection-service'
 import { applyAgentConfig, planAgentConfig } from '../integrations/ai-agents/config-service'
 import type { AgentKind } from '../integrations/ai-agents/types'
@@ -93,6 +96,10 @@ export function registerIpc(params: {
   aiChat: AIChatService
   /** 圆桌真实 WebCard 问答（Phase 4.2）：tabId 驱动的参与者执行。 */
   roundtableAI: ParticipantService
+  /** 圆桌自由布局（Phase 4.2 workspace）：布局唯一状态。 */
+  roundtableLayout: RoundtableLayoutManager
+  /** 圆桌原生视图托管（Phase 4.2 workspace）。 */
+  roundtableViews: RoundtableViewManager
   /** 内置浏览器：网页在主进程绘制，IPC 只表达意图。 */
   browser: BrowserManager
   /** AI 圆桌：主进程唯一状态（Phase 3）。 */
@@ -114,6 +121,8 @@ export function registerIpc(params: {
     bridgeStatus,
     aiChat,
     roundtableAI,
+    roundtableLayout,
+    roundtableViews,
     browser,
     roundtable,
     bookmarks,
@@ -535,7 +544,7 @@ export function registerIpc(params: {
   // 这些 handler 只做「转交」：真实状态由 BrowserManager 持有，所有返回值都是
   // 同一份快照。参数已经过 zod，`openExternal` 的地址还会再过一次协议白名单。
   handle(IPC.browserState, () => browser.state())
-  handle(IPC.browserOpen, (input) => browser.open(input as { url?: string } | undefined))
+  handle(IPC.browserOpen, (input) => openBrowserCoordinated(input as { url?: string } | undefined))
   handle(IPC.browserHide, () => browser.hide())
   handle(IPC.browserClose, () => browser.close())
   handle(IPC.browserNavigate, (input) => browser.navigate((input as { input: string }).input))
@@ -678,6 +687,106 @@ export function registerIpc(params: {
   handle(IPC.roundtableAIDescribe, (input) => {
     const { tabIds } = input as { tabIds: string[] }
     return roundtableAI.describeParticipants(tabIds)
+  })
+
+  // ---- 圆桌自由布局工作空间（Phase 4.2）----
+  // 布局唯一状态在 RoundtableLayoutManager；原生视图托管在
+  // RoundtableViewManager。Renderer 只表达意图与上报测量结果——
+  // WebContents / 视图对象绝不跨 IPC。
+
+  // 打开工作空间 overlay：与浏览器面板互斥（原生视图互相叠放会乱序）。
+  handle(IPC.roundtableWorkspaceEnter, () => {
+    if (browser.state().visible) browser.hide()
+    return roundtable.enterWorkspace()
+  })
+
+  handle(IPC.roundtableWorkspaceExit, () => roundtable.exitWorkspace())
+
+  // 打开浏览器面板前先退出工作空间（互斥的另一半）。
+  const openBrowserCoordinated = (input: unknown): unknown => {
+    if (roundtable.snapshot().workspaceOpen) roundtable.exitWorkspace()
+    return browser.open(input as never)
+  }
+
+  handle(IPC.roundtableLayoutGet, () => roundtableLayout.snapshot())
+
+  handle(IPC.roundtableLayoutMove, (input) => {
+    const { tabId, x, y } = input as { tabId: string; x: number; y: number }
+    return roundtableLayout.movePanelLive(tabId, x, y)
+  })
+
+  handle(IPC.roundtableLayoutResize, (input) => {
+    const { tabId, x, y, width, height, anchor } = input as {
+      tabId: string
+      x: number
+      y: number
+      width: number
+      height: number
+      anchor?: 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+    }
+    return roundtableLayout.resizePanel(tabId, x, y, width, height, anchor ?? 'se')
+  })
+
+  handle(IPC.roundtableLayoutFront, (input) => {
+    const { tabId } = input as { tabId: string }
+    const snapshot = roundtableLayout.bringToFront(tabId)
+    roundtableViews.refreshZOrder()
+    return snapshot
+  })
+
+  handle(IPC.roundtableLayoutSnap, (input) => {
+    const { enabled } = input as { enabled: boolean }
+    return roundtableLayout.setSnapEnabled(enabled)
+  })
+
+  handle(IPC.roundtableLayoutWorkspaceSize, (input) => {
+    const { width, height } = input as { width: number; height: number }
+    return roundtableLayout.setWorkspaceSize({ width, height })
+  })
+
+  handle(IPC.roundtableLayoutActive, (input) => {
+    const { tabId } = input as { tabId: string }
+    return roundtableLayout.bringToFront(tabId)
+  })
+
+  // 面板内容区 rects（宿主窗口相对坐标）：主进程解析宿主窗口后据此
+  // setBounds 原生视图；非宿主渲染层的迟到上报由 view manager 忽略。
+  handle(IPC.roundtablePanelBounds, (input) => {
+    const { rects } = input as { rects: Array<{ tabId: string; x: number; y: number; width: number; height: number }> }
+    roundtableViews.applyRects(rects)
+    return null
+  })
+
+  // 圆桌内直接新建网页：创建真实 WebCard（park 到卡片架）→ join →
+  // 布局给默认位。同一平台允许多张卡；URL 走既有浏览器安全校验。
+  handle(IPC.roundtableAddWeb, (input) => {
+    const { url } = input as { url: string }
+    const normalized = normalizeBrowserURL(url)
+    if (!normalized) {
+      throw new ApplicationError('VALIDATION_ERROR', 'invalid web url')
+    }
+    const tabId = browser.createShelfTabWithURL(normalized)
+    if (!tabId) {
+      throw new ApplicationError('VALIDATION_ERROR', 'failed to create tab')
+    }
+    return roundtable.join(tabId)
+  })
+
+  // 幽灵面板重开：重启后 WebContents 已消失，布局行还在。创建新标签
+  // （真实 WebCard）→ join 成员 → 布局原几何 rebind 到新 tabId——
+  // 位置 / 尺寸 / 层级一步不差，不伪造任何页面内容。
+  handle(IPC.roundtableLayoutRebind, (input) => {
+    const { oldTabId, url } = input as { oldTabId: string; url: string }
+    const normalized = normalizeBrowserURL(url)
+    if (!normalized) {
+      throw new ApplicationError('VALIDATION_ERROR', 'invalid web url')
+    }
+    const tabId = browser.createShelfTabWithURL(normalized)
+    if (!tabId) {
+      throw new ApplicationError('VALIDATION_ERROR', 'failed to create tab')
+    }
+    roundtable.join(tabId)
+    return roundtableLayout.rebindPanel(oldTabId, tabId)
   })
 }
 

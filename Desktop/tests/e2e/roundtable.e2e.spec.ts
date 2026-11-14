@@ -232,9 +232,9 @@ test('圆桌拆出独立窗口：占位区、窗口壳、重复拆出只聚焦',
     await expect(page.locator('.roundtable--slot')).toContainText('1 位参与者')
     await expect(page.locator('.roundtable--floating')).toHaveCount(0)
 
-    // 独立窗口：圆桌壳渲染完整正文（参与者 + 提问输入），没有 Studio Home。
+    // 独立窗口：主体是自由布局工作空间（面板 = 参与者），提问条在底部。
     const shell = await roundtableShell(app)
-    await expect(shell.locator('.roundtable__participant-name')).toContainText('fixture b')
+    await expect(shell.locator('.rt-panel__name')).toContainText('fixture b')
     await expect(shell.locator('.roundtable__ask-input')).toBeVisible()
     await expect(shell.getByRole('button', { name: '圆桌归位' })).toBeVisible()
     expect(shell.url()).toContain('bpRoundtable=')
@@ -265,10 +265,10 @@ test('跨窗口状态同步：参与者与草稿在两个窗口一致，归位�
     await page.getByRole('button', { name: '拆出为独立窗口' }).click()
     const shell = await roundtableShell(app)
     await expect(shell.locator('.roundtable__ask-input')).toHaveValue('两个窗口看同一份草稿', { timeout: 15_000 })
-    await expect(shell.locator('.roundtable__participant')).toHaveCount(2, { timeout: 15_000 })
+    await expect(shell.locator('.rt-panel')).toHaveCount(2, { timeout: 15_000 })
 
-    // 独立窗口里移除参与者：主窗口占位区的人数同步减少。
-    await shell.locator('.roundtable__participant').first().getByRole('button', { name: /移除/ }).click()
+    // 独立窗口里移除参与者（工作空间面板的 ✕）：主窗口占位区人数同步减少。
+    await shell.locator('.rt-panel__action--remove').first().click()
     await expect(page.locator('.roundtable--slot')).toContainText('1 位参与者', { timeout: 15_000 })
 
     // 独立窗口里改草稿：归位后在主窗口原样出现（独立窗口 → 主窗口同步）。
@@ -394,10 +394,11 @@ test('三类窗口共存：主窗口 + 独立浏览器 + 独立圆桌互不干�
     await setFakeCursor(app, null)
     await expect.poll(() => shells(app, 'bpFloat=').length, { timeout: 20_000 }).toBe(1)
 
-    // 圆桌也拆出：两个独立窗口同时活着。
+    // 圆桌也拆出：两个独立窗口同时活着——不过浮窗唯一的成员被圆桌托管后，
+    // 空浮窗按规格 §5.2 安全关闭（页面实例不复制，tabCount 仍是 1）。
     await page.getByRole('button', { name: '拆出为独立窗口' }).click()
     await expect.poll(() => shells(app, 'bpRoundtable=').length, { timeout: 20_000 }).toBe(1)
-    await expect.poll(() => shells(app, 'bpFloat=').length, { timeout: 10_000 }).toBe(1)
+    await expect.poll(() => shells(app, 'bpFloat=').length, { timeout: 10_000 }).toBe(0)
 
     // 主窗口仍可用：卡片架显示「独立窗口」状态，占位区在。
     await expect(page.locator('.studio-home')).toBeVisible()

@@ -15,6 +15,11 @@ import {
   useRoundtableStore
 } from '../features/studio/roundtable-store'
 import { subscribeRoundtableAI, useRoundtableAIStore } from '../features/studio/roundtable-ai-store'
+import {
+  subscribeRoundtableLayout,
+  useRoundtableLayoutStore
+} from '../features/studio/roundtable-layout-store'
+import { RoundtableWorkspace } from '../features/studio/RoundtableWorkspace'
 import { subscribeBrowserState, useBrowserStore } from '../features/browser/browser-store'
 import { subscribeBrowserPreviews, useBrowserPreviewStore } from '../features/browser/preview-store'
 import { useI18n } from '../i18n'
@@ -71,14 +76,28 @@ export function App() {
     // 圆桌的 Multi-AI 任务状态（Phase 4.1）：同一份广播，两个窗口同态。
     const unsubscribeAI = subscribeRoundtableAI()
     void useRoundtableAIStore.getState().hydrate()
+    // 圆桌自由布局（Phase 4.2）：同一份广播，两个窗口同态。
+    const unsubscribeLayout = subscribeRoundtableLayout()
+    void useRoundtableLayoutStore.getState().hydrate()
     return () => {
       unsubscribe()
       unsubscribePreviews()
       unsubscribeRoundtable()
       unsubscribeDragFrames()
       unsubscribeAI()
+      unsubscribeLayout()
     }
   }, [])
+
+  const detached = useRoundtableStore((state) => state.snapshot.detached)
+  const workspaceOpen = useRoundtableStore((state) => state.snapshot.workspaceOpen)
+
+  // 模块切走时退出工作空间（原生视图不跟随页面滚动，也不该盖住其他空间）。
+  useEffect(() => {
+    if (module !== 'studio' && workspaceOpen && !detached) {
+      void useRoundtableLayoutStore.getState().exitWorkspace()
+    }
+  }, [module, workspaceOpen, detached])
 
   // 首次启动引导（配对指引）：打包版 + 没看过 + 未配对时出现一次。
   // 判定三条件都在 App 层收口，Onboarding 只负责呈现与出口。
@@ -168,6 +187,10 @@ export function App() {
       )}
       {/* 命令式确认框（confirmAction）的宿主：挂在最外层，任何页面都能弹。 */}
       <ConfirmHost />
+      {/* 圆桌工作空间 overlay（Phase 4.2）：原生视图宿主；仅停靠形态挂载。
+          层级与 BrowserPanel 同层互斥（打开浏览器面板时主进程会先退出）。 */}
+      {module === 'studio' && workspaceOpen && !detached && <RoundtableWorkspace host="docked" />}
+
       {/* 浏览器浮在最上层，但仍在 Modal（z-index 100）之下：
           未来的「保存到 Records」表单要能盖住它。 */}
       <BrowserPanel />

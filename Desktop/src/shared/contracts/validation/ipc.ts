@@ -200,6 +200,20 @@ export const IPC = {
   roundtableDragBegin: 'roundtable:drag:begin',
   roundtableDragDropHandled: 'roundtable:drag:drop-handled',
   roundtableDragEnd: 'roundtable:drag:end',
+  // Phase 4.2 workspace：自由布局多网页工作空间。布局是主进程唯一状态；
+  // rects 上报是「渲染层测量 → 主进程 setBounds 原生视图」的唯一路径。
+  roundtableWorkspaceEnter: 'roundtable:workspace:enter',
+  roundtableWorkspaceExit: 'roundtable:workspace:exit',
+  roundtableLayoutGet: 'roundtable-layout:get',
+  roundtableLayoutMove: 'roundtable-layout:move',
+  roundtableLayoutResize: 'roundtable-layout:resize',
+  roundtableLayoutFront: 'roundtable-layout:front',
+  roundtableLayoutSnap: 'roundtable-layout:snap',
+  roundtableLayoutWorkspaceSize: 'roundtable-layout:workspace-size',
+  roundtableLayoutActive: 'roundtable-layout:active',
+  roundtablePanelBounds: 'roundtable-layout:panel-bounds',
+  roundtableAddWeb: 'roundtable:add-web',
+  roundtableLayoutRebind: 'roundtable-layout:rebind',
   // Phase 4.2：真实 WebCard 驱动的圆桌问答。tabId 是参与者身份，主进程
   // 负责「校验成员 → 解析真实 WebContents → Registry 识别 → 执行」。
   roundtableAIAsk: 'roundtable-ai:ask',
@@ -360,6 +374,47 @@ export const ipcRequestSchemas = {
   [IPC.roundtableAICancelParticipant]: z.object({ tabId: z.string().min(1).max(64) }),
   [IPC.roundtableAILastTask]: z.void(),
   [IPC.roundtableAIDescribe]: roundtableAIDescribeInputSchema,
+
+  // Phase 4.2 workspace：自由布局。坐标都是工作区局部坐标。
+  [IPC.roundtableWorkspaceEnter]: z.void(),
+  [IPC.roundtableWorkspaceExit]: z.void(),
+  [IPC.roundtableLayoutGet]: z.void(),
+  [IPC.roundtableLayoutMove]: z.object({
+    tabId: z.string().min(1).max(64),
+    x: z.number(),
+    y: z.number()
+  }),
+  [IPC.roundtableLayoutResize]: z.object({
+    tabId: z.string().min(1).max(64),
+    x: z.number(),
+    y: z.number(),
+    width: z.number(),
+    height: z.number(),
+    /** 缩放锚点（哪几条边随指针动）——防重叠解析要保住对侧边不动。 */
+    anchor: z.enum(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']).optional()
+  }),
+  [IPC.roundtableLayoutFront]: z.object({ tabId: z.string().min(1).max(64) }),
+  [IPC.roundtableLayoutSnap]: z.object({ enabled: z.boolean() }),
+  [IPC.roundtableLayoutWorkspaceSize]: z.object({ width: z.number(), height: z.number() }),
+  [IPC.roundtableLayoutActive]: z.object({ tabId: z.string().min(1).max(64) }),
+  [IPC.roundtablePanelBounds]: z.object({
+    rects: z
+      .array(
+        z.object({
+          tabId: z.string().min(1).max(64),
+          x: z.number(),
+          y: z.number(),
+          width: z.number(),
+          height: z.number()
+        })
+      )
+      .max(24)
+  }),
+  [IPC.roundtableAddWeb]: z.object({ url: z.string().min(1).max(2048) }),
+  [IPC.roundtableLayoutRebind]: z.object({
+    oldTabId: z.string().min(1).max(64),
+    url: z.string().min(1).max(2048)
+  }),
 
   [IPC.browserCreateTab]: z.void(),
   [IPC.browserActivateTab]: z.object({ tabId: z.string().min(1).max(64) }),

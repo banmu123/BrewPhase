@@ -17,6 +17,7 @@ import type {
   AIRoundtableParticipantStatus,
   AIRoundtableTaskSnapshot
 } from './roundtable-ai'
+import type { RoundtableLayoutSnapshot } from '../roundtable'
 import type {
   CurrentState,
   CurrentStateDraft,
@@ -320,6 +321,35 @@ export interface RendererApi {
     deleteConversation: (id: string) => Promise<boolean>
     /** 广播当前任务快照（无任务时是 null）；主窗口与圆桌独立窗口都会收到。 */
     onChanged: (listener: (snapshot: AIChatTaskSnapshot | null) => void) => () => void
+  }
+  /**
+   * 圆桌自由布局工作空间（Phase 4.2）：布局唯一状态在主进程。坐标都是
+   * 工作区局部坐标；渲染层表达意图并上报测量结果，原生视图由主进程摆放。
+   */
+  roundtableWorkspace: {
+    enter: () => Promise<RoundtableSnapshot>
+    exit: () => Promise<RoundtableSnapshot>
+    layout: () => Promise<RoundtableLayoutSnapshot>
+    move: (tabId: string, x: number, y: number) => Promise<RoundtableLayoutSnapshot>
+    resize: (
+      tabId: string,
+      x: number,
+      y: number,
+      width: number,
+      height: number,
+      anchor?: 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+    ) => Promise<RoundtableLayoutSnapshot>
+    front: (tabId: string) => Promise<RoundtableLayoutSnapshot>
+    setSnap: (enabled: boolean) => Promise<RoundtableLayoutSnapshot>
+    setWorkspaceSize: (width: number, height: number) => Promise<RoundtableLayoutSnapshot>
+    setActive: (tabId: string) => Promise<RoundtableLayoutSnapshot>
+    /** 面板内容区 rects（宿主窗口相对坐标）→ 主进程 setBounds 原生视图。 */
+    reportBounds: (rects: Array<{ tabId: string; x: number; y: number; width: number; height: number }>) => Promise<void>
+    /** 圆桌内直接新建网页（真实 WebCard + join + 默认布局）。 */
+    addWeb: (url: string) => Promise<RoundtableSnapshot>
+    /** 幽灵面板重开：新建真实标签并把原几何 rebind 到新 tabId。 */
+    rebind: (oldTabId: string, url: string) => Promise<RoundtableLayoutSnapshot>
+    onLayout: (listener: (snapshot: RoundtableLayoutSnapshot) => void) => () => void
   }
   /**
    * 圆桌真实 WebCard 问答（Phase 4.2）：tabId 是参与者身份。

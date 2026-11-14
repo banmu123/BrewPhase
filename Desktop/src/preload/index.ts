@@ -8,7 +8,11 @@ import {
   type BrowserPreviewEvent,
   type BrowserState
 } from '../shared/contracts/browser'
-import { ROUNDTABLE_CHANGED_CHANNEL, type RoundtableSnapshot } from '../shared/roundtable'
+import {
+  ROUNDTABLE_CHANGED_CHANNEL,
+  ROUNDTABLE_LAYOUT_CHANGED_CHANNEL,
+  type RoundtableSnapshot
+} from '../shared/roundtable'
 import { ROUNDTABLE_AI_TASK_CHANGED_CHANNEL } from '../shared/contracts/roundtable-ai'
 import type { RendererApi } from '../shared/contracts'
 
@@ -143,6 +147,29 @@ const api: RendererApi = {
       const wrapped = (_event: unknown, payload: unknown) => listener(payload as never)
       ipcRenderer.on(ROUNDTABLE_AI_TASK_CHANGED_CHANNEL, wrapped)
       return () => ipcRenderer.removeListener(ROUNDTABLE_AI_TASK_CHANGED_CHANNEL, wrapped)
+    }
+  },
+  // 圆桌自由布局工作空间（Phase 4.2）：布局唯一状态在主进程；渲染层
+  // 表达意图（拖动 / 缩放 / 置顶 / 添加网页）并上报测量到的面板 rects。
+  roundtableWorkspace: {
+    enter: () => invoke(IPC.roundtableWorkspaceEnter),
+    exit: () => invoke(IPC.roundtableWorkspaceExit),
+    layout: () => invoke(IPC.roundtableLayoutGet),
+    move: (tabId, x, y) => invoke(IPC.roundtableLayoutMove, { tabId, x, y }),
+    resize: (tabId, x, y, width, height, anchor) =>
+      invoke(IPC.roundtableLayoutResize, { tabId, x, y, width, height, anchor }),
+    front: (tabId) => invoke(IPC.roundtableLayoutFront, { tabId }),
+    setSnap: (enabled) => invoke(IPC.roundtableLayoutSnap, { enabled }),
+    setWorkspaceSize: (width, height) => invoke(IPC.roundtableLayoutWorkspaceSize, { width, height }),
+    setActive: (tabId) => invoke(IPC.roundtableLayoutActive, { tabId }),
+    reportBounds: (rects) => invoke(IPC.roundtablePanelBounds, { rects }),
+    addWeb: (url) => invoke(IPC.roundtableAddWeb, { url }),
+    /** 幽灵面板重开：新建真实标签并把原几何 rebind 到新 tabId。 */
+    rebind: (oldTabId, url) => invoke(IPC.roundtableLayoutRebind, { oldTabId, url }),
+    onLayout: (listener) => {
+      const wrapped = (_event: unknown, payload: unknown) => listener(payload as never)
+      ipcRenderer.on(ROUNDTABLE_LAYOUT_CHANGED_CHANNEL, wrapped)
+      return () => ipcRenderer.removeListener(ROUNDTABLE_LAYOUT_CHANGED_CHANNEL, wrapped)
     }
   },
   // AI Agent 自动配置：目标路径由主进程解析，这里只传类型与 scope。

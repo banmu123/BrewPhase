@@ -423,6 +423,24 @@ test('窗口内松手（无落点）：不拆窗、不误触发 click 打开面�
     const card = await addCard(page, '/a')
     const tabId = (await card.getAttribute('data-tab-id'))!
 
+    // 落点判定用轮询光标：真实 OS 光标位置带着上一个用例的残留（全量跑
+    // 时可能停在窗口外），必须显式把假光标钉在主窗口内部——松手 =
+    // 确定性的「窗口内」→ 取消会话，不拆窗。
+    const inside = await app.evaluate(({ BrowserWindow }) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        try {
+          if (window.isDestroyed() || window.webContents.isDestroyed()) continue
+          if (window.webContents.getURL().includes('bpRoundtable=')) continue
+          const bounds = window.getContentBounds()
+          return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }
+        } catch {
+          // 窗口正在销毁：跳过。
+        }
+      }
+      throw new Error('main window not found')
+    })
+    await setFakeCursor(app, inside)
+
     // 合成拖拽会话：dragstart → dragend，中间没有任何 drop（窗口内空白处松手）。
     await page.evaluate((id) => {
       const target = document.querySelector<HTMLElement>(`.web-card[data-tab-id="${id}"]`)
@@ -430,6 +448,7 @@ test('窗口内松手（无落点）：不拆窗、不误触发 click 打开面�
       target.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() }))
       target.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() }))
     }, tabId)
+    await setFakeCursor(app, null)
 
     // 主进程按轮询光标裁定「窗口内」→ 取消：不拆窗；click 也不误开面板。
     await expect.poll(() => app.windows().filter((candidate) => candidate.url().includes('bpFloat=')).length, { timeout: 8_000 }).toBe(0)

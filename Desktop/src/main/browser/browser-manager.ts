@@ -69,6 +69,13 @@ export type BrowserManagerParams = {
   drag?: BrowserDragSessionManager
   /** 标签被销毁时的旁路通知（圆桌用它摘除失效参与者）。 */
   onTabClosed?: (tabId: string) => void
+  /** 页面加载 / 导航完成（圆桌布局用它回填面板 URL）。 */
+  onPageSettled?: (tabId: string) => void
+  /**
+   * 用户尝试激活一个正被圆桌托管的标签（Phase 4.2）：不抢 view，
+   * 交给装配层去聚焦圆桌工作空间 / 独立窗口。
+   */
+  onRoundtableTabFocus?: (tabId: string) => void
 }
 
 /** 主窗口浮窗里网页区的对齐以渲染层上报的 stage 矩形为准（见 applyBounds）。 */
@@ -89,6 +96,11 @@ export class BrowserManager {
 
   /** 主窗口浮窗当前显示的标签；null = 起始页。 */
   private activeTabId: string | null = null
+  /**
+   * 被圆桌工作空间托管的原生视图（Phase 4.2）：bounds/可见性由
+   * RoundtableViewManager 负责，浏览器面板的一切几何逻辑必须绕开它们。
+   */
+  private readonly roundtableHosted = new Set<string>()
   /** 主窗口浮窗是否被用户打开。 */
   private panelVisible = false
   /** 主窗口浮窗是否停在起始页（activeTab 仍活着，只是被起始页盖住）。 */
@@ -100,7 +112,7 @@ export class BrowserManager {
   private emitScheduled = false
   private persistTimer: NodeJS.Timeout | null = null
 
-  constructor(params: BrowserManagerParams) {
+  constructor(private readonly params: BrowserManagerParams) {
     this.db = params.db
     this.getWindow = params.getWindow
     this.devServerUrl = params.devServerUrl
@@ -126,7 +138,10 @@ export class BrowserManager {
       },
       // 页面加载/导航/标题变化 → 合并后重新采集缩略图；标签销毁 → 清缓存
       // 并通知旁路订阅者（圆桌摘除失效参与者）。
-      onPageSettled: (tabId) => this.previews.schedule(tabId),
+      onPageSettled: (tabId) => {
+        this.previews.schedule(tabId)
+        params.onPageSettled?.(tabId)
+      },
       onTabClosed: (tabId) => {
         // 拖动中的标签被关闭：会话立刻收尾，绝不给死标签拆窗口。
         if (this.drag.active()?.tabId === tabId) this.drag.cancel()
@@ -386,6 +401,7 @@ export class BrowserManager {
       this.activeTabId = null
       this.startPage = true
     }
+    this.forgetRoundtableHosted(tabId)
     this.tabs.closeTab(tabId)
     this.syncVisibility()
     this.emit()
@@ -413,6 +429,12 @@ export class BrowserManager {
     if (!tab) return this.state()
     if (tab.detached && tab.windowId !== null) {
       this.floats.focus(tab.windowId)
+      return this.state()
+    }
+    // 圆桌托管的标签：绝不抢 view（同一个 WebContentsView 只能有一个父容器），
+    // 交给装配层聚焦圆桌工作空间 / 独立窗口。
+    if (this.roundtableHosted.has(tabId)) {
+      this.params.onRoundtableTabFocus?.(tabId)
       return this.state()
     }
     // 架子上的标签（采集宿主）：迁回主窗口再显示；已展开的标签不受影响。
@@ -579,6 +601,17 @@ export class BrowserManager {
     return this.state()
   }
 
+  /**
+   * 圆桌工作空间「添加网页」：创建标签并导航到已校验的 URL，先停在
+   * 卡片架（圆桌视图管理器随后会托管它）。返回新 tabId。
+   */
+  createShelfTabWithURL(url: string): string | null {
+    const tab = this.tabs.createTab(url)
+    this.parkTab(tab.id)
+    this.emit()
+    return tab.id
+  }
+
   /** 在指定标签里导航（卡片的内联地址栏）；不改变主窗口当前展示。 */
   navigateTab(tabId: string, input: string): BrowserState {
     if (!this.tabs.get(tabId)) return this.state()
@@ -591,6 +624,11 @@ export class BrowserManager {
   detachTab(tabId: string, screenX: number, screenY: number): BrowserState {
     const tab = this.tabs.get(tabId)
     if (!tab) return this.state()
+    // 圆桌托管的标签：页面正在圆桌里工作，拖出 = 聚焦圆桌而不是拆浮窗。
+    if (this.roundtableHosted.has(tabId)) {
+      this.params.onRoundtableTabFocus?.(tabId)
+      return this.state()
+    }
     // 已经在独立窗口里：再拆 = 聚焦现有窗口，绝不创建第二个副本（规格 §3）。
     if (tab.detached && tab.windowId !== null) {
       this.floats.focus(tab.windowId)
@@ -609,6 +647,51 @@ export class BrowserManager {
   /** 活着的全部 tabId（圆桌对账用，不构造完整快照）。 */
   liveTabIds(): string[] {
     return this.tabs.list().map((tab) => tab.id)
+  }
+
+  // MARK: - 圆桌托管协作（Phase 4.2 workspace）
+
+  /**
+   * 把标签交给圆桌宿主窗口：**复用原始 WebContentsView**——只让出浏览器
+   * 面板的激活位、从浮窗账本摘除、换父容器。圆桌托管期间 applyBounds /
+   * activateTab / 卡片拖出都不会再碰它。
+   */
+  hostTabInRoundtable(tabId: string, hostWindowId: number): boolean {
+    const tab = this.tabs.get(tabId)
+    if (!tab) return false
+    if (this.activeTabId === tabId) {
+      // 面板失去激活标签：起始页接管，面板 UI 不强行关闭。
+      this.activeTabId = null
+      this.startPage = true
+    }
+    const fromWindowId = tab.windowId
+    if (fromWindowId !== null && fromWindowId !== hostWindowId) {
+      // 从浮窗账本摘除；浮窗空了就安全关闭（与 resolveDrop 同一规则）。
+      this.floats.release(fromWindowId, tabId)
+      if (this.floats.record(fromWindowId)?.tabIds.size === 0) {
+        this.floats.closeEmpty(fromWindowId)
+      }
+    }
+    this.tabs.moveToWindow(tabId, hostWindowId)
+    this.roundtableHosted.add(tabId)
+    this.emit()
+    return true
+  }
+
+  /** 成员离开圆桌：从托管集合摘除并归还卡片架（park，不销毁）。 */
+  releaseTabFromRoundtable(tabId: string): void {
+    if (!this.roundtableHosted.delete(tabId)) return
+    this.parkTab(tabId)
+    this.emit()
+  }
+
+  isRoundtableHosted(tabId: string): boolean {
+    return this.roundtableHosted.has(tabId)
+  }
+
+  /** 托管中的标签销毁（卡片关闭）：清托管账本。 */
+  private forgetRoundtableHosted(tabId: string): void {
+    this.roundtableHosted.delete(tabId)
   }
 
   /**
@@ -636,6 +719,16 @@ export class BrowserManager {
     }
   }
 
+  /**
+   * 按 tabId 取原始 WebContentsView（主进程内部专用，Phase 4.2 圆桌
+   * 工作空间托管用）。只读：不创建、不 reload；销毁返回 null。
+   */
+  resolveTabView(tabId: string): Electron.WebContentsView | null {
+    const tab = this.tabs.get(tabId)
+    if (!tab) return null
+    return tab.view
+  }
+
   /** 拖拽落点判定（装配层把共享会话的 classify 接到这里）。 */
   classifyDragPoint(point: DragPoint): { windowId: number | null; mainWindow: boolean } {
     return this.floats.windowAt(point.x, point.y)
@@ -644,6 +737,9 @@ export class BrowserManager {
   /** 卡片开始拖动（HTML5 dragstart）。返回 false = 已有会话在跑（拒绝双开）。 */
   beginCardDrag(tabId: string): boolean {
     if (!this.tabs.get(tabId)) return false
+    // 圆桌托管的标签不许从架上拖走（view 归圆桌所有）；点击行为由
+    // activateTab 的守卫转成聚焦圆桌。
+    if (this.roundtableHosted.has(tabId)) return false
     return this.drag.begin('webcard', tabId)
   }
 
@@ -904,6 +1000,9 @@ export class BrowserManager {
     const mainWindowId = this.getWindow()?.id ?? null
     for (const tab of this.tabs.list()) {
       if (tab.windowId !== mainWindowId || tab.windowId === null) continue
+      // 圆桌托管的标签由 RoundtableViewManager 摆放（自由布局面板），
+      // 面板 bounds 与浏览器面板无关——这里跳过，绝不能写成 0×0。
+      if (this.roundtableHosted.has(tab.id)) continue
       if (tab.id === this.activeTabId && !this.startPage && !tab.error) {
         // 渲染层上报的是**网页区（stage）**的矩形，标题栏、标签条与工具栏
         // 都在它上面；这里必须原样对齐，不能再加一次标签条高度——那会让

@@ -16,22 +16,22 @@ const bridge = vi.hoisted(() => {
       closeTab: async () => ({})
     },
     roundtable: {
-      state: async () => ({ id: 'roundtable-main', participantTabIds: [], draft: '', detached: false, updatedAt: 0, version: 0 }),
+      state: async () => ({ id: 'roundtable-main', participantTabIds: [], draft: '', detached: false, workspaceOpen: false, updatedAt: 0, version: 0 }),
       join: async (tabId: string) => {
         calls.join.push(tabId)
-        return { id: 'roundtable-main', participantTabIds: [tabId], draft: '', detached: false, updatedAt: 1, version: 1 }
+        return { id: 'roundtable-main', participantTabIds: [tabId], draft: '', detached: false, workspaceOpen: false, updatedAt: 1, version: 1 }
       },
       leave: async (tabId: string) => {
         calls.leave.push(tabId)
-        return { id: 'roundtable-main', participantTabIds: [], draft: '', detached: false, updatedAt: 2, version: 2 }
+        return { id: 'roundtable-main', participantTabIds: [], draft: '', detached: false, workspaceOpen: false, updatedAt: 2, version: 2 }
       },
       setDraft: async (draft: string) => {
         calls.drafts.push(draft)
-        return { id: 'roundtable-main', participantTabIds: [], draft, detached: false, updatedAt: 3, version: 42 }
+        return { id: 'roundtable-main', participantTabIds: [], draft, detached: false, workspaceOpen: false, updatedAt: 3, version: 42 }
       },
-      detach: async () => ({ id: 'roundtable-main', participantTabIds: [], draft: '', detached: true, updatedAt: 4, version: 9 }),
-      dock: async () => ({ id: 'roundtable-main', participantTabIds: [], draft: '', detached: false, updatedAt: 5, version: 10 }),
-      focus: async () => ({ id: 'roundtable-main', participantTabIds: [], draft: '', detached: true, updatedAt: 6, version: 11 }),
+      detach: async () => ({ id: 'roundtable-main', participantTabIds: [], draft: '', detached: true, workspaceOpen: false, updatedAt: 4, version: 9 }),
+      dock: async () => ({ id: 'roundtable-main', participantTabIds: [], draft: '', detached: false, workspaceOpen: false, updatedAt: 5, version: 10 }),
+      focus: async () => ({ id: 'roundtable-main', participantTabIds: [], draft: '', detached: true, workspaceOpen: false, updatedAt: 6, version: 11 }),
       dragBegin: async () => true,
       dragDropHandled: async () => null,
       dragEnd: async () => null,
@@ -103,7 +103,7 @@ describe('roundtable store（快照缓存）', () => {
   })
 
   it('setDraft：发给主进程，用返回快照对齐输入框（后写者胜出）', async () => {
-    useRoundtableStore.setState({ snapshot: { id: 'roundtable-main', participantTabIds: [], draft: '', detached: false, updatedAt: 0, version: 7 } })
+    useRoundtableStore.setState({ snapshot: { id: 'roundtable-main', participantTabIds: [], draft: '', detached: false, workspaceOpen: false, updatedAt: 0, version: 7 } })
     await useRoundtableStore.getState().setDraft('hello')
     expect(bridge.calls.drafts).toEqual(['hello'])
     expect(useRoundtableStore.getState().snapshot.draft).toBe('hello')
@@ -122,7 +122,7 @@ describe('roundtable store（快照缓存）', () => {
       id: 'roundtable-main',
       participantTabIds: ['tab-5'],
       draft: 'from other window',
-      detached: true,
+      detached: true, workspaceOpen: false,
       updatedAt: 99,
       version: 42
     })

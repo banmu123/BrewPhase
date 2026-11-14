@@ -1,21 +1,25 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { isRoundtableAITaskBusy } from '@shared/contracts'
 import type { BrowserTabInfo } from '@shared/contracts'
 import { cardDisplayName } from '@shared/web-cards'
 import { useI18n } from '../../i18n'
 import { api } from '../../shared/api'
 import { useBrowserStore } from '../browser/browser-store'
+import { useRoundtableAIStore } from './roundtable-ai-store'
+import { useRoundtableLayoutStore } from './roundtable-layout-store'
 import { useRoundtableStore } from './roundtable-store'
-import { ROUNDTABLE_MIME, RoundtableBody } from './RoundtableSection'
+import { RoundtableAnswers, ROUNDTABLE_MIME } from './RoundtableSection'
+import { RoundtableWorkspace } from './RoundtableWorkspace'
 
 /**
- * 圆桌独立窗口的壳（Phase 3）。
+ * 圆桌独立窗口的壳（Phase 3 / 4.2）。
  *
  * App 检测到 `#bpRoundtable=<id>` 时只渲染这个组件：没有 Studio Home、
  * 没有主窗口导航——但同一个 React 应用、同一套 i18n / 主题 / preload。
  *
- * 标题栏的把手段是**拖回归位**的 OS 拖拽源：把它拖到主窗口的圆桌占位区
- * 松手（drop → dock），或直接点「归位」按钮——两种路径完全同效，都是
- * 主进程 RoundtableService.dock()（状态不丢，窗口随之关闭）。
+ * Phase 4.2 起**窗口主体就是自由布局工作空间**：同一批 WebContentsView
+ * 随拆出 / 归位迁移宿主，不创建、不销毁、不重载。提问条与讨论抽屉挂在
+ * 底部——Multi-AI 问答与多网页空间共存于同一个窗口。
  */
 export function RoundtableWindow() {
   const { t } = useI18n()
@@ -24,7 +28,12 @@ export function RoundtableWindow() {
   const setDraggingRoundtable = useRoundtableStore((state) => state.setDraggingRoundtable)
   const dragOutside = useRoundtableStore((state) => state.dragOutside)
   const tabs = useBrowserStore((state) => state.state.tabs)
+  const task = useRoundtableAIStore((state) => state.task)
+  const askTask = useRoundtableAIStore((state) => state.ask)
+  const stopTask = useRoundtableAIStore((state) => state.stop)
+  const [answersOpen, setAnswersOpen] = useState(false)
 
+  const busy = isRoundtableAITaskBusy(task)
   const participants = snapshot.participantTabIds
     .map((tabId) => tabs.find((tab) => tab.id === tabId))
     .filter((tab): tab is BrowserTabInfo => Boolean(tab))
@@ -48,8 +57,6 @@ export function RoundtableWindow() {
   return (
     <div className="rt-window">
       <header className="rt-window__titlebar" title={t.studio.roundtable.dragBackHint}>
-        {/* 专用拖回手柄：标题栏本体负责移动窗口（app-region drag），
-            OS 拖拽源必须与它分开——同一个区域两者会互相抢事件。 */}
         <span
           className="rt-window__grip"
           draggable
@@ -74,7 +81,7 @@ export function RoundtableWindow() {
           ⠿
         </span>
         <span className="rt-window__brand">BREWPHASE</span>
-        <span className="rt-window__title">{t.studio.roundtable.title}</span>
+        <span className="rt-window__title">{t.studio.roundtable.workspaceTitle}</span>
         {participants.length > 0 && (
           <span className="rt-window__count">{t.studio.roundtable.count(participants.length)}</span>
         )}
@@ -94,7 +101,59 @@ export function RoundtableWindow() {
       </header>
 
       <div className="rt-window__body">
-        <RoundtableBody participants={participants} />
+        <RoundtableWorkspace host="detached" />
+
+        {/* 提问条：Multi-AI 问答与多网页空间共存（草稿仍是同一份共享状态）。 */}
+        <footer className="rt-window__ask">
+          <form
+            className="rt-window__ask-form"
+            onSubmit={(event) => {
+              event.preventDefault()
+              if (!busy && snapshot.draft.trim() !== '') void askTask()
+            }}
+          >
+            <input
+              className="roundtable__ask-input"
+              placeholder={t.studio.roundtable.askPlaceholder}
+              aria-label={t.studio.roundtable.askLabel}
+              value={snapshot.draft}
+              maxLength={2_000}
+              onChange={(event) => void useRoundtableStore.getState().setDraft(event.target.value)}
+            />
+            {busy ? (
+              <button type="button" className="roundtable__ask-submit roundtable__ask-submit--stop" onClick={() => void stopTask()}>
+                {t.studio.roundtable.askStop}
+              </button>
+            ) : (
+              <button type="submit" className="roundtable__ask-submit" disabled={snapshot.draft.trim() === ''}>
+                {t.studio.roundtable.askStart}
+              </button>
+            )}
+            <button
+              type="button"
+              className="rt-window__ask-toggle"
+              data-open={answersOpen}
+              data-busy={busy ? 'true' : 'false'}
+              onClick={() => setAnswersOpen((current) => !current)}
+            >
+              {t.studio.roundtable.answersToggle}
+            </button>
+          </form>
+        </footer>
+
+        {answersOpen && (
+          <aside className="rt-window__drawer">
+            <header className="rt-window__drawer-head">
+              <span>{t.studio.roundtable.answersTitle}</span>
+              <button type="button" className="rt-window__drawer-close" onClick={() => setAnswersOpen(false)} aria-label={t.studio.roundtable.answersTitle}>
+                ✕
+              </button>
+            </header>
+            <div className="rt-window__drawer-body">
+              <RoundtableAnswers task={task} />
+            </div>
+          </aside>
+        )}
       </div>
     </div>
   )

@@ -479,6 +479,28 @@ create table ai_messages (
 create index ai_messages_conversation_idx on ai_messages (conversation_id, created_at);
 `
 
+const ROUNDTABLE_PANELS_SQL = `
+-- 圆桌自由布局（Phase 4.2 workspace）：每个成员面板在圆桌工作区里的
+-- 位置 / 尺寸 / 层级。坐标是**工作区局部坐标**（不是屏幕绝对坐标），
+-- 恢复时按工作区尺寸适配。tabId 是唯一身份；圆桌关闭后布局保留，
+-- 标签被关闭时由视图管理器清理对应行。
+-- url 记录面板对应的网页地址：应用重启后 WebContents 必然消失，面板
+-- 以「幽灵面板 + 一键重开（rebind 保留几何）」的方式诚实恢复布局，
+-- 不伪造任何页面内容。
+create table roundtable_panels (
+  roundtable_id text not null,
+  tab_id text not null,
+  url text not null default '',
+  x integer not null,
+  y integer not null,
+  width integer not null,
+  height integer not null,
+  z_index integer not null,
+  updated_at integer not null,
+  primary key (roundtable_id, tab_id)
+);
+`
+
 export const migrations: Migration[] = [
   { version: 1, name: 'init', sql: INIT_SQL },
   { version: 2, name: 'sync-align-ios', sql: SYNC_ALIGN_SQL },
@@ -489,7 +511,8 @@ export const migrations: Migration[] = [
   { version: 7, name: 'mcp-access', sql: MCP_ACCESS_SQL },
   { version: 8, name: 'work-contexts', sql: WORK_CONTEXT_SQL },
   { version: 9, name: 'personal-direction', sql: PERSONAL_DIRECTION_SQL },
-  { version: 10, name: 'ai-conversations', sql: AI_CONVERSATIONS_SQL }
+  { version: 10, name: 'ai-conversations', sql: AI_CONVERSATIONS_SQL },
+  { version: 11, name: 'roundtable-panels', sql: ROUNDTABLE_PANELS_SQL }
 ]
 
 /**

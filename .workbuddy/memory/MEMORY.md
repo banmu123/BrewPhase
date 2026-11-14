@@ -188,6 +188,25 @@
   探测代理页（4.2 起探测的就是卡片本身）；`browser.e2e`「拖动与缩放」无 GPU
   环境会拖不到位（干净 HEAD 同样失败，先 stash 验证再定性）。
 
+## Desktop：圆桌自由布局工作空间（Phase 4.2b）
+
+* **硬规则：自由布局但面板互不重叠**。shared 纯函数三件套（resolveMove/resolveResize/
+  findFreePanelSpot）渲染层预览与主进程落库同源调用（幂等）；被围死返回 null=保持原状，
+  绝不落一个重叠位置。movePanel 位置 clamp 是 maxY=工作区高−120（KEEP_VISIBLE），别当 bug。
+* 原生 WebContentsView 方案：DOM 只画标题栏+手柄（在 view bounds 外 6px 边距），内容区
+  rects 上报 → setBounds 对齐；**z-index 对原生 view 无效**，置顶=removeChild+addChild。
+* 布局持久化 migration 11 `roundtable_panels`（含 url 列）；防抖 300ms；setWorkspaceSize
+  只更新参照系**不改写存储位置**（拆出/归位往返不降级）；显示层按 z 序 clamp+防重叠。
+* 幽灵面板：重启后 WebContents 必然消失，布局行还在→如实显示关闭态+一键重开，
+  rebindPanel 原几何绑新 tabId；join 时页面没加载完 url 是空串→onPageSettled 回填。
+* BrowserManager 协作：hostTabInRoundtable（让激活位+浮窗摘除，空浮窗安全关闭 §5.2+
+  换父）；托管期间 applyBounds/activateTab/卡片拖出都不碰该 tab；移除=park 归还架子。
+* E2E 陷阱：①合成拖拽必须先钉假光标（`__bpTestHooks.setDragCursor`）——否则落点判定
+  轮询真实 OS 光标，上一用例的鼠标残留会偶发拆窗；②窗口枚举要逐窗口 try/catch——
+  关闭过程中 webContents 先于窗口销毁，isDestroyed()==false 时 getURL() 也会抛。
+* 独立圆桌窗口主体=工作空间（.rt-panel）+提问条+讨论抽屉（先点 .rt-window__ask-toggle
+  才有 .roundtable__answer）；旧 roundtable.e2e 壳断言按新模型写。
+
 ## 代码风格与工作流
 
 * 阈值集中 `RAG/Rules/IntelligenceConfig.swift`；中文词表放 `Resources/*.json`。
