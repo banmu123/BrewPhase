@@ -150,6 +150,16 @@
 * E2E 假光标钩子：`globalThis.__bpTestHooks.setDragCursor`（仅 !app.isPackaged
   注入）；Playwright 关独立窗口要用 `BrowserWindow.close()`（page.close() 可能
   绕过 'close' 事件）。`browser.state()` 返回 Promise，evaluate 里要 await。
+* **卡片拖拽面**（3.4）：装饰子元素（缩略图/占位/meta/握把）一律
+  `pointer-events: none`、img 加 `-webkit-user-drag: none`——拖拽目标必须是
+  卡片本体；**禁止对正在被拖动的源卡片做 DOM 变更**（data-insert 会话中断
+  嫌疑）；dragstart 副作用必须包 try（抛错 = Chromium 取消原生拖拽）；
+  会话有 45s 看门狗 + 过期会话识别（`end(fallback, expectedTabId)` 不匹配
+  只取消）。链路埋点：渲染层 `[drag:card]`、主进程 `[drag]`。
+* 编辑卡错误分层：navigate 成功会写 tab.url 使卡片退出编辑态——网络级失败
+  显示在卡片上（加载失败 chip），只有输入级拒绝（协议拦截、url 仍空）才在
+  表单内显示错误行。Playwright `dragAndDrop` 在 Electron 下不可靠，拖拽回归
+  用合成 DragEvent + 结构断言，真实鼠标走人工清单。
 
 ## 代码风格与工作流
 
