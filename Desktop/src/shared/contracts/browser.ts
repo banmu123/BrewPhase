@@ -17,6 +17,11 @@ export const BROWSER_RECENT_LIMIT = 8
  * 这一层。
  */
 export const BROWSER_CHANGED_CHANNEL = 'browser:changed'
+/**
+ * 缩略图广播通道。与 `browser:changed` 分开：快照很小、可以每帧合并；缩略图是
+ * 几十 KB 的 JPEG，只在真正采集成功时发一次，不能搭在状态广播上。
+ */
+export const BROWSER_PREVIEW_CHANNEL = 'browser:preview'
 
 /** 浮窗在**窗口坐标**里的位置与尺寸，单位是 CSS px（= Electron 的 DIP）。 */
 export type BrowserBounds = {
@@ -73,6 +78,8 @@ export type BrowserTabInfo = {
   windowId: number | null
   /** 在独立浏览器窗口里（不在主窗口）。 */
   detached: boolean
+  /** 在缩略图采集宿主里：活着、有绘制表面，但用户看不见（架子上的标签）。 */
+  parked: boolean
   /** 该标签是否是主窗口浮窗当前显示的那一个。 */
   active: boolean
 }
@@ -150,3 +157,45 @@ export type BrowserDragProbe = {
   /** 光标所在窗口是否是主窗口。 */
   mainWindow: boolean
 }
+
+/* ============================================================
+ * 网页缩略图（Phase 2）
+ *
+ * 缩略图是**真实网页的截图**，由主进程用 `webContents.capturePage()` 采集。
+ * 它只存在于本地内存：不进 SQLite、不上云、不进日志。Renderer 拿到的是一张
+ * data URL，用于卡片 `<img>`；它不是网页状态的替代品，页面本身仍在主进程。
+ * ============================================================ */
+
+export type BrowserPreview = {
+  /** 对应 BrowserTabManager 的 tabId；预览永远属于一个真实标签。 */
+  tabId: string
+  /** `data:image/jpeg;base64,…`，只在本地内存里流转。 */
+  dataUrl: string
+  /** 压缩后的像素尺寸（不是原网页尺寸）。 */
+  width: number
+  height: number
+  /** 采集时间（epoch ms），用于判断新鲜度与缓存淘汰。 */
+  capturedAt: number
+}
+
+export type BrowserPreviewEvent =
+  | { kind: 'update'; preview: BrowserPreview }
+  | { kind: 'clear'; tabId: string }
+
+export const browserPreviewRequestSchema = z.object({
+  tabId: z.string().min(1).max(64)
+})
+
+/** 在指定标签里导航（卡片的内联地址栏用；不影响主窗口当前标签）。 */
+export const browserNavigateTabSchema = z.object({
+  tabId: z.string().min(1).max(64),
+  input: z.string().min(1).max(2_048)
+})
+
+/** 把某个标签拆到独立窗口（卡片拖出主窗口时由渲染层上报屏幕坐标）。 */
+export const browserDetachTabSchema = z.object({
+  tabId: z.string().min(1).max(64),
+  screenX: z.number().finite(),
+  screenY: z.number().finite()
+})
+

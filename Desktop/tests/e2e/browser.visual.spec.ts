@@ -228,8 +228,8 @@ test('六张浏览器状态 + 三列布局修复前后', async () => {
     await captureWindow(app, '05-browser-loading.png')
     await page.waitForTimeout(1500)
 
-    // 6. 关闭后回到 Studio Home。
-    await page.getByRole('button', { name: '关闭浏览器' }).click()
+    // 6. 收起后回到 Studio Home（页面进入卡片架，不销毁）。
+    await page.getByRole('button', { name: '收起，回到卡片架' }).click()
     await expect(page.locator('.browser-panel')).toHaveCount(0)
     await page.waitForTimeout(300)
     await page.screenshot({ path: join(OUTPUT_DIR, '06-back-to-studio-home.png') })

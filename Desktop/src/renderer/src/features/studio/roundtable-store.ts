@@ -1,125 +1,169 @@
 import { create } from 'zustand'
 import {
-  addBlankCard,
   addParticipant,
-  blankWebCard,
-  cardDisplayName,
   clampRoundtable,
-  closeCard,
-  initialRoundtable,
-  isJoinableCard,
-  nextWebCardId,
-  removeParticipant,
-  reorderCards,
-  reorderParticipants,
-  resetWebCardSeqForTesting,
-  undockRoundtable,
   dockRoundtable,
+  initialRoundtable,
+  removeParticipant,
+  reorderParticipants,
+  retainParticipants,
+  undockRoundtable,
   type PanelViewport,
-  type Roundtable,
-  type WebCard
+  type Roundtable
 } from '@shared/roundtable'
+import { moveCardBefore, reconcileCardOrder } from '@shared/web-cards'
+import { api } from '../../shared/api'
 
 /**
- * 网页卡片架 + AI 圆桌的渲染层状态（Roundtable Phase 1）。
+ * 网页卡片架 + AI 圆桌的渲染层状态（Phase 2）。
  *
- * 与 browser-store 的分工：那份状态的主人在主进程（BrowserManager 广播），
- * 这份状态**只在渲染层**——本阶段网页卡片是本地模拟数据，不连 WebContents。
- * 所以它就是真相本身，不需要 hydrate / 广播；后续接真实浏览器时再把它
- * 改造成「主进程快照的缓存」，操作语义（join / leave / close）保持不变。
+ * **卡片不再是一份数据**：卡片的身份、标题、URL、加载态全部来自
+ * `useBrowserStore`（主进程快照），这里只保存两件渲染层自己的事：
+ * - `cardOrder`：架上的展示顺序（可持久化，永不改写 tabId）；
+ * - `roundtable`：参与者 tabId 与圆桌几何。
  *
- * 几何 clamp 在 store 收口：组件只报增量（位移 / 尺寸），这里负责不越界。
+ * 所以 `syncTabs` 必须在浏览器快照变化时被调用：它做顺序对账，并把已关闭
+ * 的标签从圆桌里摘掉。关闭卡片 = 关闭真实标签；加入圆桌 = 建立引用。
  */
 
-/**
- * 演示用测试数据由 UI 填入：初始只有**一张空白卡**（规格 §3），
- * 用户通过卡片上的内联表单把它填成站点卡；「添加网页」再开新的空白卡。
- * 本阶段不连 WebContents，卡片数据就是本地状态。
- */
+const ORDER_KEY = 'brewphase.webCards.order'
+
+/** 只用最小结构类型：单测在 node 环境跑，没有 DOM 的 Storage 声明。 */
+type OrderStorage = {
+  getItem: (key: string) => string | null
+  setItem: (key: string, value: string) => void
+  removeItem: (key: string) => void
+}
+
+function orderStorage(): OrderStorage | null {
+  const scope = globalThis as unknown as { localStorage?: OrderStorage }
+  return scope.localStorage ?? null
+}
+
+function readStoredOrder(): string[] {
+  try {
+    const parsed: unknown = JSON.parse(orderStorage()?.getItem(ORDER_KEY) ?? '[]')
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item): item is string => typeof item === 'string')
+  } catch {
+    return []
+  }
+}
+
+function writeStoredOrder(order: string[]): void {
+  try {
+    orderStorage()?.setItem(ORDER_KEY, JSON.stringify(order))
+  } catch {
+    // 隐私模式/配额满：顺序退化为会话内记忆，不影响功能。
+  }
+}
 
 type RoundtableStore = {
-  cards: WebCard[]
   roundtable: Roundtable
-  /** 当前选中的卡片 ID（选中态与拖入无关，只是架上的高亮）。 */
-  selectedCardId: string | null
-  /** 正在架内拖动的卡片 ID（拖动态样式）。 */
-  draggingCardId: string | null
-  /** 圆桌提问草稿：停靠 ↔ 浮动切换（两棵子树）也不丢（规格 §4.4）。 */
+  /** 架子顺序（tabId 数组）。 */
+  cardOrder: string[]
+  selectedTabId: string | null
+  draggingTabId: string | null
+  /** 拖动中光标已在主窗口之外（卡片显示「松手拆出」）。 */
+  dragOutside: boolean
+  /** 圆桌提问草稿：停靠 ↔ 浮动切换也不丢。 */
   draft: string
   setDraft: (value: string) => void
+  setDragOutside: (outside: boolean) => void
 
-  addCard: () => void
-  /** 编辑卡片（本阶段：把空白卡填成一张站点卡，或改标题/地址）。 */
-  updateCard: (id: string, patch: Partial<Pick<WebCard, 'title' | 'url' | 'status' | 'favicon'>>) => void
-  closeCard: (id: string) => void
-  selectCard: (id: string | null) => void
-  setDraggingCard: (id: string | null) => void
-  reorderCard: (id: string, overId: string) => void
+  /** 浏览器快照变化时对账：顺序保留、失效标签清理、参与者同步。 */
+  syncTabs: (tabIds: string[]) => void
+  /** 「添加网页」：新建真实标签（不抢焦点），卡片进入地址输入态。 */
+  createCard: () => Promise<void>
+  /** 关闭卡片 = 关闭真实标签；同时解除圆桌引用。 */
+  closeCard: (tabId: string) => Promise<void>
+  moveCard: (tabId: string, beforeTabId: string | null) => void
+  selectTab: (tabId: string | null) => void
+  setDraggingTab: (tabId: string | null) => void
 
-  /** 拖入圆桌（建立参与关系）。空白卡不可加入。 */
-  joinRoundtable: (cardId: string) => boolean
-  leaveRoundtable: (cardId: string) => void
-  reorderRoundtable: (cardId: string, overId: string) => void
+  joinRoundtable: (tabId: string) => void
+  leaveRoundtable: (tabId: string) => void
+  reorderRoundtable: (tabId: string, overId: string) => void
 
   undock: (viewport: PanelViewport) => void
   dock: () => void
   moveFloating: (delta: { dx: number; dy: number }, viewport: PanelViewport) => void
   resizeFloating: (delta: { dw: number; dh: number }, viewport: PanelViewport) => void
-
-  /** 测试 / E2E 直接取展示名，避免组件里拼兜底逻辑。 */
-  displayName: (id: string, fallback: string) => string
 }
 
 export const useRoundtableStore = create<RoundtableStore>((set, get) => ({
-  cards: [blankWebCard(nextWebCardId())],
   roundtable: initialRoundtable(),
-  selectedCardId: null,
-  draggingCardId: null,
+  cardOrder: readStoredOrder(),
+  selectedTabId: null,
+  draggingTabId: null,
+  dragOutside: false,
   draft: '',
   setDraft: (value) => set({ draft: value }),
+  setDragOutside: (outside) => set({ dragOutside: outside }),
 
-  addCard: () => {
-    set((state) => ({ cards: addBlankCard(state.cards, nextWebCardId()) }))
-  },
-
-  updateCard: (id, patch) => {
-    set((state) => ({
-      cards: state.cards.map((card) => (card.id === id ? { ...card, ...patch } : card))
-    }))
-  },
-
-  closeCard: (id) => {
+  syncTabs: (tabIds) => {
     set((state) => {
-      const { cards, roundtable } = closeCard(state.cards, state.roundtable, id)
+      const cardOrder = reconcileCardOrder(state.cardOrder, tabIds)
+      if (cardOrder.length !== state.cardOrder.length || cardOrder.some((id, at) => id !== state.cardOrder[at])) {
+        writeStoredOrder(cardOrder)
+      }
+      const alive = new Set(tabIds)
       return {
-        cards,
-        roundtable,
-        selectedCardId: state.selectedCardId === id ? null : state.selectedCardId
+        cardOrder,
+        roundtable: retainParticipants(state.roundtable, tabIds),
+        selectedTabId: state.selectedTabId && alive.has(state.selectedTabId) ? state.selectedTabId : null,
+        draggingTabId: state.draggingTabId && alive.has(state.draggingTabId) ? state.draggingTabId : null
       }
     })
   },
 
-  selectCard: (id) => set({ selectedCardId: id }),
-  setDraggingCard: (id) => set({ draggingCardId: id }),
-
-  reorderCard: (id, overId) => {
-    set((state) => ({ cards: reorderCards(state.cards, id, overId) }))
+  createCard: async () => {
+    try {
+      await api.browserTabs.createShelfTab()
+    } catch (error) {
+      console.error('[web-cards] create failed', error)
+    }
   },
 
-  joinRoundtable: (cardId) => {
-    const state = get()
-    const card = state.cards.find((item) => item.id === cardId)
-    if (!card || !isJoinableCard(card)) return false
-    set({ roundtable: addParticipant(state.roundtable, cardId) })
-    return true
+  closeCard: async (tabId) => {
+    set((state) => {
+      const cardOrder = state.cardOrder.filter((id) => id !== tabId)
+      writeStoredOrder(cardOrder)
+      return {
+        cardOrder,
+        roundtable: removeParticipant(state.roundtable, tabId),
+        selectedTabId: state.selectedTabId === tabId ? null : state.selectedTabId,
+        draggingTabId: state.draggingTabId === tabId ? null : state.draggingTabId
+      }
+    })
+    try {
+      await api.browserTabs.closeTab(tabId)
+    } catch (error) {
+      console.error('[web-cards] close failed', error)
+    }
   },
 
-  leaveRoundtable: (cardId) => {
-    set((state) => ({ roundtable: removeParticipant(state.roundtable, cardId) }))
+  moveCard: (tabId, beforeTabId) => {
+    set((state) => {
+      const cardOrder = moveCardBefore(state.cardOrder, tabId, beforeTabId)
+      writeStoredOrder(cardOrder)
+      return { cardOrder }
+    })
   },
 
-  reorderRoundtable: (cardId, overId) => {
-    set((state) => ({ roundtable: reorderParticipants(state.roundtable, cardId, overId) }))
+  selectTab: (tabId) => set({ selectedTabId: tabId }),
+  setDraggingTab: (tabId) => set({ draggingTabId: tabId, dragOutside: false }),
+
+  joinRoundtable: (tabId) => {
+    set((state) => ({ roundtable: addParticipant(state.roundtable, tabId) }))
+  },
+
+  leaveRoundtable: (tabId) => {
+    set((state) => ({ roundtable: removeParticipant(state.roundtable, tabId) }))
+  },
+
+  reorderRoundtable: (tabId, overId) => {
+    set((state) => ({ roundtable: reorderParticipants(state.roundtable, tabId, overId) }))
   },
 
   undock: (viewport) => {
@@ -136,7 +180,7 @@ export const useRoundtableStore = create<RoundtableStore>((set, get) => ({
 
   moveFloating: (delta, viewport) => {
     set((state) => {
-      const { position, size } = clampRoundtable(
+      const { position } = clampRoundtable(
         { x: state.roundtable.position.x + delta.dx, y: state.roundtable.position.y + delta.dy },
         state.roundtable.size,
         viewport
@@ -155,25 +199,24 @@ export const useRoundtableStore = create<RoundtableStore>((set, get) => ({
         },
         viewport
       )
-      return { roundtable: { ...state.roundtable, size } }
+      return { roundtable: { ...state.roundtable, position, size } }
     })
-  },
-
-  displayName: (id, fallback) => {
-    const card = get().cards.find((item) => item.id === id)
-    return card ? cardDisplayName(card, fallback) : fallback
   }
 }))
 
-/** E2E / 单测用：重置成初始状态（一张空白卡 + 空圆桌）。ID 序号同步拨回
- * 起点，所以重置后第一张卡恒为 `webcard-1`、`addCard()` 从 `webcard-2` 起。 */
+/** E2E / 单测用：重置成初始状态（清空顺序与参与者，不动真实浏览器）。 */
 export function resetRoundtableStoreForTesting(): void {
-  resetWebCardSeqForTesting()
+  try {
+    orderStorage()?.removeItem(ORDER_KEY)
+  } catch {
+    // ignore
+  }
   useRoundtableStore.setState({
-    cards: [blankWebCard(nextWebCardId())],
     roundtable: initialRoundtable(),
-    selectedCardId: null,
-    draggingCardId: null,
+    cardOrder: [],
+    selectedTabId: null,
+    draggingTabId: null,
+    dragOutside: false,
     draft: ''
   })
 }

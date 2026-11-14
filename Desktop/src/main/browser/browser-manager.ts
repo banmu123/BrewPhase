@@ -2,10 +2,13 @@ import { BrowserWindow, shell } from 'electron'
 import type { Db } from '../database/client'
 import {
   BROWSER_CHANGED_CHANNEL,
+  BROWSER_PREVIEW_CHANNEL,
   type BrowserBounds,
   type BrowserDragProbe,
   type BrowserLoadError,
   type BrowserOpenInput,
+  type BrowserPreview,
+  type BrowserPreviewEvent,
   type BrowserState,
   type BrowserTabInfo,
   type BrowserVisit
@@ -21,6 +24,16 @@ import {
 } from './history-store'
 import { BrowserTabManager } from './browser-tab-manager'
 import { FloatWindowManager, FLOAT_TITLEBAR_HEIGHT } from './float-window'
+import { BrowserCaptureHost } from './capture-host'
+import {
+  BrowserPreviewService,
+  PREVIEW_CAPTURE_HEIGHT,
+  PREVIEW_CAPTURE_WIDTH,
+  PREVIEW_JPEG_QUALITY,
+  PREVIEW_PRIME_DELAY_MS,
+  PREVIEW_STORE_WIDTH,
+  type PreviewCaptureResult
+} from './browser-preview'
 
 /**
  * 内置浏览器的总管理者（主进程）。
@@ -48,8 +61,7 @@ export type BrowserManagerParams = {
   devServerUrl: string | null
 }
 
-/** 主窗口浮窗里网页区的高度预留：标签条画在 React 里，view 从它下面开始。 */
-export const BROWSER_TABBAR_HEIGHT = 40
+/** 主窗口浮窗里网页区的对齐以渲染层上报的 stage 矩形为准（见 applyBounds）。 */
 
 export class BrowserManager {
   private readonly db: Db
@@ -58,6 +70,10 @@ export class BrowserManager {
 
   private readonly tabs: BrowserTabManager
   private readonly floats: FloatWindowManager
+  /** 缩略图：真实截图的内存缓存（不进库、不上云）。 */
+  private readonly previews: BrowserPreviewService
+  /** 收纳在架子上的标签挂在这里：透明、不可点、不抢焦点，但有绘制表面。 */
+  private readonly captureHost: BrowserCaptureHost
 
   /** 主窗口浮窗当前显示的标签；null = 起始页。 */
   private activeTabId: string | null = null
@@ -79,11 +95,26 @@ export class BrowserManager {
     this.bounds = readBrowserLayout(params.db)
     this.recent = readBrowserRecent(params.db)
 
+    this.previews = new BrowserPreviewService({
+      capture: (tabId) => this.capturePreview(tabId),
+      emit: (event) => this.emitPreview(event)
+    })
+
+    this.captureHost = new BrowserCaptureHost(() => {
+      const window = this.getWindow()
+      if (!window || window.isDestroyed()) return null
+      return window.getBounds()
+    })
+
     this.tabs = new BrowserTabManager({
       mainWindowId: () => this.getWindow()?.id ?? null,
+      captureWindowId: () => this.captureHost.id(),
       onPageVisited: (url, title) => {
         this.recent = recordBrowserVisit(this.db, url, title)
       },
+      // 页面加载/导航/标题变化 → 合并后重新采集缩略图；标签销毁 → 清缓存。
+      onPageSettled: (tabId) => this.previews.schedule(tabId),
+      onTabClosed: (tabId) => this.previews.forget(tabId),
       onChange: () => this.emit()
     })
 
@@ -121,7 +152,10 @@ export class BrowserManager {
       error: tab.error,
       windowId: tab.windowId,
       detached: tab.detached,
-      active: tab.id === this.activeTabId && tab.windowId === mainWindowId
+      parked: tab.parked,
+      // 「正在主窗口里看」= 面板打开、不在起始页、且它是当前标签。
+      // 只看 activeTabId 会把「面板已收起」误报成正在展开。
+      active: tab.id === this.activeTabId && tab.windowId === mainWindowId && this.panelVisible && !this.startPage
     }))
     return {
       tabs,
@@ -175,6 +209,8 @@ export class BrowserManager {
       }
       return this.state()
     }
+    // 收纳在采集宿主里的标签：先迁回主窗口，再显示；页面实例不动。
+    this.unparkTab(active.id)
     this.panelVisible = true
     this.startPage = false
     active.loading = active.view.webContents.isLoading()
@@ -184,9 +220,11 @@ export class BrowserManager {
     return this.state()
   }
 
-  /** 隐藏主窗口浮窗：页面还在（登录态、滚动位置都留着）。 */
+  /** 收起主窗口浮窗：页面回到采集宿主（登录态、滚动位置都留着）。 */
   hide(): BrowserState {
     this.panelVisible = false
+    const active = this.activeTab()
+    if (active) this.parkTab(active.id)
     this.syncVisibility()
     this.emit()
     return this.state()
@@ -254,6 +292,7 @@ export class BrowserManager {
       const mainWindowId = this.getWindow()?.id ?? null
       if (mainWindowId !== null) this.tabs.moveToWindow(active.id, mainWindowId)
     } else {
+      this.unparkTab(active.id)
       this.tabs.navigateInTab(active.id, normalized)
     }
 
@@ -352,6 +391,8 @@ export class BrowserManager {
       this.floats.focus(tab.windowId)
       return this.state()
     }
+    // 架子上的标签（采集宿主）：迁回主窗口再显示；已展开的标签不受影响。
+    this.unparkTab(tabId)
     this.activeTabId = tabId
     this.startPage = false
     this.panelVisible = true
@@ -412,6 +453,7 @@ export class BrowserManager {
         this.activeTabId = tabId
         this.startPage = false
         this.panelVisible = true
+        this.previews.schedule(tabId)
       } else {
         if (fromWindowId !== null && fromWindowId !== target.windowId) {
           this.floats.release(fromWindowId, tabId)
@@ -449,6 +491,8 @@ export class BrowserManager {
     this.floats.adopt(window.id, tabId)
     this.syncVisibility()
     this.emit()
+    // 拆出后重采一次：新窗口尺寸变了，卡片上的预览要跟着更新。
+    this.previews.schedule(tabId)
     return this.state()
   }
 
@@ -471,6 +515,8 @@ export class BrowserManager {
     this.panelVisible = true
     this.syncVisibility()
     this.emit()
+    // 拖回主窗口后刷新：卡片恢复缩略状态时显示的是当前页面，不是旧画面。
+    this.previews.schedule(tabId)
     return this.state()
   }
 
@@ -489,6 +535,173 @@ export class BrowserManager {
   /** 自动化入口：按 tabId 执行脚本（与页面在哪个窗口无关）。 */
   async executeOnTab(tabId: string, script: string): Promise<unknown> {
     return this.tabs.executeOnTab(tabId, script)
+  }
+
+  // MARK: - 卡片架（Phase 2）
+  //
+  // 卡片 = 真实标签。这里补的都是「架子视角」的入口：新建但不抢焦点、在指定
+  // 标签里导航、拖出成独立窗口、从独立窗口收回架上。任何一个都不重建 view、
+  // 不重新 loadURL——迁移的只是父子关系与显示状态。
+
+  /** 卡片架新建标签：挂在采集宿主里（用户看不见），**不**打开浮窗。 */
+  createShelfTab(): BrowserState {
+    const tab = this.tabs.createTab()
+    this.parkTab(tab.id)
+    this.emit()
+    return this.state()
+  }
+
+  /** 在指定标签里导航（卡片的内联地址栏）；不改变主窗口当前展示。 */
+  navigateTab(tabId: string, input: string): BrowserState {
+    if (!this.tabs.get(tabId)) return this.state()
+    this.tabs.navigateInTab(tabId, input)
+    this.emit()
+    return this.state()
+  }
+
+  /** 卡片拖出主窗口：直接拆成独立窗口（不经过浮窗、不打开面板）。 */
+  detachTab(tabId: string, screenX: number, screenY: number): BrowserState {
+    if (!this.tabs.get(tabId)) return this.state()
+    return this.detachToNewWindow(tabId, { screenX, screenY })
+  }
+
+  /** 从独立窗口收回卡片架：接进采集宿主，收起浮窗；页面实例不动。 */
+  recallToShelf(tabId: string): BrowserState {
+    const tab = this.tabs.get(tabId)
+    if (!tab) return this.state()
+    const mainId = this.getWindow()?.id ?? null
+    const fromWindowId = tab.windowId
+    if (fromWindowId !== null && fromWindowId !== mainId && !tab.parked) {
+      this.floats.release(fromWindowId, tabId)
+      if (this.floats.record(fromWindowId)?.tabIds.size === 0) {
+        this.floats.closeEmpty(fromWindowId)
+      }
+    }
+    if (this.activeTabId === tabId) {
+      this.activeTabId = null
+      this.startPage = true
+      this.panelVisible = false
+    }
+    this.parkTab(tabId)
+    this.syncVisibility()
+    this.emit()
+    // 归位后刷新预览：页面已在宿主里，截图不再影响任何可见窗口。
+    this.previews.schedule(tabId)
+    return this.state()
+  }
+
+  previewList(): BrowserPreview[] {
+    return this.previews.list()
+  }
+
+  previewFor(tabId: string): BrowserPreview | null {
+    return this.previews.get(tabId)
+  }
+
+  /** 卡片没有预览时的按需采集入口（不会绕过节流）。 */
+  requestPreview(tabId: string): void {
+    if (!this.tabs.get(tabId)) return
+    void this.previews.refresh(tabId)
+  }
+
+  /**
+   * 真实截图。
+   *
+   * 两种页面位置，两条采集路径：
+   * - **收纳在采集宿主里**（`parked`）：宿主是 `opacity: 0` 的 BaseWindow，
+   *   把 view 设为可见只会让 Chromium 绘制，用户看不到；采集完再藏回去。
+   * - **正在主窗口/独立窗口里显示**：原地截图，不移动、不闪屏。曾经显示过的
+   *   隐藏页面仍有绘制表面，capturePage 依然可用。
+   *
+   * 这样既不需要把网页在主窗口里闪一下，也不会复制第二个 WebContents。
+   */
+  private async capturePreview(tabId: string): Promise<PreviewCaptureResult | null> {
+    const tab = this.tabs.get(tabId)
+    if (!tab) return null
+    const webContents = tab.view.webContents
+    if (webContents.isDestroyed()) return null
+    // 加载中/错误页不截：此时画面是半成品或 Chromium 错误页，留着上一张更好。
+    if (tab.loading || tab.error) return null
+    if (!tab.url || !isAllowedBrowserURL(tab.url)) return null
+
+    const parked = tab.parked
+    if (parked) {
+      if (this.captureHost.id() === null) return null
+    } else {
+      const host = tab.windowId === null ? null : BrowserWindow.fromId(tab.windowId)
+      if (!host || host.isDestroyed() || !host.isVisible()) return null
+    }
+
+    const savedBounds = tab.view.getBounds()
+    const savedVisible = tab.view.getVisible()
+
+    try {
+      if (parked) {
+        tab.view.setBounds({
+          x: 0,
+          y: 0,
+          width: PREVIEW_CAPTURE_WIDTH,
+          height: PREVIEW_CAPTURE_HEIGHT
+        })
+        tab.view.setVisible(true)
+        await delay(PREVIEW_PRIME_DELAY_MS)
+      }
+      const image = await webContents.capturePage()
+      if (image.isEmpty()) return null
+      const size = image.getSize()
+      if (size.width < 8 || size.height < 8) return null
+      const targetWidth = Math.min(PREVIEW_STORE_WIDTH, size.width)
+      const resized = image.resize({ width: targetWidth, quality: 'good' })
+      const jpeg = resized.toJPEG(PREVIEW_JPEG_QUALITY)
+      if (jpeg.length === 0) return null
+      const stored = resized.getSize()
+      return {
+        dataUrl: `data:image/jpeg;base64,${jpeg.toString('base64')}`,
+        width: stored.width,
+        height: stored.height
+      }
+    } catch {
+      // 窗口最小化 / 显示表面回收 / 渲染进程崩溃：这次没图，保留旧预览。
+      return null
+    } finally {
+      // 采集期间用户可能正好展开了卡片（parked → main）或拆出了窗口：
+      // 那之后 bounds/visible 归窗口管理，不能再按采集前的值写回去。
+      if (parked && tab.parked) {
+        tab.view.setVisible(savedVisible)
+        tab.view.setBounds(savedBounds)
+      }
+    }
+  }
+
+  /** 把标签收进采集宿主：保持 1280×800 的桌面视口，但不可见。 */
+  private parkTab(tabId: string): void {
+    const tab = this.tabs.get(tabId)
+    if (!tab) return
+    const host = this.captureHost.ensure()
+    if (!host) return
+    if (tab.windowId !== host.id) this.tabs.moveToWindow(tabId, host.id)
+    if (tab.windowId !== host.id) return
+    tab.view.setBounds({ x: 0, y: 0, width: PREVIEW_CAPTURE_WIDTH, height: PREVIEW_CAPTURE_HEIGHT })
+    tab.view.setVisible(false)
+  }
+
+  /** 把标签迁回主窗口（展开卡片 / 面板显示）；未挂载或收纳中都能收回来。 */
+  private unparkTab(tabId: string): void {
+    const tab = this.tabs.get(tabId)
+    if (!tab) return
+    const mainId = this.getWindow()?.id ?? null
+    if (mainId === null || tab.windowId === mainId) return
+    this.tabs.moveToWindow(tabId, mainId)
+  }
+
+  private emitPreview(event: BrowserPreviewEvent): void {
+    const targets: (BrowserWindow | null)[] = [this.getWindow()]
+    for (const windowId of this.floats.windowIds()) targets.push(BrowserWindow.fromId(windowId))
+    for (const target of targets) {
+      if (target && !target.isDestroyed()) {
+        target.webContents.send(BROWSER_PREVIEW_CHANNEL, event)
+      }
+    }
   }
 
   // MARK: - 几何
@@ -531,9 +744,14 @@ export class BrowserManager {
   onMainWindowClosed(): void {
     const mainWindowId = this.getWindow()?.id ?? -1
     for (const tab of this.tabs.list()) {
+      if (tab.windowId !== mainWindowId) continue
+      // 优先收进采集宿主（页面、Session 与预览都保留）；宿主不可用时退回
+      // 「活着但未挂载」，等主窗口重建后再由 showCurrentPage 接回来。
+      this.parkTab(tab.id)
       if (tab.windowId === mainWindowId) this.tabs.moveToWindow(tab.id, null)
     }
     this.panelVisible = false
+    this.captureHost.hide()
     this.emit()
   }
 
@@ -544,6 +762,8 @@ export class BrowserManager {
     }
     this.floats.closeAll()
     this.tabs.disposeAll()
+    this.previews.dispose()
+    this.captureHost.dispose()
     this.activeTabId = null
   }
 
@@ -571,12 +791,10 @@ export class BrowserManager {
     for (const tab of this.tabs.list()) {
       if (tab.windowId !== mainWindowId || tab.windowId === null) continue
       if (tab.id === this.activeTabId && !this.startPage && !tab.error) {
-        tab.view.setBounds({
-          x: bounds.x,
-          y: bounds.y + BROWSER_TABBAR_HEIGHT,
-          width: bounds.width,
-          height: Math.max(0, bounds.height - BROWSER_TABBAR_HEIGHT)
-        })
+        // 渲染层上报的是**网页区（stage）**的矩形，标题栏、标签条与工具栏
+        // 都在它上面；这里必须原样对齐，不能再加一次标签条高度——那会让
+        // 网页整体下沉 40px，并在顶部留出一条空白。
+        tab.view.setBounds(bounds)
       } else {
         tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
       }
@@ -646,4 +864,8 @@ function readHistory(webContents: Electron.WebContents | null): {
   } catch {
     return { canGoBack: false, canGoForward: false }
   }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }

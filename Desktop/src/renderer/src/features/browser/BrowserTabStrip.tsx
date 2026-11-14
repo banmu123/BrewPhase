@@ -84,13 +84,15 @@ export function BrowserTabStrip(props: {
       const inside = event.clientY >= rect.top && event.clientY <= rect.bottom && event.clientX >= rect.left && event.clientX <= rect.right
       if (inside) {
         const target = props.tabs.find((tab) => {
-          const el = document.querySelector<HTMLElement>(`[data-tab-id="${tab.id}"]`)
+          // 必须在本标签条内找：网页卡片也用 data-tab-id，全局 querySelector
+          // 会先命中架子上的卡片，落点判定永远失败（真实缺陷，E2E 抓到过）。
+          const el = stripRef.current?.querySelector<HTMLElement>(`[data-tab-id="${tab.id}"]`)
           if (!el) return false
           const r = el.getBoundingClientRect()
           return event.clientX >= r.left && event.clientX <= r.right
         })
         if (target && target.id !== state.tabId) {
-          const el = document.querySelector<HTMLElement>(`[data-tab-id="${target.id}"]`)
+          const el = stripRef.current?.querySelector<HTMLElement>(`[data-tab-id="${target.id}"]`)
           const r = el!.getBoundingClientRect()
           setDropTarget(target.id)
           setDropHint(event.clientX < r.left + r.width / 2 ? 'before' : 'after')

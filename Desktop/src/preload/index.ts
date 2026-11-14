@@ -1,6 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/contracts/validation/ipc'
-import { BROWSER_CHANGED_CHANNEL, type BrowserState } from '../shared/contracts/browser'
+import {
+  BROWSER_CHANGED_CHANNEL,
+  BROWSER_PREVIEW_CHANNEL,
+  type BrowserPreviewEvent,
+  type BrowserState
+} from '../shared/contracts/browser'
 import type { RendererApi } from '../shared/contracts'
 
 /**
@@ -45,15 +50,30 @@ const api: RendererApi = {
   // 可拆卸浏览器窗口：拖动归属由主进程裁定，这里只报意图与坐标。
   browserTabs: {
     create: () => invoke(IPC.browserCreateTab),
+    createShelfTab: () => invoke(IPC.browserCreateShelfTab),
     activate: (tabId) => invoke(IPC.browserActivateTab, { tabId }),
     closeTab: (tabId) => invoke(IPC.browserCloseTab, { tabId }),
+    navigate: (tabId, input) => invoke(IPC.browserNavigateTab, { tabId, input }),
     reorder: (tabId, beforeTabId) => invoke(IPC.browserReorderTab, { tabId, beforeTabId }),
     resolveDrop: (tabId, screenX, screenY) => invoke(IPC.browserResolveDrop, { tabId, screenX, screenY }),
+    detach: (tabId, screenX, screenY) => invoke(IPC.browserDetachTab, { tabId, screenX, screenY }),
+    recall: (tabId) => invoke(IPC.browserRecallTab, { tabId }),
     dragProbe: (screenX, screenY) => invoke(IPC.browserDragProbe, { screenX, screenY }),
     reattach: (tabId) => invoke(IPC.browserReattach, { tabId }),
     floatActivate: (windowId, tabId) => invoke(IPC.browserFloatActivate, { windowId, tabId }),
     floatBounds: (windowId, bounds) => invoke(IPC.browserFloatBounds, { windowId, bounds }),
     executeOnTab: (tabId, script) => invoke(IPC.browserExecuteOnTab, { tabId, script })
+  },
+  // 缩略图：只收主进程采集好的本地 data URL，Renderer 不接触页面内容。
+  browserPreviews: {
+    list: () => invoke(IPC.browserPreviewList),
+    get: (tabId) => invoke(IPC.browserPreviewGet, { tabId }),
+    request: (tabId) => invoke(IPC.browserPreviewRequest, { tabId }),
+    onChanged: (listener) => {
+      const wrapped = (_event: unknown, payload: BrowserPreviewEvent) => listener(payload)
+      ipcRenderer.on(BROWSER_PREVIEW_CHANNEL, wrapped)
+      return () => ipcRenderer.removeListener(BROWSER_PREVIEW_CHANNEL, wrapped)
+    }
   },
   // AI Workspace：Multi-AI 并行提问。自动化全在主进程，这里只有意图。
   aiChat: {

@@ -105,14 +105,14 @@ async function launch(options?: { seed?: boolean }): Promise<{
 }
 
 /** 浏览器分区里的 webContents（本阶段最多一个）。 */
-async function browserTargets(app: ElectronApplication): Promise<Array<{ url: string; title: string; visible: boolean }>> {
+async function browserTargets(app: ElectronApplication): Promise<Array<{ id: number; url: string; title: string; visible: boolean }>> {
   return app.evaluate(
     ({ webContents, session }, partition) => {
       const target = session.fromPartition(partition)
       return webContents
         .getAllWebContents()
         .filter((contents) => contents.session === target && !contents.isDestroyed())
-        .map((contents) => ({ url: contents.getURL(), title: contents.getTitle(), visible: true }))
+        .map((contents) => ({ id: contents.id, url: contents.getURL(), title: contents.getTitle(), visible: true }))
     },
     BROWSER_PARTITION
   )
@@ -335,33 +335,42 @@ test('拖动与缩放：位置跟着手走、四角改尺寸、最小宽高生�
   }
 })
 
-test('关闭后重开停在起始页，点「继续上次访问」仍只复用一个网页容器', async () => {
+test('收起后重开恢复当前页面，不重新加载也不新建容器', async () => {
   const { app, page, dataDir } = await launch()
   try {
     await openBrowserFromTopBar(page)
     await navigate(page, `${baseURL}/second`)
     await waitForLoaded(page)
+    const before = await browserTargets(app)
+    expect(before).toHaveLength(1)
 
-    await page.getByRole('button', { name: '关闭浏览器' }).click()
+    // Phase 2 起 ✕ = 收起（回到卡片架），不是销毁页面。
+    await page.getByRole('button', { name: '收起，回到卡片架' }).click()
     await expect(page.locator('.browser-panel')).toHaveCount(0)
-    // 关掉浮窗不影响 Studio Home。
     await expect(page.locator('.studio-home')).toBeVisible()
     await expect(page.locator('.studio-hero__title')).toBeVisible()
-    // 关闭 = 销毁原生 view（不是单纯隐藏）。
-    expect(await browserTargets(app)).toHaveLength(0)
+    // 收起不销毁：同一个 webContents 还在（挂到采集宿主里）。
+    const shelved = await browserTargets(app)
+    expect(shelved).toHaveLength(1)
+    expect(shelved[0]!.id).toBe(before[0]!.id)
 
-    // 再打开：先落在起始页（书签的家），而不是直接跳上次的网页。
+    // 再打开：直接回到当前页面，不重新导航、不换容器。
     await openBrowserFromTopBar(page)
-    await expect(page.locator('.browser-start')).toBeVisible()
-    await expect(page.locator('.browser-panel__address input')).toHaveValue('')
-    expect(await browserTargets(app)).toHaveLength(0)
+    await expect(page.locator('.browser-panel__address input')).toHaveValue(`${baseURL}/second`, {
+      timeout: 15_000
+    })
+    const reopened = await browserTargets(app)
+    expect(reopened).toHaveLength(1)
+    expect(reopened[0]!.id).toBe(before[0]!.id)
+    expect(reopened[0]!.url).toBe(`${baseURL}/second`)
 
-    // 起始页上的「继续上次访问」才是恢复入口：只建一个容器。
+    // 起始页的「继续上次访问」仍然只复用一个容器。
+    await page.getByRole('button', { name: '起始页', exact: true }).click()
+    await expect(page.locator('.browser-start')).toBeVisible()
     await page.locator('.browser-start__resume').click()
     await expect(page.locator('.browser-panel__address input')).toHaveValue(`${baseURL}/second`, {
       timeout: 15_000
     })
-    // `getURL()` 要等导航真正提交，刚 `loadURL` 时还可能是空串。
     await expect
       .poll(async () => (await browserTargets(app))[0]?.url ?? '', { timeout: 15_000 })
       .toBe(`${baseURL}/second`)
@@ -377,7 +386,7 @@ test('关闭后重开停在起始页，点「继续上次访问」仍只复用�
   }
 })
 
-test('浮窗跨空间常驻：切到 Records 后浏览状态还在，关闭后回到原页面', async () => {
+test('浮窗跨空间常驻：切到 Records 后浏览状态还在，收起后回到原页面', async () => {
   const { app, page, dataDir } = await launch({ seed: true })
   try {
     await openBrowserFromTopBar(page)
@@ -391,9 +400,9 @@ test('浮窗跨空间常驻：切到 Records 后浏览状态还在，关闭后�
     await expect(page.locator('.browser-panel__address input')).toHaveValue(baseURL)
     expect(await browserTargets(app)).toHaveLength(1)
 
-    await page.getByRole('button', { name: '关闭浏览器' }).click()
+    await page.getByRole('button', { name: '收起，回到卡片架' }).click()
     await expect(page.locator('.browser-panel')).toHaveCount(0)
-    // 关闭浮窗后仍然停在用户原来的 Records 页面。
+    // 收起浮窗后仍然停在用户原来的 Records 页面。
     await expect(page.getByRole('heading', { name: '记录' })).toBeVisible()
   } finally {
     await app.close()

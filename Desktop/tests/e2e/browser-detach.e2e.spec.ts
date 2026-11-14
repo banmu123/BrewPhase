@@ -111,6 +111,9 @@ setInterval(() => { window.__ticks++ }, 200)
     expect(detachedB.windowId).not.toBe(1)
 
     // —— 窗口内拖动排序：真实指针链路（同一窗口内事件可靠）——
+    // 拆出后焦点在浮窗；先把主窗口带回前台，确保 pointer capture 可用。
+    await page.bringToFront()
+    await page.waitForTimeout(250)
     const strip = page.locator('.browser-tabs')
     await expect(strip).toBeVisible()
     const stripBox = await strip.boundingBox()
@@ -120,8 +123,8 @@ setInterval(() => { window.__ticks++ }, 200)
     }
     const firstTab = before.tabs[0]
     const secondTab = before.tabs[1]
-    const firstBox = await page.locator(`[data-tab-id="${firstTab.id}"]`).boundingBox()
-    const secondBox = await page.locator(`[data-tab-id="${secondTab.id}"]`).boundingBox()
+    const firstBox = await page.locator(`.browser-tabs__item[data-tab-id="${firstTab.id}"]`).boundingBox()
+    const secondBox = await page.locator(`.browser-tabs__item[data-tab-id="${secondTab.id}"]`).boundingBox()
     expect(firstBox).not.toBeNull()
     expect(secondBox).not.toBeNull()
     await page.mouse.move(firstBox!.x + firstBox!.width / 2, firstBox!.y + firstBox!.height / 2)

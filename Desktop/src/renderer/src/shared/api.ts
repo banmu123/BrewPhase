@@ -1,13 +1,15 @@
 import type { RendererApi } from '@shared/contracts'
 
-declare global {
-  interface Window {
-    /** 由 preload 通过 contextBridge 注入；renderer 拿不到任何其他 Node 能力。 */
-    brewphase: RendererApi
-  }
-}
+/**
+ * preload 注入的桥。
+ *
+ * 用 `globalThis` + 最小结构类型而不是 `window`：单元测试走
+ * `tsconfig.node.json`，那里没有 DOM lib；只要从测试能 import 到本模块，
+ * 写 `window` 就会在 typecheck 阶段炸掉（渲染层自己有 DOM，不需要声明）。
+ */
+const scope = globalThis as unknown as { brewphase: RendererApi }
 
-export const api = window.brewphase
+export const api = scope.brewphase
 
 /** 时间统一以 epoch 毫秒传递，界面这一层负责格式化。 */
 export function formatDate(value: number | null): string {

@@ -9,6 +9,7 @@ import { SettingsPage } from '../features/settings/SettingsPage'
 import { StudioHome } from '../features/studio/StudioHome'
 import { BrowserPanel } from '../features/browser/BrowserPanel'
 import { subscribeBrowserState, useBrowserStore } from '../features/browser/browser-store'
+import { subscribeBrowserPreviews, useBrowserPreviewStore } from '../features/browser/preview-store'
 import { useI18n } from '../i18n'
 import { hasSeenOnboarding, hasSeenOnboardingV2, markOnboardingSeen, Onboarding } from './Onboarding'
 import { SearchPalette } from './SearchPalette'
@@ -53,7 +54,13 @@ export function App() {
   useEffect(() => {
     const unsubscribe = subscribeBrowserState()
     void useBrowserStore.getState().hydrate()
-    return unsubscribe
+    // 缩略图是独立通道：首次补齐 + 之后只接收 update/clear。
+    const unsubscribePreviews = subscribeBrowserPreviews()
+    void useBrowserPreviewStore.getState().hydrate()
+    return () => {
+      unsubscribe()
+      unsubscribePreviews()
+    }
   }, [])
 
   // 首次启动引导（配对指引）：打包版 + 没看过 + 未配对时出现一次。

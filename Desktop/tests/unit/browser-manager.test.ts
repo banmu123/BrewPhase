@@ -128,16 +128,71 @@ const fake = vi.hoisted(() => {
     setVisible(value: boolean): void {
       this.visible = value
     }
+
+    getBounds(): { x: number; y: number; width: number; height: number } {
+      return (this.bounds as { x: number; y: number; width: number; height: number } | null) ?? {
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0
+      }
+    }
+
+    getVisible(): boolean {
+      return this.visible
+    }
   }
+
+  class FakeBaseWindow {
+    readonly id = 900
+    destroyed = false
+    readonly contentView = {
+      addChildView: () => undefined,
+      removeChildView: () => undefined
+    }
+    isDestroyed(): boolean {
+      return this.destroyed
+    }
+    isVisible(): boolean {
+      return true
+    }
+    showInactive(): void {
+      // no-op
+    }
+    hide(): void {
+      // no-op
+    }
+    setIgnoreMouseEvents(): void {
+      // no-op
+    }
+    destroy(): void {
+      this.destroyed = true
+    }
+    static fromId(id: number): unknown {
+      if (id === 900) return hostWindow
+      return id === 1 ? mainWindowHolder.window : null
+    }
+  }
+
+  const mainWindowHolder: { window: unknown } = { window: null }
+  const hostWindow = new FakeBaseWindow()
 
   const window = {
     id: 1,
     isDestroyed: () => false,
     getContentSize: (): [number, number] => [1280, 800],
+    getBounds: (): { x: number; y: number; width: number; height: number } => ({
+      x: 0,
+      y: 0,
+      width: 1280,
+      height: 800
+    }),
     // 多标签后 view 的挂载/摘除走 contentView；fake 记录调用供断言。
     contentView: { addChildView: () => undefined, removeChildView: () => undefined },
     webContents: { send: () => undefined }
   }
+
+  mainWindowHolder.window = window
 
   return {
     views,
@@ -145,6 +200,7 @@ const fake = vi.hoisted(() => {
     session,
     window,
     WebContentsView: FakeView,
+    BaseWindow: FakeBaseWindow,
     reset: () => {
       views.length = 0
       loadCalls.length = 0
@@ -155,6 +211,8 @@ const fake = vi.hoisted(() => {
 vi.mock('electron', () => ({
   // 多标签后 BrowserTabManager 用 fromId 找目标窗口；fake 主窗口 id=1。
   BrowserWindow: Object.assign(class {}, { fromId: (id: number) => (id === 1 ? fake.window : null) }),
+  // 缩略图采集宿主是 BaseWindow：隐藏标签挂在它上面（id=900）。
+  BaseWindow: fake.BaseWindow,
   session: { fromPartition: () => fake.session },
   shell: { openExternal: () => undefined },
   WebContentsView: fake.WebContentsView

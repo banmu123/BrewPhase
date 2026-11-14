@@ -4,7 +4,14 @@ import { recordDraftSchema, recordQuerySchema } from '../entities/records'
 import { canvasNodeMoveSchema, canvasNodeResizeSchema, canvasNoteSchema, canvasStrokeSchema } from '../entities/canvas'
 import { mcpClientCreateInputSchema, mcpScopeSchema } from '../mcp'
 import { aiAskInputSchema, aiProviderSchema } from '../ai-chat'
-import { browserDropSchema, browserDragProbeSchema, browserBoundsSchema } from '../browser'
+import {
+  browserDropSchema,
+  browserDragProbeSchema,
+  browserBoundsSchema,
+  browserDetachTabSchema,
+  browserNavigateTabSchema,
+  browserPreviewRequestSchema
+} from '../browser'
 import { browserBoundsUpdateSchema, browserNavigateSchema, browserOpenSchema } from '../browser'
 import { chromeProfileRequestSchema } from '../bookmarks'
 import { agentKindSchema } from '../agents'
@@ -161,7 +168,15 @@ export const IPC = {
   browserReattach: 'browser:tab:reattach',
   browserFloatActivate: 'browser:float:activate',
   browserFloatBounds: 'browser:float:bounds',
-  browserExecuteOnTab: 'browser:tab:execute'
+  browserExecuteOnTab: 'browser:tab:execute',
+  // Phase 2：网页卡片 = 真实标签；缩略图与「架子上的标签」各自有独立入口。
+  browserCreateShelfTab: 'browser:tab:create-shelf',
+  browserNavigateTab: 'browser:tab:navigate',
+  browserDetachTab: 'browser:tab:detach',
+  browserRecallTab: 'browser:tab:recall-shelf',
+  browserPreviewList: 'browser:preview:list',
+  browserPreviewGet: 'browser:preview:get',
+  browserPreviewRequest: 'browser:preview:request'
 } as const
 
 export const ipcRequestSchemas = {
@@ -320,7 +335,14 @@ export const ipcRequestSchemas = {
   [IPC.browserExecuteOnTab]: z.object({
     tabId: z.string().min(1).max(64),
     script: z.string().min(1).max(32_000)
-  })
+  }),
+  [IPC.browserCreateShelfTab]: z.void(),
+  [IPC.browserNavigateTab]: browserNavigateTabSchema,
+  [IPC.browserDetachTab]: browserDetachTabSchema,
+  [IPC.browserRecallTab]: z.object({ tabId: z.string().min(1).max(64) }),
+  [IPC.browserPreviewList]: z.void(),
+  [IPC.browserPreviewGet]: browserPreviewRequestSchema,
+  [IPC.browserPreviewRequest]: browserPreviewRequestSchema
 } as const
 
 export type IpcChannel = keyof typeof ipcRequestSchemas

@@ -6,13 +6,16 @@ export const browser: typeof BrowserMessages = {
   open: 'Open browser',
   close: 'Close browser',
   hide: 'Collapse browser',
+  shelve: 'Shelve — back to the cards',
   titlebarHint: 'Drag the title bar to move the window',
   resizeHint: 'Drag an edge or corner to resize',
   tabs: {
     newTab: 'New tab',
     closeTab: 'Close tab',
     detachedBadge: 'Detached',
-    backToMain: 'Back to main window',
+    recall: 'Return to cards',
+    recallHint: 'Drag onto the main window, or click to return to the cards',
+    recallNow: 'Release: return to the cards',
     detachHint: 'Release: detach into its own window'
   },
   toolbar: {

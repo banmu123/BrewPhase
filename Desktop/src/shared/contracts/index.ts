@@ -35,7 +35,14 @@ import type {
   McpClientInfo,
   McpScope
 } from './mcp'
-import type { BrowserBounds, BrowserDragProbe, BrowserOpenInput, BrowserState } from './browser'
+import type {
+  BrowserBounds,
+  BrowserDragProbe,
+  BrowserOpenInput,
+  BrowserPreview,
+  BrowserPreviewEvent,
+  BrowserState
+} from './browser'
 import type {
   BookmarkImportResult,
   BookmarkPreview,
@@ -221,15 +228,35 @@ export interface RendererApi {
    */
   browserTabs: {
     create: () => Promise<BrowserState>
+    /** 在卡片架上新建标签：不激活主窗口浮窗（新卡片进入地址输入态）。 */
+    createShelfTab: () => Promise<BrowserState>
     activate: (tabId: string) => Promise<BrowserState>
     closeTab: (tabId: string) => Promise<BrowserState>
+    /** 在某个标签里导航，不改主窗口当前标签（卡片内联地址栏）。 */
+    navigate: (tabId: string, input: string) => Promise<BrowserState>
     reorder: (tabId: string, beforeTabId: string | null) => Promise<BrowserState>
     resolveDrop: (tabId: string, screenX: number, screenY: number) => Promise<BrowserState>
+    /** 卡片拖出主窗口：直接拆成独立窗口，不打开浮窗。 */
+    detach: (tabId: string, screenX: number, screenY: number) => Promise<BrowserState>
+    /** 独立窗口里的标签收回卡片架：接回主窗口并收起浮窗，不重新加载。 */
+    recall: (tabId: string) => Promise<BrowserState>
     dragProbe: (screenX: number, screenY: number) => Promise<BrowserDragProbe>
     reattach: (tabId: string) => Promise<BrowserState>
     floatActivate: (windowId: number, tabId: string) => Promise<BrowserState>
     floatBounds: (windowId: number, bounds: BrowserBounds) => Promise<void>
     executeOnTab: (tabId: string, script: string) => Promise<unknown>
+  }
+  /**
+   * 网页缩略图（真实截图，主进程内存缓存）。
+   *
+   * `list` 用于首次挂载补齐；`request` 只在卡片没有预览时按需触发一次采集，
+   * 是否真正截图由主进程的节流与错误处理决定。事件流只推更新与清理。
+   */
+  browserPreviews: {
+    list: () => Promise<BrowserPreview[]>
+    get: (tabId: string) => Promise<BrowserPreview | null>
+    request: (tabId: string) => Promise<void>
+    onChanged: (listener: (event: BrowserPreviewEvent) => void) => () => void
   }
   /**
    * AI Workspace（Multi-AI）。自动化全部发生在主进程：这里只传意图

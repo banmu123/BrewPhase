@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import {
-  cardBadgeText,
-  cardDisplayName,
-  clampRoundtable,
-  type PanelViewport,
-  type WebCard
-} from '@shared/roundtable'
+import type { BrowserTabInfo } from '@shared/contracts'
+import { cardBadgeText, cardDisplayName } from '@shared/web-cards'
+import { clampRoundtable, type PanelViewport } from '@shared/roundtable'
 import { useI18n } from '../../i18n'
+import { useBrowserStore } from '../browser/browser-store'
+import { useBrowserPreviewStore } from '../browser/preview-store'
 import { useRoundtableStore } from './roundtable-store'
 
 /**
@@ -45,7 +43,7 @@ function viewportSize(): PanelViewport {
 export function RoundtableSection() {
   const { t } = useI18n()
   const roundtable = useRoundtableStore((state) => state.roundtable)
-  const cards = useRoundtableStore((state) => state.cards)
+  const tabs = useBrowserStore((state) => state.state.tabs)
   const zoneRef = useRef<HTMLDivElement>(null)
 
   // ---- 拖入接应：只做视觉反馈（热区高亮）----
@@ -53,11 +51,11 @@ export function RoundtableSection() {
   // 触发重渲染、卸掉这里的 effect——监听还没执行就没了（真实竞态，靠 E2E 抓到）。
   // 所以「松手落在哪」由卡片的 onUp 统一判定（见 WebCardShelf），
   // 这里只在 pointermove 时高亮热区，告诉用户可以松手。
-  const draggingCardId = useRoundtableStore((state) => state.draggingCardId)
+  const draggingTabId = useRoundtableStore((state) => state.draggingTabId)
   const [dropActive, setDropActive] = useState(false)
 
   useEffect(() => {
-    if (!draggingCardId) {
+    if (!draggingTabId) {
       setDropActive(false)
       return
     }
@@ -82,11 +80,11 @@ export function RoundtableSection() {
       document.removeEventListener('pointermove', onMove)
       document.removeEventListener('keydown', onKey)
     }
-  }, [draggingCardId])
+  }, [draggingTabId])
 
-  const participants = roundtable.participantIds
-    .map((id) => cards.find((card) => card.id === id))
-    .filter((card): card is WebCard => Boolean(card))
+  const participants = roundtable.participantTabIds
+    .map((tabId) => tabs.find((tab) => tab.id === tabId))
+    .filter((tab): tab is BrowserTabInfo => Boolean(tab))
 
   return (
     <>
@@ -114,7 +112,7 @@ export function RoundtableSection() {
  * ============================================================ */
 
 function DockedRoundtable(props: {
-  participants: WebCard[]
+  participants: BrowserTabInfo[]
   zoneRef: React.RefObject<HTMLDivElement | null>
   dropActive: boolean
 }) {
@@ -185,7 +183,7 @@ function DockedRoundtable(props: {
  * ============================================================ */
 
 function FloatingRoundtable(props: {
-  participants: WebCard[]
+  participants: BrowserTabInfo[]
   zoneRef: React.RefObject<HTMLDivElement | null>
   dropActive: boolean
 }) {
@@ -340,13 +338,25 @@ function FloatingRoundtable(props: {
 }
 
 /* ============================================================
- * 圆桌正文（停靠与浮动共用）：参与区 + 统一提问输入。
- * 提问状态放在这里：归位/拖出只是换壳，正文不重新挂载——
- * 但浮层与停靠是两棵子树，切换时正文会重挂载。所以提问草稿
- * 存进 store（roundtable 输入不丢，规格 §4.4）。
+ * 参与者身份：优先用同一份缩略图（不复制、不额外采集），
+ * 没有预览时退回首字母徽章。
  * ============================================================ */
 
-function RoundtableBody(props: { participants: WebCard[]; dropActive: boolean }) {
+function ParticipantThumb(props: { tabId: string }) {
+  const { t } = useI18n()
+  const preview = useBrowserPreviewStore((state) => state.previews[props.tabId])
+  const tab = useBrowserStore((state) => state.state.tabs.find((item) => item.id === props.tabId))
+  if (preview) {
+    return <img className="roundtable__participant-thumb" src={preview.dataUrl} alt="" draggable={false} referrerPolicy="no-referrer" />
+  }
+  return (
+    <span className="roundtable__participant-badge" aria-hidden="true">
+      {tab ? cardBadgeText(tab, t.studio.webShelf.unnamed) : '·'}
+    </span>
+  )
+}
+
+function RoundtableBody(props: { participants: BrowserTabInfo[]; dropActive: boolean }) {
   const { t } = useI18n()
   const question = useRoundtableStore((state) => state.draft)
   const setQuestion = useRoundtableStore((state) => state.setDraft)
@@ -369,20 +379,18 @@ function RoundtableBody(props: { participants: WebCard[]; dropActive: boolean })
           </div>
         ) : (
           <div className="roundtable__participants" role="list">
-            {props.participants.map((card) => (
-              <article className="roundtable__participant" role="listitem" key={card.id}>
-                <span className="roundtable__participant-badge" aria-hidden="true">
-                  {cardBadgeText(card, unnamed)}
-                </span>
+            {props.participants.map((tab) => (
+              <article className="roundtable__participant" role="listitem" key={tab.id}>
+                <ParticipantThumb tabId={tab.id} />
                 <span className="roundtable__participant-body">
-                  <span className="roundtable__participant-name">{cardDisplayName(card, unnamed)}</span>
+                  <span className="roundtable__participant-name">{cardDisplayName(tab, unnamed)}</span>
                   <span className="roundtable__participant-state">{t.studio.roundtable.joined}</span>
                 </span>
                 <button
                   type="button"
                   className="roundtable__remove"
-                  aria-label={t.studio.roundtable.remove(cardDisplayName(card, unnamed))}
-                  onClick={() => leaveRoundtable(card.id)}
+                  aria-label={t.studio.roundtable.remove(cardDisplayName(tab, unnamed))}
+                  onClick={() => leaveRoundtable(tab.id)}
                 >
                   {t.studio.roundtable.removeAction}
                 </button>

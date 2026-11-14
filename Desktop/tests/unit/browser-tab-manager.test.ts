@@ -60,6 +60,8 @@ const fake = vi.hoisted(() => {
     setBackgroundColor = () => undefined
     setBorderRadius = () => undefined
     setVisible = () => undefined
+    getVisible = () => false
+    getBounds = () => ({ x: 0, y: 0, width: 0, height: 0 })
   }
 
   class FakeBrowserWindow {
@@ -106,7 +108,10 @@ const fake = vi.hoisted(() => {
 })
 
 vi.mock('electron', () => ({
+  // 移动目标既可能是 BrowserWindow，也可能是采集宿主 BaseWindow：
+  // 两者都从同一张 id 注册表取 contentView。
   BrowserWindow: fake.FakeBrowserWindow,
+  BaseWindow: fake.FakeBrowserWindow,
   session: { fromPartition: () => ({ setPermissionRequestHandler: () => undefined, setPermissionCheckHandler: () => undefined, on: () => undefined }) },
   WebContentsView: fake.FakeView
 }))

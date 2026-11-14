@@ -1,4 +1,4 @@
-import { BrowserWindow, type WebContents } from 'electron'
+import { BaseWindow, type WebContents } from 'electron'
 import type { BrowserLoadError } from '../../shared/contracts/browser'
 import { isAllowedBrowserURL, normalizeBrowserURL } from '../../shared/browser-url'
 import { attachBrowserGuards, createBrowserView } from './browser-view-factory'
@@ -28,14 +28,25 @@ export type BrowserTabRecord = {
   windowId: number | null
   /** 挂在非主窗口（独立浏览器窗口）上。 */
   detached: boolean
+  /** 挂在缩略图采集宿主上：用户看不见，但页面有绘制表面。 */
+  parked: boolean
 }
 
 /** 主窗口的 id 由构造方传入；它决定 `detached` 的语义。 */
 export type BrowserTabManagerParams = {
   mainWindowId: () => number | null
+  /** 采集宿主窗口 id：挂在它上面的标签算「收纳」，不算拆出。 */
+  captureWindowId?: () => number | null
   onChange: () => void
   /** 顶层导航完成时回调（历史记录由 browser-manager 统一写）。 */
   onPageVisited?: (url: string, title: string) => void
+  /**
+   * 页面「内容可能变了」时回调：加载结束、顶层导航、站内导航、标题更新。
+   * 缩略图服务用它做 debounce；频率由对方控制，这里不做节流。
+   */
+  onPageSettled?: (tabId: string) => void
+  /** 标签被销毁（正常关闭或外部销毁）：缩略图缓存必须同步清理。 */
+  onTabClosed?: (tabId: string) => void
 }
 
 export class BrowserTabManager {
@@ -99,7 +110,8 @@ export class BrowserTabManager {
       progress: 0,
       error: null,
       windowId: null,
-      detached: false
+      detached: false,
+      parked: false
     }
     this.tabs.set(id, tab)
     this.order.push(id)
@@ -124,6 +136,7 @@ export class BrowserTabManager {
     } catch {
       // 已经销毁：忽略。
     }
+    this.params.onTabClosed?.(tabId)
     this.notify()
     return true
   }
@@ -142,12 +155,15 @@ export class BrowserTabManager {
     this.detachFromWindow(tab)
 
     if (targetWindowId !== null) {
-      const target = BrowserWindow.fromId(targetWindowId)
+      const target = BaseWindow.fromId(targetWindowId)
       if (!target || target.isDestroyed()) return false
       target.contentView.addChildView(tab.view)
     }
     tab.windowId = targetWindowId
-    tab.detached = targetWindowId !== null && targetWindowId !== this.params.mainWindowId()
+    const captureWindowId = this.params.captureWindowId?.() ?? null
+    tab.parked = targetWindowId !== null && targetWindowId === captureWindowId
+    tab.detached =
+      targetWindowId !== null && targetWindowId !== this.params.mainWindowId() && !tab.parked
     this.syncBounds(tab)
     this.notify()
     return true
@@ -155,11 +171,12 @@ export class BrowserTabManager {
 
   private detachFromWindow(tab: BrowserTabRecord): void {
     if (tab.windowId === null) return
-    const current = BrowserWindow.fromId(tab.windowId)
+    const current = BaseWindow.fromId(tab.windowId)
     if (current && !current.isDestroyed()) {
       current.contentView.removeChildView(tab.view)
     }
     tab.windowId = null
+    tab.parked = false
   }
 
   /** 窗口 resize / 挂载后，渲染层会重新上报 bounds；这里只兜底可见性。 */
@@ -232,6 +249,7 @@ export class BrowserTabManager {
       tab.loading = false
       tab.progress = tab.error ? 0 : 1
       this.notify()
+      if (!tab.error) this.params.onPageSettled?.(tab.id)
     })
     webContents.on('did-start-navigation', (event, url) => {
       if (!event.isMainFrame || event.isSameDocument) return
@@ -248,16 +266,19 @@ export class BrowserTabManager {
       tab.progress = 1
       this.params.onPageVisited?.(url, tab.title)
       this.notify()
+      this.params.onPageSettled?.(tab.id)
     })
     webContents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
       if (!isMainFrame) return
       if (!normalizeBrowserURL(url)) return
       tab.url = url
       this.notify()
+      this.params.onPageSettled?.(tab.id)
     })
     webContents.on('page-title-updated', (_event, title) => {
       tab.title = title
       this.notify()
+      this.params.onPageSettled?.(tab.id)
     })
     webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       // 子资源失败不判死；-3 是用户主动停止/跳转。
@@ -278,6 +299,7 @@ export class BrowserTabManager {
         const at = this.order.indexOf(tab.id)
         if (at !== -1) this.order.splice(at, 1)
         this.tabs.delete(tab.id)
+        this.params.onTabClosed?.(tab.id)
         this.notify()
       }
     })

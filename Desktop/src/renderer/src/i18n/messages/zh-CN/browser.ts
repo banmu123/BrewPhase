@@ -11,13 +11,17 @@ export const browser = {
   open: '打开浏览器',
   close: '关闭浏览器',
   hide: '收起浏览器',
+  /** Phase 2：面板的 ✕ 只收起，页面回到卡片架，不销毁。 */
+  shelve: '收起，回到卡片架',
   titlebarHint: '拖动标题栏移动浮窗',
   resizeHint: '拖动边缘或四角调整大小',
   tabs: {
     newTab: '新建标签',
     closeTab: '关闭标签',
     detachedBadge: '已拆出',
-    backToMain: '拖回主窗口',
+    recall: '收回卡片架',
+    recallHint: '拖到主窗口，或点这里收回卡片架',
+    recallNow: '松手：收回卡片架',
     detachHint: '松手：拆成独立浏览器窗口'
   },
   toolbar: {

@@ -330,7 +330,12 @@ function bootstrap(): void {
   // 窗口尺寸变化：原生视图不归 CSS 管，必须显式收回来。
   // 渲染层也会重新上报 bounds，这里是「渲染层还没来得及报」时的兜底。
   mainWindow.on('resize', () => browserManager?.refit())
-  mainWindow.on('closed', () => browserManager?.onMainWindowClosed())
+  mainWindow.on('closed', () => {
+    browserManager?.onMainWindowClosed()
+    // 采集宿主是 BaseWindow，不参与 BrowserWindow.getAllWindows()；主窗口关掉、
+    // 又没有任何独立浏览器窗口时，按原语义退出（macOS 仍留在 Dock）。
+    if (process.platform !== 'darwin' && BrowserWindow.getAllWindows().length === 0) app.quit()
+  })
   // 上次运行没跑完的 pending 任务（应用被关掉 / 崩溃）：接着抓，不遗忘
   try {
     for (const job of pendingMetadataJobs(db.db)) metadataQueue.enqueue(job)

@@ -581,6 +581,24 @@ export function registerIpc(params: {
     browser.openExternal((input as { url?: string } | undefined)?.url)
     return null
   })
+
+  // MARK: - 卡片架 = 真实标签（Phase 2）
+  handle(IPC.browserCreateShelfTab, () => browser.createShelfTab())
+  handle(IPC.browserNavigateTab, (input) => {
+    const { tabId, input: value } = input as { tabId: string; input: string }
+    return browser.navigateTab(tabId, value)
+  })
+  handle(IPC.browserDetachTab, (input) => {
+    const { tabId, screenX, screenY } = input as { tabId: string; screenX: number; screenY: number }
+    return browser.detachTab(tabId, screenX, screenY)
+  })
+  handle(IPC.browserRecallTab, (input) => browser.recallToShelf((input as { tabId: string }).tabId))
+  handle(IPC.browserPreviewList, () => browser.previewList())
+  handle(IPC.browserPreviewGet, (input) => browser.previewFor((input as { tabId: string }).tabId))
+  handle(IPC.browserPreviewRequest, (input) => {
+    browser.requestPreview((input as { tabId: string }).tabId)
+    return null
+  })
 }
 
 /**

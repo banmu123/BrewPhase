@@ -22,6 +22,10 @@ export function BrowserFloatWindow(props: { windowId: number }) {
   const lastReported = useRef('')
   const rafRef = useRef<number | null>(null)
   const [mounted, setMounted] = useState(false)
+  const recallDrag = useRef<{ pointerId: number; startX: number; startY: number; tabId: string; lastProbe: number } | null>(null)
+  const recallDraggingRef = useRef(false)
+  const [recallDragging, setRecallDragging] = useState(false)
+  const [recallOverMain, setRecallOverMain] = useState(false)
 
   useEffect(() => {
     setMounted(true)
@@ -66,6 +70,63 @@ export function BrowserFloatWindow(props: { windowId: number }) {
     : (ownTabs[0]?.id ?? null)
   const activeTab = ownTabs.find((tab) => tab.id === activeInFloat) ?? null
 
+  /**
+   * 「拖回卡片架」：按住标题区拖动，松手落在主窗口上即收回。
+   *
+   * 这不是移动窗口本身——拖动的是**页面**：主进程只把同一个 WebContentsView
+   * 接回主窗口并收起浮窗，不重新 loadURL、不碰 Session。指针捕获让光标离开
+   * 浮窗后仍能收到 pointerup；落点由主进程的窗口几何裁定。
+   */
+  const startRecallDrag = (event: React.PointerEvent<HTMLElement>): void => {
+    if (event.button !== 0 || !activeTab) return
+    recallDrag.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      tabId: activeTab.id,
+      lastProbe: 0
+    }
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId)
+    } catch {
+      // 忽略：没有指针捕获时仍可用「收回卡片架」按钮。
+    }
+    event.preventDefault()
+  }
+
+  const moveRecallDrag = (event: React.PointerEvent<HTMLElement>): void => {
+    const drag = recallDrag.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 6 && !recallDraggingRef.current) return
+    recallDraggingRef.current = true
+    setRecallDragging(true)
+    const now = Date.now()
+    if (now - drag.lastProbe < 140) return
+    drag.lastProbe = now
+    void api.browserTabs
+      .dragProbe(event.screenX, event.screenY)
+      .then((probe) => setRecallOverMain(probe.mainWindow))
+      .catch(() => undefined)
+  }
+
+  const endRecallDrag = (event: React.PointerEvent<HTMLElement>): void => {
+    const drag = recallDrag.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    recallDrag.current = null
+    const wasDragging = recallDraggingRef.current
+    recallDraggingRef.current = false
+    setRecallDragging(false)
+    setRecallOverMain(false)
+    if (!wasDragging) return
+    void api.browserTabs
+      .dragProbe(event.screenX, event.screenY)
+      .then((probe) => {
+        if (probe.mainWindow) return api.browserTabs.recall(drag.tabId)
+        return undefined
+      })
+      .catch(() => undefined)
+  }
+
   const windows = navigator.platform.toLowerCase().includes('win')
   const titlebarStyle: React.CSSProperties = windows
     ? { paddingRight: 'calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw))' }
@@ -74,20 +135,36 @@ export function BrowserFloatWindow(props: { windowId: number }) {
   return (
     <div className="bp-float">
       <header className="bp-float__titlebar" style={titlebarStyle}>
-        <span className="bp-float__brand">BREWPHASE</span>
-        <span className="bp-float__title">{activeTab?.title || activeTab?.url || t.browser.label}</span>
+        <span
+          className="bp-float__ident"
+          data-dragging={recallDragging}
+          data-over-main={recallOverMain}
+          title={t.browser.tabs.recallHint}
+          onPointerDown={startRecallDrag}
+          onPointerMove={moveRecallDrag}
+          onPointerUp={endRecallDrag}
+          onPointerCancel={endRecallDrag}
+        >
+          <span className="bp-float__brand">BREWPHASE</span>
+          <span className="bp-float__title">{activeTab?.title || activeTab?.url || t.browser.label}</span>
+          {recallDragging && (
+            <span className="bp-float__recall-hint">
+              {recallOverMain ? t.browser.tabs.recallNow : t.browser.tabs.recallHint}
+            </span>
+          )}
+        </span>
         <span className="spacer" />
         <button
           type="button"
           className="bp-float__home"
-          title={t.browser.tabs.backToMain}
-          aria-label={t.browser.tabs.backToMain}
+          title={t.browser.tabs.recall}
+          aria-label={t.browser.tabs.recall}
           disabled={!activeTab}
           onClick={() => {
-            if (activeTab) void api.browserTabs.reattach(activeTab.id)
+            if (activeTab) void api.browserTabs.recall(activeTab.id)
           }}
         >
-          {t.browser.tabs.backToMain}
+          {t.browser.tabs.recall}
         </button>
       </header>
 

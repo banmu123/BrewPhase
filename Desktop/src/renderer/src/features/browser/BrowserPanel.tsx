@@ -288,9 +288,10 @@ export function BrowserPanel() {
         <button
           type="button"
           className="browser-panel__close"
-          aria-label={t.browser.close}
-          title={t.browser.close}
-          onClick={() => void store.getState().close()}
+          aria-label={t.browser.shelve}
+          title={t.browser.shelve}
+          // Phase 2：收起 = 回到卡片架，**不销毁页面**。真正的关闭在卡片上。
+          onClick={() => void store.getState().hide()}
         >
           ✕
         </button>
