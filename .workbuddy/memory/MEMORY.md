@@ -112,3 +112,7 @@
 * 阈值集中 `RAG/Rules/IntelligenceConfig.swift`；中文词表放 `Resources/*.json`。
 * 纯逻辑放 `Core/`，视图放 `Shared/Components/` 与 `Features/`。
 * 改完先 commit + push 再询问 GPT，必须附 https://github.com/banmu123/BrewPhase。
+* push 报 `CRYPT_E_NO_REVOCATION_CHECK` 时：`env -u http_proxy -u https_proxy
+  -u HTTP_PROXY -u HTTPS_PROXY git -c http.sslBackend=schannel
+  -c http.schannelCheckRevoke=false push`（schannelCheckRevoke 必须与
+  显式 sslBackend=schannel 同给才生效；openssl 后端缺 CA 会报 issuer 错）。
