@@ -123,7 +123,33 @@
 * 卡片与标签条都用 `data-tab-id`：任何落点查询必须 `stripRef` 内 scoped，
   全局 `querySelector` 会命中架子卡片，排序静默失效。
 * Playwright `app.windows()` 会把 WebContentsView 里的网页也当页面返回；
-  判断独立窗口只认壳页 URL 里的 `#bpFloat=`。`page.screenshot()` 拍不到原生网页。
+  判断独立窗口只认壳页 URL 里的 `#bpFloat=`（圆桌同理 `#bpRoundtable=`）。
+  `page.screenshot()` 拍不到原生网页。
+
+## Desktop：多窗口与拖拽会话（Phase 3）
+
+* **拖出判定必须在主进程**：渲染层在窗口外收不到可靠 pointer 事件（pointerup
+  会丢、会话挂死），合成事件的 E2E 验证不了这一点。卡片/圆桌拖拽一律用 OS
+  原生 HTML5 DnD（dragend 必达、OS 拖影窗口外可见），主进程
+  `BrowserDragSessionManager` 轮询 `screen.getCursorScreenPoint` 裁定松手位置：
+  实时光标 > 会话轮询读数 > 渲染层兜底坐标。窗口内 drop 必须 `dropHandled`
+  （IPC FIFO 保证先于 dragend 到达主进程）。
+* 拖拽会话是**单例**：会话未收尾时后续 begin 全被拒。窗口关闭（含圆桌窗口
+  在 drop→dock 中销毁、dragend 永不到达）必须强制 `dragSession.cancel()`。
+* 窗口定位禁止 `Math.max(0,…)`：用 `screen.getDisplayNearestPoint(落点).workArea`
+  + `fitRectIntoBounds`（shared/window-placement.ts，负坐标有单测）。
+* **圆桌状态在主进程** `RoundtableService`（快照 + version 广播）；两个 Renderer
+  的 store 只是缓存。join 校验真实标签，标签关闭 `syncTabs` 自动摘除。
+  草稿 = 后写者胜出：baseVersion 门控会因键击间隔 < IPC 往返而丢字符。
+* 圆桌窗口：唯一实例（重复 detach 只聚焦）、系统 ✕=归位（isQuitting 放行防
+  卡 quit）、外部销毁走 `onWindowLost` 兜底归位。`-webkit-app-region: drag`
+  与 `draggable` 同区域互斥——拖拽源必须做成独立的 no-drag 手柄。
+* 浮窗/独立浏览器窗口的系统关闭 = `recallToShelf`（park，不开 BrowserPanel）；
+  主窗口 activate 重建判 `mainWindowRef` 而不是 `getAllWindows().length`
+  （圆桌窗口活着时后者非 0）。
+* E2E 假光标钩子：`globalThis.__bpTestHooks.setDragCursor`（仅 !app.isPackaged
+  注入）；Playwright 关独立窗口要用 `BrowserWindow.close()`（page.close() 可能
+  绕过 'close' 事件）。`browser.state()` 返回 Promise，evaluate 里要 await。
 
 ## 代码风格与工作流
 
