@@ -22,6 +22,12 @@ import { startAIFixture, startWebFixture, type AIFixture, type WebFixture } from
 let ai: AIFixture
 let generic: WebFixture
 
+// Multi-AI 提问条（开始讨论）暂时屏蔽（ROUNDTABLE_ASK_UI_ENABLED=false，用户要求）：
+// 下面 4 条用例全部经由提问条发起（fill .roundtable__ask-input / click .roundtable__ask-submit），
+// 屏蔽期间无法驱动。底层链路（participant-service / Adapter / 持久化）代码原样保留，
+// 恢复开关时**必须同步解除本 skip** 并跑通这批用例。
+test.skip(true, 'Multi-AI 提问条暂时屏蔽（ROUNDTABLE_ASK_UI_ENABLED=false），恢复时解除')
+
 test.beforeAll(async () => {
   ai = await startAIFixture()
   generic = await startWebFixture()

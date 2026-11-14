@@ -13,6 +13,9 @@ import { openSpace } from './nav'
  *   主进程第一行就崩。这不是应用代码的问题，是启动环境的问题。
  * - 无 GPU 的受限环境加 --no-sandbox / --disable-gpu，只影响测试进程，
  *   不写进应用默认配置。
+ * - 本用例**故意用默认 userData**（跑真实库）。`electron-vite dev` 正在运行
+ *   时会因单实例锁启动即退（Playwright 报 electron.launch: WebSocket error:
+ *   read ECONNRESET）——跑 E2E 前先停掉 dev 实例，不是产品 bug。
  */
 function launchEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env }

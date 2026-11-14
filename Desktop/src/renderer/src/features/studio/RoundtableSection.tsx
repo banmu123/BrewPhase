@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   isRoundtableAITaskBusy,
+  ROUNDTABLE_ASK_UI_ENABLED,
   type AIRoundtableParticipantStatus,
   type AIRoundtableTaskSnapshot,
   type BrowserTabInfo
@@ -309,43 +310,49 @@ export function RoundtableBody(props: { participants: BrowserTabInfo[] }) {
         )}
       </div>
 
-      <footer className="roundtable__ask">
-        <form className="roundtable__ask-form" onSubmit={submit}>
-          <input
-            className="roundtable__ask-input"
-            placeholder={
-              props.participants.length === 0
-                ? t.studio.roundtable.askPlaceholderNoAI
-                : t.studio.roundtable.askPlaceholder
-            }
-            aria-label={t.studio.roundtable.askLabel}
-            value={snapshot.draft}
-            maxLength={2_000}
-            onChange={(event) => void setDraft(event.target.value)}
-          />
-          {busy ? (
-            <button type="button" className="roundtable__ask-submit roundtable__ask-submit--stop" onClick={() => void stopTask()}>
-              {t.studio.roundtable.askStop}
-            </button>
-          ) : (
-            <button type="submit" className="roundtable__ask-submit" disabled={!canAsk}>
-              {t.studio.roundtable.askStart}
-            </button>
-          )}
-        </form>
-        <div className="roundtable__ask-meta" role="status">
-          {busy ? (
-            <span className="roundtable__ask-busy">{t.studio.roundtable.askBusyHint}</span>
-          ) : capableCount > 0 ? (
-            <span>{t.studio.roundtable.capableCount(capableCount)}</span>
-          ) : (
-            <span className="roundtable__ask-warning">{t.studio.roundtable.noCapableHint}</span>
-          )}
-          {aiError && <span className="roundtable__ask-warning">{aiError}</span>}
-        </div>
-      </footer>
+      {/* Multi-AI 提问条（开始讨论）暂时屏蔽（ROUNDTABLE_ASK_UI_ENABLED），
+          恢复时整块随开关一起回来。 */}
+      {ROUNDTABLE_ASK_UI_ENABLED && (
+        <>
+          <footer className="roundtable__ask">
+            <form className="roundtable__ask-form" onSubmit={submit}>
+              <input
+                className="roundtable__ask-input"
+                placeholder={
+                  props.participants.length === 0
+                    ? t.studio.roundtable.askPlaceholderNoAI
+                    : t.studio.roundtable.askPlaceholder
+                }
+                aria-label={t.studio.roundtable.askLabel}
+                value={snapshot.draft}
+                maxLength={2_000}
+                onChange={(event) => void setDraft(event.target.value)}
+              />
+              {busy ? (
+                <button type="button" className="roundtable__ask-submit roundtable__ask-submit--stop" onClick={() => void stopTask()}>
+                  {t.studio.roundtable.askStop}
+                </button>
+              ) : (
+                <button type="submit" className="roundtable__ask-submit" disabled={!canAsk}>
+                  {t.studio.roundtable.askStart}
+                </button>
+              )}
+            </form>
+            <div className="roundtable__ask-meta" role="status">
+              {busy ? (
+                <span className="roundtable__ask-busy">{t.studio.roundtable.askBusyHint}</span>
+              ) : capableCount > 0 ? (
+                <span>{t.studio.roundtable.capableCount(capableCount)}</span>
+              ) : (
+                <span className="roundtable__ask-warning">{t.studio.roundtable.noCapableHint}</span>
+              )}
+              {aiError && <span className="roundtable__ask-warning">{aiError}</span>}
+            </div>
+          </footer>
 
-      <RoundtableAnswers task={task} />
+          <RoundtableAnswers task={task} />
+        </>
+      )}
     </>
   )
 }

@@ -80,6 +80,9 @@ test('语言切换：中文 → English 即时生效，重启后保留', async (
 })
 
 test('英文界面下模块页面完整可用（导航与页面标题）', async () => {
+  // 本用例故意用默认 userData（真实库）。dev 实例（electron-vite dev）正在
+  // 运行时会因单实例锁启动即退（electron.launch: WebSocket ECONNRESET）——
+  // 先停 dev 实例再跑，不是产品 bug。
   const app = await electron.launch({ args: ['.', '--no-sandbox', '--disable-gpu'], env: launchEnv() })
   const page = await app.firstWindow()
   await pinLocale(page, 'en-US')

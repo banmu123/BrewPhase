@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { isRoundtableAITaskBusy } from '@shared/contracts'
+import { isRoundtableAITaskBusy, ROUNDTABLE_ASK_UI_ENABLED } from '@shared/contracts'
 import type { BrowserTabInfo } from '@shared/contracts'
 import { cardDisplayName } from '@shared/web-cards'
 import { useI18n } from '../../i18n'
@@ -103,56 +103,62 @@ export function RoundtableWindow() {
       <div className="rt-window__body">
         <RoundtableWorkspace host="detached" />
 
-        {/* 提问条：Multi-AI 问答与多网页空间共存（草稿仍是同一份共享状态）。 */}
-        <footer className="rt-window__ask">
-          <form
-            className="rt-window__ask-form"
-            onSubmit={(event) => {
-              event.preventDefault()
-              if (!busy && snapshot.draft.trim() !== '') void askTask()
-            }}
-          >
-            <input
-              className="roundtable__ask-input"
-              placeholder={t.studio.roundtable.askPlaceholder}
-              aria-label={t.studio.roundtable.askLabel}
-              value={snapshot.draft}
-              maxLength={2_000}
-              onChange={(event) => void useRoundtableStore.getState().setDraft(event.target.value)}
-            />
-            {busy ? (
-              <button type="button" className="roundtable__ask-submit roundtable__ask-submit--stop" onClick={() => void stopTask()}>
-                {t.studio.roundtable.askStop}
-              </button>
-            ) : (
-              <button type="submit" className="roundtable__ask-submit" disabled={snapshot.draft.trim() === ''}>
-                {t.studio.roundtable.askStart}
-              </button>
-            )}
-            <button
-              type="button"
-              className="rt-window__ask-toggle"
-              data-open={answersOpen}
-              data-busy={busy ? 'true' : 'false'}
-              onClick={() => setAnswersOpen((current) => !current)}
-            >
-              {t.studio.roundtable.answersToggle}
-            </button>
-          </form>
-        </footer>
+        {/* Multi-AI 提问条（开始讨论）暂时屏蔽（ROUNDTABLE_ASK_UI_ENABLED）：
+            独立窗口底部只留工作空间，恢复时整块（提问条 + 讨论抽屉）随开关回来。 */}
+        {ROUNDTABLE_ASK_UI_ENABLED && (
+          <>
+            {/* 提问条：Multi-AI 问答与多网页空间共存（草稿仍是同一份共享状态）。 */}
+            <footer className="rt-window__ask">
+              <form
+                className="rt-window__ask-form"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  if (!busy && snapshot.draft.trim() !== '') void askTask()
+                }}
+              >
+                <input
+                  className="roundtable__ask-input"
+                  placeholder={t.studio.roundtable.askPlaceholder}
+                  aria-label={t.studio.roundtable.askLabel}
+                  value={snapshot.draft}
+                  maxLength={2_000}
+                  onChange={(event) => void useRoundtableStore.getState().setDraft(event.target.value)}
+                />
+                {busy ? (
+                  <button type="button" className="roundtable__ask-submit roundtable__ask-submit--stop" onClick={() => void stopTask()}>
+                    {t.studio.roundtable.askStop}
+                  </button>
+                ) : (
+                  <button type="submit" className="roundtable__ask-submit" disabled={snapshot.draft.trim() === ''}>
+                    {t.studio.roundtable.askStart}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="rt-window__ask-toggle"
+                  data-open={answersOpen}
+                  data-busy={busy ? 'true' : 'false'}
+                  onClick={() => setAnswersOpen((current) => !current)}
+                >
+                  {t.studio.roundtable.answersToggle}
+                </button>
+              </form>
+            </footer>
 
-        {answersOpen && (
-          <aside className="rt-window__drawer">
-            <header className="rt-window__drawer-head">
-              <span>{t.studio.roundtable.answersTitle}</span>
-              <button type="button" className="rt-window__drawer-close" onClick={() => setAnswersOpen(false)} aria-label={t.studio.roundtable.answersTitle}>
-                ✕
-              </button>
-            </header>
-            <div className="rt-window__drawer-body">
-              <RoundtableAnswers task={task} />
-            </div>
-          </aside>
+            {answersOpen && (
+              <aside className="rt-window__drawer">
+                <header className="rt-window__drawer-head">
+                  <span>{t.studio.roundtable.answersTitle}</span>
+                  <button type="button" className="rt-window__drawer-close" onClick={() => setAnswersOpen(false)} aria-label={t.studio.roundtable.answersTitle}>
+                    ✕
+                  </button>
+                </header>
+                <div className="rt-window__drawer-body">
+                  <RoundtableAnswers task={task} />
+                </div>
+              </aside>
+            )}
+          </>
         )}
       </div>
     </div>

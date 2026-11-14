@@ -14,6 +14,17 @@ import type { AIChatTaskState } from '../../main/ai-chat/automation/types'
 export const ROUNDTABLE_AI_MAX_PARTICIPANTS = 12
 
 /**
+ * Multi-AI 提问条（「开始讨论」）的 UI 开关。
+ *
+ * **暂时屏蔽**（用户要求，2026-11-15）：圆桌当前聚焦多网页工作空间，
+ * 真实平台的并行问答等稳定后随测试接缝一起回归。恢复时改回 `true`
+ * 即可——停靠区块与独立窗口底部的提问条 / 讨论抽屉都由它控制，
+ * 底层链路（participant-service / IPC / 持久化 / 事件广播）原样保留。
+ * 恢复时记得把 roundtable-ai.e2e 的 skip 一并解除。
+ */
+export const ROUNDTABLE_ASK_UI_ENABLED = false
+
+/**
  * 任务快照广播通道。与 `roundtable:changed` 同一模式：preload 是 sandboxed
  * 的，通道名只能放共享层；主窗口与圆桌独立窗口都订阅它。
  */

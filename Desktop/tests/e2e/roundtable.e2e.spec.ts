@@ -232,10 +232,9 @@ test('圆桌拆出独立窗口：占位区、窗口壳、重复拆出只聚焦',
     await expect(page.locator('.roundtable--slot')).toContainText('1 位参与者')
     await expect(page.locator('.roundtable--floating')).toHaveCount(0)
 
-    // 独立窗口：主体是自由布局工作空间（面板 = 参与者），提问条在底部。
+    // 独立窗口：主体是自由布局工作空间（面板 = 参与者），提问条暂时屏蔽。
     const shell = await roundtableShell(app)
     await expect(shell.locator('.rt-panel__name')).toContainText('fixture b')
-    await expect(shell.locator('.roundtable__ask-input')).toBeVisible()
     await expect(shell.getByRole('button', { name: '圆桌归位' })).toBeVisible()
     expect(shell.url()).toContain('bpRoundtable=')
 
@@ -251,7 +250,7 @@ test('圆桌拆出独立窗口：占位区、窗口壳、重复拆出只聚焦',
   }
 })
 
-test('跨窗口状态同步：参与者与草稿在两个窗口一致，归位后数据不丢', async () => {
+test('跨窗口状态同步：参与者与移除在两个窗口一致，归位后数据不丢', async () => {
   const { app, page, dataDir } = await launch()
   try {
     const first = await addCard(page, '/a')
@@ -260,23 +259,21 @@ test('跨窗口状态同步：参与者与草稿在两个窗口一致，归位�
     await dragCardToRoundtable(page, second)
     await expect(page.locator('.roundtable__participant')).toHaveCount(2, { timeout: 15_000 })
 
-    // 拆出前在主窗口写下草稿：主窗口 → 独立窗口的同步。
-    await page.locator('.roundtable__ask-input').fill('两个窗口看同一份草稿')
+    // 提问条暂时屏蔽（ROUNDTABLE_ASK_UI_ENABLED），草稿同步断言随恢复一起回来。
+
+    // 拆出：独立窗口拿到同一批参与者。
     await page.getByRole('button', { name: '拆出为独立窗口' }).click()
     const shell = await roundtableShell(app)
-    await expect(shell.locator('.roundtable__ask-input')).toHaveValue('两个窗口看同一份草稿', { timeout: 15_000 })
     await expect(shell.locator('.rt-panel')).toHaveCount(2, { timeout: 15_000 })
 
     // 独立窗口里移除参与者（工作空间面板的 ✕）：主窗口占位区人数同步减少。
     await shell.locator('.rt-panel__action--remove').first().click()
     await expect(page.locator('.roundtable--slot')).toContainText('1 位参与者', { timeout: 15_000 })
 
-    // 独立窗口里改草稿：归位后在主窗口原样出现（独立窗口 → 主窗口同步）。
-    await shell.locator('.roundtable__ask-input').fill('在独立窗口改的草稿')
+    // 归位：主窗口参与者同步为 1。
     await shell.getByRole('button', { name: '圆桌归位' }).click()
     await expect.poll(() => shells(app, 'bpRoundtable=').length, { timeout: 15_000 }).toBe(0)
     await expect(page.locator('.roundtable:not(.roundtable--slot)')).toBeVisible({ timeout: 15_000 })
-    await expect(page.locator('.roundtable__ask-input')).toHaveValue('在独立窗口改的草稿', { timeout: 15_000 })
     await expect(page.locator('.roundtable__participant')).toHaveCount(1, { timeout: 15_000 })
 
     // 系统 ✕ = 归位（不是删状态）：再拆出、点系统关闭，数据仍在。
@@ -293,7 +290,6 @@ test('跨窗口状态同步：参与者与草稿在两个窗口一致，归位�
     }, shell2Id)
     await expect.poll(() => shells(app, 'bpRoundtable=').length, { timeout: 15_000 }).toBe(0)
     await expect(page.locator('.roundtable:not(.roundtable--slot)')).toBeVisible({ timeout: 15_000 })
-    await expect(page.locator('.roundtable__ask-input')).toHaveValue('在独立窗口改的草稿', { timeout: 15_000 })
     await expect(page.locator('.roundtable__participant')).toHaveCount(1, { timeout: 15_000 })
   } finally {
     await app.close()
