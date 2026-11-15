@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   clampPanelIntoWorkspace,
   collectSnapEdges,
+  rectsIntersect,
   resolveMoveWithoutOverlap,
   resolveResizeWithoutOverlap,
   ROUNDTABLE_PANEL_MIN_HEIGHT,
@@ -86,20 +87,46 @@ export function RoundtableWorkspace(props: { host: 'docked' | 'detached' }) {
    * 显示布局（产品规则：自由布局，但面板互不重叠）。存储位原样保留，
    * 但显示时按 z 序逐个 clamp + 防重叠解析——宿主变小把面板挤到一起时
    * 显示层也不会叠上；原生 view bounds 跟随 DOM rects，自动一致。
+   * 若宿主实在放不下（默认尺寸无解），**所有面板统一网格平铺**（每块
+   * 收缩到格子大小，不小于最小尺寸）——存储布局不改写，窗口拉大即恢复。
    */
   const displayMap = useMemo(() => {
+    const workspace = layout.workspace
     const map = new Map<string, RoundtablePanelLayout>()
     const placed: RoundtablePanelLayout[] = []
     for (const panel of ordered) {
-      const clamped = clampPanelIntoWorkspace(panel, layout.workspace)
+      const clamped = clampPanelIntoWorkspace(panel, workspace)
       const spot =
         resolveMoveWithoutOverlap(
           { x: clamped.x, y: clamped.y },
           { width: clamped.width, height: clamped.height },
           placed,
-          layout.workspace
+          workspace
         ) ?? { x: clamped.x, y: clamped.y }
       const display: RoundtablePanelLayout = { ...clamped, x: spot.x, y: spot.y }
+      if (placed.length > 0 && placed.some((other) => rectsIntersect(display, other))) {
+        // 默认尺寸放不下：全部面板统一网格平铺（诚实的降级，存储不动）。
+        const n = ordered.length
+        const cols = Math.max(1, Math.ceil(Math.sqrt(n)))
+        const rows = Math.max(1, Math.ceil(n / cols))
+        const cellW = Math.floor(workspace.width / cols)
+        const cellH = Math.floor(workspace.height / rows)
+        ordered.forEach((item, index) => {
+          const col = index % cols
+          const row = Math.floor(index / cols)
+          const sized = clampPanelIntoWorkspace(item, workspace)
+          const width = Math.max(ROUNDTABLE_PANEL_MIN_WIDTH, Math.min(sized.width, cellW))
+          const height = Math.max(ROUNDTABLE_PANEL_MIN_HEIGHT, Math.min(sized.height, cellH))
+          map.set(item.tabId, {
+            ...item,
+            x: Math.min(col * cellW, Math.max(0, workspace.width - width)),
+            y: Math.min(row * cellH, Math.max(0, workspace.height - height)),
+            width,
+            height
+          })
+        })
+        return map
+      }
       placed.push(display)
       map.set(panel.tabId, display)
     }
@@ -108,21 +135,23 @@ export function RoundtableWorkspace(props: { host: 'docked' | 'detached' }) {
 
   return (
     <div className="rt-workspace" data-host={props.host}>
-      <header className="rt-workspace__head">
-        <span className="rt-workspace__title">{t.studio.roundtable.workspaceTitle}</span>
-        <span className="rt-workspace__count">{t.studio.roundtable.count(layout.panels.length)}</span>
-        <span className="spacer" />
-        <button
-          type="button"
-          className="rt-workspace__btn"
-          data-active={layout.snapEnabled}
-          onClick={() => void useRoundtableLayoutStore.getState().setSnap(!layout.snapEnabled)}
-          title={t.studio.roundtable.snapToggle}
-        >
-          {t.studio.roundtable.snapToggle}
-        </button>
-        <AddWebPopover />
-        {props.host === 'docked' && (
+      {/* 头部只在停靠形态渲染：独立窗口的标题栏（rt-window__titlebar）
+          已带「吸附 / 添加网页 / 归位」，再来一行就是重复。 */}
+      {props.host === 'docked' && (
+        <header className="rt-workspace__head">
+          <span className="rt-workspace__title">{t.studio.roundtable.workspaceTitle}</span>
+          <span className="rt-workspace__count">{t.studio.roundtable.count(layout.panels.length)}</span>
+          <span className="spacer" />
+          <button
+            type="button"
+            className="rt-workspace__btn"
+            data-active={layout.snapEnabled}
+            onClick={() => void useRoundtableLayoutStore.getState().setSnap(!layout.snapEnabled)}
+            title={t.studio.roundtable.snapToggle}
+          >
+            {t.studio.roundtable.snapToggle}
+          </button>
+          <AddWebPopover />
           <button
             type="button"
             className="rt-workspace__btn"
@@ -130,13 +159,11 @@ export function RoundtableWorkspace(props: { host: 'docked' | 'detached' }) {
           >
             {t.studio.roundtable.undockAction}
           </button>
-        )}
-        {props.host === 'docked' && (
           <button type="button" className="rt-workspace__btn" onClick={() => void useRoundtableLayoutStore.getState().exitWorkspace()}>
             {t.studio.roundtable.exitWorkspace}
           </button>
-        )}
-      </header>
+        </header>
+      )}
       <div className="rt-workspace__canvas" ref={containerRef}>
         {ordered.map((panel) => (
           <WorkspacePanel
@@ -427,7 +454,8 @@ const QUICK_LINKS: Array<{ label: string; url: string }> = [
   { label: 'Grok', url: 'https://grok.com/' }
 ]
 
-function AddWebPopover() {
+/** 添加网页：地址输入 + 常用站点快捷方式（独立窗口标题栏也复用）。 */
+export function AddWebPopover() {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [url, setUrl] = useState('')

@@ -171,10 +171,6 @@ export const ROUNDTABLE_PANEL_DEFAULT_HEIGHT = 420
 export const ROUNDTABLE_WORKSPACE_MIN_WIDTH = 480
 export const ROUNDTABLE_WORKSPACE_MIN_HEIGHT = 320
 
-/** 面板保持可达：位置 clamp 时至少保留这么多可见宽度/高度。 */
-export const ROUNDTABLE_PANEL_KEEP_VISIBLE_WIDTH = 180
-export const ROUNDTABLE_PANEL_KEEP_VISIBLE_HEIGHT = 120
-
 /** 吸附阈值（px）。 */
 export const ROUNDTABLE_SNAP_THRESHOLD = 8
 
@@ -196,9 +192,10 @@ export function defaultPanelLayout(
 }
 
 /**
- * 把面板 clamp 进工作区：宽高不超过工作区（也不小于最小尺寸），
- * 位置保证至少 KEEP_VISIBLE 的宽度/高度留在工作区内——面板可以部分
- * 超出边界，但用户永远有办法把它拖回来。
+ * 把面板 clamp 进工作区：**完全约束在工作区内**（四边都不可越界）。
+ * 原生 WebContentsView 永远在 DOM 之上——面板一旦越出画布，网页就会
+ * 盖住窗口标题栏 / 面板自己的标题栏（拖上去就拖不回来）。完全约束后
+ * 面板标题栏永远在画布内、永远可抓，原生视图也永远不会盖到画布之外。
  */
 export function clampPanelIntoWorkspace(
   panel: RoundtablePanelLayout,
@@ -206,10 +203,10 @@ export function clampPanelIntoWorkspace(
 ): RoundtablePanelLayout {
   const width = Math.min(Math.max(panel.width, ROUNDTABLE_PANEL_MIN_WIDTH), Math.max(ROUNDTABLE_PANEL_MIN_WIDTH, workspace.width))
   const height = Math.min(Math.max(panel.height, ROUNDTABLE_PANEL_MIN_HEIGHT), Math.max(ROUNDTABLE_PANEL_MIN_HEIGHT, workspace.height))
-  const maxX = Math.max(0, workspace.width - ROUNDTABLE_PANEL_KEEP_VISIBLE_WIDTH)
-  const maxY = Math.max(0, workspace.height - ROUNDTABLE_PANEL_KEEP_VISIBLE_HEIGHT)
-  const x = Math.min(Math.max(panel.x, -width + ROUNDTABLE_PANEL_KEEP_VISIBLE_WIDTH), maxX)
-  const y = Math.min(Math.max(panel.y, -height + ROUNDTABLE_PANEL_KEEP_VISIBLE_HEIGHT), maxY)
+  const maxX = Math.max(0, workspace.width - width)
+  const maxY = Math.max(0, workspace.height - height)
+  const x = Math.min(Math.max(panel.x, 0), maxX)
+  const y = Math.min(Math.max(panel.y, 0), maxY)
   return { ...panel, x, y, width, height }
 }
 
@@ -289,13 +286,13 @@ export function rectsIntersect(a: PanelRect, b: PanelRect): boolean {
   return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
 }
 
-/** 位置 clamp（保持 KEEP_VISIBLE 可达）；宽高原样保留。 */
+/** 位置 clamp（完全约束在工作区内）；宽高原样保留。 */
 function clampRect(rect: PanelRect, workspace: WorkspaceSize): PanelRect {
-  const maxX = Math.max(0, workspace.width - ROUNDTABLE_PANEL_KEEP_VISIBLE_WIDTH)
-  const maxY = Math.max(0, workspace.height - ROUNDTABLE_PANEL_KEEP_VISIBLE_HEIGHT)
+  const maxX = Math.max(0, workspace.width - rect.width)
+  const maxY = Math.max(0, workspace.height - rect.height)
   return {
-    x: Math.min(Math.max(rect.x, -rect.width + ROUNDTABLE_PANEL_KEEP_VISIBLE_WIDTH), maxX),
-    y: Math.min(Math.max(rect.y, -rect.height + ROUNDTABLE_PANEL_KEEP_VISIBLE_HEIGHT), maxY),
+    x: Math.min(Math.max(rect.x, 0), maxX),
+    y: Math.min(Math.max(rect.y, 0), maxY),
     width: rect.width,
     height: rect.height
   }

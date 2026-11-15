@@ -95,13 +95,15 @@ describe('RoundtableLayoutManager', () => {
     expect(rows.find((row) => row.tabId === 'tab-1')?.x).toBe(640)
   })
 
-  it('movePanelLive 的位置被 clamp：面板至少 KEEP_VISIBLE 留在工作区内', () => {
+  it('movePanelLive 的位置被 clamp：面板完全约束在工作区内（四边不可越界）', () => {
     manager.setWorkspaceSize({ width: 800, height: 600 })
     manager.syncMembers(['tab-1'])
     manager.movePanelLive('tab-1', 5000, 5000)
     const panel = manager.panelOf('tab-1')!
-    expect(panel.x).toBeLessThanOrEqual(800 - 180)
-    expect(panel.y).toBeLessThanOrEqual(600 - 120)
+    expect(panel.x).toBeGreaterThanOrEqual(0)
+    expect(panel.y).toBeGreaterThanOrEqual(0)
+    expect(panel.x + panel.width).toBeLessThanOrEqual(800)
+    expect(panel.y + panel.height).toBeLessThanOrEqual(600)
   })
 
   it('bringToFront：z = max + 1；重复置顶不推进版本', () => {
@@ -121,20 +123,20 @@ describe('RoundtableLayoutManager', () => {
   it('setWorkspaceSize：只更新参照系不改写面板位置（拆出归位往返不降级）', () => {
     manager.setWorkspaceSize({ width: 1200, height: 800 })
     manager.syncMembers(['tab-1'])
-    manager.movePanel('tab-1', 1000, 400)
+    manager.movePanel('tab-1', 600, 300) // 工作区内可达位置
     manager.flushPersist()
 
     manager.setWorkspaceSize({ width: 700, height: 500 })
     // 存储位置原样保留（显示层按工作区 clamp）；meta 已持久化。
-    expect(manager.panelOf('tab-1')?.x).toBe(1000)
-    expect(manager.panelOf('tab-1')?.y).toBe(400)
+    expect(manager.panelOf('tab-1')?.x).toBe(600)
+    expect(manager.panelOf('tab-1')?.y).toBe(300)
     manager.flushPersist()
     const row = selectRoundtablePanels(handle.db, 'roundtable-main')[0]
-    expect(row?.x).toBe(1000)
+    expect(row?.x).toBe(600)
     const reborn = make()
     try {
       expect(reborn.snapshot().workspace).toEqual({ width: 700, height: 500 })
-      expect(reborn.panelOf('tab-1')?.x).toBe(1000)
+      expect(reborn.panelOf('tab-1')?.x).toBe(600)
     } finally {
       reborn.dispose()
     }
@@ -206,7 +208,11 @@ describe('RoundtableLayoutManager', () => {
   it('handleTabClosed：清布局；重建管理器（模拟重启）能恢复', () => {
     manager.setWorkspaceSize({ width: 1200, height: 800 })
     manager.syncMembers(['tab-1', 'tab-2'])
+    // (300,200) 会压到 tab-2：防重叠解析把它推到最近空位，最终位置以
+    // 解析结果为准（这是产品契约，测试不硬编码具体数字）。
     manager.movePanel('tab-1', 300, 200)
+    const moved = manager.panelOf('tab-1')!
+    expect(moved.x).not.toBe(300) // 确认解析真的生效（ tab-2 占着中间）
     manager.flushPersist()
 
     manager.handleTabClosed('tab-2')
@@ -217,7 +223,8 @@ describe('RoundtableLayoutManager', () => {
     try {
       const restored = reborn.snapshot()
       expect(restored.panels.map((panel) => panel.tabId)).toEqual(['tab-1'])
-      expect(restored.panels[0]?.x).toBe(300)
+      expect(restored.panels[0]?.x).toBe(moved.x)
+      expect(restored.panels[0]?.y).toBe(moved.y)
       expect(restored.workspace).toEqual({ width: 1200, height: 800 })
     } finally {
       reborn.dispose()

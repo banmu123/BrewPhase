@@ -125,6 +125,10 @@ export class RoundtableViewManager {
     const host = this.params.resolveHostWindow()
     if (!host || host.isDestroyed()) return
     const windowId = host.id
+    // 兜底：原生视图**永远**约束在宿主窗口内容区内。布局层已做完全约束
+    // clamp，这里是第二道防线——渲染层任何异常上报都不能让网页盖到标题
+    // 栏 / 画布之外（原生层在 DOM 之上，盖住即交互失联）。
+    const [contentWidth, contentHeight] = host.getContentSize()
     // 只收当前成员的 rects：迟到/过期的上报（面板刚被移除）绝不能把
     // 已经归还的 view 重新托管回来。
     const memberIds = new Set(this.params.layout().panels.map((panel) => panel.tabId))
@@ -140,9 +144,13 @@ export class RoundtableViewManager {
       const view = this.params.getView(rect.tabId)
       if (!view) continue
       this.rects.set(rect.tabId, rect)
-      const width = Math.max(1, Math.round(rect.width))
-      const height = Math.max(1, Math.round(rect.height))
-      view.setBounds({ x: Math.round(rect.x), y: Math.round(rect.y), width, height })
+      const width = Math.max(1, Math.round(Math.min(rect.width, contentWidth)))
+      const height = Math.max(1, Math.round(Math.min(rect.height, contentHeight)))
+      const maxX = Math.max(0, contentWidth - width)
+      const maxY = Math.max(0, contentHeight - height)
+      const x = Math.min(Math.max(0, Math.round(rect.x)), maxX)
+      const y = Math.min(Math.max(0, Math.round(rect.y)), maxY)
+      view.setBounds({ x, y, width, height })
       if (this.visible) view.setVisible(true)
     }
   }

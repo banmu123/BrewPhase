@@ -185,14 +185,19 @@ async function screenRectOf(page: Page, tabId: string): Promise<{ x: number; y: 
   })
 }
 
-/** 防重叠契约：两块屏幕矩形不相交。 */
+/** 防重叠契约：两块屏幕矩形不相交。getBoundingClientRect 带 subpixel
+ * 误差（zoom/布局累积），边界相接（间隙 < 0.5px）不算重叠。 */
 function assertNoOverlap(
   a: { x: number; y: number; width: number; height: number },
   b: { x: number; y: number; width: number; height: number }
 ): void {
+  const EPS = 0.5
   const intersects =
-    a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
-  expect(intersects).toBe(false)
+    a.x < b.x + b.width - EPS &&
+    b.x < a.x + a.width - EPS &&
+    a.y < b.y + b.height - EPS &&
+    b.y < a.y + a.height - EPS
+  expect(intersects, `panels overlap! first=${JSON.stringify(a)} second=${JSON.stringify(b)}`).toBe(false)
 }
 
 test('工作空间：直接新建网页、原生视图跟随布局、拖动/缩放/置顶', async () => {

@@ -14,7 +14,7 @@ import {
 /**
  * 自由布局的几何纯函数（Phase 4.2 workspace）：
  * 1. 默认布局级联错位、绝不超出工作区；
- * 2. clamp 保证面板可再找到（至少 KEEP_VISIBLE 留在工作区内）；
+ * 2. clamp 完全约束面板在工作区内（原生视图不能盖到画布之外）；
  * 3. 吸附是辅助而非限制——超过阈值就不吸；
  * 4. 防重叠（产品规则）：拖动推出去、缩放被挡住、新成员找空位；
  * 5. 被围死时如实返回 null（调用方保持原状），绝不产生重叠。
@@ -45,14 +45,16 @@ describe('defaultPanelLayout', () => {
 })
 
 describe('clampPanelIntoWorkspace', () => {
-  it('宽度不超过工作区；位置保证至少 KEEP_VISIBLE 可见', () => {
+  it('宽高不超过工作区；位置完全约束在工作区内（含越界拖回）', () => {
     const huge = panel('tab-1', { x: 500, y: 700, width: 2000, height: 1500 })
     const clamped = clampPanelIntoWorkspace(huge, WS)
     expect(clamped.width).toBeLessThanOrEqual(WS.width)
     expect(clamped.height).toBeLessThanOrEqual(WS.height)
-    // 右侧溢出：x 必须留下可见宽度（180）。
-    expect(clamped.x).toBeLessThanOrEqual(WS.width - 180)
-    expect(clamped.x + clamped.width).toBeGreaterThan(180)
+    // 四边都不可越界：原生视图不能盖到画布之外（否则会盖住标题栏）。
+    expect(clamped.x).toBeGreaterThanOrEqual(0)
+    expect(clamped.y).toBeGreaterThanOrEqual(0)
+    expect(clamped.x + clamped.width).toBeLessThanOrEqual(WS.width)
+    expect(clamped.y + clamped.height).toBeLessThanOrEqual(WS.height)
   })
 
   it('完全不超出工作区的面板原样保留', () => {
@@ -108,17 +110,17 @@ describe('resolveMoveWithoutOverlap', () => {
     expect(resolveMoveWithoutOverlap({ x: 0, y: 0 }, size, others, WS)).toEqual({ x: 0, y: 0 })
   })
 
-  it('拖到别人身上：沿最近方向推出去', () => {
+  it('拖到别人身上：沿最近方向推出去，且完全留在工作区内', () => {
     const other = panel('tab-2', { x: 200, y: 0, width: 400, height: 300 })
-    // 候选 (300, 50) 与 other 相交；向上推 (300, -150) 会被 clamp 且仍相交，
-    // 向下推 (300, 300) 不相交且距离最近。
+    // 候选 (300, 50) 与 other 相交；解析后不相交且四边都不越界。
     const resolved = resolveMoveWithoutOverlap({ x: 300, y: 50 }, size, [other], WS)
     expect(resolved).not.toBeNull()
     const rect = { x: resolved!.x, y: resolved!.y, width: size.width, height: size.height }
     expect(rectsIntersect(rect, other)).toBe(false)
-    // 推出的位置留在工作区内。
-    expect(resolved!.x).toBeGreaterThanOrEqual(-size.width + 180)
-    expect(resolved!.y).toBeGreaterThanOrEqual(-size.height + 120)
+    expect(resolved!.x).toBeGreaterThanOrEqual(0)
+    expect(resolved!.y).toBeGreaterThanOrEqual(0)
+    expect(resolved!.x + size.width).toBeLessThanOrEqual(WS.width)
+    expect(resolved!.y + size.height).toBeLessThanOrEqual(WS.height)
   })
 
   it('两个障碍物：迭代解析到全部避开', () => {

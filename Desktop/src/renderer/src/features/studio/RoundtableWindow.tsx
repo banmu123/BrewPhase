@@ -9,7 +9,7 @@ import { useRoundtableAIStore } from './roundtable-ai-store'
 import { useRoundtableLayoutStore } from './roundtable-layout-store'
 import { useRoundtableStore } from './roundtable-store'
 import { RoundtableAnswers, ROUNDTABLE_MIME } from './RoundtableSection'
-import { RoundtableWorkspace } from './RoundtableWorkspace'
+import { AddWebPopover, RoundtableWorkspace } from './RoundtableWorkspace'
 
 /**
  * 圆桌独立窗口的壳（Phase 3 / 4.2）。
@@ -31,6 +31,7 @@ export function RoundtableWindow() {
   const task = useRoundtableAIStore((state) => state.task)
   const askTask = useRoundtableAIStore((state) => state.ask)
   const stopTask = useRoundtableAIStore((state) => state.stop)
+  const snapEnabled = useRoundtableLayoutStore((state) => state.layout.snapEnabled)
   const [answersOpen, setAnswersOpen] = useState(false)
 
   const busy = isRoundtableAITaskBusy(task)
@@ -89,6 +90,17 @@ export function RoundtableWindow() {
           {dragOutside ? t.studio.roundtable.dragBackHint : ''}
         </span>
         <span className="spacer" />
+        {/* 工作空间头部已并入标题栏（避免与「圆桌工作空间 · n 位参与者」重复）。 */}
+        <button
+          type="button"
+          className="rt-workspace__btn"
+          data-active={snapEnabled}
+          title={t.studio.roundtable.snapToggle}
+          onClick={() => void useRoundtableLayoutStore.getState().setSnap(!snapEnabled)}
+        >
+          {t.studio.roundtable.snapToggle}
+        </button>
+        <AddWebPopover />
         <button
           type="button"
           className="rt-window__dock"

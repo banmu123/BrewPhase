@@ -9275,3 +9275,9 @@ textarea {
   color: var(--ink-faint);
   text-align: center;
 }
+
+/* 独立窗口标题栏内的「添加网页」弹层：标题栏整体是 app-region: drag，
+   弹层（含输入框）必须显式 no-drag，否则点输入框会变成拖动窗口。 */
+.rt-window__titlebar .rt-workspace__add-pop {
+  -webkit-app-region: no-drag;
+}
