@@ -20,9 +20,14 @@
   `pnpm e2e` 前必须停 dev（真实 userData 的单实例锁会让新实例直接退出）。
 * 无 GPU 的 Electron 被遮挡时**帧会被节流**：Playwright `element is not stable`
   超时不是产品 bug；断言前关 transition、做 `elementFromPoint`，必要时 `force:true`。
-* **`github.com` 的 DNS 会被投毒**（解析成 57.155.223.240，能 ping 但不是 GitHub），
-  `api.github.com` 正常。git 一律绕过 DNS：
-  `env -u http_proxy -u https_proxy git -c http.curloptResolve=github.com:443:140.82.121.3 push`。
+* **`github.com` 在本机被两层挡住**：`/etc/hosts` 把 github.com、api.github.com、
+  `*.githubusercontent.com`、upload.github.com 等全部映射到 `127.0.0.1`（用户自配的
+  屏蔽），且上游 DNS 还会把漏网的 `codeload.github.com` 投毒。git 一律绕过 DNS：
+  `env -u http_proxy -u https_proxy git -c http.curloptResolve=github.com:443:<IP> push`。
+  **IP 会变**：`140.82.121.3` 已失效，可用 `140.82.116.4`（偏慢）或 140.82.11x.3 段；
+  推不动时先 `curl -sI --max-time 6 --resolve github.com:443:<IP> https://github.com`
+  逐個试，选返回 200 的。若报 `Empty reply from server` 加 `-c http.version=HTTP/1.1`。
+  SSH 走不通（ed25519 公钥没加到 GitHub 账号，报 `Permission denied (publickey)`）。
   打包同理再多加 `-u NODE_OPTIONS`（brokered-fs shim 会拒绝 release/ 下写入与锁删除）。
 
 ## 本地化（`Tools/Localization/`）
