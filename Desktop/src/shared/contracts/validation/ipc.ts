@@ -6,6 +6,11 @@ import { mcpClientCreateInputSchema, mcpScopeSchema } from '../mcp'
 import { aiAskInputSchema, aiProviderSchema } from '../ai-chat'
 import { roundtableAIAskInputSchema, roundtableAIDescribeInputSchema } from '../roundtable-ai'
 import {
+  CONTEXT_MAX_FILES,
+  LOCAL_WORKSPACE_NAME_MAX,
+  relativePathSchema
+} from '../local-workspace'
+import {
   browserDropSchema,
   browserDragProbeSchema,
   browserBoundsSchema,
@@ -223,7 +228,23 @@ export const IPC = {
   roundtableAICancel: 'roundtable-ai:cancel',
   roundtableAICancelParticipant: 'roundtable-ai:cancel-participant',
   roundtableAILastTask: 'roundtable-ai:last-task',
-  roundtableAIDescribe: 'roundtable-ai:describe'
+  roundtableAIDescribe: 'roundtable-ai:describe',
+
+  // AI Card Workspace Bridge（Phase 1）：本地工作区 + 卡片绑定 + 只读文件
+  // 访问 + 上下文打包。文件访问只接受 workspaceId + POSIX 相对路径——
+  // 绝对路径与写操作没有对应通道。
+  workspaceList: 'workspace:list',
+  workspaceAdd: 'workspace:add',
+  workspaceRename: 'workspace:rename',
+  workspaceRemove: 'workspace:remove',
+  workspaceBindingGet: 'workspace:binding:get',
+  workspaceBindingSet: 'workspace:binding:set',
+  workspaceFilesList: 'workspace:files:list',
+  workspaceFileRead: 'workspace:file:read',
+  workspaceSearch: 'workspace:search',
+  workspaceContextBuild: 'workspace:context:build',
+  // 结构化上下文「复制到 AI 对话」：主进程写剪贴板（无焦点窗口也可靠）。
+  clipboardCopy: 'app:clipboard:copy'
 } as const
 
 export const ipcRequestSchemas = {
@@ -470,7 +491,35 @@ export const ipcRequestSchemas = {
   [IPC.roundtableDragDropHandled]: z.void(),
   [IPC.roundtableDragEnd]: z
     .object({ screenX: z.number().finite().optional(), screenY: z.number().finite().optional() })
-    .optional()
+    .optional(),
+
+  // ---- AI Card Workspace Bridge（Phase 1）----
+  [IPC.workspaceList]: z.void(),
+  [IPC.workspaceAdd]: z.void(),
+  [IPC.workspaceRename]: z.object({ id: z.string().uuid(), name: z.string().min(1).max(LOCAL_WORKSPACE_NAME_MAX) }),
+  [IPC.workspaceRemove]: z.object({ id: z.string().uuid() }),
+  [IPC.workspaceBindingGet]: z.object({ tabId: z.string().min(1).max(64) }),
+  [IPC.workspaceBindingSet]: z.object({
+    tabId: z.string().min(1).max(64),
+    workspaceId: z.string().uuid().nullable()
+  }),
+  [IPC.workspaceFilesList]: z.object({
+    workspaceId: z.string().uuid(),
+    relativePath: relativePathSchema
+  }),
+  [IPC.workspaceFileRead]: z.object({
+    workspaceId: z.string().uuid(),
+    relativePath: relativePathSchema
+  }),
+  [IPC.workspaceSearch]: z.object({
+    workspaceId: z.string().uuid(),
+    query: z.string().min(1).max(200)
+  }),
+  [IPC.workspaceContextBuild]: z.object({
+    workspaceId: z.string().uuid(),
+    relativePaths: z.array(relativePathSchema).min(1).max(CONTEXT_MAX_FILES)
+  }),
+  [IPC.clipboardCopy]: z.object({ text: z.string().min(1).max(400_000) })
 } as const
 
 export type IpcChannel = keyof typeof ipcRequestSchemas

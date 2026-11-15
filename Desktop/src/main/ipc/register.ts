@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, Menu, shell, type IpcMainInvokeEvent } from 'electron'
 import { z } from 'zod'
 import type { UpdateService } from '../update/update-service'
 import { IPC, ipcRequestSchemas } from '../../shared/contracts/validation/ipc'
@@ -62,6 +62,9 @@ import type {
 import type { CurrentStateDraft, ProposalKind } from '../../shared/contracts/personal-direction'
 import type { AIChatService } from '../ai-chat/ai-chat-service'
 import type { ParticipantService } from '../ai-chat/participant-service'
+import type { LocalWorkspaceService } from '../application/local-workspace/local-workspace-service'
+import type { WorkspaceFileService } from '../application/local-workspace/workspace-file-service'
+import type { ContextBuilder } from '../application/local-workspace/context-builder'
 import type { RoundtableLayoutManager } from '../roundtable/roundtable-layout-manager'
 import type { RoundtableViewManager } from '../roundtable/roundtable-view-manager'
 import type { BrowserBounds } from '../../shared/contracts/browser'
@@ -115,6 +118,12 @@ export function registerIpc(params: {
   dataLocation: DataLocationService
   /** 版本感知：主进程唯一的检查结果与下载页白名单。 */
   updates: UpdateService
+  /** 本地工作区登记 + 卡片绑定（AI Card Workspace Bridge Phase 1）。 */
+  localWorkspaces: LocalWorkspaceService
+  /** 本地工作区只读文件访问。 */
+  workspaceFiles: WorkspaceFileService
+  /** 本地文件 → AI 上下文打包。 */
+  contextBuilder: ContextBuilder
 }): void {
   const {
     db,
@@ -132,7 +141,10 @@ export function registerIpc(params: {
     chrome,
     dataDir,
     dataLocation,
-    updates
+    updates,
+    localWorkspaces,
+    workspaceFiles,
+    contextBuilder
   } = params
 
   // 首次启动铺默认阶段规则（之后由用户或同步决定，不覆盖）。
@@ -801,6 +813,60 @@ export function registerIpc(params: {
     }
     roundtable.join(tabId)
     return roundtableLayout.rebindPanel(oldTabId, tabId)
+  })
+
+  // ---- AI Card Workspace Bridge（Phase 1）----
+  // 本地工作区登记 + 卡片绑定 + 只读文件访问。文件侧只接受
+  // workspaceId + 相对路径（schema 校验），目录选择对话框在主进程弹出。
+  handle(IPC.workspaceList, () => localWorkspaces.list())
+
+  handle(IPC.workspaceAdd, async () => localWorkspaces.addFromDialog())
+
+  handle(IPC.workspaceRename, (input) => {
+    const { id, name } = input as { id: string; name: string }
+    return localWorkspaces.rename(id, name)
+  })
+
+  handle(IPC.workspaceRemove, (input) => {
+    const { id } = input as { id: string }
+    localWorkspaces.remove(id)
+    return null
+  })
+
+  handle(IPC.workspaceBindingGet, (input) => {
+    const { tabId } = input as { tabId: string }
+    return localWorkspaces.binding(tabId)
+  })
+
+  handle(IPC.workspaceBindingSet, (input) => {
+    const { tabId, workspaceId } = input as { tabId: string; workspaceId: string | null }
+    return localWorkspaces.setBinding(tabId, workspaceId)
+  })
+
+  handle(IPC.workspaceFilesList, async (input) => {
+    const { workspaceId, relativePath } = input as { workspaceId: string; relativePath: string }
+    return workspaceFiles.listFiles(workspaceId, relativePath)
+  })
+
+  handle(IPC.workspaceFileRead, async (input) => {
+    const { workspaceId, relativePath } = input as { workspaceId: string; relativePath: string }
+    return workspaceFiles.readFile(workspaceId, relativePath)
+  })
+
+  handle(IPC.workspaceSearch, async (input) => {
+    const { workspaceId, query } = input as { workspaceId: string; query: string }
+    return workspaceFiles.searchFiles(workspaceId, query)
+  })
+
+  handle(IPC.workspaceContextBuild, async (input) => {
+    const { workspaceId, relativePaths } = input as { workspaceId: string; relativePaths: string[] }
+    return contextBuilder.build(workspaceId, relativePaths)
+  })
+
+  handle(IPC.clipboardCopy, (input) => {
+    const { text } = input as { text: string }
+    clipboard.writeText(text)
+    return null
   })
 }
 

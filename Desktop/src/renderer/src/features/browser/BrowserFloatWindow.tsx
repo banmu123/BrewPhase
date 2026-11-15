@@ -4,6 +4,7 @@ import { api } from '../../shared/api'
 import { useI18n } from '../../i18n'
 import { subscribeBrowserState, useBrowserStore } from './browser-store'
 import { BrowserTabStrip } from './BrowserTabStrip'
+import { CardWorkspaceToolbar } from '../workspace/CardWorkspaceToolbar'
 
 /**
  * 独立浏览器窗口的壳。
@@ -13,6 +14,10 @@ import { BrowserTabStrip } from './BrowserTabStrip'
  * 的 WebContentsView，对齐 stage 的矩形；stage 变化实时上报（rAF 合并）。
  *
  * 「回主窗口」= reattach 当前标签：标签移动但页面实例不动，浮窗空了会自己关。
+ *
+ * AI Card Workspace Bridge（Phase 1）：标题栏多一个 BrewPhase 按钮，展开
+ * CardWorkspaceToolbar（正常文档流，挤压 stage）——stage 高度变化由
+ * ResizeObserver 捕获并自动重报 bounds，原生视图跟随，页面实例不动。
  */
 export function BrowserFloatWindow(props: { windowId: number }) {
   const { t } = useI18n()
@@ -26,6 +31,8 @@ export function BrowserFloatWindow(props: { windowId: number }) {
   const recallDraggingRef = useRef(false)
   const [recallDragging, setRecallDragging] = useState(false)
   const [recallOverMain, setRecallOverMain] = useState(false)
+  /** 当前卡片的 BrewPhase 工具栏展开态（不持久化；切 tab 只换绑定内容）。 */
+  const [workspaceOpen, setWorkspaceOpen] = useState(false)
 
   useEffect(() => {
     setMounted(true)
@@ -40,6 +47,17 @@ export function BrowserFloatWindow(props: { windowId: number }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.windowId])
+
+  // stage 的高度不只在窗口 resize 时变：Workspace Toolbar 展开 / 收起
+  // 会挤压内容区。ResizeObserver 是唯一能同时覆盖两种来源的测量点。
+  useEffect(() => {
+    const element = stageRef.current
+    if (!element) return
+    const observer = new ResizeObserver(() => report())
+    observer.observe(element)
+    return () => observer.disconnect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted])
 
   const report = (): void => {
     const element = stageRef.current
@@ -156,6 +174,17 @@ export function BrowserFloatWindow(props: { windowId: number }) {
         <span className="spacer" />
         <button
           type="button"
+          className="bp-float__ws-btn"
+          data-active={workspaceOpen}
+          disabled={!activeTab}
+          title={t.workspace.toolbarTitle}
+          aria-label={t.workspace.toolbarTitle}
+          onClick={() => setWorkspaceOpen((current) => !current)}
+        >
+          📁
+        </button>
+        <button
+          type="button"
           className="bp-float__home"
           title={t.browser.tabs.recall}
           aria-label={t.browser.tabs.recall}
@@ -167,6 +196,16 @@ export function BrowserFloatWindow(props: { windowId: number }) {
           {t.browser.tabs.recall}
         </button>
       </header>
+
+      {/* BrewPhase 工作区（正常文档流，挤压 stage；原生视图由 ResizeObserver 跟随）。 */}
+      {workspaceOpen && activeTab && (
+        <CardWorkspaceToolbar
+          key={activeTab.id}
+          tabId={activeTab.id}
+          variant="normal"
+          onClose={() => setWorkspaceOpen(false)}
+        />
+      )}
 
       <BrowserTabStrip
         tabs={ownTabs}

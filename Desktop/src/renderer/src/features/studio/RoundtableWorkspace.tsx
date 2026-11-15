@@ -15,6 +15,7 @@ import { useI18n } from '../../i18n'
 import { api } from '../../shared/api'
 import { useBrowserStore } from '../browser/browser-store'
 import { useBrowserPreviewStore } from '../browser/preview-store'
+import { CardWorkspaceToolbar } from '../workspace/CardWorkspaceToolbar'
 import { useRoundtableLayoutStore } from './roundtable-layout-store'
 import { useRoundtableStore } from './roundtable-store'
 
@@ -175,6 +176,7 @@ export function RoundtableWorkspace(props: { host: 'docked' | 'detached' }) {
               else contentRefs.current.delete(panel.tabId)
               reportRects()
             }}
+            onContentResize={reportRects}
           />
         ))}
         {hydrated && ordered.length === 0 && (
@@ -200,6 +202,8 @@ function WorkspacePanel(props: {
   /** 显示位置（clamp + 防重叠解析后）；拖拽起点与渲染都按它来。 */
   display: RoundtablePanelLayout
   onContentRef: (element: HTMLElement | null) => void
+  /** 内容区高度变化（工具栏展开 / 收起）→ 重报 rects 给原生视图。 */
+  onContentResize: () => void
 }) {
   const { t } = useI18n()
   const tab = useBrowserStore((state) => state.state.tabs.find((item) => item.id === props.panel.tabId))
@@ -211,7 +215,8 @@ function WorkspacePanel(props: {
   const leaveRoundtable = useRoundtableStore((state) => state.leaveRoundtable)
   const layout = useRoundtableLayoutStore((state) => state.layout)
   const draggingTabId = useRoundtableLayoutStore((state) => state.draggingTabId)
-  const [copied, setCopied] = useState(false)
+  const [workspaceOpen, setWorkspaceOpen] = useState(false)
+  const contentRef = useRef<HTMLDivElement | null>(null)
   const localRef = useRef(props)
   localRef.current = props
 
@@ -335,6 +340,22 @@ function WorkspacePanel(props: {
   // 拆出归位往返、窗口变化都不会降级用户的摆放。
   const display = props.display
 
+  // 内容区高度变化（Workspace Toolbar 展开 / 收起、幽灵面板渲染）→
+  // 重报 rects：原生 WebContentsView 跟随新的内容矩形，其他面板不受影响。
+  useEffect(() => {
+    const element = contentRef.current
+    if (!element) return
+    const observer = new ResizeObserver(() => props.onContentResize())
+    observer.observe(element)
+    return () => observer.disconnect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.onContentResize])
+
+  const attachContent = (element: HTMLDivElement | null): void => {
+    contentRef.current = element
+    props.onContentRef(element)
+  }
+
   return (
     <section
       className="rt-panel"
@@ -371,6 +392,20 @@ function WorkspacePanel(props: {
         <button
           type="button"
           className="rt-panel__action"
+          data-active={workspaceOpen}
+          disabled={isGhost}
+          title={t.workspace.toolbarTitle}
+          aria-label={t.workspace.toolbarTitle}
+          onClick={(event) => {
+            event.stopPropagation()
+            setWorkspaceOpen((current) => !current)
+          }}
+        >
+          📁
+        </button>
+        <button
+          type="button"
+          className="rt-panel__action"
           title={t.studio.roundtable.refreshAction}
           onClick={(event) => {
             event.stopPropagation()
@@ -378,22 +413,6 @@ function WorkspacePanel(props: {
           }}
         >
           ⟳
-        </button>
-        <button
-          type="button"
-          className="rt-panel__action"
-          title={t.aiWorkspace.result.copy}
-          onClick={(event) => {
-            event.stopPropagation()
-            const link = isGhost ? props.panel.url : url
-            if (!link) return
-            void navigator.clipboard.writeText(link).then(() => {
-              setCopied(true)
-              window.setTimeout(() => setCopied(false), 1_500)
-            })
-          }}
-        >
-          {copied ? '✓' : '⧉'}
         </button>
         <button
           type="button"
@@ -407,9 +426,18 @@ function WorkspacePanel(props: {
           ✕
         </button>
       </header>
+      {/* BrewPhase 工作区（正常文档流，挤压内容区；原生视图经 rects 重报跟随）。
+          圆桌回答区的「复制回答」与此无关——那是 RoundtableAnswers 自己的能力。 */}
+      {workspaceOpen && !isGhost && (
+        <CardWorkspaceToolbar
+          tabId={props.panel.tabId}
+          variant="compact"
+          onClose={() => setWorkspaceOpen(false)}
+        />
+      )}
       <div
         className="rt-panel__content"
-        ref={props.onContentRef}
+        ref={attachContent}
         data-tab-id={props.panel.tabId}
       >
         {isGhost && (

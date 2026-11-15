@@ -7,7 +7,8 @@ export const settings = {
     sync: 'Device sync',
     browser: 'Browser',
     chrome: 'Chrome extension',
-    mcp: 'AI connections'
+    mcp: 'AI connections',
+    workspace: 'Local workspaces'
   },
   general: {
     title: 'General',
@@ -185,5 +186,24 @@ export const settings = {
       title: 'Permissions and data boundary',
       body: 'The extension reads the active tab only when you click: title, URL, selected text and page description. It never reads cookies, passwords or other tabs, and never uploads anything.'
     }
+  },
+
+  workspace: {
+    title: 'Local workspaces',
+    subtitle: 'Register local project folders that AI cards can browse (read-only)',
+    add: 'Add local project folder',
+    addHint: 'Choose a folder in the system dialog; registering only records access and never modifies files.',
+    empty: 'No local workspaces registered yet. Add one, then bind it from any AI card’s BrewPhase button.',
+    pathLabel: 'Path',
+    statusLabel: 'Status',
+    available: 'Available',
+    missing: 'Folder missing',
+    rename: 'Rename',
+    renamePrompt: 'New display name',
+    remove: 'Remove access',
+    removeConfirmTitle: 'Remove workspace access?',
+    removeConfirmBody: (name: string) => `Only the registration is removed — the folder “${name}” and its files are not touched.`,
+    boundCards: (n: number) => `${n} card${n === 1 ? '' : 's'} bound`,
+    addFailed: 'Could not add this folder'
   }
 }

@@ -63,6 +63,14 @@ import type {
 } from './chrome-bridge'
 import type { DataLocationChangeResult, DataLocationStatus } from './data-location'
 import type { UpdateCheckResult } from './update'
+import type {
+  CardWorkspaceBinding,
+  ContextPackage,
+  LocalWorkspace,
+  WorkspaceFileContent,
+  WorkspaceFileListing,
+  WorkspaceSearchResult
+} from './local-workspace'
 import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from './version'
 
 export * from './version'
@@ -81,13 +89,21 @@ export * from './ai-chat'
 export * from './roundtable-ai'
 export * from './data-location'
 export * from './update'
+export * from './local-workspace'
 export * from './validation/ipc'
 
 /**
  * 应用事件：主进程写入（尤其是 MCP Bridge 的写入）之后广播的领域名。
  * 页面收到后自己重新取数据——不把内容塞进事件，避免出现第二份状态。
  */
-export const APP_DOMAINS = ['records', 'coffee', 'canvas', 'workContexts', 'personalDirection'] as const
+export const APP_DOMAINS = [
+  'records',
+  'coffee',
+  'canvas',
+  'workContexts',
+  'personalDirection',
+  'localWorkspaces'
+] as const
 export type AppDomain = (typeof APP_DOMAINS)[number]
 
 /**
@@ -122,6 +138,8 @@ export interface RendererApi {
     setAppearance: (appearance: 'light' | 'dark') => Promise<void>
     /** 主进程写入后的刷新通知（MCP/同步等外部来源）。 */
     onChanged: (listener: (domain: AppDomain) => void) => () => void
+    /** 主进程写系统剪贴板（无焦点窗口也可靠；只写文本）。 */
+    copyText: (text: string) => Promise<void>
   }
   /** 版本感知：只读检查 + 打开 GitHub 下载页，不下载、不安装。 */
   update: {
@@ -455,6 +473,29 @@ export interface RendererApi {
     uninstall: () => Promise<ChromeCompanionInstallResult>
     /** 本地 IPC 自检（hello + PING）；不代表 Chrome 已加载扩展。 */
     selfTest: () => Promise<ChromeSelfTestResult>
+  }
+  /**
+   * AI Card Workspace Bridge（Phase 1）：本地工作区登记、卡片绑定、只读
+   * 文件访问与上下文打包。文件访问只接受 workspaceId + 相对路径；目录
+   * 选择对话框在主进程弹出。数据变了走 `app.onChanged('localWorkspaces')`。
+   */
+  localWorkspace: {
+    list: () => Promise<LocalWorkspace[]>
+    /** 弹系统目录选择对话框；canceled = 用户取消。 */
+    add: () => Promise<{ ok: true; workspace: LocalWorkspace } | { ok: false; canceled: boolean; error?: string }>
+    rename: (id: string, name: string) => Promise<LocalWorkspace>
+    /** 只删除授权登记；真实文件夹不动。 */
+    remove: (id: string) => Promise<void>
+    /** 卡片绑定（tabId → workspaceId）。missing=true = 绑定的工作区已被删除。 */
+    binding: (tabId: string) => Promise<CardWorkspaceBinding>
+    setBinding: (tabId: string, workspaceId: string | null) => Promise<CardWorkspaceBinding>
+    /** 按目录列表（不递归）；忽略规则与条目上限在主进程。 */
+    listFiles: (workspaceId: string, relativePath: string) => Promise<WorkspaceFileListing>
+    readFile: (workspaceId: string, relativePath: string) => Promise<WorkspaceFileContent>
+    /** 文件名包含匹配（大小写不敏感）。 */
+    search: (workspaceId: string, query: string) => Promise<WorkspaceSearchResult>
+    /** 打包上下文（含 formattedText；不含工作区绝对路径）。 */
+    buildContext: (workspaceId: string, relativePaths: string[]) => Promise<ContextPackage>
   }
   /**
    * 数据目录：`brewphase.db` 与 `media/` 的位置。切换后需要重启；

@@ -7,7 +7,8 @@ export const settings = {
     sync: '设备同步',
     browser: '浏览器',
     chrome: 'Chrome 扩展',
-    mcp: 'AI 连接'
+    mcp: 'AI 连接',
+    workspace: '本地工作区'
   },
   general: {
     title: '常规设置',
@@ -180,5 +181,24 @@ export const settings = {
       title: '权限与数据边界',
       body: '扩展只在点击时读取当前标签页的标题、地址、选中文字与页面描述；不读取 Cookie、密码或其他标签页，也不会上传任何内容。'
     }
+  },
+
+  workspace: {
+    title: '本地工作区',
+    subtitle: '登记 AI 卡片可以浏览（只读）的本地项目文件夹',
+    add: '添加本地项目文件夹',
+    addHint: '在系统对话框里选择文件夹；只登记授权，不会改动里面的任何文件。',
+    empty: '还没有登记任何本地工作区。先添加一个，然后在任意 AI 卡片的 BrewPhase 按钮里绑定它。',
+    pathLabel: '路径',
+    statusLabel: '状态',
+    available: '可用',
+    missing: '文件夹缺失',
+    rename: '重命名',
+    renamePrompt: '新的显示名称',
+    remove: '移除授权',
+    removeConfirmTitle: '移除这个工作区授权？',
+    removeConfirmBody: (name: string) => `只删除登记——文件夹「${name}」与其中的文件不会被改动。`,
+    boundCards: (n: number) => `${n} 张卡片绑定`,
+    addFailed: '无法添加这个文件夹'
   }
 }

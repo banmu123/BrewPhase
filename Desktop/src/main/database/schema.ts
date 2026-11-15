@@ -644,3 +644,41 @@ export const roundtablePanels = sqliteTable(
   },
   (table) => [primaryKey({ columns: [table.roundtableId, table.tabId] })]
 )
+
+// MARK: - AI Card Workspace Bridge（migration 12）
+
+/**
+ * 本地工作区授权登记（AI Card Workspace Bridge，Phase 1）。**只进本地库**：
+ * 不进 change_log、不进 iOS 同步。「授权」只是登记——删除登记绝不删除
+ * 真实文件夹，也绝不授予渲染层任意文件系统访问。
+ */
+export const localWorkspaces = sqliteTable(
+  'local_workspaces',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    /** realpath 规范化后的绝对路径；唯一索引是重复登记的 DB 层兜底。 */
+    absolutePath: text('absolute_path').notNull(),
+    platform: text('platform').notNull().default(''),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (table) => [uniqueIndex('local_workspaces_path_idx').on(table.absolutePath)]
+)
+
+/**
+ * 卡片绑定：tabId → workspaceId。**刻意不设 ON DELETE CASCADE**：删除
+ * 工作区授权后绑定行保留成悬空引用，卡片读到 join 不上的绑定就显示
+ * 「绑定失效」（规格 §5.6），而不是悄悄回到未绑定。
+ */
+export const cardWorkspaceBindings = sqliteTable(
+  'card_workspace_bindings',
+  {
+    tabId: text('tab_id').primaryKey(),
+    /** 刻意无外键：删除授权后保留悬空引用，UI 显示「绑定失效」。 */
+    workspaceId: text('workspace_id').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (table) => [index('card_workspace_bindings_workspace_idx').on(table.workspaceId)]
+)

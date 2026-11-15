@@ -35,6 +35,8 @@ const api: RendererApi = {
     studioList: () => invoke(IPC.workContextsStudio),
     // 外观：只报明暗，窗口底色与标题栏配色由主进程映射。
     setAppearance: (appearance) => invoke(IPC.appThemeAppearance, appearance),
+    // 主进程写剪贴板：浮窗 / 圆桌面板可能没有焦点，navigator.clipboard 会拒绝。
+    copyText: (text) => invoke(IPC.clipboardCopy, { text }),
     onChanged: (listener) => {
       const wrapped = (_event: unknown, domain: string) => listener(domain as never)
       ipcRenderer.on('app:changed', wrapped)
@@ -293,6 +295,23 @@ const api: RendererApi = {
     choose: () => invoke(IPC.dataLocationChoose),
     reset: () => invoke(IPC.dataLocationReset),
     relaunch: () => invoke(IPC.dataLocationRelaunch)
+  },
+  // AI Card Workspace Bridge：本地工作区 + 卡片绑定 + 只读文件访问。
+  // 只传 workspaceId 与相对路径——渲染层没有传任意绝对路径的口子。
+  localWorkspace: {
+    list: () => invoke(IPC.workspaceList),
+    add: () => invoke(IPC.workspaceAdd),
+    rename: (id, name) => invoke(IPC.workspaceRename, { id, name }),
+    remove: (id) => invoke(IPC.workspaceRemove, { id }),
+    binding: (tabId) => invoke(IPC.workspaceBindingGet, { tabId }),
+    setBinding: (tabId, workspaceId) => invoke(IPC.workspaceBindingSet, { tabId, workspaceId }),
+    listFiles: (workspaceId, relativePath) =>
+      invoke(IPC.workspaceFilesList, { workspaceId, relativePath }),
+    readFile: (workspaceId, relativePath) =>
+      invoke(IPC.workspaceFileRead, { workspaceId, relativePath }),
+    search: (workspaceId, query) => invoke(IPC.workspaceSearch, { workspaceId, query }),
+    buildContext: (workspaceId, relativePaths) =>
+      invoke(IPC.workspaceContextBuild, { workspaceId, relativePaths })
   },
   // 版本感知：只读检查 + 打开下载页；URL 主进程决定，Renderer 不传地址。
   update: {

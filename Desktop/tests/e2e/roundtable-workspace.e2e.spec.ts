@@ -1,4 +1,22 @@
 import { mkdtempSync, rmSync } from 'node:fs'
+
+/** Windows：Electron 关闭后 db 句柄可能延迟释放；清理 userData 带重试。 */
+function rmWithRetry(path: string, options: { recursive: boolean; force: boolean }): void {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      rmSync(path, options)
+      return
+    } catch {
+      if (attempt >= 5) {
+        // Temp 下的 userData 清不掉只是磁盘残留（Windows 句柄延迟），
+        // 与被测行为无关——警告即可，不能让清理掩盖测试结论。
+        console.warn(`[cleanup] rmSync failed after retries: ${path}`)
+        return
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300)
+    }
+  }
+}
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { _electron as electronLauncher, expect, test } from '@playwright/test'
@@ -41,10 +59,24 @@ async function launchInto(dataDir: string): Promise<{ app: ElectronApplication; 
     args: ['.', '--no-sandbox', '--disable-gpu'],
     env: launchEnv(dataDir)
   })
-  const page = await app.firstWindow()
-  await pinLocale(page, 'zh-CN')
-  await expect(page.locator('.studio-home')).toBeVisible()
-  return { app, page }
+  // 卡片会话恢复后，恢复的网页（WebContentsView）可能先于主窗口出现在
+  // windows() 列表里——firstWindow() 拿到的未必是壳窗口。遍历找真正渲染
+  // .studio-home 的那一个。
+  let page: Page | null = null
+  await expect
+    .poll(async () => {
+      for (const candidate of app.windows()) {
+        if ((await candidate.locator('.studio-home').count()) > 0) {
+          page = candidate
+          return true
+        }
+      }
+      return false
+    })
+    .toBe(true)
+  await pinLocale(page!, 'zh-CN')
+  await expect(page!.locator('.studio-home')).toBeVisible()
+  return { app, page: page! }
 }
 
 async function launch(): Promise<{ app: ElectronApplication; page: Page; dataDir: string }> {
@@ -250,7 +282,7 @@ test('工作空间：直接新建网页、原生视图跟随布局、拖动/缩�
     expect(views.find((view) => view.tabId === secondTab)).toBeUndefined()
   } finally {
     await app.close()
-    rmSync(dataDir, { recursive: true, force: true })
+    rmWithRetry(dataDir, { recursive: true, force: true })
   }
 })
 
@@ -301,11 +333,11 @@ test('拆出与归位：同一批原生视图迁移宿主，布局不丢', async
     await expectRoundtableViewsAlive(app, { tabIds: [firstTab, secondTab], hostWindowId: mainId })
   } finally {
     await app.close()
-    rmSync(dataDir, { recursive: true, force: true })
+    rmWithRetry(dataDir, { recursive: true, force: true })
   }
 })
 
-test('布局持久化：重启后布局恢复为幽灵面板，一键重开按原几何复活', async () => {
+test('布局持久化：重启后布局与页面实例一起恢复（会话恢复），几何分毫不差', async () => {
   test.setTimeout(90_000)
   const dataDir = mkdtempSync(join(tmpdir(), 'bp-rt-persist-'))
   try {
@@ -325,37 +357,27 @@ test('布局持久化：重启后布局恢复为幽灵面板，一键重开按�
     const savedTabIds = [firstTab, secondTab]
     await first.app.close()
 
-    // —— 重启（同一 userData）：WebContents 必然消失，布局以幽灵面板
-    // 恢复（诚实呈现，不伪造页面内容）。 ——
+    // —— 重启（同一 userData）：卡片架会话恢复把 tabId 原样带回来，
+    // 圆桌面板随之**直接复活**（不再是幽灵面板）——这是 Phase「会话恢复」
+    // 的预期效果：布局与页面实例一步到位。布局几何保持用户拖后的位置。 ——
     const second = await launchInto(dataDir)
     try {
       await enterWorkspace(second.page)
       await expect(second.page.locator('.rt-panel')).toHaveCount(2, { timeout: 15_000 })
-      await expect(second.page.locator('.rt-panel[data-ghost="true"]')).toHaveCount(2)
+      await expect(second.page.locator('.rt-panel[data-ghost="true"]')).toHaveCount(0)
       const restoredLeft = await second.page.locator(`.rt-panel[data-tab-id="${firstTab}"]`).evaluate((el) => Number.parseInt(el.style.left, 10))
       expect(restoredLeft).toBe(savedLeft)
 
-      // —— 一键重开：新标签 + 原几何 rebind，原生视图回到原位 ——
-      await second.page.locator(`.rt-panel[data-tab-id="${firstTab}"] .rt-panel__ghost .rt-workspace__btn--primary`).click()
-      await expect(second.page.locator(`.rt-panel[data-tab-id="${firstTab}"][data-ghost="true"]`)).toHaveCount(0, { timeout: 15_000 })
-      const reboundTabId = await second.page
-        .locator('.rt-panel')
-        .evaluateAll((elements, excluded) => {
-          const live = elements.find((el) => el.getAttribute('data-ghost') === 'false' && el.getAttribute('data-tab-id') !== excluded)
-          return live?.getAttribute('data-tab-id') ?? null
-        }, secondTab)
-      expect(reboundTabId).toMatch(/^tab-/)
+      // —— 原生视图跟着复活：真实 WebContents 回到原位跟随 DOM rects。 ——
       const mainId = await mainWindowId(second.app)
-      await expectRoundtableViewsAlive(second.app, { tabIds: [reboundTabId!], hostWindowId: mainId })
-      await expectBoundsFollowDom(second.app, second.page, reboundTabId!)
-      // 几何保留：重开后的面板位置与重启前保存的一致。
-      const reboundLeft = await second.page.locator(`.rt-panel[data-tab-id="${reboundTabId}"]`).evaluate((el) => Number.parseInt(el.style.left, 10))
-      expect(reboundLeft).toBe(savedLeft)
+      await expectRoundtableViewsAlive(second.app, { tabIds: savedTabIds, hostWindowId: mainId })
+      await expectBoundsFollowDom(second.app, second.page, firstTab)
+      await expectBoundsFollowDom(second.app, second.page, secondTab)
     } finally {
       await second.app.close()
     }
   } finally {
-    rmSync(dataDir, { recursive: true, force: true })
+    rmWithRetry(dataDir, { recursive: true, force: true })
   }
 })
 
@@ -387,6 +409,6 @@ test('防重叠：把面板拖到另一个面板正中，落点被推到最近�
     await expectBoundsFollowDom(app, page, firstTab)
   } finally {
     await app.close()
-    rmSync(dataDir, { recursive: true, force: true })
+    rmWithRetry(dataDir, { recursive: true, force: true })
   }
 })

@@ -12,6 +12,7 @@ import { records } from './records'
 import { settings } from './settings'
 import { studio } from './studio'
 import { sync } from './sync'
+import { workspace } from './workspace'
 
 /**
  * English dictionary. `satisfies Messages` makes a missing or misspelled key a
@@ -30,5 +31,6 @@ export const enUS = {
   studio,
   browser,
   direction,
-  aiWorkspace
+  aiWorkspace,
+  workspace
 } satisfies Messages

@@ -11,6 +11,7 @@ import { records } from './records'
 import { settings } from './settings'
 import { studio } from './studio'
 import { sync } from './sync'
+import { workspace } from './workspace'
 
 /**
  * 简体中文字典 —— **类型基准**。`Messages` 由这份对象推断，
@@ -29,7 +30,8 @@ export const zhCN = {
   studio,
   browser,
   direction,
-  aiWorkspace
+  aiWorkspace,
+  workspace
 }
 
 export type Messages = typeof zhCN

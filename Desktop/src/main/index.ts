@@ -16,6 +16,9 @@ import { activeMetadataFixture } from './metadata/metadata-fixture'
 import { ApplicationEvents } from './application/events/application-events'
 import { RecordService } from './application/records/record-service'
 import { WorkContextService } from './application/work-context/work-context-service'
+import { LocalWorkspaceService } from './application/local-workspace/local-workspace-service'
+import { WorkspaceFileService } from './application/local-workspace/workspace-file-service'
+import { ContextBuilder } from './application/local-workspace/context-builder'
 import { PersonalDirectionService } from './application/personal-direction/personal-direction-service'
 import { CoffeeService } from './application/coffee/coffee-service'
 import { CanvasService } from './application/canvas/canvas-service'
@@ -235,6 +238,10 @@ function bootstrap(): void {
   const clients = new McpClientService(db.db)
   const workContexts = new WorkContextService(db.db, events)
   const personalDirection = new PersonalDirectionService(db.db, events)
+  // AI Card Workspace Bridge（Phase 1）：登记 / 绑定 / 只读文件 / 上下文。
+  const localWorkspaceService = new LocalWorkspaceService(db.db, events)
+  const workspaceFileService = new WorkspaceFileService(db.db)
+  const contextBuilder = new ContextBuilder(db.db, workspaceFileService)
 
   const bridgeStatus = (): McpBridgeStatus => ({
     running: bridgeServer?.isRunning() ?? false,
@@ -289,11 +296,12 @@ function bootstrap(): void {
     devServerUrl,
     drag: dragSession,
     // 标签被销毁：圆桌立刻摘除失效参与者（两个窗口同步），并清理布局行
-    // 与原生视图托管账本。
+    // 与原生视图托管账本；卡片工作区绑定一并清理（规格 §5.8）。
     onTabClosed: (tabId) => {
       roundtableLayoutManagerRef?.handleTabClosed(tabId)
       roundtableViewManagerRef?.handleTabClosed(tabId)
       roundtableService?.syncTabs(browserManager?.liveTabIds() ?? [])
+      localWorkspaceService.clearBinding(tabId)
     },
     // 页面加载完成：回填圆桌面板 URL（join 时导航可能尚未完成）。
     onPageSettled: (tabId) => {
@@ -514,7 +522,10 @@ function bootstrap(): void {
     chrome: chromeIntegration,
     dataDir: initialDataLocation.dataDir,
     dataLocation,
-    updates: updateService
+    updates: updateService,
+    localWorkspaces: localWorkspaceService,
+    workspaceFiles: workspaceFileService,
+    contextBuilder: contextBuilder
   })
 
   // E2E / 单测钩子：注入假光标（拖拽会话的松手位置判定用）。

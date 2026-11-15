@@ -501,6 +501,35 @@ create table roundtable_panels (
 );
 `
 
+const LOCAL_WORKSPACES_SQL = `
+-- AI Card Workspace Bridge（Phase 1）：本地工作区授权登记。
+-- 这是「这台机器授权过哪些文件夹」的本机事实：不进 change_log、不进 iOS 同步。
+-- absolute_path 存 realpath 规范化后的路径；唯一索引做重复登记兜底，
+-- 大小写不敏感的查重在 Service 层做（Windows/默认盘上只差大小写也算同一路径）。
+create table local_workspaces (
+  id text primary key,
+  name text not null,
+  absolute_path text not null,
+  platform text not null default '',
+  created_at integer not null,
+  updated_at integer not null
+);
+create unique index local_workspaces_path_idx on local_workspaces (absolute_path);
+
+-- 卡片绑定：tabId → workspaceId。**刻意不设外键**：删除工作区授权后绑定
+-- 行保留成悬空引用，卡片读到 join 不上的绑定就显示「绑定失效」（规格
+-- §5.6），而不是悄悄回到未绑定——这也是 roundtable_panels / mcp 日志的
+-- 同款「引用可悬空」惯例。tabId 与卡片会话快照（browser.tabSession）同源：
+-- 重启后 tabId 原样恢复，绑定随之命中。
+create table card_workspace_bindings (
+  tab_id text primary key,
+  workspace_id text not null,
+  created_at integer not null,
+  updated_at integer not null
+);
+create index card_workspace_bindings_workspace_idx on card_workspace_bindings (workspace_id);
+`
+
 export const migrations: Migration[] = [
   { version: 1, name: 'init', sql: INIT_SQL },
   { version: 2, name: 'sync-align-ios', sql: SYNC_ALIGN_SQL },
@@ -512,7 +541,8 @@ export const migrations: Migration[] = [
   { version: 8, name: 'work-contexts', sql: WORK_CONTEXT_SQL },
   { version: 9, name: 'personal-direction', sql: PERSONAL_DIRECTION_SQL },
   { version: 10, name: 'ai-conversations', sql: AI_CONVERSATIONS_SQL },
-  { version: 11, name: 'roundtable-panels', sql: ROUNDTABLE_PANELS_SQL }
+  { version: 11, name: 'roundtable-panels', sql: ROUNDTABLE_PANELS_SQL },
+  { version: 12, name: 'local-workspaces', sql: LOCAL_WORKSPACES_SQL }
 ]
 
 /**

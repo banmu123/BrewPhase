@@ -9,6 +9,7 @@ import type {
   ChromeDetection,
   ChromeSelfTestResult,
   DataLocationStatus,
+  LocalWorkspace,
   McpBridgeStatus,
   McpClientCreated,
   McpClientInfo,
@@ -64,7 +65,8 @@ export function SettingsPage({
     { key: 'sync', label: t.settings.nav.sync },
     { key: 'browser', label: t.settings.nav.browser },
     { key: 'chrome', label: t.settings.nav.chrome },
-    { key: 'mcp', label: t.settings.nav.mcp }
+    { key: 'mcp', label: t.settings.nav.mcp },
+    { key: 'workspace', label: t.settings.nav.workspace }
   ]
 
   return (
@@ -104,6 +106,7 @@ export function SettingsPage({
             {category === 'browser' && <BrowserSection />}
             {category === 'chrome' && <ChromeSection />}
             {category === 'mcp' && <McpSection />}
+            {category === 'workspace' && <WorkspaceSection />}
           </div>
         </div>
       </div>
@@ -1368,4 +1371,115 @@ function McpSection() {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+/** 本地工作区（AI Card Workspace Bridge Phase 1）：登记列表 + 添加 / 重命名 / 移除授权。 */
+function WorkspaceSection() {
+  const { t } = useI18n()
+  const [workspaces, setWorkspaces] = useState<LocalWorkspace[]>([])
+  const [loaded, setLoaded] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = useCallback(async (): Promise<void> => {
+    try {
+      setWorkspaces(await api.localWorkspace.list())
+      setError(null)
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setLoaded(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+    return api.app.onChanged((domain) => {
+      if (domain === 'localWorkspaces') void refresh()
+    })
+  }, [refresh])
+
+  const add = async (): Promise<void> => {
+    setAdding(true)
+    setError(null)
+    try {
+      const result = await api.localWorkspace.add()
+      if (!result.ok && !result.canceled && result.error) setError(result.error)
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  const rename = async (workspace: LocalWorkspace): Promise<void> => {
+    const name = window.prompt(t.settings.workspace.renamePrompt, workspace.name)
+    if (!name || name.trim() === workspace.name) return
+    try {
+      await api.localWorkspace.rename(workspace.id, name)
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+
+  const remove = async (workspace: LocalWorkspace): Promise<void> => {
+    const confirmed = await confirmAction({
+      title: t.settings.workspace.removeConfirmTitle,
+      description: t.settings.workspace.removeConfirmBody(workspace.name),
+      confirmLabel: t.settings.workspace.remove,
+      cancelLabel: t.common.cancel
+    })
+    if (!confirmed) return
+    try {
+      await api.localWorkspace.remove(workspace.id)
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+
+  return (
+    <div className="settings-section">
+      <h2 className="settings-section__title">{t.settings.workspace.title}</h2>
+      <p className="settings-lead">{t.settings.workspace.subtitle}</p>
+
+      <div className="stack">
+        <p className="note">{t.settings.workspace.addHint}</p>
+        <button type="button" className="button button--primary" disabled={adding} onClick={() => void add()}>
+          ＋ {t.settings.workspace.add}
+        </button>
+        {error && <p className="error">{error}</p>}
+      </div>
+
+      {loaded && workspaces.length === 0 && <p className="empty">{t.settings.workspace.empty}</p>}
+      {workspaces.length > 0 && (
+        <div className="list">
+          {workspaces.map((workspace) => (
+            <div key={workspace.id} className="list-item" data-testid="workspace-row">
+              <div className="list-item__main">
+                <span className="list-item__title">{workspace.name}</span>
+                <span className="list-item__meta" title={workspace.absolutePath}>
+                  {t.settings.workspace.pathLabel}: {workspace.absolutePath}
+                </span>
+                <span className="list-item__meta">
+                  {t.settings.workspace.statusLabel}:{' '}
+                  <span data-available={workspace.availability === 'available'}>
+                    {workspace.availability === 'available'
+                      ? t.settings.workspace.available
+                      : t.settings.workspace.missing}
+                  </span>
+                </span>
+              </div>
+              <div className="row">
+                <button type="button" className="button button--ghost" onClick={() => void rename(workspace)}>
+                  {t.settings.workspace.rename}
+                </button>
+                <button type="button" className="button" onClick={() => void remove(workspace)}>
+                  {t.settings.workspace.remove}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
