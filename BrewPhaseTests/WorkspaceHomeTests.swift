@@ -26,33 +26,29 @@ final class WorkspaceHomeTests: XCTestCase {
         XCTAssertEqual(WorkspaceStackLayout.visibleLimit, 3)
     }
 
-    func testDeeperCardsDropLowerAndShiftRight() {
-        // 后卡必须比前卡更低、更偏右：这是「叠放」与「并排」的全部区别。
-        XCTAssertLessThan(WorkspaceStackLayout.drop(depth: 0), WorkspaceStackLayout.drop(depth: 1))
-        XCTAssertLessThan(WorkspaceStackLayout.drop(depth: 1), WorkspaceStackLayout.drop(depth: 2))
-        XCTAssertLessThan(WorkspaceStackLayout.shift(depth: 0), WorkspaceStackLayout.shift(depth: 1))
-
-        XCTAssertEqual(WorkspaceStackLayout.drop(depth: 0), 0)
-        XCTAssertEqual(WorkspaceStackLayout.shift(depth: 0), 0)
+    func testDeeperCardsSinkLower() {
+        // 后卡必须比前卡低一点：这是「叠放」与「并排成一张网格」的区别。
+        XCTAssertLessThan(WorkspaceStackLayout.lift(depth: 0), WorkspaceStackLayout.lift(depth: 1))
+        XCTAssertLessThan(WorkspaceStackLayout.lift(depth: 1), WorkspaceStackLayout.lift(depth: 2))
+        XCTAssertEqual(WorkspaceStackLayout.lift(depth: 0), 0)
     }
 
-    func testBackCardsKeepFullWidthSoTheirEdgeActuallyShows() {
-        // 回归护栏：后卡曾经靠「两侧各内收 4pt」做台阶，但卡片按宽高比定高，
-        // 内收 4pt 会让它比前卡矮 2×4÷0.62 ≈ 13pt，而它只下探 7pt——
-        // 后卡整张躲进前卡背后，堆叠看起来只有一张卡。现在宽度不变、只错位。
-        XCTAssertEqual(WorkspaceStackLayout.shift(depth: 0), 0)
-        XCTAssertGreaterThan(WorkspaceStackLayout.shift(depth: 1), 0)
-        // 台阶要够一条看得见的边。
-        XCTAssertGreaterThanOrEqual(WorkspaceStackLayout.drop(depth: 1), 3)
+    func testCardsOverlapInsteadOfSittingSideBySide() {
+        // 横向叠放靠负间距：相邻两张必须真的压在一起，而不是留缝。
+        XCTAssertGreaterThan(WorkspaceStackLayout.cardOverlap, 0)
+        // 也不能压掉整张卡——后卡还要露出一条能看出「还有东西」的边。
+        XCTAssertLessThan(WorkspaceStackLayout.cardOverlap, 60)
+        // 卡片是横着排的，比原来竖排时更宽更矮。
+        XCTAssertGreaterThan(WorkspaceStackLayout.cardAspect, 0.7)
     }
 
-    func testStackReservesTheHeightItUses() {
-        // 错位是视觉，不该让下一段内容替它买单：底部的让位必须等于最深那层
-        // 的下探量。
+    func testSectionReservesTheHeightItUses() {
+        // 错位是视觉，不该让下一个分区替它买单：底部的让位必须等于最深那张
+        // 下沉的量。
         for count in 0...5 {
             let deepest = WorkspaceStackLayout.visibleCount(itemCount: count) - 1
-            XCTAssertEqual(WorkspaceStackLayout.stackBottomPadding(itemCount: count),
-                           WorkspaceStackLayout.drop(depth: deepest))
+            XCTAssertEqual(WorkspaceStackLayout.sectionBottomPadding(itemCount: count),
+                           WorkspaceStackLayout.lift(depth: deepest))
         }
     }
 
@@ -223,6 +219,67 @@ final class WorkspaceHomeTests: XCTestCase {
     func testAllThreeSpacesStillExistAsTopLevelDestinations() {
         // 删掉 Tab Bar 不等于删掉空间：三个都还在，且顺序固定。
         XCTAssertEqual(AppTab.allCases, [.coffee, .records, .canvas])
+    }
+
+    // MARK: - 搜索
+
+    func testSearchMatchesTitleRegardlessOfCase() {
+        let item = WorkspaceSearchItem(bean: bean("Yirgacheffe Konga", at: 1))
+        XCTAssertEqual(WorkspaceHomeFeed.matches("yirga", in: [item]).count, 1)
+        XCTAssertEqual(WorkspaceHomeFeed.matches("KONGA", in: [item]).count, 1)
+        XCTAssertTrue(WorkspaceHomeFeed.matches("曼特宁", in: [item]).isEmpty)
+    }
+
+    func testSearchLooksBeyondTheTitle() {
+        // 搜的是「我记得里面提过什么」，不是只搜标题：备注、标签、作者都要能命中。
+        let beanWithNote = Bean(name: "孔加", notes: "柑橘和茉莉")
+        XCTAssertEqual(WorkspaceHomeFeed.matches("茉莉", in: [WorkspaceSearchItem(bean: beanWithNote)]).count, 1)
+
+        let record = Record(carrier: .text, title: "随手一记", note: "周五试了新的滤杯")
+        XCTAssertEqual(WorkspaceHomeFeed.matches("滤杯", in: [WorkspaceSearchItem(record: record)]).count, 1)
+    }
+
+    func testSearchRequiresEveryWord() {
+        // 多词是「与」：两个词都要命中，位置不限。
+        let item = WorkspaceSearchItem(bean: bean("耶加 孔加", at: 1))
+        XCTAssertEqual(WorkspaceHomeFeed.matches("耶加 孔加", in: [item]).count, 1)
+        XCTAssertEqual(WorkspaceHomeFeed.matches("孔加 耶加", in: [item]).count, 1)
+        XCTAssertTrue(WorkspaceHomeFeed.matches("耶加 曼特宁", in: [item]).isEmpty)
+    }
+
+    func testBlankQueryReturnsNothing() {
+        // 空搜索不该把全部内容当成结果倒出来。
+        let item = WorkspaceSearchItem(bean: bean("A", at: 1))
+        XCTAssertTrue(WorkspaceHomeFeed.matches("", in: [item]).isEmpty)
+        XCTAssertTrue(WorkspaceHomeFeed.matches("   ", in: [item]).isEmpty)
+    }
+
+    func testSearchRespectsItsLimit() {
+        let items = (0..<10).map { WorkspaceSearchItem(bean: bean("豆 \($0)", at: Double($0))) }
+        XCTAssertEqual(WorkspaceHomeFeed.matches("豆", in: items, limit: 4).count, 4)
+    }
+
+    func testSearchResultPointsAtTheItemItself() {
+        // 首页卡片点开进列表，搜索结果点开进这一条——两者不是同一种目标。
+        let bean = bean("A", at: 1)
+        XCTAssertEqual(WorkspaceSearchItem(bean: bean).target, .bean(bean.id))
+
+        let record = Record(carrier: .link, title: "链接", urlString: "https://example.com")
+        XCTAssertEqual(WorkspaceSearchItem(record: record).target, .record(record.id))
+
+        let canvas = Canvas(name: "想法")
+        XCTAssertEqual(WorkspaceSearchItem(canvas: canvas).target, .canvas(canvas.id))
+    }
+
+    func testSearchCoversAllThreeSpaces() {
+        let items = [
+            WorkspaceSearchItem(bean: bean("共享关键词 豆", at: 1)),
+            WorkspaceSearchItem(record: Record(carrier: .text, title: "共享关键词 记录")),
+            WorkspaceSearchItem(canvas: Canvas(name: "共享关键词 画布")),
+        ]
+        let hits = WorkspaceHomeFeed.matches("共享关键词", in: items)
+        XCTAssertEqual(hits.count, 3)
+        XCTAssertEqual(Set(hits.map(\.space)), Set(AppTab.allCases))
     }
 
     // MARK: - 构造夹具

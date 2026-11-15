@@ -167,11 +167,15 @@ Canvas 重设计的唯一权威来源。
 - **Hairline / CardDivider**：0.7pt；CardDivider 可缩进对齐文字左缘。
 - **PrimaryButton**：整屏唯一 espresso 实心块；SecondaryButton：well 胶囊；
   文字级次级操作用 roast 色文本 + 图标。
-- **WorkspaceCardStack（首页，Phase 1 起）**：三个空间各一列，列宽等分、卡片同高
-  （几何收在 `WorkspaceStackLayout`）；后卡**宽度不变**，只下探 7pt、右移 2pt、
-  降一档不透明度——**不能用「两侧内收」做台阶**：卡片按宽高比定高，收窄会让后卡
-  比前卡更矮，整张躲进前卡背后。点最前那张开内容，点标题/露出的边缘/空态卡进空间。
-  每列最多三张，Coffee 不得在尺寸、颜色、位置与信息量上压过 Records 与 Canvas。
+- **WorkspaceCardStack（首页，Phase 1 起）**：三个空间**纵向**各占一行——手机上三列
+  并排会把内容挤在上半屏、下半屏全空。一行最多三张卡，用负间距 32pt 叠成一摞，
+  后卡下沉 3pt、降一档不透明度；卡片宽度由行宽均分（几何收在 `WorkspaceStackLayout`）。
+  **整行是一个按钮**：点卡片、点标题、点空白都进该空间的**列表**。首页卡片只是预览，
+  要直接打开某一条，用顶部搜索。三个空间同尺寸、同上限，Coffee 不得压过另两个。
+- **首页搜索**：胶囊输入框（与 Records 同款），跨三个空间匹配标题、备注、标签、作者；
+  多词是「与」；结果行点开的是**那一条**的详情，不是空间列表。
+- **DesktopSyncEntryRow**：44pt 状态行（未配对 / 已配对 / 同步中 / 失败），挂在**首页**
+  顶端而不是咖啡页——桌面端是三个空间共同的外围入口。
 - **SpaceSwitcherBar（模块顶部，Phase 1 起）**：44pt 一行，左「工作台」右三个空间名，
   选中 cream 0.55 + ink；挂在模块根页面的 `safeAreaInset`，推开详情即消失。
   全 App 不再有底部 Tab Bar。

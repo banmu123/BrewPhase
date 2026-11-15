@@ -1681,4 +1681,10 @@ EN: dict[str, str] = {
     "进入%@": "Open %@",
     "打开%@": "Open %@",
     "这条内容已经不在了": "This item is gone",
+    # 首页搜索：三个空间一起搜，结果点开是那一条本身。
+    "搜索咖啡、记录、画布": "Search coffee, records, canvas",
+    "没有找到": "Nothing found",
+    "换个词试试，或者清空搜索回到三个空间。":
+        "Try another word, or clear the search to go back to the three spaces.",
+    "%@ 条内容": "%@ items",
 }

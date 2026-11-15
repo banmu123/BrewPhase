@@ -18,6 +18,7 @@
 "%@ 星" = "%@ stars";
 "%@ 本次 %@，你的较好记录在 %@–%@" = "%@: this cup %@, your better brews %@–%@";
 "%@ 条" = "%@ entries";
+"%@ 条内容" = "%@ items";
 "%@ 条待送达" = "%@ scheduled";
 "%@ 条记录" = "%@ records";
 "%@ 条里有 %@ 次都用的是 %@。" = "%@ of the %@ records used %@.";
@@ -502,7 +503,6 @@
 "手动记录" = "Manual note";
 "打开" = "Opening";
 "打开 BrewPhase Desktop，在设备同步中生成配对二维码。" = "Open BrewPhase Desktop and generate a pairing code in Settings → Device sync.";
-"打开%@" = "Open %@";
 "打开原始来源" = "Open original";
 "打开原记录" = "Open original record";
 "扫描二维码" = "Scan QR code";
@@ -527,6 +527,7 @@
 "换一张" = "Replace";
 "换一张图片" = "Replace photo";
 "换一段视频" = "Replace video";
+"换个词试试，或者清空搜索回到三个空间。" = "Try another word, or clear the search to go back to the three spaces.";
 "换了向量模型或界面语言之后需要重建" = "Needed after changing the embedding model or the interface language";
 "换了向量模型或界面语言，索引已重建。" = "The embedding model or interface language changed, so the index was rebuilt.";
 "换城市之后" = "After moving cities";
@@ -544,6 +545,7 @@
 "提醒" = "Reminders";
 "提醒会根据每包豆子的烘焙日期自动排好" = "Reminders line themselves up from each bag's roast date";
 "提醒会根据烘焙日期一次排好，不需要 App 在后台运行。" = "Reminders are scheduled in one go from the roast date; the app never needs to run in the background.";
+"搜索咖啡、记录、画布" = "Search coffee, records, canvas";
 "搜索标题、备注、标签" = "Search titles, notes, tags";
 "摩卡壶" = "Moka pot";
 "播放" = "Play";
@@ -718,6 +720,7 @@
 "没有名字的豆子" = "Unnamed bag";
 "没有开封日期，也没有可用的冲煮记录，本次预测按未开封处理。" = "No open date and no usable brew record to infer one from — this estimate treats the bag as still sealed.";
 "没有开封日期，开封时间按最早一次冲煮记录推算。" = "There is no open date, so the bag is taken as opened at the first brew you recorded.";
+"没有找到" = "Nothing found";
 "没有找到相似的记录" = "No similar records found";
 "没有烘焙日期" = "no roast date";
 "没有记录开封日期。" = "No opening date was recorded.";

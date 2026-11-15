@@ -39,13 +39,13 @@ RootView
 
 | 文件 | 职责 |
 |---|---|
-| `BrewPhase/Core/WorkspaceStackLayout.swift` | 堆叠几何：可见张数、下探、错位、透明度（纯值，可单测） |
+| `BrewPhase/Core/WorkspaceStackLayout.swift` | 堆叠几何：可见张数、重叠宽度、下沉、透明度（纯值，可单测） |
 | `BrewPhase/Features/Home/WorkspaceHomeFeed.swift` | 卡片投影 + 选卡规则 + 问候语（纯值，可单测） |
-| `BrewPhase/Features/Home/WorkspaceHomeView.swift` | 首页容器：页头、三列、详情跳转 |
-| `BrewPhase/Features/Home/WorkspaceCardStackView.swift` | 一列：空间名 + 叠放卡片 + 点击分层 |
+| `BrewPhase/Features/Home/WorkspaceHomeView.swift` | 首页容器：页头、桌面同步入口、搜索、三个纵向分区、详情跳转 |
+| `BrewPhase/Features/Home/WorkspaceCardStackView.swift` | 一个分区：空间名 + 横向叠放的三张卡（整行即按钮） |
 | `BrewPhase/Features/Home/WorkspaceCardView.swift` | 单张卡：真实缩略图 / 色块 + 标题 |
 | `BrewPhase/Features/Home/SpaceSwitcherBar.swift` | 模块顶部切换条 + `SpaceNavigation` |
-| `BrewPhaseTests/WorkspaceHomeTests.swift` | 19 条用例（几何、选卡、投影、路由、问候） |
+| `BrewPhaseTests/WorkspaceHomeTests.swift` | 26 条用例（几何、选卡、搜索、投影、路由、问候） |
 
 **修改（8）**
 
@@ -68,20 +68,19 @@ RootView
 
 ```text
 WorkspaceHomeView (NavigationStack)
-├── header            BREWPHASE / STUDIO · 问候 · 日期
-└── HStack(spacing: 10)
-    ├── WorkspaceCardStackView(.coffee)  ─┐
-    ├── WorkspaceCardStackView(.records)  ├── 每列：空间名 + ZStack(≤3 张 WorkspaceCardView)
-    └── WorkspaceCardStackView(.canvas)  ─┘
+├── header                      BREWPHASE / STUDIO · 问候 · 日期
+├── DesktopSyncEntryRow         桌面配对状态行（从咖啡页搬来）
+├── searchField                 胶囊搜索框（跨三个空间）
+└── VStack(spacing: 20)         三个分区纵向排列
+    ├── WorkspaceCardStackView(.coffee)   ─┐
+    ├── WorkspaceCardStackView(.records)   ├── 每区：空间名 + HStack(间距 -32, ≤3 张卡)
+    └── WorkspaceCardStackView(.canvas)   ─┘
 ```
 
-`WorkspaceCardStackView` 的点击分两层：
-
-- 最前面那张卡是一个 `Button` → 打开这条内容；
-- 空间名、露出边缘、空态卡、以及整列的空白处 → 进入这个空间。
-
-后卡 `allowsHitTesting(false)`、`accessibilityHidden(true)`：重叠区域里它们只是纵深，
-不会出现「点到了看不见的那张」。
+**点击只有一层**：整个分区是一个 `Button`，点卡片、点标题、点空白都进这个空间的
+**列表**。首页卡片只是预览，不承担「打开某一条」的职责——要直接打开某一条，用顶部
+搜索（结果行点开才是详情）。这条是 13:20 修订的：最初点最前那张卡会直接进详情，
+用户指出应该先进列表。
 
 ## 4. 三空间真实数据怎么接
 
@@ -109,24 +108,34 @@ WorkspaceHomeView (NavigationStack)
 
 ## 5. 卡片堆叠与点击区域怎么实现
 
-几何全部收在 `WorkspaceStackLayout`（纯值，19 条用例里 5 条钉它）：
+几何全部收在 `WorkspaceStackLayout`（纯值，26 条用例里 6 条钉它）：
 
 | 参数 | 值 | 说明 |
 |---|---|---|
-| `visibleLimit` | 3 | 列里最多画三张 |
-| `depthDrop` | 7pt | 每层向下退让 |
-| `depthShift` | 2pt | 每层向右错开 |
-| `cardAspect` | 0.62 | 卡片宽高比，决定三列等高 |
+| `visibleLimit` | 3 | 一个分区最多三张 |
+| `cardOverlap` | 32pt | 相邻两张的重叠宽度；负间距实现 |
+| `depthLift` | 3pt | 每往后一张下沉多少 |
+| `cardAspect` | 0.9 | 宽 ÷ 高；卡片宽度由行宽均分 |
 | `opacity` | 1 / 0.9 / 0.78 | 后卡退后但可读 |
 
-**这里踩过一个真实的坑**（已修，并写成回归用例）：最初用「两侧各内收 4pt」做台阶。
-卡片按宽高比定高，内收 4pt 会让后卡比前卡**矮 13pt**，而它只下探 7pt——后卡整张躲进前卡
-背后，截图上三列各只有一张卡。改成「宽度不变、只往右下挪」之后台阶才可见：
-验收截图里 Coffee / Records 的堆叠到 420.7pt（3 张），Canvas 到 413.7pt（2 张），
-差 7pt 正是少一张卡的台阶。
+**这里踩过两个真实的坑**（都已修，并写成回归用例）：
 
-点击区域：`ZStack` 里只有 depth 0 参与命中测试；卡片本体 `.aspectRatio` + `.clipShape`，
-点击目标是整张卡（≥ 44pt 见方）。
+1. 最初是「三个空间三列并排」，每列内收 4pt 做台阶。卡片按宽高比定高，内收会让后卡
+   比前卡**矮 13pt**，而它只下探 7pt——后卡整张躲进前卡背后，截图上每列只剩一张卡。
+2. 三列并排在手机上把内容挤在上半屏，下半屏整片空白（用户实测指出）。改成三个分区
+   **纵向**排列、每个分区内**横向**叠放，页面才铺满。
+
+点击：整个分区是一个 `Button`（`.contentShape(Rectangle())`），点卡片/标题/空白都进
+该空间的列表；后卡只做纵深，不单独响应点击。卡片本体 ≥ 44pt 见方。
+
+## 5.1 顶部搜索
+
+- 胶囊输入框（与 Records 同款），带 200ms 防抖；`-BrewPhaseSearch` 可预填用于截图。
+- 匹配范围：豆名/烘焙商/产区/处理法/备注/风味标签、冲煮方式/磨豆机/备注、
+  风味记录备注/标签、记录标题/正文/摘要/作者/标签/URL、画布名/说明。
+- 多词为「与」：每个词都要在任一字段命中，顺序不限。
+- 候选池每类 200 条，结果上限 30 行；点结果行进**那一条**的详情。
+- 无结果时给 `EmptyStateView`（一个图形 + 一句「没有找到」+ 清空搜索）。
 
 ## 6. 底部导航换成了什么
 
@@ -189,26 +198,33 @@ xcodebuild test   -scheme BrewPhase -destination 'iPhone 16 Pro (18.6)'   → TE
 
 自动化只能证明「结构对」，下面这些必须有人点一遍：
 
-- [ ] 点 Coffee / Records / Canvas 三列（非卡片处）分别进入对应页面
-- [ ] 点最前面那张卡，打开的是**这一条**内容（豆 → 豆档案，记录 → 记录详情，画布 → 画布工作区）
+- [ ] 点 Coffee / Records / Canvas 三个分区（卡片上、标题上、空白处都试）都进入对应**列表**
+- [ ] 顶部搜索输入关键词：结果行出现，点开是**这一条**的详情；清空后回到三个分区
 - [ ] 进模块后点「‹ 工作台」回到三空间首页
 - [ ] 在 Coffee 里点「记录」直接换空间，不必先回首页
 - [ ] 推开详情后，顶部切换条消失、系统返回手势正常
-- [ ] 空空间：删光某类内容后，该列显示同尺寸空态卡，点击进入该空间
+- [ ] 空空间：删光某类内容后，该分区显示同尺寸空态卡，点击进入该空间
 - [ ] VoiceOver：三个空间名可读、选中态朗读为「已选中」、后卡不被聚焦
 - [ ] Dynamic Type 拉到最大字号：卡片标题只留一行、不撑破卡片
 - [ ] 打开「减弱动态效果」：新增内容时堆叠用淡入而不是弹入
 - [ ] 深色模式：首页与模块页的纸面、卡片、发丝线对比正常（本次未在深色下截图）
-- [ ] iPad：三列不糊成一片、也不被拉得过宽
+- [ ] iPad：三个分区不被拉得过宽（内容上限 760pt）
 
 ---
 
 **截图位置**（本轮验收用，未入库）：`/tmp/bp-phase1/`
-`home-v3.png`（首页，16 Pro）、`home-16e.png`（首页，16e 390×844）、
-`coffee/records/canvas.png`（带顶部切换条的三个模块页）。
+`home-v5.png`（竖排首页，16 Pro）、`home-search.png`（搜索「咖啡」的结果）、
+`home-search-empty.png`（无结果空态）、`coffee/records/canvas.png`（带顶部切换条的模块页）。
 
-结构测量（像素扫描，非目测）：前卡横向范围 22–134.3 / 144.7–257.0 / 267.3–379.7pt，
-即**三列各 112.3pt 等宽**、缝 10.4pt、左右留白 22pt；后卡因 2/4pt 右移，实测并集到
-138.3 / 261.0 / 381.7pt，仍在页面留白内。模块页 y=106 处有一条全宽发丝线（切换条下缘），
-首页同一位置没有；三页底部 780–868pt 无任何宽于 200pt 的白色块（即无底部胶囊导航）。
-iPhone 16e（390×844pt）上三列同样等宽、内容最右 371.3pt，未越界。
+**竖排后的结构测量**（像素扫描，非目测，iPhone 16 Pro 402×874pt）：
+
+| 量 | 实测 |
+|---|---|
+| 卡片行横向 | 22 → 380pt 铺满内容宽；三张卡各 141pt，重叠 32pt（边界在 22 / 131 / 240 / 380） |
+| 分区纵向 | Coffee 卡片 312.7–471.7、Records 525–684、Canvas 737 起（首屏可见约 2/3，余下滚动） |
+| 页面元素顺序 | 页头 → 桌面同步行 169–201 → 搜索框 219–258 → 分区标题 ~288 |
+| 搜索态 | 结果行 34pt 图标 + 两行文字，行高 52pt，行间 0.7pt 发丝线；无结果时给 EmptyState |
+| 底部导航 | 780–868pt 内没有任何宽于 200pt 的白色块（底部胶囊确已删除） |
+
+三列并排版本的旧测量（每列 112.3pt、缝 10.4pt）随 13:20 改版作废，保留在提交
+`915e0d8` 的截图记录里。

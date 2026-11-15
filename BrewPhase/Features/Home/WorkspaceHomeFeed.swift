@@ -259,3 +259,128 @@ enum WorkspaceGreeting: String, CaseIterable {
         }
     }
 }
+
+// MARK: - 搜索
+
+/// 一条可以被搜到的内容。
+///
+/// 和首页卡片是两种东西：卡片点开进**空间列表**，搜索结果点开进**这一条**的
+/// 详情——用户已经明确说出他找什么，再让他从列表里翻一遍是多余的一步。
+struct WorkspaceSearchItem: Identifiable, Equatable {
+
+    let id: String
+    let space: AppTab
+    let title: String
+    /// 一行辅助信息：烘焙商、冲煮方式、评分、日期。
+    let subtitle: String
+    /// 参与匹配的原文。标题也在里面，但备注、作者、标签同样要能搜到。
+    let haystack: [String]
+    let target: WorkspaceCard.Target
+
+    static func == (lhs: WorkspaceSearchItem, rhs: WorkspaceSearchItem) -> Bool {
+        lhs.id == rhs.id
+            && lhs.title == rhs.title
+            && lhs.subtitle == rhs.subtitle
+            && lhs.space == rhs.space
+    }
+}
+
+extension WorkspaceSearchItem {
+
+    init(bean: Bean) {
+        let name = bean.name.trimmed
+        self.init(
+            id: "bean-\(bean.id.uuidString)",
+            space: .coffee,
+            title: name.isEmpty ? L("未命名") : bean.name,
+            subtitle: bean.roaster.trimmed.isEmpty ? bean.roastLevel.label : bean.roaster,
+            haystack: [bean.name, bean.roaster, bean.origin, bean.process,
+                       bean.notes, bean.flavorTags.joined(separator: " ")],
+            target: .bean(bean.id)
+        )
+    }
+
+    init(brew: Brew) {
+        let bag = brew.bean?.name ?? ""
+        self.init(
+            id: "brew-\(brew.id.uuidString)",
+            space: .coffee,
+            title: bag.trimmed.isEmpty ? L("一杯咖啡") : bag,
+            subtitle: [brew.method, Fmt.short(brew.date)]
+                .filter { !$0.trimmed.isEmpty }
+                .joined(separator: " · "),
+            haystack: [bag, brew.method, brew.grinder, brew.notes,
+                       brew.flavorTags.joined(separator: " ")],
+            // 冲煮没有独立详情页：点开是它所属那包豆的档案。
+            target: brew.bean.map { .bean($0.id) } ?? .none
+        )
+    }
+
+    init(tasting: Tasting) {
+        let bag = tasting.bean?.name ?? ""
+        self.init(
+            id: "tasting-\(tasting.id.uuidString)",
+            space: .coffee,
+            title: bag.trimmed.isEmpty ? L("风味记录") : bag,
+            subtitle: tasting.score > 0 ? "★ \(tasting.score) · \(Fmt.short(tasting.date))"
+                                        : Fmt.short(tasting.date),
+            haystack: [bag, tasting.notes, tasting.flavorTags.joined(separator: " ")],
+            target: tasting.bean.map { .bean($0.id) } ?? .none
+        )
+    }
+
+    init(record: Record) {
+        let title = record.displayTitle.trimmed
+        self.init(
+            id: "record-\(record.id.uuidString)",
+            space: .records,
+            title: title.isEmpty ? L("未命名记录") : record.displayTitle,
+            subtitle: [record.carrier.title, Fmt.short(record.createdAt)]
+                .joined(separator: " · "),
+            haystack: [record.title, record.note, record.summary, record.sourceName,
+                       record.authorName, record.orderedTags.map(\.displayName).joined(separator: " "),
+                       record.urlString],
+            target: .record(record.id)
+        )
+    }
+
+    init(canvas: Canvas) {
+        let note = canvas.note.trimmed
+        self.init(
+            id: "canvas-\(canvas.id.uuidString)",
+            space: .canvas,
+            title: canvas.displayName,
+            subtitle: note.isEmpty ? L("画布") : note,
+            haystack: [canvas.name, canvas.note],
+            target: .canvas(canvas.id)
+        )
+    }
+}
+
+extension WorkspaceHomeFeed {
+
+    /// 搜索：把查询切成词，每个词都要在候选的任一字段里出现。
+    ///
+    /// 多词是「与」而不是「或」——搜「耶加 水洗」时，只要两者都命中，顺序和
+    /// 位置都无所谓；这样比整串匹配宽容，也比单词匹配准确。
+    static func matches(_ query: String,
+                        in items: [WorkspaceSearchItem],
+                        limit: Int = 30) -> [WorkspaceSearchItem] {
+        let tokens = query
+            .split(whereSeparator: { $0.isWhitespace })
+            .map(String.init)
+            .filter { !$0.isEmpty }
+        guard !tokens.isEmpty else { return [] }
+
+        var hits: [WorkspaceSearchItem] = []
+        for item in items {
+            let matchesAll = tokens.allSatisfy { token in
+                item.haystack.contains { $0.localizedCaseInsensitiveContains(token) }
+            }
+            guard matchesAll else { continue }
+            hits.append(item)
+            if hits.count == limit { break }
+        }
+        return hits
+    }
+}

@@ -134,6 +134,14 @@ enum DebugLaunch {
         }
     }
 
+    /// `-BrewPhaseSearch "耶加"` — 首页搜索框预填。
+    ///
+    /// 理由和 `screen` 一样：`simctl launch` 不能打字，搜索结果列表只有在真的
+    /// 有一串查询词时才存在。它只影响首页的初始输入，不跳过任何过滤逻辑。
+    static var searchQuery: String? {
+        value(for: "-BrewPhaseSearch")
+    }
+
     /// `-BrewPhaseAsk "这包豆什么时候开封的？"`
     ///
     /// 让问答页一打开就自动问这一句。存在的原因和 `screen` 一样：`simctl launch`

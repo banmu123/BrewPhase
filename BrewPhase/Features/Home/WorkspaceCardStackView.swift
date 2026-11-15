@@ -1,16 +1,13 @@
 import SwiftUI
 
-/// 一个空间在首页的样子：一列错位叠放的小卡片。
+/// 一个空间在首页的样子：标题一行，下面几张卡横向叠成一摞。
 ///
-/// 三列共用同一套几何（`WorkspaceStackLayout`）、同一个上限、同一种卡片，
-/// 所以 Coffee 不会比 Records 更重——这是这一版首页的硬约束。
+/// 三个分区**纵向**排列（每区一行），而不是三列并排：手机上三列会把内容挤在
+/// 屏幕上半截，下半截全是空白。三行铺满一屏，页面才站得住。
 ///
-/// 点击分两层：
-/// * 点**最前面那张卡** → 打开这条内容；
-/// * 点**标题、露出的卡片边缘、或空态卡** → 进入这个空间。
-///
-/// 后面的卡片 `allowsHitTesting(false)`：它们是纵深，不是按钮。这样重叠区域
-/// 不会出现「点到了看不见的那张」的错乱。
+/// 整个分区就是一个按钮——点标题、点卡片、点空白，都是「进入这个空间」。
+/// 首页卡片只是预览，不承担「打开某一条」的职责：真正的列表在空间页里，
+/// 用户要的是先看见这一栏有什么，再进去翻。
 struct WorkspaceCardStackView: View {
 
     let space: AppTab
@@ -19,7 +16,6 @@ struct WorkspaceCardStackView: View {
     var canvases: [UUID: Canvas] = [:]
     let accent: Color
     let onOpenSpace: () -> Void
-    let onOpenCard: (WorkspaceCard) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -28,82 +24,82 @@ struct WorkspaceCardStackView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Metric.Space.xs) {
-            header
-            stack
+        Button(action: onOpenSpace) {
+            VStack(alignment: .leading, spacing: Metric.Space.xs) {
+                header
+                stack
+            }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(CardButtonStyle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: L("进入%@", space.title)))
+        .accessibilityValue(Text(verbatim: accessibilityValue))
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var accessibilityValue: String {
+        guard let first = cards.first, first.kind != .empty else { return L("空着") }
+        return L("%@ 条内容", String(cards.count))
     }
 
     // MARK: - 空间名
 
     private var header: some View {
-        Button(action: onOpenSpace) {
-            HStack(spacing: 3) {
-                Text(verbatim: space.title)
-                    .font(TypeScale.section)
-                    .tracking(0.8)
-                    .foregroundStyle(accent)
-                    .lineLimit(1)
+        HStack(spacing: 6) {
+            Text(verbatim: space.title)
+                .font(TypeScale.section)
+                .tracking(0.8)
+                .foregroundStyle(accent)
+                .lineLimit(1)
 
-                Spacer(minLength: 2)
-
-                if !cards.isEmpty, cards.first?.kind != .empty {
-                    Text(verbatim: String(cards.count))
-                        .font(.system(size: 10, weight: .medium).monospacedDigit())
-                        .foregroundStyle(Palette.inkFaint)
-                }
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .semibold))
+            if let first = cards.first, first.kind != .empty {
+                Text(verbatim: String(cards.count))
+                    .font(.system(size: 10, weight: .medium).monospacedDigit())
                     .foregroundStyle(Palette.inkFaint)
             }
-            // 24pt 的可视高度 + 上下各 10pt 的触摸余量 = 44pt。
-            .frame(height: 24)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
+
+            Spacer(minLength: 4)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(Palette.inkFaint)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(Text(verbatim: L("进入%@", space.title)))
+        .frame(height: 22)
+        .contentShape(Rectangle())
     }
 
-    // MARK: - 堆叠
+    // MARK: - 叠放的卡片
 
+    /// 负间距把卡片叠起来：后一张压在前一张下面，只露出一条边。
+    ///
+    /// **永远画满三个卡位**（不足的用透明占位）：卡片宽度由「整行 ÷ 3」决定，
+    /// 这样只有一张内容的分区和有三张的分区，卡片是同一个尺寸。否则空态卡会
+    /// 被拉成整屏宽，看起来像另一套组件。
     private var stack: some View {
-        ZStack(alignment: .top) {
-            ForEach(Array(visible.enumerated()), id: \.element.id) { depth, card in
-                cardLayer(card, depth: depth)
-                    .offset(
-                        x: WorkspaceStackLayout.shift(depth: depth),
-                        y: WorkspaceStackLayout.drop(depth: depth)
+        HStack(alignment: .top, spacing: -WorkspaceStackLayout.cardOverlap) {
+            ForEach(0..<WorkspaceStackLayout.visibleLimit, id: \.self) { depth in
+                if depth < visible.count {
+                    let card = visible[depth]
+                    WorkspaceCardView(
+                        card: card,
+                        canvas: card.canvasID.flatMap { canvases[$0] },
+                        accent: accent
                     )
+                    .frame(maxWidth: .infinity)
+                    .offset(y: WorkspaceStackLayout.lift(depth: depth))
                     .opacity(WorkspaceStackLayout.opacity(depth: depth))
                     .zIndex(Double(-depth))
-                    .allowsHitTesting(depth == 0)
-                    .accessibilityHidden(depth != 0)
+                } else {
+                    Color.clear
+                        .frame(maxWidth: .infinity)
+                        .zIndex(Double(-depth))
+                }
             }
         }
-        .padding(.bottom, WorkspaceStackLayout.stackBottomPadding(itemCount: cards.count))
-        .frame(maxWidth: .infinity)
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onOpenSpace)
+        .padding(.bottom, WorkspaceStackLayout.sectionBottomPadding(itemCount: cards.count))
+        .frame(maxWidth: .infinity, alignment: .leading)
         .animation(reduceMotion ? Motion.fade : Motion.settle, value: visible.map(\.id))
-    }
-
-    @ViewBuilder
-    private func cardLayer(_ card: WorkspaceCard, depth: Int) -> some View {
-        let view = WorkspaceCardView(
-            card: card,
-            canvas: card.canvasID.flatMap { canvases[$0] },
-            accent: accent
-        )
-
-        if depth == 0, card.target != .none {
-            Button { onOpenCard(card) } label: { view }
-                .buttonStyle(CardButtonStyle())
-                .accessibilityHint(Text(verbatim: L("打开%@", card.overline)))
-        } else {
-            view
-        }
     }
 }
 

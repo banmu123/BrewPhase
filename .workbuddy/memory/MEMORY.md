@@ -213,11 +213,17 @@
   `BrewPhaseApp`**（换语言 `.id(language)` 会重建整棵树，放 RootView 会被弹回首页）。
   底部 Tab Bar 已删除；模块顶部 `SpaceSwitcherBar` 挂在各自 NavigationStack 的
   **根页面**（`safeAreaInset`），推开详情自动消失，不出现两套导航。
-* 首页三列等分（缝 10pt / 留白 22pt），每列最多 3 张**同宽同高**卡片；
+* 首页**三个分区纵向**排列（每区一行），每区最多 3 张**同宽同高**卡片；
   三个空间同一条选卡规则：先每类一张（记录按载体分种类）→ 按时间补齐 → 上限 3。
-* **堆叠不能靠「两侧内收」实现**：卡片按 `cardAspect` 定高，收窄 4pt 后卡比前卡
-  矮 13pt，而下探只有 7pt → 后卡整张躲进前卡背后，截图上只有一张卡。正确做法是
-  宽度不变、只下探 7 + 右移 2（`WorkspaceStackLayout`，有回归用例钉住）。
+  竖排是 13:20 用户实测后的改版：三列并排会把内容挤在上半屏、下半屏全空。
+* 分区内**横向叠放**：`HStack(spacing: -32)`，卡片 `frame(maxWidth: .infinity)`
+  自动均分（负间距让可分宽度变大，三张正好铺满一行）。**永远画满 3 个卡位**，
+  不足的用 `Color.clear` 占位——否则只有一张内容的分区会被拉成整屏宽的大卡。
+* 空空间/内容少时不要再想「三列内收」那种做法：卡片宽度一变，按 `cardAspect`
+  定的高度就变，台阶会整张躲到前卡背后（旧版踩过）。
+* 点分区 = 进该空间的**列表**，不是打开第一条；要直接开某一条只有顶部搜索。
+* 搜索：跨三个空间匹配标题/备注/标签/作者，多词为「与」，200ms 防抖；
+  `-BrewPhaseSearch "词"` 可预填用于截图（simctl 不能打字）。
 * `CanvasThumbnailPreview` 要嵌进别的卡片，必须用 `height: nil` + `chrome: false`，
   否则带出双重圆角与固定高度。
 * 本机 xcodebuild 必须 `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`
