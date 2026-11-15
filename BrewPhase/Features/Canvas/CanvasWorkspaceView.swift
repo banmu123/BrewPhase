@@ -107,10 +107,14 @@ struct CanvasWorkspaceView: View {
 
                 worldLayer
 
+                // 空态 / 加载态必须钉在**视口尺寸**上，不能用 .infinity 撑满
+                // ZStack：空画布时 worldLayer 是 800×800 的固定 frame，会把这个
+                // ZStack 的布局宽度撑到 800pt，VStack 于是居中在屏幕外，文字
+                // 只露出右半截（真机截图里就是「这块画布…」被右边缘裁掉）。
                 if loadState == .empty {
-                    emptyCanvas
+                    emptyCanvas(in: geo.size)
                 } else if loadState == .loading && nodes.isEmpty {
-                    loadingCanvas
+                    loadingCanvas(in: geo.size)
                 }
             }
             .coordinateSpace(.named(canvasScreenSpace))
@@ -331,10 +335,11 @@ struct CanvasWorkspaceView: View {
     // MARK: - 加载 / 失败 / 空
 
     /// 首次读取时的指示。只在还没有内容时出现——重试时上一屏保持不动。
-    private var loadingCanvas: some View {
+    /// 与空态同理：尺寸取自视口，避免被世界层的固定 frame 带偏。
+    private func loadingCanvas(in size: CGSize) -> some View {
         ProgressView()
             .controlSize(.regular)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(width: size.width, height: size.height)
             .accessibilityLabel("正在读取画布")
     }
 
@@ -364,30 +369,53 @@ struct CanvasWorkspaceView: View {
         .overlay(alignment: .bottom) { Hairline() }
     }
 
-    private var emptyCanvas: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "rectangle.on.rectangle.angled")
-                .font(.system(size: 22, weight: .ultraLight))
-                .foregroundStyle(Palette.inkFaint)
+    /// 空画布引导。**尺寸由调用方传入的视口决定**，内容块限宽 300pt 后在
+    /// 视口里水平垂直居中；不随缩放/平移漂移（它不属于世界层）。
+    private func emptyCanvas(in size: CGSize) -> some View {
+        // 限宽有两个作用：长副标题会自然折行，且窄屏也不会贴到两边。
+        let contentWidth = min(300, max(0, size.width - 48))
+        return VStack(spacing: 0) {
+            ZStack {
+                Circle().fill(Palette.card)
+                Circle().strokeBorder(Palette.hairline, lineWidth: 0.8)
+                Image(systemName: "rectangle.on.rectangle.angled")
+                    .font(.system(size: 24, weight: .ultraLight))
+                    .foregroundStyle(Palette.inkFaint)
+            }
+            .frame(width: 64, height: 64)
+            .padding(.bottom, 18)
+
             Text("这块画布还是空的")
-                .font(TypeScale.callout)
+                .font(TypeScale.bodyMedium)
                 .foregroundStyle(Palette.inkSoft)
+
             Text("从记录里挑几样东西放进来，再按你的想法摆开。")
                 .font(TypeScale.caption)
                 .foregroundStyle(Palette.inkFaint)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 6)
+
             Button {
                 showsPicker = true
             } label: {
                 Text("从记录中添加")
                     .font(TypeScale.callout)
                     .foregroundStyle(Palette.roast)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 9)
+                    .background {
+                        Capsule()
+                            .fill(Palette.card)
+                            .overlay(Capsule().strokeBorder(Palette.hairline, lineWidth: 0.8))
+                    }
             }
             .buttonStyle(.plain)
-            .padding(.top, 2)
+            .padding(.top, 20)
         }
-        .padding(.horizontal, 40)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(width: contentWidth)
+        // 外层钉死视口尺寸：默认 .center 对齐，内容块就落在画布正中央。
+        .frame(width: size.width, height: size.height)
     }
 
     private var moreMenu: some View {
