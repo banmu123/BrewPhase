@@ -1,6 +1,6 @@
 import { BrowserWindow, screen } from 'electron'
 import { join } from 'node:path'
-import { WINDOW_CHROME, initialWindowAppearance } from '../appearance'
+import { WINDOW_CHROME, initialWindowAppearance, windowIconPath } from '../appearance'
 import { fitRectIntoBounds } from '../../shared/window-placement'
 import { ROUNDTABLE_WINDOW_MIN_HEIGHT, ROUNDTABLE_WINDOW_MIN_WIDTH } from '../../shared/roundtable'
 import { FLOAT_TITLEBAR_HEIGHT } from '../browser/float-window'
@@ -65,6 +65,8 @@ export class RoundtableWindowManager {
     // 跟随系统外观取首帧 chrome：与主窗口一致，深色系统下拆出圆桌
     // 不闪一道浅色（Renderer 起来后会经 IPC 纠正强制外观）。
     const chrome = WINDOW_CHROME[initialWindowAppearance()]
+    // 任务栏/Alt-Tab 图标：不设就是 Electron 原子默认图标（用户报告过）。
+    const icon = windowIconPath()
     const width = 680
     const height = 540
 
@@ -76,6 +78,7 @@ export class RoundtableWindowManager {
       show: false,
       title: 'BrewPhase Roundtable',
       backgroundColor: chrome.background,
+      ...(icon ? { icon } : {}),
       titleBarStyle: mac ? 'hiddenInset' : windows ? 'hidden' : 'default',
       ...(windows
         ? {

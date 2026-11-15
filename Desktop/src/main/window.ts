@@ -1,8 +1,7 @@
-import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { app, BrowserWindow, shell } from 'electron'
+import { BrowserWindow, shell } from 'electron'
 import { isEmbedFrameURL } from '../shared/link-embed'
-import { initialWindowAppearance, WINDOW_CHROME } from './appearance'
+import { initialWindowAppearance, WINDOW_CHROME, windowIconPath } from './appearance'
 
 /**
  * 一个窗口，能开的只允许是应用自己。
@@ -16,12 +15,8 @@ export function createMainWindow(params: { devServerUrl: string | null }): Brows
   const mac = process.platform === 'darwin'
   const windows = process.platform === 'win32'
 
-  // 开发态的窗口/任务栏/Alt-Tab 图标：不设就是 Electron 原子默认图标。
-  // 打包版由 electron-builder 把 build/icon.ico 烧进 exe，这里只补 dev / preview。
-  const iconCandidates = windows
-    ? [join(app.getAppPath(), 'build/icon.ico'), join(app.getAppPath(), 'build/icon.png')]
-    : [join(app.getAppPath(), 'build/icon.png')]
-  const iconPath = iconCandidates.find((candidate) => existsSync(candidate))
+  // 图标来源与子窗口（圆桌 / 浮窗）共用：见 appearance.windowIconPath()。
+  const iconPath = windowIconPath()
 
   // 窗口底色与标题栏按钮跟随外观：深色下若仍用浅色底，缩放窗口会闪一道白光。
   const chrome = WINDOW_CHROME[initialWindowAppearance()]

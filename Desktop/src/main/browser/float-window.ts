@@ -1,6 +1,6 @@
 import { BrowserWindow, screen } from 'electron'
 import { join } from 'node:path'
-import { WINDOW_CHROME, initialWindowAppearance } from '../appearance'
+import { WINDOW_CHROME, initialWindowAppearance, windowIconPath } from '../appearance'
 import { fitRectIntoBounds } from '../../shared/window-placement'
 
 /**
@@ -91,6 +91,8 @@ export class FloatWindowManager {
     const windows = process.platform === 'win32'
     // 跟随系统外观取首帧 chrome：与主窗口一致，深色系统下拖出浮窗不闪浅色。
     const chrome = WINDOW_CHROME[initialWindowAppearance()]
+    // 任务栏/Alt-Tab 图标：不设就是 Electron 原子默认图标（用户报告过）。
+    const icon = windowIconPath()
 
     const window = new BrowserWindow({
       width,
@@ -100,6 +102,7 @@ export class FloatWindowManager {
       show: false,
       title: 'BrewPhase Browser',
       backgroundColor: chrome.background,
+      ...(icon ? { icon } : {}),
       titleBarStyle: mac ? 'hiddenInset' : windows ? 'hidden' : 'default',
       ...(windows
         ? {
