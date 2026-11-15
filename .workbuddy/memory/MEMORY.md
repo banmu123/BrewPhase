@@ -207,6 +207,27 @@
 * 独立圆桌窗口主体=工作空间（.rt-panel）+提问条+讨论抽屉（先点 .rt-window__ask-toggle
   才有 .roundtable__answer）；旧 roundtable.e2e 壳断言按新模型写。
 
+## iOS：三空间首页与一级导航（Phase 1）
+
+* 一级导航只有两态 `AppRoute(.home / .space(AppTab))`，**路由状态必须住在
+  `BrewPhaseApp`**（换语言 `.id(language)` 会重建整棵树，放 RootView 会被弹回首页）。
+  底部 Tab Bar 已删除；模块顶部 `SpaceSwitcherBar` 挂在各自 NavigationStack 的
+  **根页面**（`safeAreaInset`），推开详情自动消失，不出现两套导航。
+* 首页三列等分（缝 10pt / 留白 22pt），每列最多 3 张**同宽同高**卡片；
+  三个空间同一条选卡规则：先每类一张（记录按载体分种类）→ 按时间补齐 → 上限 3。
+* **堆叠不能靠「两侧内收」实现**：卡片按 `cardAspect` 定高，收窄 4pt 后卡比前卡
+  矮 13pt，而下探只有 7pt → 后卡整张躲进前卡背后，截图上只有一张卡。正确做法是
+  宽度不变、只下探 7 + 右移 2（`WorkspaceStackLayout`，有回归用例钉住）。
+* `CanvasThumbnailPreview` 要嵌进别的卡片，必须用 `height: nil` + `chrome: false`，
+  否则带出双重圆角与固定高度。
+* 本机 xcodebuild 必须 `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`
+  （默认选中的是 Command Line Tools，会报 tool not found）。
+* `Tools/run.sh --demo` 在应用已运行时**不会重启**，启动参数被静默忽略：
+  先 `simctl terminate` 再 launch；zsh 不对 `$2` 做词分割，传参用 `"$@"`。
+  另外 `simctl install` 常新建数据容器，示例数据要重新灌一次。
+* 模拟器里过期的 `sync-harness.json` 会让 SyncCrossEndTests 以「连接被拒」失败
+  而不是 `XCTSkip`（它们只在没有夹具时才跳过）。
+
 ## 代码风格与工作流
 
 * 阈值集中 `RAG/Rules/IntelligenceConfig.swift`；中文词表放 `Resources/*.json`。
