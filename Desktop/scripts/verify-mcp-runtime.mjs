@@ -37,8 +37,16 @@ if (RELEASE_DIRS.length === 0) {
 const candidates = RELEASE_DIRS.flatMap((dir) =>
   readdirSync(dir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
-    .map((entry) => join(dir, entry.name, 'resources', 'mcp'))
-    .filter((mcpDir) => existsSync(mcpDir))
+    .flatMap((entry) => {
+      const productDir = join(dir, entry.name)
+      // win/linux：unpacked 目录直下是 resources/（小写）；
+      // macOS：平台目录里包着 <Product>.app，MCP 在 app 的 Contents/Resources/（大写）。
+      const unbundled = join(productDir, 'resources', 'mcp')
+      const bundled = readdirSync(productDir, { withFileTypes: true })
+        .filter((app) => app.isDirectory() && app.name.endsWith('.app'))
+        .map((app) => join(productDir, app.name, 'Contents', 'Resources', 'mcp'))
+      return [unbundled, ...bundled].filter((mcpDir) => existsSync(mcpDir))
+    })
 )
 
 if (candidates.length === 0) {

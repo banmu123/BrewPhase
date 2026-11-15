@@ -45,14 +45,15 @@ available.
 |---|---|---|---|---|
 | iPhone app | **Available** | App Store 1.1, `com.brewphase.ios`, free, US storefront, EN + ZH | [App Store](https://apps.apple.com/us/app/brewphase/id6815591631) | iTunes Lookup API `?bundleId=com.brewphase.ios&country=us`, 2026-11-10 |
 | iPhone app, `main` (2.0) | **In development — not published** | Coffee + Records + Canvas + LAN sync in source | Build from source | `BrewPhase.xcodeproj/project.pbxproj`, `BrewPhase/Features/` |
-| macOS Desktop | **Published (prerelease)** | arm64 `.dmg` + `.zip`, Developer ID signed, notarized, stapled, with `.sha256` sidecars; release `desktop-v0.1.0` published 2026-11-10 | Anonymous download from the Releases page | GitHub Releases API, 2026-11-10; `Desktop/release/` is gitignored |
-| Windows Desktop | **CI artifacts only, unsigned** | NSIS exe produced by run `42761926389` (2026-11-10); never installed on real hardware, not attached to a Release | Build from source; artifacts need an authorised session | Actions run 42761926389; `Desktop/electron-builder.yml` |
+| macOS Desktop | **Published (prerelease)** | arm64 `.dmg` + `.zip` with `.sha256` sidecars. `desktop-v0.1.2` (published 2026-11-15): Developer ID signed with hardened runtime, **not notarized** — Apple notarization returns 403 (team legal agreement pending), first launch needs right-click → Open. `desktop-v0.1.1` (2026-11-11) is the last signed + notarized + stapled build. | Anonymous download from the Releases page | GitHub Releases API, 2026-11-15; `Desktop/release/` is gitignored |
+| Windows Desktop | **Published (prerelease), unsigned** | NSIS x64 `.exe` + `.sha256` attached to `desktop-v0.1.2` (2026-11-15, CI-built); no Authenticode certificate, never installed on real hardware | Anonymous download from the Releases page | GitHub Releases API, 2026-11-15 |
 | Linux Desktop | **Not supported yet** | `AppImage` target kept in config; no build, no verification | — | `Desktop/electron-builder.yml` |
 | MCP / AI Action Gateway | **Built, not published** | Ships with the desktop app; 18 tools, 8 scopes | Run from source | `Desktop/docs/MCP_TOOLS.md`, `Desktop/src/mcp/` |
 
-There is **one published GitHub Release**: `desktop-v0.1.0` (prerelease, published 2026-11-10,
-tag at commit `f9fee39`), with 4 assets — signed + notarized macOS arm64 `.dmg`/`.zip` and
-`.sha256` sidecars, anonymously downloadable. The iOS app's download entry
+There are **three published GitHub Releases** (all prerelease, anonymously downloadable):
+`desktop-v0.1.0` (2026-11-10, tag at `f9fee39`), `desktop-v0.1.1` (2026-11-11, last signed +
+notarized macOS build) and `desktop-v0.1.2` (2026-11-15, Developer ID signed macOS arm64 +
+unsigned Windows x64). The iOS app's download entry
 (`AppLinks.desktopDownload`) points at the Releases page; the previously planned
 `commitbrew.com/brewphase` page (HTTP 404) is no longer required for downloads.
 
@@ -240,7 +241,7 @@ Signed and notarized do **not** mean published: these artifacts are still in an 
 |---|---|
 | Maintainer | One active maintainer (`banmu123`): reviews PRs, builds and signs packages, handles releases |
 | iOS release | Built and submitted from Xcode / App Store Connect; repository has no iOS release workflow |
-| macOS release (actual) | Built locally, signed with the keychain Developer ID, notarized with `BrewPingNotary`, stapled, then uploaded to a draft GitHub Release through the API |
+| macOS release (actual) | Built locally, signed with the keychain Developer ID, then uploaded to the existing GitHub Release through the API. Notarization with `BrewPingNotary` currently fails: notarytool returns HTTP 403 "a required agreement is missing or has expired" (team legal agreement needs attention); 0.1.2 shipped signed-only because of this |
 | macOS / Windows release (configured) | `desktop-v*` tag → `.github/workflows/desktop-release.yml` → artifacts + draft prerelease. First executed 2026-11-10, both jobs green (unsigned); secrets still not configured |
 | Issue / PR process | GitHub Issues / PRs; no templates and no required CI checks yet |
 | Security reports | No `SECURITY.md`; use a private GitHub Security Advisory or an issue |
