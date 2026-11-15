@@ -31,7 +31,6 @@ struct CoffeeHomeView: View {
     @State private var cardIndex = DebugLaunch.cardIndex ?? 0
     /// 已喝完的豆子收在折叠入口里，不占活跃堆叠。
     @State private var showsFinished = false
-    @State private var showsSettings = false
 
     // MARK: - Derived
 
@@ -115,9 +114,6 @@ struct CoffeeHomeView: View {
             .navigationDestination(item: $detailBean) { bean in
                 BeanDetailView(bean: bean)
             }
-            .sheet(isPresented: $showsSettings) {
-                MoreView()
-            }
             .sheet(isPresented: $isAddingBean) {
                 BeanEditorView(mode: .create)
             }
@@ -160,19 +156,6 @@ struct CoffeeHomeView: View {
             }
 
             Spacer(minLength: 0)
-
-            Button {
-                showsSettings = true
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(Palette.inkSoft)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(Palette.card))
-                    .overlay(Circle().strokeBorder(Palette.hairline, lineWidth: 0.8))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("设置")
 
             Button {
                 isAddingBean = true

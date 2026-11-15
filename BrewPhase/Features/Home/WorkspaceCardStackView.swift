@@ -14,6 +14,9 @@ import SwiftUI
 /// 哪里都不影响点哪里，也不影响 ScrollView 的内容尺寸。分区标题不参与运动。
 /// 物理时间线与引擎步进由宿主（`WorkspaceHomeView`）统一驱动，本视图只按
 /// 稳定卡 ID 读取渲染值。
+///
+/// 空空间不画卡片，改由 `WorkspaceEmptyShelfView` 画一层空搁板；它与卡片行
+/// 等高，所以分区布局、ScrollView 高度与按钮点击区域都不变。
 struct WorkspaceCardStackView: View {
 
     let space: AppTab
@@ -56,11 +59,13 @@ struct WorkspaceCardStackView: View {
             field?.reconcile(cards: cards, for: space)
             reportBounds()
         }
-        .onChange(of: cards) { field?.reconcile(cards: $0, for: space) }
+        .onChange(of: cards) { _, newCards in
+            field?.reconcile(cards: newCards, for: space)
+        }
     }
 
     private var accessibilityValue: String {
-        guard let first = cards.first, first.kind != .empty else { return L("空着") }
+        guard !isEmptySpace else { return space.emptyTitle }
         return L("%@ 条内容", String(cards.count))
     }
 
@@ -74,7 +79,7 @@ struct WorkspaceCardStackView: View {
                 .foregroundStyle(accent)
                 .lineLimit(1)
 
-            if let first = cards.first, first.kind != .empty {
+            if !isEmptySpace {
                 Text(verbatim: String(cards.count))
                     .font(.system(size: 10, weight: .medium).monospacedDigit())
                     .foregroundStyle(Palette.inkFaint)
@@ -92,16 +97,40 @@ struct WorkspaceCardStackView: View {
 
     // MARK: - 叠放的卡片
 
+    /// 空空间不画卡片：只留一层空架子，见 `WorkspaceEmptyShelfView`。
+    ///
+    /// 判断放在数据层而不是「卡片数量 == 1」：一张真实内容卡片要走到
+    /// Phase 2.1 的放宽行程，空态卡则要完全静止地退成背景。
+    private var isEmptySpace: Bool {
+        cards.first?.kind == .empty
+    }
+
+    @ViewBuilder
+    private var stack: some View {
+        if isEmptySpace {
+            emptyShelf
+        } else {
+            cardStack
+        }
+    }
+
+    /// 空架与卡片行**等高**（`WorkspaceEmptyShelfView` 复用同一组卡位几何），
+    /// 因此三个分区的高度、ScrollView 内容尺寸和点击区域都不变。
+    private var emptyShelf: some View {
+        WorkspaceEmptyShelfView(space: space)
+            .padding(.bottom, WorkspaceStackLayout.sectionBottomPadding(itemCount: cards.count))
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     /// 负间距把卡片叠起来：后一张压在前一张下面，只露出一条边。
     ///
     /// **永远画满三个卡位**（不足的用透明占位）：卡片宽度由「整行 ÷ 3」决定，
-    /// 这样只有一张内容的分区和有三张的分区，卡片是同一个尺寸。否则空态卡
-    /// 会被拉成整屏宽，看起来像另一套组件。
+    /// 这样只有一张内容的分区和有三张的分区，卡片是同一个尺寸。
     ///
     /// 单卡片时把它放进**中间**卡位（`WorkspaceStackLayout.cardSlot`）：
     /// 三个卡位等宽且对称，中间卡位的中心就是整行中点，于是卡片天然居中，
     /// 左右各剩一半空白可供滑动（Phase 2.1）。
-    private var stack: some View {
+    private var cardStack: some View {
         HStack(alignment: .top, spacing: -WorkspaceStackLayout.cardOverlap) {
             ForEach(0..<WorkspaceStackLayout.visibleLimit, id: \.self) { slot in
                 if let card = card(atSlot: slot) {
@@ -159,7 +188,7 @@ struct WorkspaceCardStackView: View {
         guard let field else { return }
         field.setBounds(
             cardCount: visible.count,
-            isEmpty: cards.first?.kind == .empty,
+            isEmpty: isEmptySpace,
             availableWidth: availableWidth,
             for: space
         )

@@ -24,6 +24,8 @@ struct WorkspaceHomeView: View {
     @Query(sort: \Canvas.updatedAt, order: .reverse) private var canvases: [Canvas]
 
     @State private var destination: HomeDestination?
+    /// 全局设置（「更多」）。放在首页一步可达，不再挂在咖啡那一栏里。
+    @State private var showsSettings = false
 
     /// 输入框里的字。
     @State private var searchText = DebugLaunch.searchQuery ?? ""
@@ -78,6 +80,10 @@ struct WorkspaceHomeView: View {
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(item: $destination) { target in
                 destinationView(for: target)
+            }
+            // 「更多」是四个分组的总设置页，属于整个工作台，不属于某个空间。
+            .sheet(isPresented: $showsSettings) {
+                MoreView()
             }
             // Gravity Cards：用户开始滚动时暂停传感器输入，滚动结束后
             // 重新校准基准再恢复——滚动本身不该被解读成倾斜。
@@ -203,22 +209,46 @@ struct WorkspaceHomeView: View {
     // MARK: - 页头
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(verbatim: "BREWPHASE / STUDIO")
-                .font(TypeScale.brandMark)
-                .italic()
-                .tracking(2.4)
-                .foregroundStyle(Palette.inkFaint)
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(verbatim: "BREWPHASE / STUDIO")
+                    .font(TypeScale.brandMark)
+                    .italic()
+                    .tracking(2.4)
+                    .foregroundStyle(Palette.inkFaint)
 
-            Text(verbatim: greeting.line)
-                .font(TypeScale.greeting)
-                .foregroundStyle(Palette.ink)
+                Text(verbatim: greeting.line)
+                    .font(TypeScale.greeting)
+                    .foregroundStyle(Palette.ink)
 
-            Text(verbatim: dateLine)
-                .font(TypeScale.caption)
-                .foregroundStyle(Palette.inkFaint)
+                Text(verbatim: dateLine)
+                    .font(TypeScale.caption)
+                    .foregroundStyle(Palette.inkFaint)
+            }
+
+            Spacer(minLength: 0)
+
+            settingsButton
         }
         .padding(.top, 10)
+    }
+
+    /// 全局设置的唯一入口：MoreView 是「咖啡 / 本地智能 / 数据 / 应用」四组的
+    /// 总设置页，不是咖啡专属设置，所以放在首页右上角一步可达。
+    /// 造型沿用原来咖啡页那枚圆形按钮，换位置不换手感。
+    private var settingsButton: some View {
+        Button {
+            showsSettings = true
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(Palette.inkSoft)
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(Palette.card))
+                .overlay(Circle().strokeBorder(Palette.hairline, lineWidth: 0.8))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("设置")
     }
 
     private var greeting: WorkspaceGreeting {
