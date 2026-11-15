@@ -426,39 +426,43 @@ function WorkspacePanel(props: {
           ✕
         </button>
       </header>
-      {/* BrewPhase 工作区（正常文档流，挤压内容区；原生视图经 rects 重报跟随）。
-          圆桌回答区的「复制回答」与此无关——那是 RoundtableAnswers 自己的能力。 */}
-      {workspaceOpen && !isGhost && (
-        <CardWorkspaceToolbar
-          tabId={props.panel.tabId}
-          variant="compact"
-          onClose={() => setWorkspaceOpen(false)}
-        />
-      )}
-      <div
-        className="rt-panel__content"
-        ref={attachContent}
-        data-tab-id={props.panel.tabId}
-      >
-        {isGhost && (
-          <div className="rt-panel__ghost">
-            <p className="rt-panel__ghost-hint">{t.studio.roundtable.ghostHint}</p>
-            <button
-              type="button"
-              className="rt-workspace__btn rt-workspace__btn--primary"
-              onClick={(event) => {
-                event.stopPropagation()
-                void useRoundtableLayoutStore
-                  .getState()
-                  .rebind(props.panel.tabId, props.panel.url)
-                  .catch(() => undefined)
-              }}
-            >
-              {t.studio.roundtable.ghostReopen}
-            </button>
-          </div>
+      {/* 内容区：网页矩形 + 右侧工作区竖栏（与独立窗口同一形态，宽度挤压）。
+          原生视图经 rects 重报跟随；圆桌回答区的「复制回答」与此无关。 */}
+      <div className="rt-panel__main">
+        <div
+          className="rt-panel__content"
+          ref={attachContent}
+          data-tab-id={props.panel.tabId}
+        >
+          {isGhost && (
+            <div className="rt-panel__ghost">
+              <p className="rt-panel__ghost-hint">{t.studio.roundtable.ghostHint}</p>
+              <button
+                type="button"
+                className="rt-workspace__btn rt-workspace__btn--primary"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  void useRoundtableLayoutStore
+                    .getState()
+                    .rebind(props.panel.tabId, props.panel.url)
+                    .catch(() => undefined)
+                }}
+              >
+                {t.studio.roundtable.ghostReopen}
+              </button>
+            </div>
+          )}
+          {/* 预留矩形：原生 WebContentsView 由主进程 setBounds 对齐到这里。 */}
+        </div>
+        {workspaceOpen && !isGhost && (
+          <aside className="rt-panel__side">
+            <CardWorkspaceToolbar
+              tabId={props.panel.tabId}
+              variant="side"
+              onClose={() => setWorkspaceOpen(false)}
+            />
+          </aside>
         )}
-        {/* 预留矩形：原生 WebContentsView 由主进程 setBounds 对齐到这里。 */}
       </div>
       {RESIZE_DIRS.map((dir) => (
         <span

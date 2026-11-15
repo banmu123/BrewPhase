@@ -65,6 +65,9 @@ import type { ParticipantService } from '../ai-chat/participant-service'
 import type { LocalWorkspaceService } from '../application/local-workspace/local-workspace-service'
 import type { WorkspaceFileService } from '../application/local-workspace/workspace-file-service'
 import type { ContextBuilder } from '../application/local-workspace/context-builder'
+import type { ReplyIntelligenceService } from '../application/reply-intelligence/reply-intelligence-service'
+import type { ActionRiskLevel } from '../../shared/contracts/reply-intelligence'
+import type { ReplyCategory } from '../../shared/contracts/reply-intelligence'
 import type { RoundtableLayoutManager } from '../roundtable/roundtable-layout-manager'
 import type { RoundtableViewManager } from '../roundtable/roundtable-view-manager'
 import type { BrowserBounds } from '../../shared/contracts/browser'
@@ -124,6 +127,8 @@ export function registerIpc(params: {
   workspaceFiles: WorkspaceFileService
   /** 本地文件 → AI 上下文打包。 */
   contextBuilder: ContextBuilder
+  /** AI 回复导入 / 分类 / 草稿（Phase 2）。 */
+  replyIntelligence: ReplyIntelligenceService
 }): void {
   const {
     db,
@@ -144,7 +149,8 @@ export function registerIpc(params: {
     updates,
     localWorkspaces,
     workspaceFiles,
-    contextBuilder
+    contextBuilder,
+    replyIntelligence
   } = params
 
   // 首次启动铺默认阶段规则（之后由用户或同步决定，不覆盖）。
@@ -867,6 +873,77 @@ export function registerIpc(params: {
     const { text } = input as { text: string }
     clipboard.writeText(text)
     return null
+  })
+
+  // ---- AI Reply Intelligence（Phase 2）----
+  // 剪贴板只在用户点击「从剪贴板导入」时读取一次；解析在本地规则层，
+  // 草稿只存候选文本——没有任何执行通道。
+  handle(IPC.replyCaptureClipboard, (input) => {
+    const { tabId } = input as { tabId: string }
+    return replyIntelligence.captureFromClipboard(tabId)
+  })
+
+  handle(IPC.replyCapturePaste, (input) => {
+    const { tabId, content } = input as { tabId: string; content: string }
+    return replyIntelligence.captureFromPaste(tabId, content)
+  })
+
+  handle(IPC.replyList, (input) => {
+    const { limit } = (input ?? {}) as { limit?: number }
+    return replyIntelligence.list(limit ?? 50)
+  })
+
+  handle(IPC.replyGet, (input) => {
+    const { id } = input as { id: string }
+    return replyIntelligence.detail(id)
+  })
+
+  handle(IPC.replyRemove, (input) => {
+    const { id } = input as { id: string }
+    replyIntelligence.remove(id)
+    return null
+  })
+
+  handle(IPC.replySegmentUpdate, (input) => {
+    const { id, categories, content } = input as {
+      id: string
+      categories: ReplyCategory[]
+      content?: string
+    }
+    return replyIntelligence.updateSegment(id, categories, content)
+  })
+
+  handle(IPC.replySegmentRemove, (input) => {
+    const { id } = input as { id: string }
+    replyIntelligence.removeSegment(id)
+    return null
+  })
+
+  handle(IPC.replyDraftCreate, (input) => {
+    const { replyId, segmentId } = input as { replyId: string; segmentId?: string | null }
+    return replyIntelligence.createDraft({ replyId, segmentId: segmentId ?? null })
+  })
+
+  handle(IPC.replyDraftUpdate, (input) => {
+    const { id, ...patch } = input as {
+      id: string
+      title?: string
+      description?: string
+      workingDirectory?: string
+      riskLevel?: ActionRiskLevel
+    }
+    return replyIntelligence.updateDraft(id, patch)
+  })
+
+  handle(IPC.replyDraftRemove, (input) => {
+    const { id } = input as { id: string }
+    replyIntelligence.removeDraft(id)
+    return null
+  })
+
+  handle(IPC.replyDraftList, (input) => {
+    const { replyId, limit } = (input ?? {}) as { replyId?: string | null; limit?: number }
+    return replyIntelligence.listDrafts(replyId ?? null, limit ?? 100)
   })
 }
 

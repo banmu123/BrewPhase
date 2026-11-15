@@ -7,6 +7,7 @@ import type {
 } from '@shared/contracts'
 import { api } from '../../shared/api'
 import { useI18n } from '../../i18n'
+import { ReplyPanel } from './ReplyPanel'
 
 /**
  * CardWorkspaceToolbar —— AI Card 的本地工作区工具栏（Phase 1）。
@@ -37,7 +38,7 @@ export function CardWorkspaceToolbar(props: {
   const { t } = useI18n()
   const [binding, setBinding] = useState<CardWorkspaceBinding | null>(null)
   const [loaded, setLoaded] = useState(false)
-  const [panel, setPanel] = useState<'main' | 'workspaces' | 'files' | 'context'>('workspaces')
+  const [panel, setPanel] = useState<'main' | 'workspaces' | 'files' | 'context' | 'reply'>('workspaces')
   const [workspaces, setWorkspaces] = useState<LocalWorkspace[]>([])
   const [listing, setListing] = useState<WorkspaceFileListing | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -245,6 +246,9 @@ export function CardWorkspaceToolbar(props: {
               >
                 {t.workspace.browseFiles}
               </button>
+              <button type="button" className="cwt__mini" onClick={() => setPanel('reply')}>
+                {t.workspace.reply.entry}
+              </button>
               <button type="button" className="cwt__mini" onClick={() => void openWorkspaces()}>
                 {t.workspace.switchWorkspace}
               </button>
@@ -257,11 +261,10 @@ export function CardWorkspaceToolbar(props: {
               </button>
               <button
                 type="button"
-                className="cwt__mini cwt__mini--primary"
-                disabled={workspace.availability !== 'available'}
-                onClick={() => void openFiles()}
+                className="cwt__mini"
+                onClick={() => setPanel('reply')}
               >
-                {t.workspace.browseFiles}
+                {t.workspace.reply.entry}
               </button>
               <button
                 type="button"
@@ -285,6 +288,9 @@ export function CardWorkspaceToolbar(props: {
               <span className="cwt__stateline cwt__stateline--inline">{t.workspace.boundMissingTitle}</span>
             )}
             <span className="spacer" />
+            <button type="button" className="cwt__mini" onClick={() => setPanel('reply')}>
+              {t.workspace.reply.entry}
+            </button>
             <button
               type="button"
               className="cwt__mini cwt__mini--icon"
@@ -429,6 +435,15 @@ export function CardWorkspaceToolbar(props: {
             </button>
           </div>
         </div>
+      )}
+
+      {loaded && panel === 'reply' && (
+        <ReplyPanel
+          tabId={props.tabId}
+          workspaceName={binding?.workspace?.name ?? null}
+          variant={props.variant}
+          onBack={() => setPanel('main')}
+        />
       )}
 
       {loaded && panel === 'context' && package_ && (

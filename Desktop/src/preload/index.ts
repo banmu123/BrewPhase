@@ -296,6 +296,22 @@ const api: RendererApi = {
     reset: () => invoke(IPC.dataLocationReset),
     relaunch: () => invoke(IPC.dataLocationRelaunch)
   },
+  // AI Reply Intelligence：回复导入 / 分类 / 草稿。剪贴板只在
+  // captureFromClipboard 里由主进程读取一次，没有监听通道。
+  replyIntelligence: {
+    captureFromClipboard: (tabId) => invoke(IPC.replyCaptureClipboard, { tabId }),
+    captureFromPaste: (tabId, content) => invoke(IPC.replyCapturePaste, { tabId, content }),
+    list: (limit?: number) => invoke(IPC.replyList, { limit }),
+    detail: (id) => invoke(IPC.replyGet, { id }),
+    remove: (id) => invoke(IPC.replyRemove, { id }),
+    updateSegment: (id, categories, content) =>
+      invoke(IPC.replySegmentUpdate, { id, categories, content }),
+    removeSegment: (id) => invoke(IPC.replySegmentRemove, { id }),
+    createDraft: (input) => invoke(IPC.replyDraftCreate, input),
+    updateDraft: (id, patch) => invoke(IPC.replyDraftUpdate, { id, ...patch }),
+    removeDraft: (id) => invoke(IPC.replyDraftRemove, { id }),
+    listDrafts: (replyId, limit) => invoke(IPC.replyDraftList, { replyId, limit })
+  },
   // AI Card Workspace Bridge：本地工作区 + 卡片绑定 + 只读文件访问。
   // 只传 workspaceId 与相对路径——渲染层没有传任意绝对路径的口子。
   localWorkspace: {

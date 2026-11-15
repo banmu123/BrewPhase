@@ -530,6 +530,66 @@ create table card_workspace_bindings (
 create index card_workspace_bindings_workspace_idx on card_workspace_bindings (workspace_id);
 `
 
+const REPLY_INTELLIGENCE_SQL = `
+-- AI Reply Intelligence（Phase 2）：用户主动交接的 AI 回复 + 分类分段 +
+-- 操作任务草稿。**只进本地库**，不进 change_log / iOS 同步。
+-- 来源是「用户复制 / 粘贴 + 明确导入」——没有后台监听、没有 DOM 轮询。
+create table captured_replies (
+  id text primary key,
+  provider_id text not null default '',
+  provider_name text not null default '',
+  source_url text not null default '',
+  source_title text not null default '',
+  tab_id text not null default '',
+  workspace_id text,
+  capture_method text not null default 'manual_paste',
+  raw_content text not null,
+  captured_at integer not null,
+  created_at integer not null
+);
+create index captured_replies_captured_idx on captured_replies (captured_at);
+
+-- 分类分段：categories 是 JSON 字符串数组（多标签，如
+-- ["operation","shell_command"]）；start/end_offset 指向 raw_content 的
+-- 原文偏移，永远能回到原始上下文。user_edited = 用户改过分类/内容，
+-- 解析器永不再覆盖它。
+create table reply_segments (
+  id text primary key,
+  reply_id text not null references captured_replies (id) on delete cascade,
+  sequence integer not null,
+  categories text not null default '[]',
+  content text not null,
+  start_offset integer not null default 0,
+  end_offset integer not null default 0,
+  confidence real not null default 0,
+  reason text not null default '',
+  user_edited integer not null default 0
+);
+create index reply_segments_reply_idx on reply_segments (reply_id, sequence);
+
+-- 操作任务草稿：**只是草稿**——没有执行通道，status 恒为 draft 起步，
+-- requires_approval 恒 true。payload 是 JSON（命令/代码块/文件路径候选）。
+-- workspace_id 刻意无外键（与 card_workspace_bindings 同款：工作区删除后
+-- 草稿保留成「待绑定」）；working_directory 只存相对路径。
+create table action_drafts (
+  id text primary key,
+  reply_id text not null references captured_replies (id) on delete cascade,
+  segment_id text references reply_segments (id) on delete set null,
+  workspace_id text,
+  action_type text not null default 'operation',
+  title text not null,
+  description text not null default '',
+  payload text not null default '{}',
+  working_directory text not null default '',
+  risk_level text not null default 'normal',
+  requires_approval integer not null default 1,
+  status text not null default 'draft',
+  created_at integer not null,
+  updated_at integer not null
+);
+create index action_drafts_reply_idx on action_drafts (reply_id);
+`
+
 export const migrations: Migration[] = [
   { version: 1, name: 'init', sql: INIT_SQL },
   { version: 2, name: 'sync-align-ios', sql: SYNC_ALIGN_SQL },
@@ -542,7 +602,8 @@ export const migrations: Migration[] = [
   { version: 9, name: 'personal-direction', sql: PERSONAL_DIRECTION_SQL },
   { version: 10, name: 'ai-conversations', sql: AI_CONVERSATIONS_SQL },
   { version: 11, name: 'roundtable-panels', sql: ROUNDTABLE_PANELS_SQL },
-  { version: 12, name: 'local-workspaces', sql: LOCAL_WORKSPACES_SQL }
+  { version: 12, name: 'local-workspaces', sql: LOCAL_WORKSPACES_SQL },
+  { version: 13, name: 'reply-intelligence', sql: REPLY_INTELLIGENCE_SQL }
 ]
 
 /**

@@ -167,7 +167,7 @@ test('独立窗口：BrewPhase 按钮 → 工具栏全流程 → stage 跟随 �
   await app.close()
 })
 
-test('圆桌面板：工作区按钮替换复制 URL、compact 工具栏、view bounds 跟随', async () => {
+test('圆桌面板：工作区按钮替换复制 URL、右侧竖栏、view bounds 跟随', async () => {
   test.setTimeout(240_000)
   const { app, page } = await launch()
 
@@ -208,7 +208,7 @@ test('圆桌面板：工作区按钮替换复制 URL、compact 工具栏、view 
   await wsButton.click()
   const toolbar = panel.locator('.cwt')
   await expect(toolbar).toBeVisible()
-  await expect(toolbar).toHaveAttribute('data-variant', 'compact')
+  await expect(toolbar).toHaveAttribute('data-variant', 'side')
   await expect(toolbar).toContainText('选择项目')
 
   await toolbar.locator('.cwt__pickrow--add').click()
@@ -216,25 +216,107 @@ test('圆桌面板：工作区按钮替换复制 URL、compact 工具栏、view 
   const binding = await page.evaluate((id) => window.brewphase.localWorkspace.binding(id as string), tabId)
   expect(binding.workspace).not.toBeNull()
 
-  const contentBefore = await panel.locator('.rt-panel__content').evaluate((el) => el.getBoundingClientRect().height)
+  const contentBefore = await panel.locator('.rt-panel__content').evaluate((el) => el.getBoundingClientRect().width)
   await expect
-    .poll(async () => (await readViewBounds())?.height ?? 0)
-    .toBeLessThan(boundsBefore.height)
+    .poll(async () => (await readViewBounds())?.width ?? 0)
+    .toBeLessThan(boundsBefore.width)
 
   // 收起 → view bounds 恢复（±3px 容差）。
   await toolbar.getByRole('button', { name: '收起' }).click()
   await expect(panel.locator('.cwt')).toHaveCount(0)
-  const contentAfter = await panel.locator('.rt-panel__content').evaluate((el) => el.getBoundingClientRect().height)
+  const contentAfter = await panel.locator('.rt-panel__content').evaluate((el) => el.getBoundingClientRect().width)
   await expect
-    .poll(async () => (await readViewBounds())?.height ?? 0)
+    .poll(async () => (await readViewBounds())?.width ?? 0)
     .toBeGreaterThan(contentBefore - 3)
-  expect(Math.abs((await readViewBounds())!.height - contentAfter)).toBeLessThanOrEqual(3)
+  expect(Math.abs((await readViewBounds())!.width - contentAfter)).toBeLessThanOrEqual(3)
 
   // 移除圆桌成员不删绑定（tab 回卡片架，绑定仍在）。
   await panel.locator('.rt-panel__action--remove').click()
   await expect(panel).toHaveCount(0, { timeout: 15_000 })
   const bindingAfterLeave = await page.evaluate((id) => window.brewphase.localWorkspace.binding(id as string), tabId)
   expect(bindingAfterLeave.workspace).not.toBeNull()
+
+  await app.close()
+})
+
+test('整理回复：粘贴导入 → 本地分类 → 保存操作草稿', async () => {
+  test.setTimeout(240_000)
+  const { app, page } = await launch()
+  const card = await addCard(page, '/reply')
+  await expect(card).toContainText('fixture reply', { timeout: 20_000 })
+  const tabId = await card.getAttribute('data-tab-id')
+
+  await page.evaluate((id) => window.brewphase.browserTabs.detach(id as string, 100, 100), tabId)
+  const floatShells = (): number =>
+    app.windows().filter((candidate) => candidate.url().includes('bpFloat=')).length
+  await expect.poll(floatShells, { timeout: 20_000 }).toBe(1)
+  await setFakeCursor(app, null)
+
+  const floatPage = app
+    .windows()
+    .find((candidate) => candidate !== page && candidate.url().includes('bpFloat'))
+  expect(floatPage).toBeTruthy()
+  await expect(floatPage!.locator('.bp-float')).toBeVisible()
+
+  // 打开工作区侧栏 → 添加工作区（env 预置目录）→ 自动绑定。
+  await floatPage!.locator('.bp-float__ws-btn').click()
+  const toolbar = floatPage!.locator('.cwt[data-variant="side"]')
+  await expect(toolbar).toBeVisible()
+  await toolbar.locator('.cwt__pickrow--add').click()
+  await expect(toolbar.locator('.cwt__project-link')).toBeVisible({ timeout: 10_000 })
+
+  // 「整理回复」→ intake → 粘贴 → 确认导入。
+  await toolbar.getByRole('button', { name: '整理回复' }).click()
+  const replyPanel = toolbar.locator('[data-reply-panel]')
+  await expect(replyPanel.locator('.cwt__textarea')).toBeVisible()
+  await replyPanel
+    .locator('.cwt__textarea')
+    .fill(
+      [
+        '# 重构方案',
+        '把数据库层抽成 repository，保持接口稳定。',
+        '',
+        '## 修改文件',
+        '',
+        '- 修改 src/main/index.ts 的装配顺序',
+        '- 新建 src/main/db/pool.ts',
+        '',
+        '```bash',
+        'pnpm typecheck && pnpm test',
+        '```',
+        '',
+        '```diff',
+        '--- a/src/main/index.ts',
+        '+++ b/src/main/index.ts',
+        '@@ -1 +1,2 @@',
+        "+import './pool'",
+        '```',
+        '',
+        '参考：https://example.com/guide',
+        '',
+        '下一步：跑通 CI 后合并。'
+      ].join('\n')
+    )
+  await replyPanel.getByRole('button', { name: '确认导入' }).click()
+
+  // 分类结果：本地规则解析（无模型调用）——标题是重点、bash 是命令、diff 是 patch。
+  await expect(replyPanel.locator('.cwt__tab', { hasText: '全部' })).toBeVisible()
+  const segs = replyPanel.locator('.cwt__seg')
+  await expect(segs.first()).toBeVisible({ timeout: 10_000 })
+  await expect(replyPanel.locator('.cwt__chip', { hasText: '重点' }).first()).toBeVisible()
+  await expect(replyPanel.locator('.cwt__chip', { hasText: '命令' }).first()).toBeVisible()
+  await expect(replyPanel.locator('.cwt__chip', { hasText: 'Patch' }).first()).toBeVisible()
+
+  // 过滤：切到「命令」tab 只剩命令段。
+  await replyPanel.locator('.cwt__tab', { hasText: '命令' }).click()
+  await expect(replyPanel.locator('.cwt__seg-content')).toContainText('pnpm typecheck')
+
+  // 保存草稿 → 草稿视图显示风险提示与候选统计。
+  await replyPanel.getByRole('button', { name: '存为草稿' }).click()
+  await expect(replyPanel.locator('.cwt__seg-title').first()).toBeVisible({ timeout: 10_000 })
+  await expect(replyPanel.locator('.cwt__pathline', { hasText: '命令候选' }).first()).toBeVisible()
+  // 草稿是本地数据：持久化验证由单测覆盖，这里确认 UI 链路闭环。
+  await expect(replyPanel.locator('.cwt__chip', { hasText: '草稿' }).first()).toBeVisible()
 
   await app.close()
 })

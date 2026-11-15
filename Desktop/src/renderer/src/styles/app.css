@@ -9167,11 +9167,33 @@ textarea {
 }
 
 /* 内容区：原生 view 的目标矩形；四周 6px 边距留给手柄。 */
+.rt-panel__main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+}
+
 .rt-panel__content {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   border-radius: 0 0 6px 6px;
   background: var(--card);
+}
+
+/* 右侧工作区竖栏：与独立窗口同形态；圆桌面板较小（最小 320px），
+   宽度取 min(304px, 58%) —— 面板拖大趋近独立窗口尺寸，拖小仍有可用列。 */
+.rt-panel__side {
+  flex: none;
+  width: min(304px, 58%);
+  min-width: 176px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--hairline);
+  background: var(--paper);
 }
 
 /* 缩放手柄：8 个方位，落在 6px 边距与标题栏边缘（DOM 对 DOM，可点）。 */
@@ -9725,4 +9747,136 @@ textarea {
 /* 圆桌面板标题栏的工作区按钮激活态。 */
 .rt-panel__action[data-active='true'] {
   color: var(--sage);
+}
+
+/* ---- Reply Intelligence（Phase 2）：回复整理面板 ---- */
+/* 结构与 .cwt 主体同源：行 + 紧凑列表；segment 卡是主要新块。 */
+.cwt__intake {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+
+.cwt__textarea {
+  width: 100%;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--ink);
+  padding: 6px 8px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 80px;
+}
+
+.cwt__reply-source {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 分类过滤行（横向 chips，可滚动）。 */
+.cwt__tabs {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.cwt__tab {
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-faint);
+  padding: 2px 9px;
+  font-size: 10.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.cwt__tab:hover {
+  background: var(--well);
+}
+
+.cwt__tab[data-active='true'] {
+  border-color: var(--sage);
+  background: color-mix(in srgb, var(--sage) 14%, var(--card));
+  color: var(--ink);
+}
+
+/* 分类标签：可点（编辑态）或静态展示。 */
+.cwt__chips {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.cwt__chip {
+  flex: none;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink-faint);
+  padding: 1px 8px;
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.cwt__chip[data-static='true'] {
+  cursor: default;
+  background: color-mix(in srgb, var(--sage) 10%, var(--card));
+}
+
+.cwt__chip[data-active='true'] {
+  border-color: var(--sage);
+  background: color-mix(in srgb, var(--sage) 18%, var(--card));
+  color: var(--ink);
+}
+
+/* segment 卡：分类 chips + 原文 + 操作行。 */
+.cwt__seg {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: var(--card);
+  padding: 6px 8px;
+}
+
+.cwt__seg--editing {
+  border-color: var(--sage);
+}
+
+.cwt__seg-title {
+  min-width: 0;
+  flex: 1;
+  font-weight: 600;
+  color: var(--ink);
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cwt__seg-content {
+  margin: 0;
+  max-height: 120px;
+  overflow: auto;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+  background: var(--well);
+  border-radius: 5px;
+  padding: 5px 7px;
 }

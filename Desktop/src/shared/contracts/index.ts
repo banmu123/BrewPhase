@@ -71,6 +71,14 @@ import type {
   WorkspaceFileListing,
   WorkspaceSearchResult
 } from './local-workspace'
+import type {
+  ActionDraft,
+  ActionRiskLevel,
+  CapturedReply,
+  ReplyCategory,
+  ReplyDetail,
+  ReplySegment
+} from './reply-intelligence'
 import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from './version'
 
 export * from './version'
@@ -90,6 +98,7 @@ export * from './roundtable-ai'
 export * from './data-location'
 export * from './update'
 export * from './local-workspace'
+export * from './reply-intelligence'
 export * from './validation/ipc'
 
 /**
@@ -102,7 +111,8 @@ export const APP_DOMAINS = [
   'canvas',
   'workContexts',
   'personalDirection',
-  'localWorkspaces'
+  'localWorkspaces',
+  'replyIntelligence'
 ] as const
 export type AppDomain = (typeof APP_DOMAINS)[number]
 
@@ -496,6 +506,41 @@ export interface RendererApi {
     search: (workspaceId: string, query: string) => Promise<WorkspaceSearchResult>
     /** 打包上下文（含 formattedText；不含工作区绝对路径）。 */
     buildContext: (workspaceId: string, relativePaths: string[]) => Promise<ContextPackage>
+  }
+  /**
+   * AI Reply Intelligence（Phase 2）：回复导入 / 分类 / 操作草稿。
+   * 剪贴板只在用户点击「从剪贴板导入」时由主进程读取一次——没有监听
+   * 或轮询通道。解析是本地规则，不调用模型、不执行任何内容。
+   */
+  replyIntelligence: {
+    /** 剪贴板一次性读取 + 导入；剪贴板为空时报错。 */
+    captureFromClipboard: (tabId: string) => Promise<ReplyDetail>
+    /** 手动粘贴导入。 */
+    captureFromPaste: (tabId: string, content: string) => Promise<ReplyDetail>
+    list: (limit?: number) => Promise<CapturedReply[]>
+    detail: (id: string) => Promise<ReplyDetail>
+    /** 删除回复：分段与草稿一并删除（来源关系结束）。 */
+    remove: (id: string) => Promise<void>
+    /** 用户改分类 / 内容（user_edited 置真，解析器不再覆盖）。 */
+    updateSegment: (
+      id: string,
+      categories: ReplyCategory[],
+      content?: string
+    ) => Promise<ReplySegment>
+    removeSegment: (id: string) => Promise<void>
+    /** 从分段（或整条回复）创建操作草稿：来源与工作区绑定一并保存。 */
+    createDraft: (input: { replyId: string; segmentId?: string | null }) => Promise<ActionDraft>
+    updateDraft: (
+      id: string,
+      patch: {
+        title?: string
+        description?: string
+        workingDirectory?: string
+        riskLevel?: ActionRiskLevel
+      }
+    ) => Promise<ActionDraft>
+    removeDraft: (id: string) => Promise<void>
+    listDrafts: (replyId: string | null, limit?: number) => Promise<ActionDraft[]>
   }
   /**
    * 数据目录：`brewphase.db` 与 `media/` 的位置。切换后需要重启；

@@ -19,6 +19,7 @@ import { WorkContextService } from './application/work-context/work-context-serv
 import { LocalWorkspaceService } from './application/local-workspace/local-workspace-service'
 import { WorkspaceFileService } from './application/local-workspace/workspace-file-service'
 import { ContextBuilder } from './application/local-workspace/context-builder'
+import { ReplyIntelligenceService } from './application/reply-intelligence/reply-intelligence-service'
 import { PersonalDirectionService } from './application/personal-direction/personal-direction-service'
 import { CoffeeService } from './application/coffee/coffee-service'
 import { CanvasService } from './application/canvas/canvas-service'
@@ -242,6 +243,17 @@ function bootstrap(): void {
   const localWorkspaceService = new LocalWorkspaceService(db.db, events)
   const workspaceFileService = new WorkspaceFileService(db.db)
   const contextBuilder = new ContextBuilder(db.db, workspaceFileService)
+  // AI Reply Intelligence（Phase 2）：来源识别用 tab 的真实 URL；tab 已关闭
+  // 时允许导入（来源为空），但 UI 层只在卡片活着时提供入口。
+  const replyIntelligenceService = new ReplyIntelligenceService(
+    db.db,
+    events,
+    localWorkspaceService,
+    (tabId) => {
+      const info = browserManager?.resolveTabForAI(tabId)
+      return info ? { url: info.url, title: info.title } : null
+    }
+  )
 
   const bridgeStatus = (): McpBridgeStatus => ({
     running: bridgeServer?.isRunning() ?? false,
@@ -525,7 +537,8 @@ function bootstrap(): void {
     updates: updateService,
     localWorkspaces: localWorkspaceService,
     workspaceFiles: workspaceFileService,
-    contextBuilder: contextBuilder
+    contextBuilder: contextBuilder,
+    replyIntelligence: replyIntelligenceService
   })
 
   // E2E / 单测钩子：注入假光标（拖拽会话的松手位置判定用）。

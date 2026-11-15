@@ -682,3 +682,81 @@ export const cardWorkspaceBindings = sqliteTable(
   },
   (table) => [index('card_workspace_bindings_workspace_idx').on(table.workspaceId)]
 )
+
+// MARK: - AI Reply Intelligence（migration 13）
+
+/**
+ * 用户主动交接的 AI 回复（Phase 2）。**只进本地库**：来源是「用户复制 /
+ * 粘贴 + 明确导入」——没有后台监听、没有 DOM 轮询、没有自动提取。
+ * workspace_id 刻意无外键：工作区删除后回复保留，草稿显示「待绑定」。
+ */
+export const capturedReplies = sqliteTable(
+  'captured_replies',
+  {
+    id: text('id').primaryKey(),
+    providerId: text('provider_id').notNull().default(''),
+    providerName: text('provider_name').notNull().default(''),
+    sourceUrl: text('source_url').notNull().default(''),
+    sourceTitle: text('source_title').notNull().default(''),
+    tabId: text('tab_id').notNull().default(''),
+    workspaceId: text('workspace_id'),
+    /** clipboard_import | manual_paste —— 都是用户明确触发。 */
+    captureMethod: text('capture_method').notNull().default('manual_paste'),
+    rawContent: text('raw_content').notNull(),
+    capturedAt: integer('captured_at').notNull(),
+    createdAt: integer('created_at').notNull()
+  },
+  (table) => [index('captured_replies_captured_idx').on(table.capturedAt)]
+)
+
+/**
+ * 解析分段：categories 是 JSON 字符串数组（多标签）。start/end_offset
+ * 指向 raw_content 原文偏移——分类结果永远能回到原始上下文。
+ * user_edited 后解析器永不再覆盖。
+ */
+export const replySegments = sqliteTable(
+  'reply_segments',
+  {
+    id: text('id').primaryKey(),
+    replyId: text('reply_id')
+      .notNull()
+      .references(() => capturedReplies.id, { onDelete: 'cascade' }),
+    sequence: integer('sequence').notNull(),
+    categories: text('categories').notNull().default('[]'),
+    content: text('content').notNull(),
+    startOffset: integer('start_offset').notNull().default(0),
+    endOffset: integer('end_offset').notNull().default(0),
+    confidence: real('confidence').notNull().default(0),
+    reason: text('reason').notNull().default(''),
+    userEdited: integer('user_edited', { mode: 'boolean' }).notNull().default(false)
+  },
+  (table) => [index('reply_segments_reply_idx').on(table.replyId, table.sequence)]
+)
+
+/**
+ * 操作任务草稿：**只是草稿**——没有执行通道，status 从 draft 起步、
+ * requires_approval 恒 true。payload 是 JSON（命令 / 代码块 / 文件路径候选）。
+ */
+export const actionDrafts = sqliteTable(
+  'action_drafts',
+  {
+    id: text('id').primaryKey(),
+    replyId: text('reply_id')
+      .notNull()
+      .references(() => capturedReplies.id, { onDelete: 'cascade' }),
+    /** 段被删时置空（草稿保留），来源回复仍在。 */
+    segmentId: text('segment_id').references(() => replySegments.id, { onDelete: 'set null' }),
+    workspaceId: text('workspace_id'),
+    actionType: text('action_type').notNull().default('operation'),
+    title: text('title').notNull(),
+    description: text('description').notNull().default(''),
+    payload: text('payload').notNull().default('{}'),
+    workingDirectory: text('working_directory').notNull().default(''),
+    riskLevel: text('risk_level').notNull().default('normal'),
+    requiresApproval: integer('requires_approval', { mode: 'boolean' }).notNull().default(true),
+    status: text('status').notNull().default('draft'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (table) => [index('action_drafts_reply_idx').on(table.replyId)]
+)

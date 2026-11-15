@@ -12,6 +12,7 @@ export type AppDomain =
   | 'workContexts'
   | 'personalDirection'
   | 'localWorkspaces'
+  | 'replyIntelligence'
 
 export class ApplicationEvents {
   private readonly listeners = new Set<(domain: AppDomain) => void>()

@@ -11,6 +11,11 @@ import {
   relativePathSchema
 } from '../local-workspace'
 import {
+  REPLY_RAW_MAX_CHARS,
+  actionRiskLevelSchema,
+  replyCategorySchema
+} from '../reply-intelligence'
+import {
   browserDropSchema,
   browserDragProbeSchema,
   browserBoundsSchema,
@@ -244,7 +249,21 @@ export const IPC = {
   workspaceSearch: 'workspace:search',
   workspaceContextBuild: 'workspace:context:build',
   // 结构化上下文「复制到 AI 对话」：主进程写剪贴板（无焦点窗口也可靠）。
-  clipboardCopy: 'app:clipboard:copy'
+  clipboardCopy: 'app:clipboard:copy',
+
+  // AI Reply Intelligence（Phase 2）：回复导入 / 分类 / 草稿。剪贴板
+  // 只在 captureFromClipboard 时读取一次——没有监听或轮询通道。
+  replyCaptureClipboard: 'reply:capture:clipboard',
+  replyCapturePaste: 'reply:capture:paste',
+  replyList: 'reply:list',
+  replyGet: 'reply:get',
+  replyRemove: 'reply:remove',
+  replySegmentUpdate: 'reply:segment:update',
+  replySegmentRemove: 'reply:segment:remove',
+  replyDraftCreate: 'reply:draft:create',
+  replyDraftUpdate: 'reply:draft:update',
+  replyDraftRemove: 'reply:draft:remove',
+  replyDraftList: 'reply:draft:list'
 } as const
 
 export const ipcRequestSchemas = {
@@ -519,7 +538,39 @@ export const ipcRequestSchemas = {
     workspaceId: z.string().uuid(),
     relativePaths: z.array(relativePathSchema).min(1).max(CONTEXT_MAX_FILES)
   }),
-  [IPC.clipboardCopy]: z.object({ text: z.string().min(1).max(400_000) })
+  [IPC.clipboardCopy]: z.object({ text: z.string().min(1).max(400_000) }),
+
+  // ---- AI Reply Intelligence（Phase 2）----
+  [IPC.replyCaptureClipboard]: z.object({ tabId: z.string().min(1).max(64) }),
+  [IPC.replyCapturePaste]: z.object({
+    tabId: z.string().min(1).max(64),
+    content: z.string().min(1).max(REPLY_RAW_MAX_CHARS)
+  }),
+  [IPC.replyList]: z.object({ limit: z.number().int().min(1).max(100).optional() }).optional(),
+  [IPC.replyGet]: z.object({ id: z.string().uuid() }),
+  [IPC.replyRemove]: z.object({ id: z.string().uuid() }),
+  [IPC.replySegmentUpdate]: z.object({
+    id: z.string().uuid(),
+    categories: z.array(replyCategorySchema).min(1).max(4),
+    content: z.string().max(REPLY_RAW_MAX_CHARS).optional()
+  }),
+  [IPC.replySegmentRemove]: z.object({ id: z.string().uuid() }),
+  [IPC.replyDraftCreate]: z.object({
+    replyId: z.string().uuid(),
+    segmentId: z.string().uuid().nullable().optional()
+  }),
+  [IPC.replyDraftUpdate]: z.object({
+    id: z.string().uuid(),
+    title: z.string().min(1).max(200).optional(),
+    description: z.string().max(4_000).optional(),
+    workingDirectory: z.string().max(1_024).optional(),
+    riskLevel: actionRiskLevelSchema.optional()
+  }),
+  [IPC.replyDraftRemove]: z.object({ id: z.string().uuid() }),
+  [IPC.replyDraftList]: z.object({
+    replyId: z.string().uuid().nullable().optional(),
+    limit: z.number().int().min(1).max(200).optional()
+  }).optional()
 } as const
 
 export type IpcChannel = keyof typeof ipcRequestSchemas
