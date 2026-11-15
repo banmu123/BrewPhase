@@ -1,6 +1,6 @@
 import { BrowserWindow, screen } from 'electron'
 import { join } from 'node:path'
-import { WINDOW_CHROME } from '../appearance'
+import { WINDOW_CHROME, initialWindowAppearance } from '../appearance'
 import { fitRectIntoBounds } from '../../shared/window-placement'
 
 /**
@@ -89,7 +89,8 @@ export class FloatWindowManager {
 
     const mac = process.platform === 'darwin'
     const windows = process.platform === 'win32'
-    const chrome = WINDOW_CHROME.light
+    // 跟随系统外观取首帧 chrome：与主窗口一致，深色系统下拖出浮窗不闪浅色。
+    const chrome = WINDOW_CHROME[initialWindowAppearance()]
 
     const window = new BrowserWindow({
       width,

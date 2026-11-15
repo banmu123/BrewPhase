@@ -8006,7 +8006,10 @@ textarea {
   height: 44px;
   flex: none;
   padding: 0 14px;
-  background: var(--paper-deep);
+  /* 必须用 --paper（与主窗口 .topbar、圆桌 .rt-window__titlebar 同源）：
+     Windows titleBarOverlay 原生按钮区域画在 DOM 之上，底色来自主进程
+     WINDOW_CHROME（= --paper），标题栏用别的表面色就会在右上角出色差。 */
+  background: var(--paper);
   border-bottom: 1px solid var(--hairline);
   -webkit-app-region: drag;
   user-select: none;
@@ -8531,7 +8534,10 @@ textarea {
   padding: 0 12px;
   padding-left: 78px;
   border-bottom: 1px solid var(--hairline);
-  background: var(--card);
+  /* 必须用 --paper：Windows 的 titleBarOverlay 原生按钮区域画在 DOM 之上，
+     底色来自主进程 WINDOW_CHROME（= --paper）。用 --card 这类更白的表面，
+     右上角系统按钮处就会留出一块 #f7f8f6 vs #ffffff 的色差。 */
+  background: var(--paper);
   cursor: grab;
   user-select: none;
   -webkit-app-region: drag;

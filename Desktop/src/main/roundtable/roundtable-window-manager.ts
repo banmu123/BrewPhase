@@ -1,6 +1,6 @@
 import { BrowserWindow, screen } from 'electron'
 import { join } from 'node:path'
-import { WINDOW_CHROME } from '../appearance'
+import { WINDOW_CHROME, initialWindowAppearance } from '../appearance'
 import { fitRectIntoBounds } from '../../shared/window-placement'
 import { ROUNDTABLE_WINDOW_MIN_HEIGHT, ROUNDTABLE_WINDOW_MIN_WIDTH } from '../../shared/roundtable'
 import { FLOAT_TITLEBAR_HEIGHT } from '../browser/float-window'
@@ -62,7 +62,9 @@ export class RoundtableWindowManager {
 
     const mac = process.platform === 'darwin'
     const windows = process.platform === 'win32'
-    const chrome = WINDOW_CHROME.light
+    // 跟随系统外观取首帧 chrome：与主窗口一致，深色系统下拆出圆桌
+    // 不闪一道浅色（Renderer 起来后会经 IPC 纠正强制外观）。
+    const chrome = WINDOW_CHROME[initialWindowAppearance()]
     const width = 680
     const height = 540
 
