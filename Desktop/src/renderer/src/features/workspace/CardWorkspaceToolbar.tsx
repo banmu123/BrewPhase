@@ -30,7 +30,8 @@ import { useI18n } from '../../i18n'
 
 export function CardWorkspaceToolbar(props: {
   tabId: string
-  variant: 'normal' | 'compact'
+  /** normal=顶部横条；compact=圆桌面板顶部；side=独立窗口右侧竖栏。 */
+  variant: 'normal' | 'compact' | 'side'
   onClose: () => void
 }) {
   const { t } = useI18n()
@@ -217,32 +218,62 @@ export function CardWorkspaceToolbar(props: {
               data-missing={workspace.availability === 'missing'}
               title={workspace.availability === 'available' ? t.workspace.available : t.workspace.missing}
             />
-            <span className="spacer" />
-            <button type="button" className="cwt__mini" onClick={() => void openWorkspaces()}>
-              {t.workspace.switchWorkspace}
-            </button>
-            <button
-              type="button"
-              className="cwt__mini cwt__mini--primary"
-              disabled={workspace.availability !== 'available'}
-              onClick={() => void openFiles()}
-            >
-              {t.workspace.browseFiles}
-            </button>
-            <button
-              type="button"
-              className="cwt__mini cwt__mini--icon"
-              onClick={props.onClose}
-              title={t.workspace.collapse}
-              aria-label={t.workspace.collapse}
-            >
-              ✕
-            </button>
+            {props.variant === 'side' && (
+              <button
+                type="button"
+                className="cwt__mini cwt__mini--icon"
+                onClick={props.onClose}
+                title={t.workspace.collapse}
+                aria-label={t.workspace.collapse}
+              >
+                ✕
+              </button>
+            )}
           </div>
           <p className="cwt__pathline" title={workspace.absolutePath}>
             {workspace.absolutePath}
           </p>
           {workspace.availability === 'missing' && <p className="cwt__stateline">{t.workspace.missingHint}</p>}
+          {props.variant === 'side' ? (
+            // 右侧竖栏：操作按钮纵向全宽，主动作（浏览文件）在最上。
+            <div className="cwt__side-actions">
+              <button
+                type="button"
+                className="cwt__mini cwt__mini--primary"
+                disabled={workspace.availability !== 'available'}
+                onClick={() => void openFiles()}
+              >
+                {t.workspace.browseFiles}
+              </button>
+              <button type="button" className="cwt__mini" onClick={() => void openWorkspaces()}>
+                {t.workspace.switchWorkspace}
+              </button>
+            </div>
+          ) : (
+            <>
+              <span className="spacer" />
+              <button type="button" className="cwt__mini" onClick={() => void openWorkspaces()}>
+                {t.workspace.switchWorkspace}
+              </button>
+              <button
+                type="button"
+                className="cwt__mini cwt__mini--primary"
+                disabled={workspace.availability !== 'available'}
+                onClick={() => void openFiles()}
+              >
+                {t.workspace.browseFiles}
+              </button>
+              <button
+                type="button"
+                className="cwt__mini cwt__mini--icon"
+                onClick={props.onClose}
+                title={t.workspace.collapse}
+                aria-label={t.workspace.collapse}
+              >
+                ✕
+              </button>
+            </>
+          )}
         </div>
       )}
 

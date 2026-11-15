@@ -15,8 +15,8 @@ import { CardWorkspaceToolbar } from '../workspace/CardWorkspaceToolbar'
  *
  * 「回主窗口」= reattach 当前标签：标签移动但页面实例不动，浮窗空了会自己关。
  *
- * AI Card Workspace Bridge（Phase 1）：标题栏多一个 BrewPhase 按钮，展开
- * CardWorkspaceToolbar（正常文档流，挤压 stage）——stage 高度变化由
+ * AI Card Workspace Bridge（Phase 1）：标题栏一个 📁 按钮，点开在**右侧**
+ * 展开工作区竖栏（宽度挤压 stage，高度不动）——stage 尺寸变化由
  * ResizeObserver 捕获并自动重报 bounds，原生视图跟随，页面实例不动。
  */
 export function BrowserFloatWindow(props: { windowId: number }) {
@@ -197,16 +197,6 @@ export function BrowserFloatWindow(props: { windowId: number }) {
         </button>
       </header>
 
-      {/* BrewPhase 工作区（正常文档流，挤压 stage；原生视图由 ResizeObserver 跟随）。 */}
-      {workspaceOpen && activeTab && (
-        <CardWorkspaceToolbar
-          key={activeTab.id}
-          tabId={activeTab.id}
-          variant="normal"
-          onClose={() => setWorkspaceOpen(false)}
-        />
-      )}
-
       <BrowserTabStrip
         tabs={ownTabs}
         ownWindowId={props.windowId}
@@ -217,8 +207,21 @@ export function BrowserFloatWindow(props: { windowId: number }) {
         onClose={(tabId) => void api.browserTabs.closeTab(tabId)}
       />
 
-      {/* 网页画在这块留白上（原生层）。 */}
-      <div className="bp-float__stage" ref={stageRef} />
+      {/* 内容区：stage + 右侧工作区竖栏（水平挤压，原生视图由 ResizeObserver 跟随宽度变化）。 */}
+      <div className="bp-float__main">
+        {/* 网页画在这块留白上（原生层）。 */}
+        <div className="bp-float__stage" ref={stageRef} />
+        {workspaceOpen && activeTab && (
+          <aside className="bp-float__side">
+            <CardWorkspaceToolbar
+              key={activeTab.id}
+              tabId={activeTab.id}
+              variant="side"
+              onClose={() => setWorkspaceOpen(false)}
+            />
+          </aside>
+        )}
+      </div>
     </div>
   )
 }

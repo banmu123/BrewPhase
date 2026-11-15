@@ -112,9 +112,10 @@ test('独立窗口：BrewPhase 按钮 → 工具栏全流程 → stage 跟随 �
   await expect(toolbar).toContainText('选择项目')
   await expect(toolbar.locator('.cwt__pickrow--add')).toContainText('添加本地项目文件夹')
 
-  // stage 高度被挤压（DOM 变了 → ResizeObserver 会把新 bounds 报给主进程）。
+  // stage 宽度被右侧竖栏挤压（DOM 变了 → ResizeObserver 会把新 bounds 报给主进程）。
   const stageAfter = await floatPage!.locator('.bp-float__stage').boundingBox()
-  expect(stageAfter!.height).toBeLessThan(stageBefore!.height)
+  expect(stageAfter!.height).toBe(stageBefore!.height)
+  expect(stageAfter!.width).toBeLessThan(stageBefore!.width)
   // 原生网页实例没动（没有 reload）。
   const born = await page.evaluate(
     (id) => window.brewphase.browserTabs.executeOnTab(id as string, 'window.__born'),
@@ -152,6 +153,7 @@ test('独立窗口：BrewPhase 按钮 → 工具栏全流程 → stage 跟随 �
   await toolbar.getByRole('button', { name: '收起' }).click()
   await expect(floatPage!.locator('.cwt')).toHaveCount(0)
   const stageRestored = await floatPage!.locator('.bp-float__stage').boundingBox()
+  expect(Math.abs(stageRestored!.width - stageBefore!.width)).toBeLessThanOrEqual(2)
   expect(Math.abs(stageRestored!.height - stageBefore!.height)).toBeLessThanOrEqual(2)
 
   // 收回卡片架仍然正常（原生功能无回归）。

@@ -8069,10 +8069,30 @@ textarea {
   background: var(--paper);
 }
 
+.bp-float__main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
 .bp-float__stage {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   background: var(--canvas-paper);
+}
+
+/* 右侧工作区竖栏（AI Card Workspace Bridge）：只占宽度，网页高度不动；
+   原生 WebContentsView 的宽度由渲染层 ResizeObserver 上报跟随。 */
+.bp-float__side {
+  flex: none;
+  width: 304px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--hairline);
+  background: var(--paper);
 }
 
 /* ============ 网页卡片架 Phase 2：真实缩略图卡片 ============ */
@@ -9329,6 +9349,34 @@ textarea {
   border-bottom: 0;
   border-radius: 0;
   background: var(--sheet-deep);
+}
+
+.cwt[data-variant='side'] {
+  flex: 1;
+  max-height: none;
+  padding: 8px 10px;
+  border-bottom: 0;
+  min-height: 0;
+}
+
+.cwt[data-variant='side'] .cwt__pathline {
+  white-space: normal;
+  word-break: break-all;
+  direction: ltr;
+}
+
+.cwt[data-variant='side'] .cwt__side-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cwt[data-variant='side'] .cwt__side-actions .cwt__mini {
+  width: 100%;
+  justify-content: center;
+  text-align: center;
+  padding: 5px 8px;
+  font-size: 12px;
 }
 
 .cwt__skeleton {
