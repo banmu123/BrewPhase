@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -22,7 +22,13 @@ const HOST_PATH = fileURLToPath(
   new URL(`../../resources/native-host/${platformKey}/${binaryName}`, import.meta.url)
 )
 
-describe('Native Messaging Host（真实进程）', () => {
+// Host 可执行文件是预编译产物（Desktop/.gitignore 忽略整个目录）：
+// CI checkout 后不存在，而打包流水线并不编译它。缺失时整组跳过——
+// 真实进程测试只能在本地跑，不能让发布构建因此失败（曾让
+// desktop-v0.1.2 的 CI 单测步骤全平台挂掉）。
+const HOST_BINARY_EXISTS = existsSync(HOST_PATH)
+
+describe.skipIf(!HOST_BINARY_EXISTS)('Native Messaging Host（真实进程）', () => {
   let dir = ''
   let server: Server | null = null
   let sockets: Socket[] = []
