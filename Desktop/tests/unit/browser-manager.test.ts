@@ -385,4 +385,49 @@ describe('BrowserManager 起始页与恢复', () => {
     expect(fake.views[0]!.webContents.id).toBe(id)
     expect(fake.loadCalls).toEqual(['https://keep.example/'])
   })
+
+  it('重启后恢复卡片架：tabId 原样回来、全部收纳在架上', () => {
+    // 会话 1：主面板开一张卡，架子上再收一张；dispose 时同步落最终快照。
+    manager.navigate('https://a.example/')
+    manager.createShelfTabWithURL('https://b.example/')
+    manager.dispose()
+
+    // 会话 2：同一个库，新 manager —— 构造时恢复。
+    manager = new BrowserManager({ db, getWindow: () => fake.window as never, devServerUrl: null })
+    const state = manager.state()
+    expect(state.tabs.map((tab) => tab.id)).toEqual(['tab-1', 'tab-2'])
+    expect(state.tabs.map((tab) => tab.url)).toEqual(['https://a.example/', 'https://b.example/'])
+    // 恢复的卡安静躺在架子上（采集宿主），点击卡片才展开。
+    expect(state.tabs.every((tab) => tab.parked)).toBe(true)
+    // 页面真实加载（不是占位空白）：会话 1 两次 + 恢复时两次。
+    expect(fake.loadCalls).toEqual([
+      'https://a.example/',
+      'https://b.example/',
+      'https://a.example/',
+      'https://b.example/'
+    ])
+    // activeTab 不恢复：打开面板从起始页开始。
+    expect(state.startPage).toBe(true)
+  })
+
+  it('恢复后新开标签的编号继续推进，不与持久化的圆桌面板记录冲突', () => {
+    manager.navigate('https://a.example/')
+    manager.createShelfTabWithURL('https://b.example/')
+    manager.dispose()
+
+    manager = new BrowserManager({ db, getWindow: () => fake.window as never, devServerUrl: null })
+    const next = manager.createShelfTabWithURL('https://c.example/')
+
+    expect(next).toBe('tab-3')
+    expect(manager.state().tabs.map((tab) => tab.id)).toEqual(['tab-1', 'tab-2', 'tab-3'])
+  })
+
+  it('关闭全部卡片后重启，卡片架恢复为空', () => {
+    manager.navigate('https://a.example/')
+    manager.close()
+    manager.dispose()
+
+    manager = new BrowserManager({ db, getWindow: () => fake.window as never, devServerUrl: null })
+    expect(manager.state().tabs).toEqual([])
+  })
 })

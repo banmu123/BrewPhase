@@ -122,6 +122,50 @@ export class BrowserTabManager {
   }
 
   /**
+   * 会话恢复：按持久化的 id/url/title 重建标签，**tabId 保持原样**。
+   *
+   * 圆桌面板布局、成员列表、卡片顺序都以 tabId 持久化引用；编号一样，
+   * 重启后这些记录无需迁移就能重新命中。页面立即开始加载（与「拖动的
+   * 是页面实例」不冲突——恢复是重建，不是复制第二份）。
+   * 标题先用持久化值占位：`navigateInTab` 会清标题，加载完成后由
+   * `did-navigate` / `page-title-updated` 回填真实值。
+   */
+  restoreTab(id: string, url: string, title: string): BrowserTabRecord | null {
+    const match = /^tab-(\d{1,6})$/.exec(id)
+    const seq = match ? Number(match[1]) : 0
+    if (!Number.isInteger(seq) || seq <= 0) return null
+    if (this.tabs.has(id)) return null
+    const normalized = normalizeBrowserURL(url)
+    if (!normalized) return null
+
+    this.seq = Math.max(this.seq, seq)
+    const view = createBrowserView()
+    const tab: BrowserTabRecord = {
+      id,
+      view,
+      url: normalized,
+      title,
+      loading: true,
+      progress: 0.08,
+      error: null,
+      windowId: null,
+      detached: false,
+      parked: false
+    }
+    this.tabs.set(id, tab)
+    this.order.push(id)
+    this.attachListeners(tab)
+    void view.webContents.loadURL(normalized).catch(() => undefined)
+    this.notify()
+    return tab
+  }
+
+  /** 当前编号水位：会话快照用它保证下次恢复后新 tabId 不与旧记录冲突。 */
+  currentSeq(): number {
+    return this.seq
+  }
+
+  /**
    * 关闭标签：**唯一**销毁 webContents 的地方。
    * 先从所在窗口摘下，再 close；顺序错了会留下孤儿原生视图。
    */

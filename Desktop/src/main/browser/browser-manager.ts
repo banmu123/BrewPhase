@@ -4,6 +4,7 @@ import {
   BROWSER_CHANGED_CHANNEL,
   BROWSER_DRAG_CHANNEL,
   BROWSER_PREVIEW_CHANNEL,
+  BROWSER_TAB_SESSION_LIMIT,
   type BrowserBounds,
   type BrowserDragFrame,
   type BrowserDragProbe,
@@ -20,9 +21,11 @@ import { clampBrowserBounds, type BrowserViewport } from '../../shared/browser-l
 import {
   readBrowserLayout,
   readBrowserRecent,
+  readBrowserTabSession,
   recordBrowserVisit,
   retitleBrowserVisit,
-  writeBrowserLayout
+  writeBrowserLayout,
+  writeBrowserTabSession
 } from './history-store'
 import { BrowserTabManager } from './browser-tab-manager'
 import { FloatWindowManager, FLOAT_TITLEBAR_HEIGHT } from './float-window'
@@ -111,6 +114,8 @@ export class BrowserManager {
 
   private emitScheduled = false
   private persistTimer: NodeJS.Timeout | null = null
+  /** 卡片会话快照的防抖落库（与布局持久化分开，避免互相清对方的 timer）。 */
+  private sessionTimer: NodeJS.Timeout | null = null
 
   constructor(private readonly params: BrowserManagerParams) {
     this.db = params.db
@@ -148,7 +153,11 @@ export class BrowserManager {
         this.previews.forget(tabId)
         params.onTabClosed?.(tabId)
       },
-      onChange: () => this.emit()
+      // 标签任何变化都可能改变卡片架内容 → 防抖写会话快照（重启恢复）。
+      onChange: () => {
+        this.emit()
+        this.scheduleSessionPersist()
+      }
     })
 
     this.floats = new FloatWindowManager({
@@ -174,6 +183,48 @@ export class BrowserManager {
         },
         log: (message) => console.log(`[drag] ${message}`)
       })
+
+    // 上一会话的卡片架：重启即恢复（方法定义见下方 MARK 段）。
+    this.restoreSession()
+  }
+
+  // MARK: - 标签会话恢复
+
+  /**
+   * 重启后把上次的卡片架恢复回来。
+   *
+   * 卡片 = 真实标签（铁律），所以恢复的是**完整的 tabId/url/title**：
+   * tabId 原样回来，圆桌面板布局、成员、卡片顺序这些按 id 的持久化
+   * 记录无需迁移就能重新命中（Phase 4.2b 的幽灵面板随之消失）。
+   * 恢复的卡全部收进采集宿主（park）：安静躺在架子上加载，点击再展开；
+   * activeTab 不恢复——打开面板从起始页开始，这与「卡片收纳」语义一致。
+   */
+  private restoreSession(): void {
+    const session = readBrowserTabSession(this.db)
+    if (!session) return
+    for (const entry of session.tabs) {
+      const tab = this.tabs.restoreTab(entry.id, entry.url, entry.title)
+      if (tab) this.parkTab(tab.id)
+    }
+  }
+
+  /** 标签变化后防抖写快照：只在结构稳定时落库，loading 抖动不触发磁盘写。 */
+  private scheduleSessionPersist(): void {
+    if (this.sessionTimer) clearTimeout(this.sessionTimer)
+    this.sessionTimer = setTimeout(() => {
+      this.sessionTimer = null
+      this.persistSession()
+    }, 600)
+  }
+
+  /** 把当前卡片架写成会话快照（空 url 的空白卡没有恢复价值，跳过）。 */
+  private persistSession(): void {
+    const tabs = this.tabs
+      .list()
+      .filter((tab) => normalizeBrowserURL(tab.url))
+      .slice(0, BROWSER_TAB_SESSION_LIMIT)
+      .map((tab) => ({ id: tab.id, url: tab.url, title: tab.title.slice(0, 512) }))
+    writeBrowserTabSession(this.db, { seq: this.tabs.currentSeq(), tabs })
   }
 
   // MARK: - 对外状态
@@ -965,6 +1016,16 @@ export class BrowserManager {
   }
 
   dispose(): void {
+    // 退出/迁移前的最后一次快照：防抖 timer 里可能还压着没落库的变化。
+    if (this.sessionTimer) {
+      clearTimeout(this.sessionTimer)
+      this.sessionTimer = null
+    }
+    try {
+      this.persistSession()
+    } catch (error) {
+      console.error('[browser] session persist on dispose failed', error)
+    }
     if (this.persistTimer) {
       clearTimeout(this.persistTimer)
       this.persistTimer = null

@@ -3,9 +3,11 @@ import { readState, writeState } from '../database/client'
 import {
   BROWSER_RECENT_LIMIT,
   browserBoundsSchema,
+  browserTabSessionSchema,
   browserVisitSchema,
   type BrowserBounds,
   type BrowserState,
+  type BrowserTabSessionSnapshot,
   type BrowserVisit
 } from '../../shared/contracts/browser'
 import { normalizeBrowserURL } from '../../shared/browser-url'
@@ -13,12 +15,13 @@ import { normalizeBrowserURL } from '../../shared/browser-url'
 /**
  * 浏览器本地状态（**只进 local_state，不进业务库、不进同步**）。
  *
- * 这里存的三样东西都不是用户内容：浮窗长在哪、上次看了哪一页、最近看过哪几页。
- * Cookie / LocalStorage / 登录态由 Chromium 的 `persist:brewphase-browser`
- * 分区自己落盘，应用层**不读、不导出、不上传**。
+ * 这里存的四样东西都不是用户内容：浮窗长在哪、上次看了哪一页、最近看过
+ * 哪几页、卡片架上开着哪几张卡。Cookie / LocalStorage / 登录态由 Chromium
+ * 的 `persist:brewphase-browser` 分区自己落盘，应用层**不读、不导出、不上传**。
  */
 const LAYOUT_KEY = 'browser.layout'
 const RECENT_KEY = 'browser.recent'
+const TAB_SESSION_KEY = 'browser.tabSession'
 
 export function readBrowserLayout(db: Db): BrowserBounds | null {
   const raw = readState(db, LAYOUT_KEY)
@@ -86,4 +89,20 @@ export function retitleBrowserVisit(db: Db, url: string, title: string): Browser
 
 export function readBrowserLastVisit(db: Db): BrowserVisit | null {
   return readBrowserRecent(db)[0] ?? null
+}
+
+/** 读上次会话的卡片架快照（损坏/校验失败都按「没有会话」处理）。 */
+export function readBrowserTabSession(db: Db): BrowserTabSessionSnapshot | null {
+  const raw = readState(db, TAB_SESSION_KEY)
+  if (!raw) return null
+  try {
+    const parsed = browserTabSessionSchema.safeParse(JSON.parse(raw))
+    return parsed.success ? parsed.data : null
+  } catch {
+    return null
+  }
+}
+
+export function writeBrowserTabSession(db: Db, snapshot: BrowserTabSessionSnapshot): void {
+  writeState(db, TAB_SESSION_KEY, JSON.stringify(snapshot))
 }

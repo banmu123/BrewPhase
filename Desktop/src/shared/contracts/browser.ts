@@ -91,6 +91,30 @@ export const browserVisitSchema = z.object({
   visitedAt: z.number().int().nonnegative()
 })
 
+/** 标签会话快照最多恢复多少张卡：防止异常数据无限膨胀（正常用量远小于此）。 */
+export const BROWSER_TAB_SESSION_LIMIT = 24
+
+/**
+ * 标签会话快照的一张卡。**id 必须保持 `tab-<n>` 原样恢复**：
+ * 圆桌面板布局、成员列表、卡片顺序都按 tabId 持久化引用——恢复时编号
+ * 一样，这些记录才不用迁移就能接上（Phase 4.2b 幽灵面板随之消失）。
+ */
+export const browserTabSessionEntrySchema = z.object({
+  id: z.string().regex(/^tab-\d{1,6}$/),
+  url: z.string().max(2_048),
+  title: z.string().max(512)
+})
+
+export const browserTabSessionSchema = z.object({
+  /** 恢复后新标签编号的下限；恢复时取 max，保证新 tabId 不与旧记录冲突。 */
+  seq: z.number().int().nonnegative(),
+  /** 数组顺序即恢复后的标签展示顺序。 */
+  tabs: z.array(browserTabSessionEntrySchema).max(BROWSER_TAB_SESSION_LIMIT)
+})
+
+export type BrowserTabSessionEntry = z.infer<typeof browserTabSessionEntrySchema>
+export type BrowserTabSessionSnapshot = z.infer<typeof browserTabSessionSchema>
+
 /**
  * 一次失败的加载。
  *

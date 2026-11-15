@@ -227,4 +227,42 @@ describe('BrowserTabManager 生命周期', () => {
     expect(manager.get(tab.id)).toBeNull()
     expect(manager.order).not.toContain(tab.id)
   })
+
+  it('restoreTab 原样恢复 tabId，并推进编号水位避免冲突', () => {
+    const manager = makeManager()
+    const restored = manager.restoreTab('tab-7', 'https://example.test/restored', '恢复的页面')
+    expect(restored).not.toBeNull()
+    expect(restored!.id).toBe('tab-7')
+    expect(restored!.url).toBe('https://example.test/restored')
+    expect(restored!.title).toBe('恢复的页面')
+    expect(manager.order).toEqual(['tab-7'])
+    // 新标签从恢复的最高编号继续，绝不与持久化记录里的旧 tabId 撞车。
+    const fresh = manager.createTab('https://example.test/fresh')
+    expect(fresh.id).toBe('tab-8')
+    expect(manager.currentSeq()).toBe(8)
+  })
+
+  it('restoreTab 拒绝非法输入：坏 id、坏协议、重复 id', () => {
+    const manager = makeManager()
+    expect(manager.restoreTab('tab-x', 'https://example.test/a', '')).toBeNull()
+    expect(manager.restoreTab('tab-0', 'https://example.test/a', '')).toBeNull()
+    expect(manager.restoreTab('tab-1', 'javascript:alert(1)', '')).toBeNull()
+    expect(manager.restoreTab('tab-1', '', '')).toBeNull()
+    expect(manager.order).toEqual([])
+
+    expect(manager.restoreTab('tab-2', 'https://example.test/first', '')).not.toBeNull()
+    // 同一个 id 恢复两次只算一次：会话快照重复写入不能复制出两个标签。
+    expect(manager.restoreTab('tab-2', 'https://example.test/again', '')).toBeNull()
+    expect(manager.order).toEqual(['tab-2'])
+  })
+
+  it('restoreTab 的恢复是真实加载：loadURL 只发生一次', async () => {
+    const manager = makeManager()
+    const tab = manager.restoreTab('tab-3', 'https://example.test/session', '标题')
+    expect(tab).not.toBeNull()
+    const wc = tab!.view.webContents as unknown as { url: string; loadURL: (u: string) => Promise<void> }
+    // FakeWC.loadURL 会记录 url；等一次 microtask 让 restoreTab 的 void 调用完成。
+    await Promise.resolve()
+    expect(wc.url).toBe('https://example.test/session')
+  })
 })
