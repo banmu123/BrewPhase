@@ -130,6 +130,10 @@ enum PrefKey {
     /// 用户得有一个地方能把它关掉。
     static let experimentalFlavorPrediction = "brewphase.flavor.prediction.enabled"
 
+    /// Gravity Cards：首页卡片是否跟随设备倾斜滑动。默认开启；
+    /// 关掉后完全回到静态堆叠，传感器也不会启动。
+    static let gravityCardsEnabled = "brewphase.home.gravityCards.enabled"
+
     // MARK: 本地问答（RAG）
 
     /// 总开关。关掉之后索引也不再维护。

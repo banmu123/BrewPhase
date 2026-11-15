@@ -17,6 +17,7 @@ struct MoreView: View {
     @AppStorage(PrefKey.defaultWaterG) private var defaultWaterG: Double = 240
     @AppStorage(PrefKey.defaultWaterTemp) private var defaultWaterTemp: Double = 92
     @AppStorage(PrefKey.experimentalFlavorPrediction) private var predictsFlavorWindow: Bool = true
+    @AppStorage(PrefKey.gravityCardsEnabled) private var gravityCardsEnabled: Bool = true
 
     @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
     @State private var pendingReminderCount = 0
@@ -59,6 +60,7 @@ struct MoreView: View {
                     // 应用：语言、实验功能、关于。
                     SectionHeader(title: "应用")
                     LanguageSection(language: language, showsHeader: false)
+                    gravityCardsBlock
                     experimentalBlock
                     aboutCard
                 }
@@ -381,6 +383,31 @@ struct MoreView: View {
     }
 
     // MARK: - 应用
+
+    /// Gravity Cards：首页卡片是否跟随设备倾斜。
+    ///
+    /// 一行开关 + 一句状态说明。没有灵敏度面板——本阶段只要开关，
+    /// 参数集中在 `WorkspaceMotionSettings`，不在这里暴露。
+    private var gravityCardsBlock: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Card(padding: 0) {
+                EditorToggleRow(
+                    title: "重力卡片",
+                    detail: "倾斜手机时，首页卡片像放在桌面上一样轻轻滑动",
+                    isOn: $gravityCardsEnabled,
+                    showsDivider: false
+                )
+            }
+
+            Text(gravityCardsEnabled
+                 ? LocalizedStringKey("运动数据只在本机用于卡片交互，不会被保存或同步。")
+                 : LocalizedStringKey("已关闭：首页卡片保持静态堆叠，传感器不会启动。"))
+                .font(TypeScale.caption)
+                .foregroundStyle(Palette.inkFaint)
+                .padding(.horizontal, 4)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
 
     private var experimentalBlock: some View {
         VStack(alignment: .leading, spacing: 10) {

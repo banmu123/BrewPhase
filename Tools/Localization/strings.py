@@ -1687,4 +1687,12 @@ EN: dict[str, str] = {
     "换个词试试，或者清空搜索回到三个空间。":
         "Try another word, or clear the search to go back to the three spaces.",
     "%@ 条内容": "%@ items",
+    # Gravity Cards：设置开关与数据用途说明。
+    "重力卡片": "Gravity cards",
+    "倾斜手机时，首页卡片像放在桌面上一样轻轻滑动":
+        "Tilt the phone and the home cards slide like paper on a desk",
+    "运动数据只在本机用于卡片交互，不会被保存或同步。":
+        "Motion data is used on this device for the card interaction only. It is never saved or synced.",
+    "已关闭：首页卡片保持静态堆叠，传感器不会启动。":
+        "Off: the home cards stay in their static stack, and the motion sensor is not started.",
 }

@@ -66,6 +66,30 @@
 * `CanvasThumbnailPreview` 嵌进别的卡必须 `height: nil` + `chrome: false`，
   否则带出双重圆角与固定高度。
 
+## iOS：Gravity Cards（Phase 2）
+
+* **运动只加 `.offset` / `.rotationEffect`，不碰布局**：整区仍是同一个 Button，
+  按压/命中/ScrollView 高度全都原样。想让卡片动，别改 frame、别加手势。
+* 物理时间线**只有一条**（`WorkspaceHomeView.sections` 里的 `TimelineView`）；
+  步进写成闭包里的 `let _ = field.step(at:)`，`onChange(of: timeline.date)` 抓不住。
+  三个分区各一个引擎（`WorkspaceGravityField`），引擎**不是可观察对象**，
+  卡片靠 `frameToken: Date` 重画——这个属性**不能叫 `frame`**（与 `View.frame()` 冲突）。
+* 静止即停：全 settled 且无重力 → `isQuiescent = true` → 时间线暂停；
+  传感器 30Hz 用 `@ObservationIgnored` 写，绝不触发视图刷新。
+* 行程由布局推导（`WorkspaceGravityTravel.homeBounds`）：水平
+  `min(16, gutter−2)=16`，垂直 `min(8, 标题间距−2, 分区间距/2)=6`。
+  垂直必须小于 `Metric.Space.xs(8)`，否则卡片会盖住自己的标题。
+* 姿态用**基准重力 + 同设备系分量差**，不要试图用四元数做跨系变换：
+  完整变换会退化成常量（`RᵀR₀g₀ = RᵀG = g`），相对量只能来自投影差。
+  符号：`Δx = g.x−g₀.x`，`Δy = g₀.y−g.y`（屏幕 y 向下）；俯仰在接近竖直握持时
+  响应天然变弱（∝ cos 基准倾角），这是物理不是 bug。
+* `DebugLaunch.value(for:)` 会把以 `-` 开头的值当成下个开关 → 需要负数的参数
+  （`-BrewPhaseGravityTilt -1,-0.5`）必须直读 `ProcessInfo.arguments`。
+* 生命周期：滚动/键盘 `suspend()`+`calm()`（保速度滑停，时间线继续跑到 settled）；
+  恢复一律重校准基准；推详情用 `destination` 变化兜底（根视图不一定收 onDisappear）。
+* 测试 38 条（`WorkspaceGravityTests`），`DeviceMotionSourcing` 协议 + Mock 注入，
+  不碰真机传感器；全量 780 条。真机手感/方向/耗电只能人工验收。
+
 ## iOS：Canvas
 
 * `CanvasNode` 是摆放实例（UUID + 世界坐标），不复制记录；删除必须走

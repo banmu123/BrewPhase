@@ -182,6 +182,7 @@
 "保存记录" = "Save record";
 "保持不变" = "Keep unchanged";
 "修改这些参数会影响 BrewPhase 对咖啡阶段的判断。" = "Changing these numbers changes how BrewPhase reads every bag's stage.";
+"倾斜手机时，首页卡片像放在桌面上一样轻轻滑动" = "Tilt the phone and the home cards slide like paper on a desk";
 "偏深的烘焙压得住奶，做意式或加奶都不闷。" = "Darker roasts stand up to milk; espresso or milk drinks stay clean.";
 "储存方式" = "Storage";
 "储存温度" = "Storage temp";
@@ -415,6 +416,7 @@
 "工作室还空着" = "The studio shelf is empty";
 "巧克力" = "Chocolate";
 "已关联 %@ 条与这包豆子直接相关的知识。" = "Linked %@ entries of knowledge directly relevant to this bag.";
+"已关闭：首页卡片保持静态堆叠，传感器不会启动。" = "Off: the home cards stay in their static stack, and the motion sensor is not started.";
 "已同步 %@ 项" = "%@ items synced";
 "已喝完" = "Finished";
 "已在画布" = "On canvas";
@@ -975,6 +977,7 @@
 "载入 7 包演示豆，体验完整功能" = "Load 7 sample bags to explore every feature";
 "载入示例数据" = "Load sample data";
 "过去平均 %@ 分" = "averaged %@ before";
+"运动数据只在本机用于卡片交互，不会被保存或同步。" = "Motion data is used on this device for the card interaction only. It is never saved or synced.";
 "返回全部" = "Back to everything";
 "返回工作台" = "Back to workspace";
 "还剩 %@。" = "%@ left.";
@@ -1103,6 +1106,7 @@
 "醇厚 %@" = "Body %@";
 "醇厚度 %@" = "body %@";
 "醇感" = "Body";
+"重力卡片" = "Gravity cards";
 "重命名" = "Rename";
 "重命名与说明" = "Rename and description";
 "重命名标签" = "Rename tag";

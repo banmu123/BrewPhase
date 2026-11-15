@@ -111,7 +111,8 @@ enum SyncInspection {
 enum DebugLaunch {
 
     // fileprivate：同文件的 `SyncInspection` 也要解析 launch arguments。
-    fileprivate static func value(for flag: String) -> String? {
+    // `internal` 部分：Gravity Cards 的调试注入（模拟器截图）也要读启动参数。
+    static func value(for flag: String) -> String? {
         let args = ProcessInfo.processInfo.arguments
         guard let index = args.firstIndex(of: flag), args.indices.contains(index + 1) else { return nil }
         let value = args[index + 1]
