@@ -46,14 +46,15 @@ available.
 | iPhone app | **Available** | App Store 1.1, `com.brewphase.ios`, free, US storefront, EN + ZH | [App Store](https://apps.apple.com/us/app/brewphase/id6815591631) | iTunes Lookup API `?bundleId=com.brewphase.ios&country=us`, 2026-11-10 |
 | iPhone app, `main` (2.0) | **In development — not published** | Coffee + Records + Canvas + LAN sync in source | Build from source | `BrewPhase.xcodeproj/project.pbxproj`, `BrewPhase/Features/` |
 | macOS Desktop | **Published (prerelease)** | arm64 `.dmg` + `.zip` with `.sha256` sidecars. `desktop-v0.1.3` (published 2026-11-15): Developer ID signed with hardened runtime, Apple notarization **Accepted** (`d71085e7-07ec-471d-bdf3-ca3aea31be0b`), ticket stapled to the app; the dmg itself was also signed and notarization Accepted (`6306e49b-52d0-4bfa-be10-106b9d56a2f1`), but its ticket is not stapled to the published dmg (stapling would change the file after upload). `spctl` on the app extracted from the dmg → `accepted / Notarized Developer ID`. Also adds update awareness (check + notify + manual download). `desktop-v0.1.2` (signed only, **not notarized**) is superseded — it caused the Gatekeeper warning on first launch. No Intel build. | Anonymous download from the Releases page | GitHub Releases API, 2026-11-15; `Desktop/release/` is gitignored |
-| Windows Desktop | **Published (prerelease), unsigned** | NSIS x64 `.exe` + `.sha256` attached to `desktop-v0.1.2` (2026-11-15, CI-built); no Authenticode certificate, never installed on real hardware | Anonymous download from the Releases page | GitHub Releases API, 2026-11-15 |
+| Windows Desktop | **Published (prerelease), unsigned** | NSIS x64 `.exe` + `.sha256` attached to `desktop-v0.1.3` (2026-11-15, CI-built; previous `desktop-v0.1.2` / `desktop-v0.1.0`); includes update awareness (check + notify, manual download); no Authenticode certificate, never installed on real hardware | Anonymous download from the Releases page | GitHub Releases API, 2026-11-15 |
 | Linux Desktop | **Not supported yet** | `AppImage` target kept in config; no build, no verification | — | `Desktop/electron-builder.yml` |
 | MCP / AI Action Gateway | **Built, not published** | Ships with the desktop app; 18 tools, 8 scopes | Run from source | `Desktop/docs/MCP_TOOLS.md`, `Desktop/src/mcp/` |
 
 There are **four published GitHub Releases** (all prerelease, anonymously downloadable):
 `desktop-v0.1.0` (2026-11-10, tag at `f9fee39`), `desktop-v0.1.1` (2026-11-11, signed +
 notarized macOS), `desktop-v0.1.2` (2026-11-15, signed-only macOS arm64 + unsigned Windows x64)
-and `desktop-v0.1.3` (2026-11-15, notarized + stapled macOS arm64, update awareness). The iOS
+and `desktop-v0.1.3` (2026-11-15, notarized + stapled macOS arm64, unsigned Windows x64, update
+awareness). The iOS
 app's download entry
 (`AppLinks.desktopDownload`) points at the Releases page; the previously planned
 `commitbrew.com/brewphase` page (HTTP 404) is no longer required for downloads.
