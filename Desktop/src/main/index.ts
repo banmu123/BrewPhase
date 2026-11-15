@@ -43,8 +43,10 @@ import { DataLocationService } from './data-location-service'
 import { BridgeServer } from './mcp-bridge/bridge-server'
 import { BRIDGE_PROTOCOL_VERSION, bridgePaths, platformSupportsBridge } from './mcp-bridge/bridge-contract'
 import type { McpBridgeStatus } from '../shared/contracts/mcp'
+import { UPDATE_CHANGED_CHANNEL } from '../shared/contracts/update'
 import { APP_VERSION } from '../shared/contracts/version'
 import { EMBED_FRAME_ORIGINS } from '../shared/link-embed'
+import { UpdateService } from './update/update-service'
 
 /**
  * MCP STDIO 入口的绝对路径。
@@ -487,6 +489,15 @@ function bootstrap(): void {
     }
   })
 
+  // 版本感知：主进程唯一状态，结果广播给所有 Renderer 窗口（含独立窗口）。
+  const updateService = new UpdateService({
+    broadcast: (result) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.send(UPDATE_CHANGED_CHANNEL, result)
+      }
+    }
+  })
+
   registerIpc({
     db,
     devServerUrl,
@@ -502,7 +513,8 @@ function bootstrap(): void {
     bookmarks: bookmarkService,
     chrome: chromeIntegration,
     dataDir: initialDataLocation.dataDir,
-    dataLocation
+    dataLocation,
+    updates: updateService
   })
 
   // E2E / 单测钩子：注入假光标（拖拽会话的松手位置判定用）。
@@ -523,6 +535,8 @@ function bootstrap(): void {
 
   const mainWindow = createMainWindow({ devServerUrl })
   mainWindowRef = mainWindow
+  // 版本探针只在打包版跑：dev / e2e 不联网；定时器 unref，不阻止退出。
+  if (app.isPackaged) updateService.startAutoCheck()
   mainWindow.on('closed', () => {
     mainWindowRef = null
   })

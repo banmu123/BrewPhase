@@ -45,15 +45,16 @@ available.
 |---|---|---|---|---|
 | iPhone app | **Available** | App Store 1.1, `com.brewphase.ios`, free, US storefront, EN + ZH | [App Store](https://apps.apple.com/us/app/brewphase/id6815591631) | iTunes Lookup API `?bundleId=com.brewphase.ios&country=us`, 2026-11-10 |
 | iPhone app, `main` (2.0) | **In development — not published** | Coffee + Records + Canvas + LAN sync in source | Build from source | `BrewPhase.xcodeproj/project.pbxproj`, `BrewPhase/Features/` |
-| macOS Desktop | **Published (prerelease)** | arm64 `.dmg` + `.zip` with `.sha256` sidecars. `desktop-v0.1.2` (published 2026-11-15): Developer ID signed with hardened runtime, **not notarized** — Apple notarization returns 403 (team legal agreement pending), first launch needs right-click → Open. `desktop-v0.1.1` (2026-11-11) is the last signed + notarized + stapled build. | Anonymous download from the Releases page | GitHub Releases API, 2026-11-15; `Desktop/release/` is gitignored |
+| macOS Desktop | **Published (prerelease)** | arm64 `.dmg` + `.zip` with `.sha256` sidecars. `desktop-v0.1.3` (published 2026-11-15): Developer ID signed with hardened runtime, Apple notarization **Accepted** (`d71085e7-07ec-471d-bdf3-ca3aea31be0b`), ticket stapled to the app; the dmg itself was also signed and notarization Accepted (`6306e49b-52d0-4bfa-be10-106b9d56a2f1`), but its ticket is not stapled to the published dmg (stapling would change the file after upload). `spctl` on the app extracted from the dmg → `accepted / Notarized Developer ID`. Also adds update awareness (check + notify + manual download). `desktop-v0.1.2` (signed only, **not notarized**) is superseded — it caused the Gatekeeper warning on first launch. No Intel build. | Anonymous download from the Releases page | GitHub Releases API, 2026-11-15; `Desktop/release/` is gitignored |
 | Windows Desktop | **Published (prerelease), unsigned** | NSIS x64 `.exe` + `.sha256` attached to `desktop-v0.1.2` (2026-11-15, CI-built); no Authenticode certificate, never installed on real hardware | Anonymous download from the Releases page | GitHub Releases API, 2026-11-15 |
 | Linux Desktop | **Not supported yet** | `AppImage` target kept in config; no build, no verification | — | `Desktop/electron-builder.yml` |
 | MCP / AI Action Gateway | **Built, not published** | Ships with the desktop app; 18 tools, 8 scopes | Run from source | `Desktop/docs/MCP_TOOLS.md`, `Desktop/src/mcp/` |
 
-There are **three published GitHub Releases** (all prerelease, anonymously downloadable):
-`desktop-v0.1.0` (2026-11-10, tag at `f9fee39`), `desktop-v0.1.1` (2026-11-11, last signed +
-notarized macOS build) and `desktop-v0.1.2` (2026-11-15, Developer ID signed macOS arm64 +
-unsigned Windows x64). The iOS app's download entry
+There are **four published GitHub Releases** (all prerelease, anonymously downloadable):
+`desktop-v0.1.0` (2026-11-10, tag at `f9fee39`), `desktop-v0.1.1` (2026-11-11, signed +
+notarized macOS), `desktop-v0.1.2` (2026-11-15, signed-only macOS arm64 + unsigned Windows x64)
+and `desktop-v0.1.3` (2026-11-15, notarized + stapled macOS arm64, update awareness). The iOS
+app's download entry
 (`AppLinks.desktopDownload`) points at the Releases page; the previously planned
 `commitbrew.com/brewphase` page (HTTP 404) is no longer required for downloads.
 
@@ -155,7 +156,9 @@ because `better-sqlite3` 13 loads platform N-API prebuilds shared between Node a
 **Release state (2026-11-10):** the only release is draft `439332432` with 4 uploaded assets —
 `BrewPhase-0.1.0-mac-arm64.dmg` (141,152,610 B), `.zip` (141,660,586 B) and two `.sha256` files.
 It is not published, and no remote tag `desktop-artifacts-20261109` exists (drafts do not create
-tags until published). Automatic updates (`electron-updater`) are not implemented.
+tags until published). Automatic installation of updates (`electron-updater`) is not implemented;
+update awareness (check GitHub Releases for a newer `desktop-v*` version, notify in Settings,
+open the download page) is implemented — it reads only version numbers and links, uploads nothing.
 
 ## 6. Code signing & notarization
 
@@ -241,7 +244,7 @@ Signed and notarized do **not** mean published: these artifacts are still in an 
 |---|---|
 | Maintainer | One active maintainer (`banmu123`): reviews PRs, builds and signs packages, handles releases |
 | iOS release | Built and submitted from Xcode / App Store Connect; repository has no iOS release workflow |
-| macOS release (actual) | Built locally, signed with the keychain Developer ID, then uploaded to the existing GitHub Release through the API. Notarization with `BrewPingNotary` currently fails: notarytool returns HTTP 403 "a required agreement is missing or has expired" (team legal agreement needs attention); 0.1.2 shipped signed-only because of this |
+| macOS release (actual) | Built locally with `electron-builder` (on this machine `NODE_TLS_REJECT_UNAUTHORIZED=0` is needed for the proxy certificate), signed with the keychain Developer ID, then `notarytool submit --keychain-profile BrewPingNotary` + `stapler staple`; dmg signed as well. The HTTP 403 "a required agreement is missing or has expired" that blocked 0.1.2 no longer reproduces — 0.1.3 shipped signed + notarized + stapled. Release and assets are created/uploaded through the GitHub API |
 | macOS / Windows release (configured) | `desktop-v*` tag → `.github/workflows/desktop-release.yml` → artifacts + draft prerelease. First executed 2026-11-10, both jobs green (unsigned); secrets still not configured |
 | Issue / PR process | GitHub Issues / PRs; no templates and no required CI checks yet |
 | Security reports | No `SECURITY.md`; use a private GitHub Security Advisory or an issue |

@@ -55,8 +55,21 @@ export const settings = {
       'TLS 传输加密（当前同步是局域网 HTTP + token/签名）',
       '双向同步（现为移动设备 → 电脑单向）',
       'Windows 上的 MCP Bridge（Named Pipe 权限未验证）',
-      '代码签名 / 公证 / 自动更新'
-    ]
+      '自动安装更新（现在只提示新版本，仍需手动下载）'
+    ],
+    update: {
+      title: '检查更新',
+      hint: '启动时自动查询 GitHub Releases 是否有新版本；只读取版本号与下载页地址，不上传设备信息或任何记录数据。',
+      check: '检查更新',
+      checking: '正在检查…',
+      idle: '还没有检查过更新',
+      upToDate: (version: string) => `已是最新版本 ${version}`,
+      available: (version: string) => `发现新版本 ${version}`,
+      unavailable: '暂时无法检查更新，请稍后重试',
+      open: '前往下载',
+      lastChecked: (time: string) => `上次检查：${time}`,
+      badge: '有新版本可用'
+    }
   },
   /** 设置 → 浏览器：Chrome 书签导入向导。 */
   browser: {

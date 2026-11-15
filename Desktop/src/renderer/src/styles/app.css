@@ -2109,6 +2109,17 @@ textarea {
   white-space: nowrap;
 }
 
+/* 有新版本：导航项右侧一枚提示点，沿用 --priority，深浅主题都可读。 */
+.settings-nav__dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: var(--priority);
+  vertical-align: middle;
+}
+
 .settings-nav__item:hover {
   background: var(--well);
   color: var(--ink);

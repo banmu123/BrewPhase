@@ -1,5 +1,6 @@
-import { app, BrowserWindow, ipcMain, Menu, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, shell, type IpcMainInvokeEvent } from 'electron'
 import { z } from 'zod'
+import type { UpdateService } from '../update/update-service'
 import { IPC, ipcRequestSchemas } from '../../shared/contracts/validation/ipc'
 import type { DatabaseHandle } from '../database/client'
 import {
@@ -112,6 +113,8 @@ export function registerIpc(params: {
   dataDir: string
   /** 数据目录选择/迁移；成功后需要重启。 */
   dataLocation: DataLocationService
+  /** 版本感知：主进程唯一的检查结果与下载页白名单。 */
+  updates: UpdateService
 }): void {
   const {
     db,
@@ -128,7 +131,8 @@ export function registerIpc(params: {
     bookmarks,
     chrome,
     dataDir,
-    dataLocation
+    dataLocation,
+    updates
   } = params
 
   // 首次启动铺默认阶段规则（之后由用户或同步决定，不覆盖）。
@@ -163,6 +167,16 @@ export function registerIpc(params: {
     dataDir,
     onboardingEligible: app.isPackaged || process.env.BREWPHASE_FORCE_ONBOARDING === 'yes'
   }))
+
+  // 版本感知：只查版本号；打开下载页的地址由主进程从自己的缓存里取，
+  // Renderer 传不进 URL，也就无法借这条通道打开任意地址。
+  handle(IPC.updateCheck, (input) =>
+    updates.check({ force: (input as { force?: boolean } | undefined)?.force === true })
+  )
+  handle(IPC.updateOpenRelease, () => {
+    void shell.openExternal(updates.releaseUrl())
+    return null
+  })
 
   // 轻量菜单入口：把应用菜单（role + 快捷键都在其中）弹在窗口鼠标位置。
   // 菜单是主进程对象，Renderer 只发一个空请求，拿不到任何菜单结构。

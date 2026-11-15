@@ -14,7 +14,8 @@ import type {
   McpClientInfo,
   McpScope,
   SyncConflictItem,
-  SyncStatus
+  SyncStatus,
+  UpdateCheckResult
 } from '@shared/contracts'
 import { MCP_SCOPE_GROUPS, MCP_SCOPE_PRESETS } from '@shared/contracts'
 import { api } from '../../shared/api'
@@ -36,7 +37,13 @@ import { codexConfig, configTargetFrom, workbuddyConfig } from './mcp-config'
  * 用户数据（设备名、客户端名、token、路径）不翻译。
  */
 
-export function SettingsPage({ info }: { info: AppInfo | null }) {
+export function SettingsPage({
+  info,
+  update
+}: {
+  info: AppInfo | null
+  update: UpdateCheckResult | null
+}) {
   const { t } = useI18n()
   // 跨页直达（引导页「打开设备同步设置」）：mount 时消费一次挂起的请求，
   // 之后每次新请求跟随切换。用户手动点子导航不经过 store，不受影响。
@@ -80,12 +87,19 @@ export function SettingsPage({ info }: { info: AppInfo | null }) {
                 onClick={() => setCategory(item.key)}
               >
                 {item.label}
+                {item.key === 'general' && update?.status === 'available' && (
+                  <span
+                    className="settings-nav__dot"
+                    title={t.settings.general.update.badge}
+                    aria-hidden="true"
+                  />
+                )}
               </button>
             ))}
           </nav>
 
           <div className="settings-pane">
-            {category === 'general' && <GeneralSection info={info} />}
+            {category === 'general' && <GeneralSection info={info} update={update} />}
             {category === 'sync' && <SyncSection />}
             {category === 'browser' && <BrowserSection />}
             {category === 'chrome' && <ChromeSection />}
@@ -98,13 +112,41 @@ export function SettingsPage({ info }: { info: AppInfo | null }) {
 }
 
 /** 常规：语言、应用信息、本地数据、关于。 */
-function GeneralSection({ info }: { info: AppInfo | null }) {
-  const { t, locale, setLocale } = useI18n()
+function GeneralSection({
+  info,
+  update
+}: {
+  info: AppInfo | null
+  update: UpdateCheckResult | null
+}) {
+  const { t, locale, setLocale, formatDateTime } = useI18n()
   const { preference, setPreference } = useTheme()
   const [location, setLocation] = useState<DataLocationStatus | null>(null)
   const [moving, setMoving] = useState(false)
   const [restarting, setRestarting] = useState(false)
   const [moveError, setMoveError] = useState<string | null>(null)
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
+
+  async function checkUpdate(): Promise<void> {
+    setCheckingUpdate(true)
+    try {
+      // 结果由主进程广播回 App，再经 props 流回这里；设置页不另存一份状态。
+      await api.update.check(true)
+    } catch (cause) {
+      console.error('[update] check failed', cause)
+    } finally {
+      setCheckingUpdate(false)
+    }
+  }
+
+  const updateStatus =
+    update == null
+      ? t.settings.general.update.idle
+      : update.status === 'available' && update.latestVersion
+        ? t.settings.general.update.available(update.latestVersion)
+        : update.status === 'up-to-date'
+          ? t.settings.general.update.upToDate(update.currentVersion)
+          : t.settings.general.update.unavailable
 
   useEffect(() => {
     void api.dataLocation
@@ -223,6 +265,37 @@ function GeneralSection({ info }: { info: AppInfo | null }) {
           <dt>{t.settings.general.platform}</dt>
           <dd>{info?.platform ?? '—'}</dd>
         </dl>
+      </section>
+
+      <section className="settings-subsection">
+        <h2 className="settings-subsection__title">{t.settings.general.update.title}</h2>
+        <p className="note">{t.settings.general.update.hint}</p>
+        <div className="row" style={{ marginTop: 10, alignItems: 'center' }}>
+          <span
+            className="note"
+            data-update-status={update?.status ?? 'idle'}
+            style={update?.status === 'unavailable' ? { color: 'var(--priority)' } : undefined}
+          >
+            {updateStatus}
+          </span>
+          <button
+            className="button button--ghost"
+            onClick={() => void checkUpdate()}
+            disabled={checkingUpdate}
+          >
+            {checkingUpdate ? t.settings.general.update.checking : t.settings.general.update.check}
+          </button>
+          {update?.status === 'available' && (
+            <button className="button" onClick={() => void api.update.openRelease()}>
+              {t.settings.general.update.open}
+            </button>
+          )}
+        </div>
+        {update && (
+          <p className="note" style={{ marginTop: 6 }}>
+            {t.settings.general.update.lastChecked(formatDateTime(update.checkedAt))}
+          </p>
+        )}
       </section>
 
       <section className="settings-subsection">

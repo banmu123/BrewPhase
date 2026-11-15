@@ -39,6 +39,9 @@ import {
 
 export const IPC = {
   appInfo: 'app:info',
+  // 版本感知：只查询 GitHub Releases 的版本号，不下载、不安装。
+  updateCheck: 'update:check',
+  updateOpenRelease: 'update:open-release',
   appPopupMenu: 'app:popup-menu',
   // 外观：Renderer 只报「现在是浅色还是深色」，色值由主进程自己决定。
   // 不让 Renderer 传颜色，是为了窗口底色与页面配色永远出自同一份定义。
@@ -225,6 +228,10 @@ export const IPC = {
 
 export const ipcRequestSchemas = {
   [IPC.appInfo]: z.void(),
+  // force 只由设置页「检查更新」按钮传 true；自动检查走 24h 缓存。
+  [IPC.updateCheck]: z.object({ force: z.boolean().optional() }).optional(),
+  // 刻意不收 URL：主进程只打开自己缓存且过白名单的 GitHub 地址。
+  [IPC.updateOpenRelease]: z.void(),
   // Studio Home「继续工作」区块的只读读取（创建/更新走 MCP）。
   [IPC.workContextsStudio]: z.void(),
   // 轻量菜单入口：Renderer 顶栏按钮 → 主进程把应用菜单弹成 popup。

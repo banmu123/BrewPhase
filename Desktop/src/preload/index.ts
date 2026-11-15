@@ -14,6 +14,7 @@ import {
   type RoundtableSnapshot
 } from '../shared/roundtable'
 import { ROUNDTABLE_AI_TASK_CHANGED_CHANNEL } from '../shared/contracts/roundtable-ai'
+import { UPDATE_CHANGED_CHANNEL, type UpdateCheckResult } from '../shared/contracts/update'
 import type { RendererApi } from '../shared/contracts'
 
 /**
@@ -292,6 +293,16 @@ const api: RendererApi = {
     choose: () => invoke(IPC.dataLocationChoose),
     reset: () => invoke(IPC.dataLocationReset),
     relaunch: () => invoke(IPC.dataLocationRelaunch)
+  },
+  // 版本感知：只读检查 + 打开下载页；URL 主进程决定，Renderer 不传地址。
+  update: {
+    check: (force?: boolean) => invoke(IPC.updateCheck, { force: force === true }),
+    openRelease: () => invoke(IPC.updateOpenRelease),
+    onChanged: (listener) => {
+      const wrapped = (_event: unknown, result: UpdateCheckResult) => listener(result)
+      ipcRenderer.on(UPDATE_CHANGED_CHANNEL, wrapped)
+      return () => ipcRenderer.removeListener(UPDATE_CHANGED_CHANNEL, wrapped)
+    }
   }
 }
 

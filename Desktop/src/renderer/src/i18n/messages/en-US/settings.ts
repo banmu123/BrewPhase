@@ -58,8 +58,21 @@ export const settings = {
       'TLS transport encryption (sync is LAN HTTP with tokens/signatures)',
       'Two-way sync (currently mobile device → desktop only)',
       'MCP Bridge on Windows (Named Pipe permissions unverified)',
-      'Code signing / notarization / auto-update'
-    ]
+      'Automatic update installation (new versions are only announced; download is manual)'
+    ],
+    update: {
+      title: 'Check for updates',
+      hint: 'BrewPhase looks up the latest GitHub release on startup. Only version numbers and download links are read — no device info or journal data is uploaded.',
+      check: 'Check for updates',
+      checking: 'Checking…',
+      idle: 'No update check yet',
+      upToDate: (version: string) => `You are up to date (${version})`,
+      available: (version: string) => `Version ${version} is available`,
+      unavailable: 'Could not check for updates. Try again later.',
+      open: 'Open download page',
+      lastChecked: (time: string) => `Last checked: ${time}`,
+      badge: 'Update available'
+    }
   },
   /** Settings → Browser: Chrome bookmark import wizard. */
   browser: {

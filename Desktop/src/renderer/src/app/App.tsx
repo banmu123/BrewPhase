@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { AppInfo } from '@shared/contracts'
+import type { AppInfo, UpdateCheckResult } from '@shared/contracts'
 import { api } from '../shared/api'
 import { CanvasPage } from '../features/canvas/CanvasPage'
 import { BrowserFloatWindow } from '../features/browser/BrowserFloatWindow'
@@ -44,6 +44,8 @@ export function App() {
   const { t } = useI18n()
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // 版本感知结果由主进程持有，这里只做展示；设置页与导航徽标共用同一份。
+  const [update, setUpdate] = useState<UpdateCheckResult | null>(null)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   // 设置页可以随时重新打开接入向导；那条路径直接进 AI 分支。
   const agentOnboarding = useAppStore((state) => state.agentOnboarding)
@@ -57,6 +59,19 @@ export function App() {
       .info()
       .then(setInfo)
       .catch((cause: Error) => setError(cause.message))
+  }, [])
+
+  /**
+   * 启动时问一次「有没有新版本」，之后由主进程的 24h 定时器广播。
+   * 检查失败只是 unavailable，不弹错、不阻塞应用——离线仍可完整使用。
+   */
+  useEffect(() => {
+    const unsubscribe = api.update.onChanged(setUpdate)
+    void api.update
+      .check()
+      .then(setUpdate)
+      .catch(() => {})
+    return unsubscribe
   }, [])
 
   /**
@@ -168,7 +183,7 @@ export function App() {
           ) : module === 'canvas' ? (
             <CanvasPage />
           ) : module === 'settings' ? (
-            <SettingsPage info={info} />
+            <SettingsPage info={info} update={update} />
           ) : (
             <StudioHome />
           )}

@@ -62,6 +62,7 @@ import type {
   ChromeSelfTestResult
 } from './chrome-bridge'
 import type { DataLocationChangeResult, DataLocationStatus } from './data-location'
+import type { UpdateCheckResult } from './update'
 import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from './version'
 
 export * from './version'
@@ -79,6 +80,7 @@ export * from './agents'
 export * from './ai-chat'
 export * from './roundtable-ai'
 export * from './data-location'
+export * from './update'
 export * from './validation/ipc'
 
 /**
@@ -120,6 +122,12 @@ export interface RendererApi {
     setAppearance: (appearance: 'light' | 'dark') => Promise<void>
     /** 主进程写入后的刷新通知（MCP/同步等外部来源）。 */
     onChanged: (listener: (domain: AppDomain) => void) => () => void
+  }
+  /** 版本感知：只读检查 + 打开 GitHub 下载页，不下载、不安装。 */
+  update: {
+    check: (force?: boolean) => Promise<UpdateCheckResult>
+    openRelease: () => Promise<void>
+    onChanged: (listener: (result: UpdateCheckResult) => void) => () => void
   }
   /**
    * Personal Direction：现状 / 方向 / 阶段。
