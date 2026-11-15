@@ -1663,4 +1663,22 @@ EN: dict[str, str] = {
     "已同步 %@ 项": "%@ items synced",
     "有 %@ 条冲突": "%@ conflicts",
     "有 %@ 条失败": "%@ failures",
+
+    # MARK: Workspace home — three equal spaces, card stacks, top switcher
+    #
+    # 首页不是咖啡页：这三列是同一种卡片、同一个上限。文案也不该让任何
+    # 一个空间听起来更像「主体」。
+    "工作台": "Workspace",
+    "返回工作台": "Back to workspace",
+    "早上好。": "Good morning.",
+    "下午好。": "Good afternoon.",
+    "晚上好。": "Good evening.",
+    "空着": "Empty",
+    "还没有咖啡": "No coffee yet",
+    "咖啡豆": "Bean",
+    "一杯咖啡": "A cup of coffee",
+    "未命名记录": "Untitled entry",
+    "进入%@": "Open %@",
+    "打开%@": "Open %@",
+    "这条内容已经不在了": "This item is gone",
 }

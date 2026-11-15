@@ -10,29 +10,44 @@ import SwiftUI
 struct CanvasThumbnailPreview: View {
 
     let canvas: Canvas
-    var height: CGFloat = 96
+    /// 固定高度；nil 表示填满外层给的空间（首页小卡片用）。
+    var height: CGFloat? = 96
+    /// 自带底色、圆角与发丝线。嵌进别的卡片里时关掉，免得出现双重圆角。
+    var chrome: Bool = true
 
     @Environment(\.modelContext) private var context
     @State private var data: CanvasThumbnailData?
     @State private var recordsByID: [UUID: Record] = [:]
 
     var body: some View {
+        Group {
+            if chrome {
+                content
+                    .frame(height: height)
+                    .frame(maxWidth: .infinity)
+                    .background(Palette.well.opacity(0.55))
+                    .clipShape(RoundedRectangle(cornerRadius: Metric.radius, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Metric.radius, style: .continuous)
+                            .strokeBorder(Palette.hairline, lineWidth: 0.7)
+                    )
+            } else {
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+            }
+        }
+        .task(id: canvas.updatedAt) { load() }
+    }
+
+    private var content: some View {
         ZStack {
             if let data, !data.items.isEmpty {
                 composition(data)
             } else {
-                CanvasCover(name: canvas.name, height: height)
+                CanvasCover(name: canvas.name, height: height ?? 110)
             }
         }
-        .frame(height: height)
-        .frame(maxWidth: .infinity)
-        .background(Palette.well.opacity(0.55))
-        .clipShape(RoundedRectangle(cornerRadius: Metric.radius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Metric.radius, style: .continuous)
-                .strokeBorder(Palette.hairline, lineWidth: 0.7)
-        )
-        .task(id: canvas.updatedAt) { load() }
     }
 
     private func composition(_ data: CanvasThumbnailData) -> some View {

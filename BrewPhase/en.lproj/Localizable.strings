@@ -96,6 +96,7 @@
 "一包没有记录的豆子" = "an unrecorded bag";
 "一句话总结" = "One-line summary";
 "一本属于你的咖啡实验手册：记录每一包豆，看到风味怎么变化。" = "A coffee notebook that's yours: log every bag and watch its flavour move.";
+"一杯咖啡" = "A cup of coffee";
 "一杯手冲的时间" = "The time a pour-over takes";
 "一次只改一个变量，否则事后不知道是哪一项起的作用。" = "Change one variable at a time, or you will not know which one did the work.";
 "一段网页、一张照片、一段视频、一句话。放进来，再决定它对你意味着什么。" = "A page, a photo, a clip, a sentence. Put it here, then decide what it means to you.";
@@ -112,6 +113,7 @@
 "下一杯留意" = "Watch next time";
 "下一杯：%@" = "Next cup: %@";
 "下一步" = "Next step";
+"下午好。" = "Good afternoon.";
 "下次记这一杯，会自动带上这次的参数。" = "Next time, this cup's parameters will be filled in for you.";
 "下面会给你两部分资料：一部分是用户自己的豆子、冲煮和风味记录，一部分是 BrewPhase 自带的咖啡常识。" = "You will be given two sets of material: the user's own bags, brews and tasting notes, and the coffee background notes that ship with BrewPhase.";
 "不依赖任何模型，中英混写也能匹配，但只认字面相近" = "Depends on no model and copes with mixed Chinese and English, but only matches on literal wording";
@@ -322,6 +324,7 @@
 "咖啡、记录与画布，在你的设备之间自然延续。" = "Coffee, records and canvases carry on across your devices.";
 "咖啡变成了少数几件每天都会做的事之一。它不解决问题，但它让一天有个开头。" = "Coffee became one of the few things I do every day. It solves nothing, but it starts the day.";
 "咖啡知识" = "Coffee knowledge";
+"咖啡豆" = "Bean";
 "咖啡豆及相关记录" = "Beans and related records";
 "品种" = "Variety";
 "品鉴" = "Tasting";
@@ -407,6 +410,7 @@
 "局域网传输使用 HTTP（无 TLS），不要在公共网络使用；当前为 iPhone → Desktop 单向同步，桌面端的修改不会自动回传 iPhone。" = "Plain HTTP (no TLS) — trusted LAN only. One-way iPhone → Desktop; desktop edits never flow back.";
 "层级匹配" = "Hierarchy match";
 "展开依据" = "Show evidence";
+"工作台" = "Workspace";
 "工作室还空着" = "The studio shelf is empty";
 "巧克力" = "Chocolate";
 "已关联 %@ 条与这包豆子直接相关的知识。" = "Linked %@ entries of knowledge directly relevant to this bag.";
@@ -498,6 +502,7 @@
 "手动记录" = "Manual note";
 "打开" = "Opening";
 "打开 BrewPhase Desktop，在设备同步中生成配对二维码。" = "Open BrewPhase Desktop and generate a pairing code in Settings → Device sync.";
+"打开%@" = "Open %@";
 "打开原始来源" = "Open original";
 "打开原记录" = "Open original record";
 "扫描二维码" = "Scan QR code";
@@ -569,12 +574,14 @@
 "无法连接桌面端（已尝试 %@）。请确认 iPhone 与 Mac 在同一 Wi-Fi，桌面端同步已启用，且 Mac 防火墙允许 BrewPhase。" = "Couldn't reach the desktop (tried %@). Make sure the iPhone and Mac are on the same Wi-Fi, sync is enabled on the desktop, and the Mac firewall allows BrewPhase.";
 "无法连接桌面端，请确认两台设备在同一个局域网。" = "Cannot reach the desktop. Make sure both devices are on the same local network.";
 "日期" = "Date";
+"早上好。" = "Good morning.";
 "时间" = "Time";
 "时间 %@–%@" = "Time %@–%@";
 "时间不短但甜感没上来时，升温通常比磨细更有效。" = "When the time is fine but sweetness is missing, a warmer brew usually helps more than a finer grind.";
 "时间与天数" = "Timing";
 "时间偏短是萃取不足最常见的信号，磨细是最直接的补救。" = "A short brew is the most common under-extraction signal; going finer is the direct fix.";
 "时间偏长，又有苦或干涩，通常是磨得太细。" = "A long brew plus bitterness or dryness usually means the grind is too fine.";
+"晚上好。" = "Good evening.";
 "暂停" = "Pause";
 "暂无结果" = "No result yet";
 "暂时不认这种链接，会按普通网页保存。" = "This link is not recognised; it will be saved as a normal page.";
@@ -610,6 +617,7 @@
 "未命名" = "Untitled";
 "未命名标签" = "Untitled tag";
 "未命名画布" = "Untitled canvas";
+"未命名记录" = "Untitled entry";
 "未命名链接" = "Untitled link";
 "未填写" = "Not set";
 "未选择" = "Not selected";
@@ -829,6 +837,7 @@
 "移除" = "Remove";
 "稍微延长" = "a little longer";
 "稍微缩短" = "a little shorter";
+"空着" = "Empty";
 "窗口今天结束" = "The window closes today";
 "窗口开始" = "Window starts";
 "窗口结束" = "Window ends";
@@ -964,6 +973,7 @@
 "载入示例数据" = "Load sample data";
 "过去平均 %@ 分" = "averaged %@ before";
 "返回全部" = "Back to everything";
+"返回工作台" = "Back to workspace";
 "还剩 %@。" = "%@ left.";
 "还在养豆，风味还没打开" = "Still resting — the flavour is not open yet";
 "还在认识你的冲煮习惯" = "Still learning how you brew";
@@ -973,6 +983,7 @@
 "还没有冲煮记录" = "No brews yet";
 "还没有冲煮记录\n记下第一杯，之后才能看到你的参数变化和个人规律。" = "No brews yet.\nLog the first cup and your parameter patterns will start to show up here.";
 "还没有冲煮记录。冲完随手记一笔，这里会长起来。" = "No brews yet. Log one as you drink it and this list starts to grow.";
+"还没有咖啡" = "No coffee yet";
 "还没有填：%@。填上之后关联会更准。" = "Not filled in yet: %@. Filling these in makes the linking more accurate.";
 "还没有安装？下载桌面端" = "Not installed yet? Download the desktop app";
 "还没有标签" = "No tags yet";
@@ -1040,6 +1051,7 @@
 "这是从 %@ 次高评分记录里算出来的区间，不是通用建议。" = "This range comes from your %@ high-scoring brews, not from general advice.";
 "这是你自己的高分记录统计，不是专业标准。" = "These ranges come from your own high-rated brews, not a professional standard.";
 "这条内容不公开，或者在当前地区看不到。" = "This content is private, or not available in your region.";
+"这条内容已经不在了" = "This item is gone";
 "这条是用户单独记的，不是某次冲煮的附笔。" = "This note was written on its own, not as a by-product of a brew.";
 "这条链接已经收藏过了：%@" = "You already saved this link: %@";
 "这杯怎么样" = "How was it";
@@ -1064,6 +1076,7 @@
 "这次：%@" = "This time: %@";
 "这段视频没能保存下来，可以换一段试试" = "This video could not be saved — try another one";
 "这段视频的文件不在本机。" = "The video file is not on this device.";
+"进入%@" = "Open %@";
 "进入黄金风味期" = "Peak window opens";
 "进入黄金风味期时提醒" = "When it enters its peak window";
 "进行中" = "In progress";

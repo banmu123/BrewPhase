@@ -55,6 +55,19 @@ enum Palette {
     static let cream = color(0xEFE3D2)
     static let moss = color(0x6E8A5F)
 
+    // MARK: - Space identity
+    //
+    // 三个空间各一个低饱和标记色，只上在小字与极浅的底面上，用来「认得出」，
+    // 不构成等级：三者的明度接近，没有谁更响。
+    //
+    // 它们**不是**阶段色。moss 已经被「peak」占用（阶段色是语义，不能挪作
+    // 装饰），所以 Records 的灰绿另立一格 `sage`。
+
+    /// Records：灰绿（鼠尾草）。
+    static let sage = color(0x5F7752)
+    /// Canvas：灰紫。
+    static let lilac = color(0x6A6485)
+
     // MARK: - Phase colours
     //
     // Small doses only: a dot, a 7pt bar segment, a chip's text. Never a filled
@@ -138,7 +151,6 @@ enum Metric {
     /// Page gutter: the studio keeps its walls at 22pt (Design System v1 §4).
     static let gutter: CGFloat = 22
     static let sectionGap: CGFloat = 28
-    static let tabBarInset: CGFloat = 12
 
     /// The 4pt ladder (Design System v1 §4). Use these instead of bare numbers
     /// so the page's breathing rhythm stays consistent.

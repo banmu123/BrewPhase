@@ -167,8 +167,14 @@ Canvas 重设计的唯一权威来源。
 - **Hairline / CardDivider**：0.7pt；CardDivider 可缩进对齐文字左缘。
 - **PrimaryButton**：整屏唯一 espresso 实心块；SecondaryButton：well 胶囊；
   文字级次级操作用 roast 色文本 + 图标。
-- **CapsuleTabBar**：白胶囊 + 0.8pt 边 + 14pt 轻阴影；选中 cream 0.55 + espresso；
-  未选中 inkFaint；点击区域 ≥ 44pt；通过布局参与安全区，不遮内容。
+- **WorkspaceCardStack（首页，Phase 1 起）**：三个空间各一列，列宽等分、卡片同高
+  （几何收在 `WorkspaceStackLayout`）；后卡**宽度不变**，只下探 7pt、右移 2pt、
+  降一档不透明度——**不能用「两侧内收」做台阶**：卡片按宽高比定高，收窄会让后卡
+  比前卡更矮，整张躲进前卡背后。点最前那张开内容，点标题/露出的边缘/空态卡进空间。
+  每列最多三张，Coffee 不得在尺寸、颜色、位置与信息量上压过 Records 与 Canvas。
+- **SpaceSwitcherBar（模块顶部，Phase 1 起）**：44pt 一行，左「工作台」右三个空间名，
+  选中 cream 0.55 + ink；挂在模块根页面的 `safeAreaInset`，推开详情即消失。
+  全 App 不再有底部 Tab Bar。
 - **PhaseTrack**：真实天数等比分段 + 「今天」标记 + 图例；阶段色只上轨道与
   状态点；禁止做成经验条。
 - **BeanStack / BeanDeck**：连续手势数学是品牌资产，只允许改视觉层
@@ -217,8 +223,8 @@ minHeight 372 / 五级行距 16-13-11-17-14 / actionGap 20），每个值有语�
 
 ## 10. 验收基准（每次改版对照）
 
-1. 是否一眼看出「今天最该喝的那包豆」？
+1. 首页是否先让人看见「三个空间」，而不是「一个咖啡 App」？
 2. 信息是否克制但足够专业（参数等宽、状态有色、其余安静）？
 3. 用户能否不经思考完成主操作（开始冲煮 / 记一杯）？
 4. 页面是否区别于通用 SaaS（留白、衬线 overline、非对称层次）？
-5. Coffee 首页能否作为 Records / Canvas 未来重设计的视觉标杆？
+5. 三个空间在首页的尺寸、颜色、位置与信息量上是否真正平等？

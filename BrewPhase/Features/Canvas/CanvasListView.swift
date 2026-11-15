@@ -8,6 +8,9 @@ import SwiftUI
 /// 只通过 `CanvasNode` 引用它们。
 struct CanvasListView: View {
 
+    /// 一级导航：回工作台、换到另一个空间。由 `RootView` 注入。
+    var navigation = SpaceNavigation()
+
     @Environment(\.modelContext) private var context
 
     @Query(sort: \Canvas.updatedAt, order: .reverse) private var canvases: [Canvas]
@@ -64,6 +67,9 @@ struct CanvasListView: View {
                 .padding(.bottom, 28)
             }
             .background(Palette.paper)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                SpaceSwitcherBar(current: .canvas, navigation: navigation)
+            }
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(item: $detail) { canvas in
                 CanvasWorkspaceView(canvas: canvas)

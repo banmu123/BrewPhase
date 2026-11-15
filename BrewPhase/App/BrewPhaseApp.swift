@@ -22,8 +22,9 @@ struct BrewPhaseApp: App {
     @StateObject private var language = LanguageManager.shared
 
     /// Held here rather than inside `RootView` so that rebuilding the view tree
-    /// for a language change does not reset which tab the user is on.
-    @State private var selection: AppTab = DebugLaunch.tab ?? .coffee
+    /// for a language change does not reset which space the user is in — 换语言
+    /// 不该把人从 Records 弹回首页。
+    @State private var route: AppRoute = DebugLaunch.tab.map(AppRoute.space) ?? .home
 
     init() {
         // Touch the singleton before the first frame so the language is already
@@ -94,7 +95,7 @@ struct BrewPhaseApp: App {
             Group {
                 switch store {
                 case .ready(let container):
-                    RootView(selection: $selection)
+                    RootView(route: $route)
                         .modelContainer(container)
                 case .failed:
                     PersistenceRecoveryView(onRetry: retry)
@@ -116,9 +117,8 @@ struct BrewPhaseApp: App {
 
 /// 三个一级页面：喝什么、记什么、把什么放在一起。
 ///
-/// 「豆仓」与「冲煮」不再是两个并列的 Tab——冲煮本来就是咖啡这件事的一部分，
-/// 现在它作为咖啡页里的一个入口存在。腾出来的位置给了记录与画布，这是这一版
-/// 产品形态的变化：从一台咖啡工具，变成一个有咖啡的个人空间。
+/// 「豆仓」与「冲煮」不再是两个并列的入口——冲煮本来就是咖啡这件事的一部分，
+/// 现在它作为咖啡页里的一个入口存在。三个空间平起平坐，谁也不给谁当子菜单。
 enum AppTab: String, CaseIterable, Identifiable, Hashable {
     case coffee
     case records
@@ -133,21 +133,23 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
         case .canvas: return L("画布")
         }
     }
+}
 
-    var symbol: String {
-        switch self {
-        case .coffee: return "cup.and.saucer.fill"
-        case .records: return "rectangle.stack.fill"
-        case .canvas: return "square.grid.2x2.fill"
-        }
-    }
+/// 一级导航只有两站：三空间首页，或某一个空间。
+///
+/// 不再有「第几个 Tab」——底部 Tab Bar 已经删掉，空间之间从首页进、从模块
+/// 顶部换。它是 `Equatable` 的，因为切换时要判断「是不是已经在这一页」。
+enum AppRoute: Equatable {
+    case home
+    case space(AppTab)
 }
 
 struct RootView: View {
 
-    @Binding var selection: AppTab
+    @Binding var route: AppRoute
 
     @Environment(\.modelContext) private var context
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query(sort: \Bean.createdAt, order: .reverse) private var beans: [Bean]
     @Query(sort: \Brew.date, order: .reverse) private var brews: [Brew]
     @Query private var rules: [PhaseRule]
@@ -159,28 +161,13 @@ struct RootView: View {
     @State private var debugCanvas: Canvas?
 
     var body: some View {
-        // 导航条与页面是上下两块，而不是把胶囊浮在内容上面：页面自己滚动到
-        // 多长都走不到胶囊底下，也就不需要每个列表各自猜一个底部内边距。
-        VStack(spacing: 0) {
-            TabView(selection: $selection) {
-                CoffeeHomeView()
-                    .toolbar(.hidden, for: .tabBar)
-                    .tag(AppTab.coffee)
-
-                RecordsView()
-                    .toolbar(.hidden, for: .tabBar)
-                    .tag(AppTab.records)
-
-                CanvasListView()
-                    .toolbar(.hidden, for: .tabBar)
-                    .tag(AppTab.canvas)
+        Group {
+            switch route {
+            case .home:
+                WorkspaceHomeView(onOpenSpace: { go(to: .space($0)) })
+            case .space(let space):
+                module(space)
             }
-            .tint(Palette.roast)
-
-            CapsuleTabBar(selection: $selection)
-                .padding(.horizontal, 56)
-                .padding(.top, 8)
-                .padding(.bottom, 4)
         }
         .background(Palette.paper)
         .sheet(item: $debugScreen) { screen in
@@ -212,6 +199,37 @@ struct RootView: View {
                     performDebugBeanAction(action)
                 }
             }
+        }
+    }
+
+    // MARK: - 一级导航
+
+    /// 换站。已经在目标页时不做任何事——重复点同一个空间不该重建整棵视图树
+    /// （Records 会因此丢掉刚建立的分页与滚动位置）。
+    private func go(to next: AppRoute) {
+        guard next != route else { return }
+        withAnimation(reduceMotion ? nil : Motion.fade) {
+            route = next
+        }
+    }
+
+    /// 一个空间自己的完整页面。三个模块各自带 `NavigationStack`，这里只负责
+    /// 选哪一页，并把「回首页 / 换空间」交给它们顶部的切换条——不另建一套
+    /// 平行导航，详情页照旧由各模块自己的栈推开。
+    @ViewBuilder
+    private func module(_ space: AppTab) -> some View {
+        let navigation = SpaceNavigation(
+            goHome: { go(to: .home) },
+            open: { go(to: .space($0)) }
+        )
+
+        switch space {
+        case .coffee:
+            CoffeeHomeView(navigation: navigation)
+        case .records:
+            RecordsView(navigation: navigation)
+        case .canvas:
+            CanvasListView(navigation: navigation)
         }
     }
 

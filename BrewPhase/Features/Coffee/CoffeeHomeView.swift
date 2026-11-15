@@ -8,6 +8,9 @@ import SwiftUI
 /// 这一页底部的一段，以及一个通往完整历史的入口。
 struct CoffeeHomeView: View {
 
+    /// 一级导航：回工作台、换到另一个空间。由 `RootView` 注入。
+    var navigation = SpaceNavigation()
+
     @Query(sort: \Bean.createdAt, order: .reverse) private var beans: [Bean]
     @Query(sort: \Brew.date, order: .reverse) private var brews: [Brew]
     @Query private var rules: [PhaseRule]
@@ -109,6 +112,11 @@ struct CoffeeHomeView: View {
                 .padding(.bottom, Metric.sectionGap)
             }
             .background(Palette.paper)
+            // 顶部空间切换条挂在根页面上：推开一包豆时它随根页面一起离开，
+            // 详情页只剩系统返回按钮。
+            .safeAreaInset(edge: .top, spacing: 0) {
+                SpaceSwitcherBar(current: .coffee, navigation: navigation)
+            }
             // 页面自己带标题，导航栏不再重复一遍——也让堆叠卡片更靠近顶部。
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(item: $detailBean) { bean in

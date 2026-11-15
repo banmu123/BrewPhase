@@ -11,6 +11,9 @@ import UIKit
 /// 走 `updateHeight`。系统只认四种载体；分类是用户自己贴的标签。
 struct RecordsView: View {
 
+    /// 一级导航：回工作台、换到另一个空间。由 `RootView` 注入。
+    var navigation = SpaceNavigation()
+
     @Environment(\.modelContext) private var context
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -73,6 +76,9 @@ struct RecordsView: View {
                     .padding(.bottom, 28)
                 }
                 .background(Palette.paper)
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    SpaceSwitcherBar(current: .records, navigation: navigation)
+                }
                 .onAppear { scrollProxy = proxy }
             }
             .toolbar(.hidden, for: .navigationBar)
