@@ -63,11 +63,11 @@ struct WorkspaceCardMotionState {
 
 /// Gravity Cards：一个分区允许卡片移动的范围。
 ///
-/// 行程不是拍脑袋的常数：水平方向以「页面内容左右留白」为池、垂直方向以
-/// 「与相邻分区的间距」为池，再被 `WorkspaceMotionSettings` 的上限收窄
-/// （推导见 `WorkspaceGravityTravel.homeBounds`）。空间隔离因此是结构性的
+/// 行程不是拍脑袋的常数：多卡片以「页面左右留白」为池，单卡片则以
+/// 「卡片区域宽度减卡片实际宽度」为池（推导见 `WorkspaceGravityTravel`），
+/// 各自再被 `WorkspaceMotionSettings` 的上限收窄。空间隔离因此是结构性的
 /// ——Coffee 的引擎只知道 Coffee 自己的边界，卡片物理上无处可去别的分区。
-struct WorkspaceGravityBounds {
+struct WorkspaceGravityBounds: Equatable {
 
     /// 每个方向从原始位置出发的单侧最大距离（pt）。
     var horizontalTravel: CGFloat
@@ -75,4 +75,14 @@ struct WorkspaceGravityBounds {
 
     /// 空态 / 未知布局时的退化：不动。
     static let none = WorkspaceGravityBounds(horizontalTravel: 0, verticalTravel: 0)
+
+    /// 把某个偏移安全地收进本边界内，并告诉调用方哪些分量被夹过。
+    ///
+    /// 只在边界**变小**时用（卡片数量变了、屏幕转了）：位置夹回、该方向
+    /// 速度清零，避免卡片顶着旧速度继续往外挤。
+    func clamp(_ offset: CGPoint) -> (offset: CGPoint, clampedX: Bool, clampedY: Bool) {
+        let x = Swift.min(Swift.max(offset.x, -horizontalTravel), horizontalTravel)
+        let y = Swift.min(Swift.max(offset.y, -verticalTravel), verticalTravel)
+        return (CGPoint(x: x, y: y), x != offset.x, y != offset.y)
+    }
 }

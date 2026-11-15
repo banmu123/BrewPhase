@@ -72,9 +72,27 @@ final class WorkspacePhysicsEngine {
         states = next
     }
 
-    /// 更新边界（旋转/字体/机型导致的可用留白变化）。
-    func update(bounds: WorkspaceGravityBounds) {
-        self.bounds = bounds
+    /// 更新边界（卡片数量变化、机型/字体导致的可用留白变化）。
+    ///
+    /// 边界**变小**时（3 张变 1 张不会；1 张变 3 张、屏幕变窄会），已有
+    /// 偏移可能落在新边界外：位置夹回、该方向速度清零，而不是让卡片顶着
+    /// 旧速度继续往外挤。边界变大时什么都不做——卡片留在原地继续用新空间。
+    func update(bounds newBounds: WorkspaceGravityBounds) {
+        guard newBounds != bounds else { return }
+        let shrank = newBounds.horizontalTravel < bounds.horizontalTravel
+            || newBounds.verticalTravel < bounds.verticalTravel
+        bounds = newBounds
+        guard shrank else { return }
+
+        for id in states.keys {
+            guard var state = states[id] else { continue }
+            let fitted = newBounds.clamp(state.offset)
+            // 只有真的被夹过才清速度：没越界的方向保持惯性。
+            if fitted.clampedX { state.velocity.dx = 0 }
+            if fitted.clampedY { state.velocity.dy = 0 }
+            state.offset = fitted.offset
+            states[id] = state
+        }
     }
 
     // MARK: - 输入与查询
@@ -163,12 +181,10 @@ final class WorkspacePhysicsEngine {
             }
 
             // 2. 摩擦：指数衰减，per-second 语义。
-            let friction = CGFloat(
-                pow(
-                    Double(1 - WorkspaceMotionSettings.frictionPerSecond - state.extraFriction),
-                    dt
-                )
-            )
+            //    底数钳在 0.02 以上：即使把参数调到极端也不会出现负底数
+            //    （那会让 pow 返回 NaN，卡片直接消失）。
+            let keep = max(0.02, 1 - WorkspaceMotionSettings.frictionPerSecond - state.extraFriction)
+            let friction = CGFloat(pow(Double(keep), dt))
             state.velocity.dx *= friction
             state.velocity.dy *= friction
 

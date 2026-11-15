@@ -217,10 +217,15 @@ final class WorkspaceMotionController {
         let unitX = smoothed.dx / magnitude
         let unitY = smoothed.dy / magnitude
 
-        // 强度沿「超出死区的比例」线性上升：死区边界 0 → 满倾 1，
+        // 强度沿「超出死区的比例」上升：死区边界 0 → 满倾 1，
         // 避免一过死区就跳到最大力。
+        //
+        // Phase 2.1：再做一次幂函数整形，让大倾角明显快于小倾角。
+        // **整形只发生在这一处**——引擎对强度是纯线性的，两边各来一次
+        // 会把曲线叠成平方，响应过猛（规格 §3.3）。
         let range = max(WorkspaceMotionSettings.tiltMaxRadians - deadZone, 0.0001)
-        let intensity = min(1, max(0, (capped - deadZone) / range))
+        let linear = min(1, max(0, (capped - deadZone) / range))
+        let intensity = pow(linear, WorkspaceMotionSettings.tiltResponseExponent)
 
         emit(CGVector(dx: unitX * intensity, dy: unitY * intensity))
     }

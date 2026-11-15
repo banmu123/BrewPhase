@@ -49,4 +49,25 @@ enum WorkspaceStackLayout {
     static func sectionBottomPadding(itemCount: Int) -> CGFloat {
         lift(depth: visibleCount(itemCount: itemCount) - 1)
     }
+
+    // MARK: - 卡位与宽度（Gravity Cards Phase 2.1）
+
+    /// 单卡片时卡片落在**中间**卡位，左右各留一个透明占位。
+    ///
+    /// 三个卡位等宽、相邻重叠 `cardOverlap`，所以中间卡位的中心恰好是整行
+    /// 中点（推导：卡宽 w = (W+2c)/3，中间卡位左缘 = w−c，中心 = (3w−2c)/2 = W/2）。
+    /// 用占位而不是 `Spacer()` 是关键：卡宽仍由「整行 ÷ 3」决定，单卡不会
+    /// 被拉成整屏宽的大卡。
+    static func cardSlot(forDepth depth: Int, cardCount: Int) -> Int {
+        cardCount <= 1 ? visibleLimit / 2 : max(0, depth)
+    }
+
+    /// 卡片的实际渲染宽度：`visibleLimit` 个等宽卡位，相邻重叠 `cardOverlap`。
+    ///
+    /// 单卡与三卡共用同一个公式——这是「只有一张卡也不放大」的保证。
+    static func cardWidth(in availableWidth: CGFloat) -> CGFloat {
+        guard availableWidth > 0 else { return 0 }
+        let span = availableWidth + CGFloat(visibleLimit - 1) * cardOverlap
+        return span / CGFloat(visibleLimit)
+    }
 }

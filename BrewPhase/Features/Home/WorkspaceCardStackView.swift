@@ -32,6 +32,9 @@ struct WorkspaceCardStackView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// 卡片区域的实际宽度。单卡片的横向行程由它推导（Phase 2.1）。
+    @State private var availableWidth: CGFloat = 0
+
     private var visible: [WorkspaceCard] {
         Array(cards.prefix(WorkspaceStackLayout.visibleLimit))
     }
@@ -49,7 +52,10 @@ struct WorkspaceCardStackView: View {
         .accessibilityLabel(Text(verbatim: L("进入%@", space.title)))
         .accessibilityValue(Text(verbatim: accessibilityValue))
         .accessibilityAddTraits(.isButton)
-        .onAppear { field?.reconcile(cards: cards, for: space) }
+        .onAppear {
+            field?.reconcile(cards: cards, for: space)
+            reportBounds()
+        }
         .onChange(of: cards) { field?.reconcile(cards: $0, for: space) }
     }
 
@@ -91,11 +97,15 @@ struct WorkspaceCardStackView: View {
     /// **永远画满三个卡位**（不足的用透明占位）：卡片宽度由「整行 ÷ 3」决定，
     /// 这样只有一张内容的分区和有三张的分区，卡片是同一个尺寸。否则空态卡
     /// 会被拉成整屏宽，看起来像另一套组件。
+    ///
+    /// 单卡片时把它放进**中间**卡位（`WorkspaceStackLayout.cardSlot`）：
+    /// 三个卡位等宽且对称，中间卡位的中心就是整行中点，于是卡片天然居中，
+    /// 左右各剩一半空白可供滑动（Phase 2.1）。
     private var stack: some View {
         HStack(alignment: .top, spacing: -WorkspaceStackLayout.cardOverlap) {
-            ForEach(0..<WorkspaceStackLayout.visibleLimit, id: \.self) { depth in
-                if depth < visible.count {
-                    let card = visible[depth]
+            ForEach(0..<WorkspaceStackLayout.visibleLimit, id: \.self) { slot in
+                if let card = card(atSlot: slot) {
+                    let depth = depth(atSlot: slot)
                     WorkspaceCardView(
                         card: card,
                         canvas: card.canvasID.flatMap { canvases[$0] },
@@ -112,13 +122,47 @@ struct WorkspaceCardStackView: View {
                 } else {
                     Color.clear
                         .frame(maxWidth: .infinity)
-                        .zIndex(Double(-depth))
+                        .zIndex(Double(-slot))
                 }
             }
         }
         .padding(.bottom, WorkspaceStackLayout.sectionBottomPadding(itemCount: cards.count))
         .frame(maxWidth: .infinity, alignment: .leading)
         .animation(reduceMotion ? Motion.fade : Motion.settle, value: visible.map(\.id))
+        // 真实几何 → 行程。用 onGeometryChange 而不是 GeometryReader：
+        // 后者会占掉布局，前者只读尺寸，卡片行尺寸不变。
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            availableWidth = width
+            reportBounds()
+        }
+        .onChange(of: visible.count) { _, _ in reportBounds() }
+    }
+
+    /// 某个卡位上应该画哪张卡。单卡片放在中间卡位，其余情况按深度顺排。
+    private func card(atSlot slot: Int) -> WorkspaceCard? {
+        guard !visible.isEmpty else { return nil }
+        if visible.count == 1 {
+            return slot == WorkspaceStackLayout.cardSlot(forDepth: 0, cardCount: 1) ? visible[0] : nil
+        }
+        return slot < visible.count ? visible[slot] : nil
+    }
+
+    /// 卡位对应的堆叠深度（决定下沉与不透明度）。单卡片永远是第 0 层。
+    private func depth(atSlot slot: Int) -> Int {
+        visible.count == 1 ? 0 : slot
+    }
+
+    /// 把「卡片数量 + 区域宽度」交给引擎，由它换算成本分区的行程。
+    private func reportBounds() {
+        guard let field else { return }
+        field.setBounds(
+            cardCount: visible.count,
+            isEmpty: cards.first?.kind == .empty,
+            availableWidth: availableWidth,
+            for: space
+        )
     }
 }
 
@@ -150,13 +194,20 @@ struct WorkspaceGravityRenderModifier: ViewModifier {
 
 // MARK: - 行程推导
 
-/// 一个分区可用行程的推导。独立出来供测试：行程 = 布局留白与设置上限的交集。
+/// 一个分区可用行程的推导。独立出来供测试：行程 = 真实布局几何与设置上限的交集。
 ///
-/// 行程不是拍脑袋的常数——它由真实布局决定，再被设置上限收窄。任一方向
-/// 的池子变小（更窄的机型、更大的动态字体把标题撑高），行程跟着缩。
+/// 两种形态，区别只在于「横向能走多远」：
+///
+/// - **多卡片**（2–3 张）：卡片互相压着，任何一张滑远都会盖住别人，保守到
+///   `min(16, gutter−2)`。
+/// - **单卡片**：没有压住谁的问题，横向走满整行——`(区域宽 − 卡片宽)/2 − 安全边`。
+///   卡片宽度与三卡时完全相同（`WorkspaceStackLayout.cardWidth`），所以是
+///   「同一张卡在更宽的地方走」，不是「把卡放大」。
+///
+/// 垂直方向两者一样：上下都是标题与相邻分区，行程必须小于它们的间距。
 enum WorkspaceGravityTravel {
 
-    /// 首页的实际边界。
+    /// 多卡片（也是空态卡）的保守边界。
     ///
     /// - 水平：页面左右各 `Metric.gutter`（22pt）的留白，卡片左右各有 16pt
     ///   可去，永远出不了屏幕。
@@ -164,14 +215,47 @@ enum WorkspaceGravityTravel {
     ///   2pt 安全边（6pt），下行不超过间距一半（10pt），取小者 = 6pt。
     ///   两端都小于相邻元素的间距，因此**任何一张卡都盖不住标题**。
     static var homeBounds: WorkspaceGravityBounds {
-        let up = max(0, Metric.Space.xs - 2)
-        let down = max(0, (Metric.Space.lg) / 2)
-        let vertical = min(WorkspaceMotionSettings.maxVerticalTravel, min(up, down))
-        let horizontal = min(WorkspaceMotionSettings.maxHorizontalTravel, Metric.gutter - 2)
-        return WorkspaceGravityBounds(
-            horizontalTravel: max(0, horizontal),
-            verticalTravel: max(0, vertical)
+        WorkspaceGravityBounds(
+            horizontalTravel: stackedHorizontalTravel,
+            verticalTravel: stackedVerticalTravel
         )
+    }
+
+    private static var stackedHorizontalTravel: CGFloat {
+        max(0, min(WorkspaceMotionSettings.maxHorizontalTravel, Metric.gutter - 2))
+    }
+
+    private static var stackedVerticalTravel: CGFloat {
+        let up = max(0, Metric.Space.xs - 2)
+        let down = max(0, Metric.Space.lg / 2)
+        let vertical = min(WorkspaceMotionSettings.maxVerticalTravel, min(up, down))
+        return max(0, vertical)
+    }
+
+    /// 单卡片的横向行程。
+    ///
+    /// `travel = (availableWidth − cardWidth) / 2 − safeMargin`，小于零取零。
+    /// 650pt 的 iPad 上这会给到 ~250pt；358pt 的 iPhone 上约 102pt
+    /// ——都是「明显能滑」，而不是 Phase 2 的 16pt。
+    static func singleCardBounds(availableWidth: CGFloat) -> WorkspaceGravityBounds {
+        let cardWidth = WorkspaceStackLayout.cardWidth(in: availableWidth)
+        let spare = (availableWidth - cardWidth) / 2
+            - WorkspaceMotionSettings.singleCardSafeMargin
+        return WorkspaceGravityBounds(
+            horizontalTravel: max(0, spare),
+            verticalTravel: stackedVerticalTravel
+        )
+    }
+
+    /// 按当前卡片数量选边界。空态卡不走单卡片放宽——它只是个占位，
+    /// 给它整行行程没有意义，也避免「没内容反而动得最远」。
+    static func bounds(
+        cardCount: Int,
+        isEmpty: Bool,
+        availableWidth: CGFloat
+    ) -> WorkspaceGravityBounds {
+        guard cardCount <= 1, !isEmpty, availableWidth > 0 else { return homeBounds }
+        return singleCardBounds(availableWidth: availableWidth)
     }
 
     /// 通用推导：给可用留白池，得到实际行程。

@@ -643,6 +643,351 @@ final class WorkspaceGravityTests: XCTestCase {
         XCTAssertEqual(motion.screenGravity, .zero)
     }
 
+    // MARK: - Phase 2.1：单卡片行程
+
+    /// 一台 402pt 宽的 iPhone 16 Pro，减去左右各 22pt 页留白。
+    private let phoneContentWidth: CGFloat = 358
+
+    func testSingleCardKeepsTheSameWidthAsInAStack() {
+        // 只有一张卡也不许放大：宽度仍由「整行 ÷ 3」决定，与三卡完全一致。
+        let width = WorkspaceStackLayout.cardWidth(in: phoneContentWidth)
+        let expected = (phoneContentWidth + 2 * WorkspaceStackLayout.cardOverlap)
+            / CGFloat(WorkspaceStackLayout.visibleLimit)
+        XCTAssertEqual(width, expected, accuracy: 0.001)
+        XCTAssertLessThan(width, phoneContentWidth / 2, "单卡不应被拉成半屏宽")
+        XCTAssertEqual(WorkspaceStackLayout.cardWidth(in: 0), 0)
+    }
+
+    func testSingleCardSitsInTheMiddleSlot() {
+        // 三个卡位等宽且对称 → 中间卡位的中心就是整行中点。
+        XCTAssertEqual(
+            WorkspaceStackLayout.cardSlot(forDepth: 0, cardCount: 1),
+            WorkspaceStackLayout.visibleLimit / 2
+        )
+        // 多卡片仍按深度顺排，不居中。
+        for depth in 0..<WorkspaceStackLayout.visibleLimit {
+            XCTAssertEqual(WorkspaceStackLayout.cardSlot(forDepth: depth, cardCount: 3), depth)
+        }
+
+        // 用几何验证「中间卡位确实居中」：卡宽 w、重叠 c，中间卡位左缘 = w − c。
+        let w = WorkspaceStackLayout.cardWidth(in: phoneContentWidth)
+        let c = WorkspaceStackLayout.cardOverlap
+        let center = (w - c) + w / 2
+        XCTAssertEqual(center, phoneContentWidth / 2, accuracy: 0.001)
+    }
+
+    func testSingleCardTravelIsFarLargerThanSixteenPoints() {
+        let single = WorkspaceGravityTravel.singleCardBounds(availableWidth: phoneContentWidth)
+        let stacked = WorkspaceGravityTravel.homeBounds
+
+        XCTAssertEqual(
+            single.horizontalTravel,
+            (phoneContentWidth - WorkspaceStackLayout.cardWidth(in: phoneContentWidth)) / 2
+                - WorkspaceMotionSettings.singleCardSafeMargin,
+            accuracy: 0.001
+        )
+        XCTAssertGreaterThan(
+            single.horizontalTravel,
+            WorkspaceMotionSettings.maxHorizontalTravel * 5,
+            "单卡行程必须明显大于多卡片的 16pt"
+        )
+        // 垂直不放宽：上下都是标题与相邻分区。
+        XCTAssertEqual(single.verticalTravel, stacked.verticalTravel, accuracy: 0.001)
+    }
+
+    func testSingleCardTravelGrowsWithWiderScreens() {
+        let phone = WorkspaceGravityTravel.singleCardBounds(availableWidth: 358)
+        let pad = WorkspaceGravityTravel.singleCardBounds(availableWidth: 650)
+        XCTAssertGreaterThan(pad.horizontalTravel, phone.horizontalTravel)
+        // 极窄区域（比卡片还窄）时退化为零，不能变负。
+        XCTAssertEqual(
+            WorkspaceGravityTravel.singleCardBounds(availableWidth: 40).horizontalTravel,
+            0
+        )
+        XCTAssertEqual(
+            WorkspaceGravityTravel.singleCardBounds(availableWidth: 0).horizontalTravel,
+            0
+        )
+    }
+
+    func testSingleCardSlidesBothWaysWithinTheSafeArea() {
+        let bounds = WorkspaceGravityTravel.singleCardBounds(availableWidth: phoneContentWidth)
+        let card = WorkspaceCard(bean: bean("A"))
+        let engine = WorkspacePhysicsEngine(bounds: bounds)
+        engine.reconcile(cards: [card])
+
+        // 向右到满行程。
+        run(engine, gravity: CGVector(dx: 1, dy: 0), frames: 240)
+        let right = engine.render(for: card.id).offset.x
+        XCTAssertEqual(right, bounds.horizontalTravel, accuracy: 0.001)
+        XCTAssertGreaterThan(right, 90)
+
+        // 向左到满行程。
+        run(engine, gravity: CGVector(dx: -1, dy: 0), frames: 480)
+        let left = engine.render(for: card.id).offset.x
+        XCTAssertEqual(left, -bounds.horizontalTravel, accuracy: 0.001)
+    }
+
+    func testSingleCardNeverLeavesTheContentArea() {
+        let bounds = WorkspaceGravityTravel.singleCardBounds(availableWidth: phoneContentWidth)
+        let cardWidth = WorkspaceStackLayout.cardWidth(in: phoneContentWidth)
+        let card = WorkspaceCard(bean: bean("A"))
+        let engine = WorkspacePhysicsEngine(bounds: bounds)
+        engine.reconcile(cards: [card])
+
+        run(engine, gravity: CGVector(dx: 1, dy: 0), frames: 240)
+        let offset = engine.render(for: card.id).offset.x
+
+        // 居中 + 偏移后的左右边缘都必须留在内容区内。
+        let center = phoneContentWidth / 2
+        let leftEdge = center + offset - cardWidth / 2
+        let rightEdge = center + offset + cardWidth / 2
+        XCTAssertGreaterThanOrEqual(leftEdge, WorkspaceMotionSettings.singleCardSafeMargin - 0.001)
+        XCTAssertLessThanOrEqual(
+            rightEdge,
+            phoneContentWidth - WorkspaceMotionSettings.singleCardSafeMargin + 0.001
+        )
+    }
+
+    func testMultiCardBoundsStayConservative() {
+        let two = WorkspaceGravityTravel.bounds(
+            cardCount: 2, isEmpty: false, availableWidth: phoneContentWidth
+        )
+        let three = WorkspaceGravityTravel.bounds(
+            cardCount: 3, isEmpty: false, availableWidth: phoneContentWidth
+        )
+        XCTAssertEqual(two, WorkspaceGravityTravel.homeBounds)
+        XCTAssertEqual(three, WorkspaceGravityTravel.homeBounds)
+        XCTAssertLessThanOrEqual(
+            two.horizontalTravel,
+            WorkspaceMotionSettings.maxHorizontalTravel,
+            "多卡片不能因为单卡放宽而一起放大"
+        )
+    }
+
+    func testEmptyCardDoesNotGetTheSingleCardTravel() {
+        // 空态卡只是占位，不该「没内容反而动得最远」。
+        let empty = WorkspaceGravityTravel.bounds(
+            cardCount: 1, isEmpty: true, availableWidth: phoneContentWidth
+        )
+        XCTAssertEqual(empty, WorkspaceGravityTravel.homeBounds)
+    }
+
+    func testGoingFromThreeCardsToOneDoesNotResetTheSurvivor() {
+        let a = WorkspaceCard(bean: bean("A", at: 1))
+        let b = WorkspaceCard(bean: bean("B", at: 2))
+        let c = WorkspaceCard(bean: bean("C", at: 3))
+        let engine = WorkspacePhysicsEngine(bounds: WorkspaceGravityTravel.homeBounds)
+        engine.reconcile(cards: [a, b, c])
+        run(engine, gravity: CGVector(dx: 1, dy: 0), frames: 60)
+        let moved = engine.render(for: a.id).offset.x
+        XCTAssertGreaterThan(moved, 0)
+
+        // B、C 被删，只剩 A：边界变宽，位置必须保留（不飞走、不归零）。
+        engine.reconcile(cards: [a])
+        engine.update(bounds: WorkspaceGravityTravel.singleCardBounds(availableWidth: phoneContentWidth))
+
+        XCTAssertEqual(engine.render(for: a.id).offset.x, moved, accuracy: 0.0001)
+        XCTAssertNil(engine.states[b.id])
+        XCTAssertNil(engine.states[c.id])
+    }
+
+    func testShrinkingBoundsClampsPositionInsteadOfLeavingTheSpace() {
+        let a = WorkspaceCard(bean: bean("A", at: 1))
+        let engine = WorkspacePhysicsEngine(
+            bounds: WorkspaceGravityTravel.singleCardBounds(availableWidth: phoneContentWidth)
+        )
+        engine.reconcile(cards: [a])
+        run(engine, gravity: CGVector(dx: 1, dy: 0), frames: 240)
+        XCTAssertGreaterThan(engine.render(for: a.id).offset.x, 90)
+
+        // 内容变多 → 回到保守边界：越界的位置必须被夹回，速度清零。
+        let b = WorkspaceCard(bean: bean("B", at: 2))
+        engine.reconcile(cards: [a, b])
+        engine.update(bounds: WorkspaceGravityTravel.homeBounds)
+
+        let offset = engine.render(for: a.id).offset
+        XCTAssertLessThanOrEqual(
+            offset.x,
+            WorkspaceGravityTravel.homeBounds.horizontalTravel + 0.001
+        )
+        XCTAssertEqual(velocity(engine, a.id).dx, 0, accuracy: 0.0001)
+        // 状态本身没有被丢弃：还是这张卡的记录。
+        XCTAssertNotNil(engine.states[a.id])
+    }
+
+    func testGrowingContentKeepsStatesByStableID() {
+        let a = WorkspaceCard(bean: bean("A", at: 1))
+        let engine = WorkspacePhysicsEngine(
+            bounds: WorkspaceGravityTravel.singleCardBounds(availableWidth: phoneContentWidth)
+        )
+        engine.reconcile(cards: [a])
+        run(engine, gravity: CGVector(dx: 1, dy: 0), frames: 120)
+        let moved = engine.render(for: a.id).offset.x
+        XCTAssertGreaterThan(moved, 0)
+
+        // 一张变三张：A 仍在最前，位置与速度都归它自己。
+        let b = WorkspaceCard(bean: bean("B", at: 2))
+        let c = WorkspaceCard(bean: bean("C", at: 3))
+        engine.reconcile(cards: [a, b, c])
+
+        XCTAssertEqual(engine.states.count, 3)
+        XCTAssertGreaterThan(engine.render(for: a.id).offset.x, 0)
+        XCTAssertEqual(engine.render(for: b.id).offset.x, 0, accuracy: 0.0001)
+        XCTAssertEqual(engine.render(for: c.id).offset.x, 0, accuracy: 0.0001)
+    }
+
+    // MARK: - Phase 2.1：倾斜角度 → 速度（控制器 + 引擎串联）
+
+    /// 在同一初始姿态下倾斜 `degrees` 度，跑 `frames` 帧，返回末态强度/速度/位移。
+    ///
+    /// 真实链路：每一帧先喂传感器样本、取控制器输出，再用它驱动引擎一步。
+    /// 行程给足（300pt），保证测的是「速度响应」而不是「撞到边界」。
+    private func tiltRun(
+        degrees: Double,
+        frames: Int = 60,
+        travel: CGFloat = 300
+    ) -> (intensity: CGFloat, speed: CGFloat, distance: CGFloat) {
+        let source = MockDeviceMotionSource()
+        let motion = WorkspaceMotionController(source: source, debugTilt: nil)
+        motion.activate()
+        // 基准：竖直握持。
+        motion.ingest(DeviceGravitySample(x: 0, y: -1, z: 0))
+
+        let theta = degrees * .pi / 180
+        let sample = DeviceGravitySample(x: sin(theta), y: -cos(theta), z: 0)
+
+        let card = WorkspaceCard(bean: bean("A"))
+        let engine = WorkspacePhysicsEngine(
+            bounds: WorkspaceGravityBounds(
+                horizontalTravel: travel,
+                verticalTravel: WorkspaceMotionSettings.maxVerticalTravel
+            )
+        )
+        engine.reconcile(cards: [card])
+
+        var intensity: CGFloat = 0
+        for index in 1...frames {
+            motion.ingest(sample)
+            intensity = motion.screenGravity.dx
+            engine.advance(
+                gravity: motion.screenGravity,
+                timestamp: Double(index) / 60,
+                dt: 1.0 / 60
+            )
+        }
+
+        let state = engine.states[card.id]
+        return (
+            intensity,
+            hypot(state?.velocity.dx ?? 0, state?.velocity.dy ?? 0),
+            engine.render(for: card.id).offset.x
+        )
+    }
+
+    func testTiltIntensityIsMonotonicInAngle() {
+        let small = tiltRun(degrees: 8)
+        let medium = tiltRun(degrees: 15)
+        let large = tiltRun(degrees: 22)
+
+        XCTAssertGreaterThan(small.intensity, 0, "小倾角也要有响应")
+        XCTAssertGreaterThan(medium.intensity, small.intensity)
+        XCTAssertGreaterThan(large.intensity, medium.intensity)
+    }
+
+    func testLargerTiltMovesFasterAndFurther() {
+        // 规格 §5.2 的核心断言：同样时长、同样起点，倾角越大越快越远。
+        let small = tiltRun(degrees: 8, frames: 45)
+        let medium = tiltRun(degrees: 15, frames: 45)
+        let large = tiltRun(degrees: 22, frames: 45)
+
+        XCTAssertLessThan(small.speed, medium.speed)
+        XCTAssertLessThan(medium.speed, large.speed)
+        XCTAssertLessThan(small.distance, medium.distance)
+        XCTAssertLessThan(medium.distance, large.distance)
+
+        // 速度差要「能被感知」：大到小至少 3 倍，而不是几个百分点。
+        XCTAssertGreaterThan(large.speed, small.speed * 3)
+        print(
+            """
+            [Gravity 2.1] 45 帧（0.75s）:
+              8°  intensity=\(String(format: "%.3f", small.intensity)) \
+            speed=\(String(format: "%.1f", small.speed))pt/s \
+            distance=\(String(format: "%.1f", small.distance))pt
+              15° intensity=\(String(format: "%.3f", medium.intensity)) \
+            speed=\(String(format: "%.1f", medium.speed))pt/s \
+            distance=\(String(format: "%.1f", medium.distance))pt
+              22° intensity=\(String(format: "%.3f", large.intensity)) \
+            speed=\(String(format: "%.1f", large.speed))pt/s \
+            distance=\(String(format: "%.1f", large.distance))pt
+            """
+        )
+    }
+
+    func testSustainedMaxTiltStopsAtTheSpeedCap() {
+        // 行程给到 10000pt：这一条测的是「速度有没有被上限管住」，
+        // 不能因为卡片先撞到边界（边界阻尼会把速度吃掉）而误判。
+        let run = tiltRun(degrees: 40, frames: 240, travel: 10_000)
+        XCTAssertLessThanOrEqual(
+            run.speed,
+            WorkspaceMotionSettings.maxSpeed + 0.001,
+            "满倾也不能突破速度上限"
+        )
+        XCTAssertGreaterThan(
+            run.speed,
+            WorkspaceMotionSettings.maxSpeed * 0.9,
+            "满倾必须接近上限，而不是被摩擦按住"
+        )
+    }
+
+    func testTiltInsideDeadZoneProducesNoSpeed() {
+        let run = tiltRun(degrees: 2, frames: 60)
+        XCTAssertEqual(run.intensity, 0, accuracy: 0.0001)
+        XCTAssertEqual(run.speed, 0, accuracy: 0.0001)
+        XCTAssertEqual(run.distance, 0, accuracy: 0.0001)
+    }
+
+    func testReleasingTiltDecaysSpeedNaturally() {
+        let bounds = WorkspaceGravityBounds(horizontalTravel: 300, verticalTravel: 8)
+        let card = WorkspaceCard(bean: bean("A"))
+        let engine = WorkspacePhysicsEngine(bounds: bounds)
+        engine.reconcile(cards: [card])
+
+        run(engine, gravity: CGVector(dx: 0.8, dy: 0), frames: 45)
+        let moving = hypot(velocity(engine, card.id).dx, velocity(engine, card.id).dy)
+        XCTAssertGreaterThan(moving, 50)
+
+        run(engine, gravity: .zero, frames: 300)
+        let resting = hypot(velocity(engine, card.id).dx, velocity(engine, card.id).dy)
+        XCTAssertLessThan(resting, WorkspaceMotionSettings.settleSpeed)
+        XCTAssertTrue(engine.allSettled)
+        // 停在新的位置，不自动回原位。
+        XCTAssertGreaterThan(engine.render(for: card.id).offset.x, 10)
+    }
+
+    func testReversingTiltNeverTeleportsUnderTheNewDynamics() {
+        let bounds = WorkspaceGravityBounds(horizontalTravel: 300, verticalTravel: 8)
+        let card = WorkspaceCard(bean: bean("A"))
+        let engine = WorkspacePhysicsEngine(bounds: bounds)
+        engine.reconcile(cards: [card])
+
+        run(engine, gravity: CGVector(dx: 1, dy: 0), frames: 45)
+        let before = engine.render(for: card.id).offset.x
+
+        engine.advance(
+            gravity: CGVector(dx: -1, dy: 0),
+            timestamp: 46.0 / 60.0,
+            dt: 1.0 / 60.0
+        )
+        let after = engine.render(for: card.id).offset.x
+        XCTAssertLessThanOrEqual(
+            abs(after - before),
+            WorkspaceMotionSettings.maxSpeed / 60 + 0.001
+        )
+        // 先减速（速度变小），而不是立刻反向。
+        XCTAssertGreaterThan(velocity(engine, card.id).dx, 0)
+    }
+
     // MARK: - 工具
 
     /// 连续喂若干帧同样的倾斜，让低通滤波收敛。

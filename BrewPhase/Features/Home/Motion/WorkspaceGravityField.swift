@@ -57,6 +57,24 @@ final class WorkspaceGravityField {
         engines[space]?.reconcile(cards: cards)
     }
 
+    /// 把「卡片数量 + 卡片区域实际宽度」交给该分区的引擎。
+    ///
+    /// 单卡片会拿到「走满整行」的行程，多卡片继续用保守边界（Phase 2.1）。
+    /// 边界变小时引擎会把越界的偏移夹回并清掉该方向的速度。
+    func setBounds(
+        cardCount: Int,
+        isEmpty: Bool,
+        availableWidth: CGFloat,
+        for space: AppTab
+    ) {
+        let bounds = WorkspaceGravityTravel.bounds(
+            cardCount: cardCount,
+            isEmpty: isEmpty,
+            availableWidth: availableWidth
+        )
+        engines[space]?.update(bounds: bounds)
+    }
+
     // MARK: - 帧驱动
 
     /// 时间线每帧调用一次：推进三个引擎，必要时把「已静止」翻上去。
