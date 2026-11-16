@@ -471,7 +471,7 @@ enum DemoData {
                    note: L("二楼靠窗，能看到电车经过。点了一杯浅烘的肯尼亚，凉下来之后更像红茶。"),
                    createdAt: day(28), isSample: true),
 
-            image(L(" Saturday 手冲"), [UIColor(red: 0.72, green: 0.60, blue: 0.45, alpha: 1),
+            image(L("Saturday 手冲"), [UIColor(red: 0.72, green: 0.60, blue: 0.45, alpha: 1),
                                       UIColor(red: 0.42, green: 0.32, blue: 0.24, alpha: 1)],
                   width: 900, height: 700, createdAt: day(31)),
 
@@ -520,6 +520,19 @@ enum DemoData {
                    title: L("老豆子的最后一杯"),
                    note: L("尾段有点空，但干净。喝完这一包，豆仓又空出一格。"),
                    createdAt: day(56), isSample: true),
+
+            // 最后两条不只是凑数：记录列表**每页 20 条**，19 条永远只有一页，
+            // 「滚动到底自动取下一页」这条路在示例数据上根本走不到。补到 21 条，
+            // 第一页刚好满、第二页还有一条，翻页这件事才看得见。
+            Record(carrier: .text,
+                   title: L("同一支豆，两种喝法"),
+                   note: L("一半手冲，一半冷萃放冰箱。冷萃把甜感推到前面，酸味退到后面去了。"),
+                   createdAt: day(59), isSample: true),
+
+            Record(carrier: .text,
+                   title: L("秤没电了"),
+                   note: L("凭手感冲了一杯，居然不差。记录里少了克数，反而记得更清楚。"),
+                   createdAt: day(62), isSample: true),
         ]
 
         let tagAssignments: [[String]] = [
@@ -551,5 +564,53 @@ enum DemoData {
                    createdAt: day(30), isSample: true),
         ]
         for canvas in canvases { context.insert(canvas) }
+
+        // 先把豆子、记录、画布落库，再摆画布节点。
+        //
+        // `CanvasNodeStore.add` 内部自己会 `save`，失败时还会 `rollback`——如果这时
+        // 前面那批还挂在未保存状态里，一次失败的节点摆放会把整份示例数据一起回滚，
+        // 而外面只记一条「节点没摆上」的日志，表现为「打开开关什么都没发生」。
+        // 先存这一次，回滚最多伤到节点。
+        do {
+            try context.save()
+        } catch {
+            AppLog.store.error(
+                "sample data save failed before canvas nodes: \(error.localizedDescription, privacy: .public)"
+            )
+            context.rollback()
+            return
+        }
+
+        // 画布上得有东西。Canvas 是第三个空间：两块空画布只能看到空态引导，
+        // 审核的人看不出这一版到底做了什么。这里走**用户手动添加时同一条**
+        // 路径（`CanvasNodeStore.add` + 它内部的 `CanvasPlacement`），
+        // 所以示例画布的布局跟真用起来是一回事，不是写死的坐标。
+        //
+        // 画布一：四种载体各一条，缩略图、标题、来源都要能在画布上认出来。
+        // 画布二：文字为主，是那块「想法」画布，摆得疏一点。
+        let placements: [(canvas: Canvas, indices: [Int])] = [
+            (canvases[0], [0, 10, 9, 5]),    // 仓库卡 · 视频卡 · 图片卡 · 文字卡
+            (canvases[1], [6, 15, 11]),     // 两条随记 + 一张图
+        ]
+        for (canvas, indices) in placements {
+            let picks = indices.compactMap { index in
+                records.indices.contains(index) ? records[index] : nil
+            }
+            guard !picks.isEmpty else { continue }
+            do {
+                // 参照区给宽一点（≈ iPad 宽度、比 iPhone 高一截）：同一套算法在
+                // 390×700 里只能摆出一列，画布看起来像一条列表，白瞎了这个空间。
+                // 700×900 会摆成两列，才看得出「画布」这件事。
+                try CanvasNodeStore.add(picks, to: canvas,
+                                        visibleWorldRect: CGRect(x: 0, y: 0, width: 700, height: 900),
+                                        context: context)
+            } catch {
+                // 节点放不上去不该让整批示例数据装不进来：豆子、记录、画布已经
+                // 都在这次 save 里了，这里只如实记一条日志。
+                AppLog.store.error(
+                    "sample canvas nodes failed: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
     }
 }

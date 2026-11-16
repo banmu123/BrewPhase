@@ -15,12 +15,12 @@ final class SampleDataTests: XCTestCase {
 
     override func setUpWithError() throws {
         LanguageManager.pinForTesting(.simplifiedChinese)
-        let schema = Schema([
-            Bean.self, Brew.self, Tasting.self, PhaseReminder.self, PhaseRule.self, EmbeddingRecord.self,
-        ])
+        // 用**真正的** `BrewPhaseSchema`，不是只挑 Bean 那几张：示例数据现在还会
+        // 写记录、标签与画布节点，容器里没有这些实体的话，「示例画布上有节点」
+        // 这条根本验证不了。
         container = try ModelContainer(
-            for: schema,
-            configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
+            for: BrewPhaseSchema.schema,
+            configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]
         )
         context = ModelContext(container)
     }
@@ -67,6 +67,78 @@ final class SampleDataTests: XCTestCase {
         let beans = try context.fetch(FetchDescriptor<Bean>())
         XCTAssertEqual(beans.count, 7)
         XCTAssertTrue(beans.allSatisfy(\.isSample))
+    }
+
+    // MARK: - 示例画布（审核与试用的第三空间）
+
+    /// 两块示例画布上都要真的有节点。
+    ///
+    /// Canvas 是三个空间里的第三个：空画布只能看到空态引导，把示例数据打开
+    /// 也看不出这一版做了什么——这正好是审核员最先会点进去确认的地方。
+    func testSampleCanvasesCarryNodesForEveryCarrier() throws {
+        DemoData.install(context: context)
+
+        let canvases = try context.fetch(FetchDescriptor<Canvas>())
+        XCTAssertEqual(canvases.count, 2)
+
+        var carriers = Set<RecordCarrier>()
+        for canvas in canvases {
+            let nodes = try CanvasNodeStore.nodes(in: canvas.id, context: context)
+            XCTAssertFalse(nodes.isEmpty, "示例画布「\(canvas.name)」上一个节点都没有")
+            for node in nodes {
+                let record = try XCTUnwrap(
+                    (try context.fetch(FetchDescriptor<Record>()))
+                        .first { $0.id == node.recordID },
+                    "节点指向了一条不存在的记录"
+                )
+                carriers.insert(record.carrier)
+                XCTAssertTrue(record.isSample, "示例画布上不该出现真实记录")
+            }
+        }
+        XCTAssertEqual(carriers, Set(RecordCarrier.allCases), "四种载体至少各有一条，画布才看得出层次")
+    }
+
+    /// 记录数必须**超过一页**，否则「滚动到底取下一页」在示例数据上永远走不到。
+    ///
+    /// 直接跟 `RecordsDataSource.pageSize` 比，不写死 20：以后改页大小，这条会
+    /// 跟着一起守住，而不是变成一条永远成立的假断言。
+    func testSampleRecordsFillMoreThanOnePage() throws {
+        DemoData.install(context: context)
+        let records = try context.fetchCount(FetchDescriptor<Record>())
+        XCTAssertGreaterThan(records, RecordsDataSource.pageSize)
+    }
+
+    /// 关掉开关时，示例画布上的节点要连画布一起清掉。
+    func testRemovalTakesSampleCanvasNodesAway() throws {
+        DemoData.install(context: context)
+        XCTAssertGreaterThan(try context.fetchCount(FetchDescriptor<CanvasNode>()), 0)
+
+        XCTAssertTrue(DemoData.removeInstalled(context: context))
+
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<CanvasNode>()), 0, "示例节点要随示例画布一起走")
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<Canvas>()), 0)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<Record>()), 0)
+    }
+
+    /// 真实画布上摆了示例记录：删示例数据只能摘掉节点，画布本身要留着。
+    func testRemovalKeepsARealCanvasThatHoldsSampleRecords() throws {
+        let canvas = Canvas(name: "我的真实画布")
+        context.insert(canvas)
+        try context.save()
+
+        DemoData.install(context: context)
+        let sample = try XCTUnwrap(
+            try context.fetch(FetchDescriptor<Record>(predicate: #Predicate { $0.isSample })).first
+        )
+        try CanvasNodeStore.add([sample], to: canvas,
+                                visibleWorldRect: CGRect(x: 0, y: 0, width: 390, height: 700),
+                                context: context)
+        XCTAssertEqual(try CanvasNodeStore.nodes(in: canvas.id, context: context).count, 1)
+
+        XCTAssertTrue(DemoData.removeInstalled(context: context))
+
+        XCTAssertEqual(try CanvasNodeStore.nodes(in: canvas.id, context: context).count, 0, "指向示例记录的节点要摘掉")
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<Canvas>()), 1, "真实画布不能被带走")
     }
 
     // MARK: - 移除（P0：真实数据不得受伤）

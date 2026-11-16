@@ -247,7 +247,7 @@ struct MoreView: View {
                                 .font(TypeScale.body)
                                 .foregroundStyle(Palette.ink)
                             Text(hasSampleData
-                                 ? "示例豆已在库中，关闭即整批移除"
+                                 ? "示例数据已在库中，关闭即整批移除"
                                  : "载入 7 包演示豆，体验完整功能")
                                 .font(TypeScale.caption)
                                 .foregroundStyle(Palette.inkFaint)
@@ -281,7 +281,7 @@ struct MoreView: View {
                     Button("载入示例数据") { performSampleAction(.install) }
                     Button("取消", role: .cancel) {}
                 } message: {
-                    Text("将加入 7 包演示豆（含冲煮与风味记录）。你自己的记录不受影响，之后关闭开关即可整批移除。")
+                    Text("将加入 7 包演示豆（含冲煮与风味记录）、示例记录与 2 块画布。你自己的记录不受影响，之后关闭开关即可整批移除。")
                 }
                 .confirmationDialog(
                     "删除示例数据？",
@@ -331,15 +331,19 @@ struct MoreView: View {
     }
 
     /// 库里有没有示例数据——开关显示的就是这个事实，不是一份独立偏好。
+    ///
+    /// 走 `DemoData.hasInstalled` 而不是只数豆子：用户（或审核的人）完全可能只把
+    /// 示例豆删掉，记录与画布还在。只看豆子的话开关会显示「关」，点进记录页却
+    /// 仍是示例内容，再打开一次还会把示例记录插第二遍。
     private var hasSampleData: Bool {
-        beans.contains { $0.isSample }
+        DemoData.hasInstalled(context: context)
     }
 
     private func performSampleAction(_ action: SampleAction) {
         switch action {
         case .install:
             DemoData.install(context: context)
-            sampleMessage = L("示例数据已载入：7 包演示豆，覆盖养豆到喝完的完整生命周期。")
+            sampleMessage = L("示例数据已载入：豆子、记录与画布都放好了，三个空间都可以直接看。")
             // 刚插进来的豆子还没有任何提醒；下一次启动才会整体重排。这里顺手
             // 排一遍，开关打开之后提醒就是真的在队列里。
             Task { await resyncReminders() }

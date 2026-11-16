@@ -1131,18 +1131,18 @@ EN: dict[str, str] = {
 
     # MARK: 示例数据（审核与试用模式）
     "示例数据": "Sample data",
-    "示例豆已在库中，关闭即整批移除": "Sample bags are installed — turning this off removes them all",
-    "载入 7 包演示豆，体验完整功能": "Load 7 sample bags to explore every feature",
+    "示例数据已在库中，关闭即整批移除": "Sample data is installed — turning this off removes all of it",
+    "载入 7 包演示豆，体验完整功能": "Load sample bags, records and canvases",
     "加入示例数据？": "Add sample data?",
     "载入示例数据": "Load sample data",
-    "将加入 7 包演示豆（含冲煮与风味记录）。你自己的记录不受影响，之后关闭开关即可整批移除。":
-        "Adds 7 sample bags with brews and tasting notes. Your own records are untouched; turn the switch off later to remove them all.",
+    "将加入 7 包演示豆（含冲煮与风味记录）、示例记录与 2 块画布。你自己的记录不受影响，之后关闭开关即可整批移除。":
+        "Adds 7 sample bags with their brews and tasting notes, a set of sample records, and 2 canvases. Your own records are untouched; turn the switch off later to remove all of it.",
     "删除示例数据？": "Remove sample data?",
     "删除示例数据": "Remove sample data",
     "将删除全部示例豆及其冲煮与风味记录。你自己的记录不受影响。":
         "Deletes every sample bag along with its brews and tasting notes. Your own records are untouched.",
-    "示例数据已载入：7 包演示豆，覆盖养豆到喝完的完整生命周期。":
-        "Sample data loaded: 7 bags covering the full lifecycle, from resting to finished.",
+    "示例数据已载入：豆子、记录与画布都放好了，三个空间都可以直接看。":
+        "Sample data loaded: bags, records and canvases are all in place — every space is ready to look at.",
     "示例数据已移除，你的记录未受影响。":
         "Sample data removed. Your own records are untouched.",
 
@@ -1347,7 +1347,7 @@ EN: dict[str, str] = {
     "返回全部": "Back to everything",
     "这批记录没能读出来。": "This batch of records could not be read.",
     "重新加载": "Reload",
-    " Saturday 手冲": "Saturday pour-over",
+    "Saturday 手冲": "Saturday pour-over",
     "一杯手冲的时间": "The time a pour-over takes",
     "封面是示例生成的；视频本体不在示例里，详情页会如实说。":
         "The cover is generated for the sample set; the video file itself is not included, and the detail page will say so.",
@@ -1363,6 +1363,12 @@ EN: dict[str, str] = {
     "老豆子的最后一杯": "The last cup of an old bag",
     "尾段有点空，但干净。喝完这一包，豆仓又空出一格。":
         "The tail was a bit thin but clean. Finishing this bag opens a slot on the shelf.",
+    "同一支豆，两种喝法": "One bean, two ways to drink it",
+    "一半手冲，一半冷萃放冰箱。冷萃把甜感推到前面，酸味退到后面去了。":
+        "Half pour-over, half cold brew left in the fridge. The cold brew pushes sweetness forward and the acidity steps back.",
+    "秤没电了": "The scale ran out of battery",
+    "凭手感冲了一杯，居然不差。记录里少了克数，反而记得更清楚。":
+        "Brewed one by feel and it was not bad at all. The record is missing its grams, and somehow I remember it better.",
 
     # MARK: My Café — tabs, records and canvases
     "咖啡": "Coffee",
