@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -45,7 +45,10 @@ describe('工作区登记', () => {
     const ws = service.add(root, 'BrewPhase')
     expect(ws.name).toBe('BrewPhase')
     expect(ws.availability).toBe('available')
-    expect(ws.absolutePath.toLowerCase()).toBe(root.toLowerCase())
+    // 服务端存的是 realpath 规范化后的路径：macOS 上 tmpdir 返回 /var/folders/…，
+    // 而 /var 是指向 /private/var 的符号链接，所以期望值也要过一遍 realpathSync，
+    // 否则 CI 上会拿到 /private/var/… 与 /var/… 比较而失败。
+    expect(ws.absolutePath.toLowerCase()).toBe(realpathSync(root).toLowerCase())
     expect(service.list()).toHaveLength(1)
     expect(domains).toContain('localWorkspaces')
   })
