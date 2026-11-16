@@ -16,7 +16,7 @@ of repeating numbers. If two files disagree, fix the other one.
 **No adoption metrics are claimed.** Install counts, ratings, download counts and tester numbers live
 in App Store Connect / GitHub and are not verifiable from this repository.
 
-**Last reviewed: 2026-11-10** (Asia/Shanghai). Repository is public; default branch `main`.
+**Last reviewed: 2026-11-16** (Asia/Shanghai). Repository is public; default branch `main`.
 
 ---
 
@@ -24,11 +24,11 @@ in App Store Connect / GitHub and are not verifiable from this repository.
 
 | | |
 |---|---|
-| Status | **Actively developed.** The iPhone app has a shipped App Store release; the desktop app, Records/Canvas and MCP are implemented in `main` but not distributed |
+| Status | **Actively developed.** The iPhone app has a shipped App Store release; the desktop app ships as prereleases on GitHub. Records/Canvas are implemented in `main` but not distributed on iOS |
 | Main branch | `main`; all work lands here, no maintenance branches |
-| Latest shipped release | **iOS 1.1**, App Store, published 2026-10-13; version 1.1 refreshed 2026-10-28 |
-| Version in `main` | iOS `MARKETING_VERSION = 2.0`, `CURRENT_PROJECT_VERSION = 1`; Desktop `0.1.0` (`Desktop/package.json`) |
-| Repository visibility | **Public** (verified via `GET /repos/banmu123/BrewPhase`, 2026-11-10) |
+| Latest shipped release | **iOS 1.1**, App Store, published 2026-10-13; version 1.1 refreshed 2026-10-28. Desktop: `desktop-v0.1.4` prerelease, published 2026-11-16 |
+| Version in `main` | iOS `MARKETING_VERSION = 2.0`, `CURRENT_PROJECT_VERSION = 1`; Desktop `0.1.4` (`Desktop/package.json`) |
+| Repository visibility | **Public** (verified via `GET /repos/banmu123/BrewPhase`, 2026-11-16) |
 | Maintainers | 1 active maintainer (`banmu123`) — see [Maintenance](#9-maintenance) |
 | Languages | English + Simplified Chinese in the UI; 1,141 localisation keys |
 
@@ -46,16 +46,16 @@ available.
 | iPhone app | **Available** | App Store 1.1, `com.brewphase.ios`, free, US storefront, EN + ZH | [App Store](https://apps.apple.com/us/app/brewphase/id6815591631) | iTunes Lookup API `?bundleId=com.brewphase.ios&country=us`, 2026-11-10 |
 | iPhone app, `main` (2.0) | **In development — not published** | Coffee + Records + Canvas + LAN sync in source | Build from source | `BrewPhase.xcodeproj/project.pbxproj`, `BrewPhase/Features/` |
 | macOS Desktop | **Published (prerelease)** | arm64 `.dmg` + `.zip` with `.sha256` sidecars. `desktop-v0.1.4` (published 2026-11-16): per-card AI workspaces, right-rail workspace layout, local reply intelligence; Developer ID signed with hardened runtime, Apple notarization **Accepted** (`d91fd530-c41c-447a-8322-490bb6ad7429`), ticket stapled to the app; the dmg was signed afterwards but not submitted to notary on its own — the app inside is already stapled, so `spctl` on the mounted app reports `accepted / Notarized Developer ID`. `desktop-v0.1.3` (2026-11-15) is the previous notarized + stapled macOS build and introduced update awareness (check + notify + manual download). `desktop-v0.1.2` (signed only, **not notarized**) is superseded — it caused the Gatekeeper warning on first launch. No Intel build. | Anonymous download from the Releases page | GitHub Releases API, 2026-11-16; `Desktop/release/` is gitignored |
-| Windows Desktop | **Published (prerelease), unsigned** | NSIS x64 `.exe` + `.sha256` attached to `desktop-v0.1.3` (2026-11-15, CI-built; no 0.1.4 Windows build yet; previous `desktop-v0.1.2` / `desktop-v0.1.0`); includes update awareness (check + notify, manual download); no Authenticode certificate, never installed on real hardware | Anonymous download from the Releases page | GitHub Releases API, 2026-11-16 |
+| Windows Desktop | **Published (prerelease), unsigned** | NSIS x64 `.exe` + `.sha256` in `desktop-v0.1.4` (2026-11-16, CI-built from `main`; earlier in `desktop-v0.1.3` / `0.1.2` / `0.1.0`); includes update awareness (check + notify, manual download); no Authenticode certificate, never installed on real hardware; no MCP bridge | Anonymous download from the Releases page | GitHub Releases API, 2026-11-16 |
 | Linux Desktop | **Not supported yet** | `AppImage` target kept in config; no build, no verification | — | `Desktop/electron-builder.yml` |
-| MCP / AI Action Gateway | **Built, not published** | Ships with the desktop app; 18 tools, 8 scopes | Run from source | `Desktop/docs/MCP_TOOLS.md`, `Desktop/src/mcp/` |
+| MCP / AI Action Gateway | **Built, not published** | Ships with the desktop app on macOS; 27 tools, 8 scopes. Not available on Windows | Run from source, or point a client at the packaged `Resources/mcp/stdio.mjs` | `Desktop/docs/MCP_TOOLS.md`, `Desktop/src/mcp/` |
 
 There are **five published GitHub Releases** (all prerelease, anonymously downloadable):
 `desktop-v0.1.0` (2026-11-10, tag at `f9fee39`), `desktop-v0.1.1` (2026-11-11, signed +
 notarized macOS), `desktop-v0.1.2` (2026-11-15, signed-only macOS arm64 + unsigned Windows x64),
 `desktop-v0.1.3` (2026-11-15, notarized + stapled macOS arm64, unsigned Windows x64, update
 awareness) and `desktop-v0.1.4` (2026-11-16, notarized + stapled macOS arm64 with AI card
-workspaces and reply intelligence; Windows stays on 0.1.3). The iOS
+workspaces and reply intelligence, plus an unsigned Windows x64 NSIS `.exe` built by CI). The iOS
 app's download entry
 (`AppLinks.desktopDownload`) points at the Releases page; the previously planned
 `commitbrew.com/brewphase` page (HTTP 404) is no longer required for downloads.
@@ -66,7 +66,7 @@ app's download entry
 |---|---|---|---|
 | iPhone (App Store) | **iOS 18.0+**, iPhone only | Bundle `com.brewphase.ios`; `TARGETED_DEVICE_FAMILY = 1`; Swift 5.0 | `BrewPhase.xcodeproj/project.pbxproj`; iTunes `minimumOsVersion: 18.0` |
 | macOS Desktop | **Not declared in the repository** | Only arm64 has been built. No minimum macOS version is specified in config or docs, so it **cannot be confirmed** here | `Desktop/electron-builder.yml`, `Desktop/README.md` |
-| Windows Desktop | **Cannot be confirmed** | Config targets NSIS x64; no build, no install, no device test has occurred | `.github/workflows/desktop-release.yml` |
+| Windows Desktop | **Cannot be confirmed** | Config targets NSIS x64; an unsigned installer is published, but no install or device test has occurred | `.github/workflows/desktop-release.yml`, GitHub Releases API |
 | Linux Desktop | **Not supported** | `AppImage` target retained in config only | `Desktop/electron-builder.yml` |
 | MCP | macOS / Linux (Unix domain socket) | Windows Named Pipe ACL unverified; no TCP fallback; V1 explicitly does not support Windows | `Desktop/docs/MCP_ARCHITECTURE.md`, `Desktop/docs/MCP_SECURITY.md` |
 | LAN sync | Both devices on the same local network | Plain HTTP, preferred port 47821; no TLS, no public relay | `Desktop/docs/SYNC_PROTOCOL.md`, `BrewPhase/Sync/SyncNetworkClient.swift` |
@@ -96,7 +96,7 @@ not claimed as shipped 1.1 features.
 - **Desktop companion** — Coffee / Records / Canvas on Electron with local SQLite, guarded link
   metadata resolution, derived-metadata table that cannot create sync conflicts
   (`Desktop/README.md` §已实现).
-- **MCP V1** — 18 tools, 8 scopes, per-client tokens, stdio server + Unix socket bridge, write
+- **MCP V1** — 27 tools, 8 scopes, per-client tokens, stdio server + Unix socket bridge, write
   audit and idempotency (`Desktop/docs/MCP_*.md`).
 
 **Explicitly not implemented**: bidirectional sync, TLS for LAN sync, Bonjour auto-discovery,
@@ -112,16 +112,17 @@ graphical session.
 | Suite | Where | Count | How counted | Last known execution |
 |---|---|---|---|---|
 | iOS XCTest | `BrewPhaseTests/` | **40 files / 702 test methods** (44 `XCTestCase` subclasses) | Static: `find … -name '*.swift' \| wc -l`; `grep -rhoE 'func test[A-Za-z0-9_]*\(' \| wc -l` | 702 passed, 0 failures — maintainer's local `xcodebuild test` run, 2026-11-09 |
-| Desktop Vitest | `Desktop/tests/unit/`, `Desktop/tests/integration/` | **335 passed**; 33 test files in `Desktop/tests/`, 340 textual `it(`/`test(` occurrences | `pnpm test` (config includes unit + integration only) | Local run, 2026-11-10 |
+| Desktop Vitest | `Desktop/tests/unit/`, `Desktop/tests/integration/` | **887 passed**, 68 test files | `pnpm test` (config includes unit + integration only); file count from `ls tests/unit/*.test.ts tests/integration/*.test.ts \| wc -l` | Local run, 2026-11-16 |
 | Desktop e2e | `Desktop/tests/e2e/` | **13 passed / 2 skipped** | `pnpm e2e` (Playwright + real Electron) | Local run, 2026-11-09 |
 | Localisation | `Tools/Localization/` | **1,141 keys** in both `.lproj` tables | `python3 Tools/Localization/check.py` | Local run, 2026-11-10 |
 | Typecheck / build | `Desktop/` | passed | `pnpm typecheck`, `pnpm build` | Local run, 2026-11-10 |
 
 > **Honesty note on these numbers.** The execution counts are maintainer-side local records (kept in
-> `.workbuddy/memory/`, which is not tracked by git), not CI-reproducible results. Static method
-> counts are reproducible with the commands above. The 340 textual `it(`/`test(` matches do not equal
-> the 335 executed cases (conditional/skipped cases); the difference has not been investigated.
-> No count here is presented as a CI badge result.
+> `.workbuddy/memory/`, which is not tracked by git), not CI badge results. Static method counts are
+> reproducible with the commands above. The same suite runs in CI on `macos-latest` and
+> `windows-latest`; on 2026-11-16 the macOS leg failed one assertion in
+> `tests/unit/local-workspace-service.test.ts` — it compared a `realpath`-normalised path against the
+> raw `tmpdir` path, and `/var` is a symlink to `/private/var` on macOS. Fixed in `133ac12`.
 
 **CI.** [`.github/workflows/desktop-release.yml`](../.github/workflows/desktop-release.yml) is the
 only workflow in the repository. `name: Desktop Release`; triggers are `push` on `desktop-v*` tags
@@ -155,12 +156,14 @@ Artifact names follow `BrewPhase-${version}-${os}-${arch}.${ext}`. Targets: macO
 Windows NSIS `exe`, Linux `AppImage` (config only). `npmRebuild: false` + `asarUnpack` are used
 because `better-sqlite3` 13 loads platform N-API prebuilds shared between Node and Electron.
 
-**Release state (2026-11-10):** the only release is draft `439332432` with 4 uploaded assets —
-`BrewPhase-0.1.0-mac-arm64.dmg` (141,152,610 B), `.zip` (141,660,586 B) and two `.sha256` files.
-It is not published, and no remote tag `desktop-artifacts-20261109` exists (drafts do not create
-tags until published). Automatic installation of updates (`electron-updater`) is not implemented;
-update awareness (check GitHub Releases for a newer `desktop-v*` version, notify in Settings,
-open the download page) is implemented — it reads only version numbers and links, uploads nothing.
+**Release state (2026-11-16):** five published prereleases — `desktop-v0.1.0`, `0.1.1`, `0.1.2`,
+`0.1.3`, `0.1.4` — each anonymously downloadable with `.sha256` sidecars:
+`desktop-v0.1.4` carries `BrewPhase-0.1.4-mac-arm64.dmg` / `.zip` (signed, notarized, stapled) and
+`BrewPhase-0.1.4-win-x64.exe` (unsigned, CI-built). Windows assets for 0.1.0/0.1.2/0.1.3 were also
+built by CI; the macOS assets were built and notarized locally, because CI holds **no** signing
+secrets. Automatic installation of updates (`electron-updater`) is not implemented; update awareness
+(reads GitHub Releases, notifies in Settings → General, opens the download page) is — it sends no
+device or journal data. Install steps are in [`INSTALL.md`](INSTALL.md).
 
 ## 6. Code signing & notarization
 
@@ -172,8 +175,8 @@ open the download page) is implemented — it reads only version numbers and lin
 | Gatekeeper | `spctl --assess` → `accepted / source=Notarized Developer ID` for both app and dmg | Local verification, 2026-11-10 |
 | Release `.zip` | Rebuilt from the stapled `.app` with `ditto -c -k --keepParent`; `.zip` itself cannot be stapled | Local verification, 2026-11-10 |
 | SHA-256 | Two `.sha256` files, `shasum -a 256 -c` passes | `Desktop/release/` (gitignored) |
-| Windows | No signing; no certificate, no `signtool` run | No artifact exists |
-| CI signing | **Not configured** — 0 repository secrets | `GET /actions/secrets`, 2026-11-10 |
+| Windows | No Authenticode signature; no certificate, no `signtool` run | Published `.exe` assets in `desktop-v0.1.0` … `desktop-v0.1.4` (GitHub Releases API) |
+| CI signing | **Not configured** — 0 repository secrets | `GET /actions/secrets`, 2026-11-16 |
 
 Notarization was performed **locally** with the keychain profile `BrewPingNotary` (same Apple Team
 ID, inherited from the maintainer's other project) using `xcrun notarytool submit` +
@@ -182,7 +185,9 @@ key. No `.p8` file is required for this local path. CI would need the seven secr
 `Desktop/README.md` (`MAC_CERT_P12_B64`, `MAC_CERT_PASSWORD`, `APPLE_API_KEY_P8_B64`,
 `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`, `WIN_CERT_P12_B64`, `WIN_CERT_PASSWORD`).
 
-Signed and notarized do **not** mean published: these artifacts are still in an unpublished draft.
+Signed and notarized do **not** by themselves mean published — 0.1.0 spent a day as an unpublished
+draft. All five `desktop-v*` releases are public now, and 0.1.3 / 0.1.4 were each signed, notarized
+and stapled before upload (0.1.4 app submission `d91fd530-c41c-447a-8322-490bb6ad7429`).
 
 ## 7. Privacy & security status
 
@@ -211,29 +216,30 @@ Signed and notarized do **not** mean published: these artifacts are still in an 
 
 1. **Two different products share one README.** App Store 1.1 ships Coffee only; Records, Canvas,
    sync and Desktop exist only in `main` (2.0).
-2. **No public desktop download.** The only Release is a draft, with no published tag. A public
-   repository does not make a draft or its assets downloadable.
+2. **Desktop distribution is prerelease-only.** Five `desktop-v*` releases are public and anonymously
+   downloadable, but none is a stable "1.0", all are marked prerelease, and there is no download page
+   outside GitHub Releases.
 3. **No LICENSE file.** `GET /repos/.../license` → 404; GitHub reports `license: None`. Until one is
    added, the repository is all-rights-reserved by default.
 4. **No `CONTRIBUTING.md`, `SECURITY.md`, PR CI or test-on-push workflow.**
 5. **GitHub Pages is not enabled**, so the privacy policy URL embedded in the app is a 404; the
    policy text is also out of date relative to `main`.
-6. **Windows has no Release asset and no signed installer** — CI artifacts exist (run
-   `42761926389`) but are unsigned and have never been installed on real hardware. The iOS
-   download entry now points at the GitHub Releases page (`AppLinks.swift`).
+6. **Windows installers are unsigned** — no Authenticode certificate, so SmartScreen warns on every
+   fresh download. The release is built by CI, the checksum is published, but no certificate.
 7. **LAN sync has no TLS** and is one-way (iOS → Desktop). MCP writes stay on the desktop.
 8. **Real-device end-to-end sync validation is incomplete.** Coverage is integration-level (real
    HTTP + real SQLite); the iPhone ↔ Mac pass is still in progress
    (`Desktop/docs/REAL_DEVICE_SYNC_GUIDE.md`).
-9. **Windows is unverified.** No Windows artifact, no install test, and MCP V1 does not support
-   Windows Named Pipes. Linux has no build or verification.
+9. **The Windows build has never been installed on real Windows hardware** — packaging and CI pass,
+   but install, first-run and MCP behaviour are unverified. MCP V1 does not support Windows Named
+   Pipes at all. Linux has no build or verification.
 10. **macOS is arm64 only** — no Intel or universal build.
 11. **No automatic updates** for the desktop app.
 12. **Unfinished capabilities**: Bonjour auto-discovery, TLS, bidirectional sync, Canvas drawing,
     desktop video playback, system reminder scheduling
     (`Desktop/README.md` §未实现, `Desktop/docs/ROADMAP.md`).
-13. **Version metadata is not aligned**: Xcode `MARKETING_VERSION = 2.0`, Desktop `0.1.0`, App Store
-    `1.1`, draft release assets named `0.1.0`.
+13. **Version metadata is not aligned**: Xcode `MARKETING_VERSION = 2.0`, Desktop `0.1.4`, App Store
+    `1.1`. Only the desktop has a release cadence; the 2.0 iOS build is unreleased.
 14. **Screenshots in `docs/screenshots/` predate the current three-tab UI** and are verification
     evidence, not current product imagery. Three App Store 1.1 frames were added for the README;
     no Records / Canvas / Desktop / MCP screenshots exist.
