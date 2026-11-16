@@ -240,9 +240,16 @@ and stapled before upload (0.1.4 app submission `d91fd530-c41c-447a-8322-490bb6a
     (`Desktop/README.md` §未实现, `Desktop/docs/ROADMAP.md`).
 13. **Version metadata is not aligned**: Xcode `MARKETING_VERSION = 2.0`, Desktop `0.1.4`, App Store
     `1.1`. Only the desktop has a release cadence; the 2.0 iOS build is unreleased.
-14. **Screenshots in `docs/screenshots/` predate the current three-tab UI** and are verification
-    evidence, not current product imagery. Three App Store 1.1 frames were added for the README;
-    no Records / Canvas / Desktop / MCP screenshots exist.
+14. **Screenshot coverage is uneven.** `docs/screenshots/` holds three groups:
+    - `appstore-0*.jpg` — official App Store frames for the shipped iOS 1.1 build;
+    - `desktop-{studio,coffee,records,canvas}-{en,zh}.jpg` — Desktop 0.1.4, 1440×900, seeded demo
+      library, regenerated with `README_SHOTS=1 npx playwright test readme-shots` (see
+      `Desktop/tests/e2e/readme-shots.spec.ts`);
+    - `01-…-10-*.png` — simulator captures from 2026-09 that predate the three-tab UI; kept as
+      verification evidence, **not** product imagery.
+
+    There is **no Windows screenshot** (the build has never run on Windows hardware), no Records /
+    Canvas imagery for the unreleased iOS 2.0, and no MCP screenshot.
 15. **Single maintainer** — bus factor 1; response times depend on one person.
 16. **App Store metrics and regional availability are not in the repository** and are not claimed.
 

@@ -73,6 +73,22 @@ MCP 仅在 macOS 可用。Windows 的 Named Pipe 权限尚未验证，因此该�
 
 ## 📸 截图
 
+### 桌面端 · 0.1.4
+
+<p align="center">
+  <img src="docs/screenshots/desktop-studio-zh.jpg" alt="BrewPhase 桌面端 —— 工作室首页：咖啡架、画布与记录库" width="100%" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/desktop-coffee-zh.jpg" alt="BrewPhase 桌面端 —— 单包豆的档案、冲煮记录与风味窗口" width="32%" />
+  <img src="docs/screenshots/desktop-records-zh.jpg" alt="BrewPhase 桌面端 —— 记录库：链接、图片、文字与视频" width="32%" />
+  <img src="docs/screenshots/desktop-canvas-zh.jpg" alt="BrewPhase 桌面端 —— 把记录摊在画布上" width="32%" />
+</p>
+<p align="center">
+  <sub><b>工作室首页</b> · <b>咖啡</b> · <b>记录</b> · <b>画布</b> —— 取自 0.1.4 构建，1440×900，中文界面</sub>
+</p>
+
+### iPhone · 1.1
+
 <p align="center">
   <img src="docs/screenshots/appstore-01-todays-pick.jpg" alt="BrewPhase 今日推荐" width="27%" />
   <img src="docs/screenshots/appstore-03-flavour-over-time.jpg" alt="BrewPhase 风味变化" width="27%" />
@@ -82,8 +98,14 @@ MCP 仅在 macOS 可用。Windows 的 Named Pipe 权限尚未验证，因此该�
   <sub><b>iPhone 上的 BrewPhase 1.1</b> &nbsp;·&nbsp; 今日推荐 &nbsp;·&nbsp; 风味变化 &nbsp;·&nbsp; 冲煮记录 —— App Store 官方截图</sub>
 </p>
 
-这三张展示的是**已上架的 1.1 版本**。`main` 里的 Records、Canvas 和桌面端还未发布，因此没有对应截图；
-[`docs/screenshots/`](docs/screenshots/) 里较早的模拟器截图拍于三页导航改版之前，保留作验收证据，不作为产品展示图。
+桌面端这几张取自**已发布的 0.1.4 预览版**，跑的是种子演示库（3 包豆、7 条记录、2 块画布、3 次冲煮）。
+卡片没有一张是贴图或 Mock——全部按真实记录渲染。可复现：在 `Desktop/` 下跑
+`README_SHOTS=1 npx playwright test readme-shots`，八张截图会重新生成到 `$TMPDIR`。同一套界面的英文
+截图是 `desktop-*-en.jpg`，供 `README.md` 使用。**没有 Windows 截图**——Windows 构建从未在 Windows
+真机上跑过，见[平台状态](#-平台状态)。
+
+iPhone 那三张展示的是**已上架的 1.1 版本**。[`docs/screenshots/`](docs/screenshots/) 里 01–10 那批较早的
+模拟器截图拍于三页导航改版之前，保留作验收证据，不作为产品展示图。
 
 ## BrewPhase 是什么，不是什么
 
@@ -392,6 +414,7 @@ skill 的完整文档：[skills/brewphase-life-path/README.zh-CN.md](skills/brew
 |---|---|
 | **项目状态（权威）** | [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) |
 | **安装说明** —— iPhone、macOS、Windows | [docs/INSTALL.zh-CN.md](docs/INSTALL.zh-CN.md) · [English](docs/INSTALL.md) |
+| **截图**（可重新生成） | [docs/screenshots/](docs/screenshots/) · 在 `Desktop/` 下跑 `README_SHOTS=1 npx playwright test readme-shots` |
 | **桌面端开发文档** | [Desktop/README.md](Desktop/README.md) |
 | 产品范围 | [Desktop/docs/PRODUCT_SCOPE.md](Desktop/docs/PRODUCT_SCOPE.md) |
 | 架构 | [Desktop/docs/ARCHITECTURE.md](Desktop/docs/ARCHITECTURE.md) |

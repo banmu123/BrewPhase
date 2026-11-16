@@ -92,6 +92,22 @@ record of what is shipped is [docs/PROJECT\_STATUS.md](docs/PROJECT_STATUS.md).
 
 ## 📸 Screenshots
 
+### Desktop · 0.1.4
+
+<p align="center">
+  <img src="docs/screenshots/desktop-studio-en.jpg" alt="BrewPhase Desktop — Studio home with the coffee shelf, canvases and the records library" width="100%" />
+</p>
+<p align="center">
+  <img src="docs/screenshots/desktop-coffee-en.jpg" alt="BrewPhase Desktop — a bag's profile with brew history and flavour window" width="32%" />
+  <img src="docs/screenshots/desktop-records-en.jpg" alt="BrewPhase Desktop — the records library with links, images, text and video" width="32%" />
+  <img src="docs/screenshots/desktop-canvas-en.jpg" alt="BrewPhase Desktop — a canvas with records laid out on it" width="32%" />
+</p>
+<p align="center">
+  <sub><b>Studio home</b> · <b>Coffee</b> · <b>Records</b> · <b>Canvas</b> — captured from the 0.1.4 build, 1440×900, English UI</sub>
+</p>
+
+### iPhone · 1.1
+
 <p align="center">
   <img src="docs/screenshots/appstore-01-todays-pick.jpg" alt="BrewPhase today's pick" width="27%" />
   <img src="docs/screenshots/appstore-03-flavour-over-time.jpg" alt="BrewPhase flavour over time" width="27%" />
@@ -101,8 +117,15 @@ record of what is shipped is [docs/PROJECT\_STATUS.md](docs/PROJECT_STATUS.md).
   <sub><b>BrewPhase 1.1 on iPhone</b> \&nbsp;·\&nbsp; today's pick \&nbsp;·\&nbsp; flavour over time \&nbsp;·\&nbsp; brew log — official App Store screenshots</sub>
 </p>
 
-These three frames show the **shipped 1.1 build**. Records, Canvas and the desktop app in `main`
-have not been released and are not pictured; the older simulator captures in
+The desktop frames come from the **shipped 0.1.4 prerelease**, running against a seeded demo library
+(3 bags, 7 records, 2 canvases, 3 brews). Nothing is mocked or pasted in — every card is rendered from
+real record data. They are reproducible: `cd Desktop && README_SHOTS=1 npx playwright test
+readme-shots` regenerates all eight captures into `$TMPDIR`. The Chinese-UI captures of the same four
+screens are `desktop-*-zh.jpg`, used by `README.zh-CN.md`. There is **no Windows screenshot**, because
+the Windows build has never been run on Windows hardware — see
+[Platform status](#-platform-status).
+
+The iPhone frames show the **shipped 1.1 build**. The older simulator captures 01–10 in
 [`docs/screenshots/`](docs/screenshots/) predate the current three-tab interface and are kept as
 verification evidence, not as product imagery.
 
@@ -466,6 +489,7 @@ only in **[Project status](docs/PROJECT_STATUS.md)**. Everything else is here:
 |---|---|
 | **Project status** (authoritative) | [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) |
 | **Installing** — iPhone, macOS, Windows | [docs/INSTALL.md](docs/INSTALL.md) · [简体中文](docs/INSTALL.zh-CN.md) |
+| **Screenshots** (regenerate) | [docs/screenshots/](docs/screenshots/) · `README_SHOTS=1 npx playwright test readme-shots` in `Desktop/` |
 | **Desktop development guide** | [Desktop/README.md](Desktop/README.md) |
 | Product scope | [Desktop/docs/PRODUCT_SCOPE.md](Desktop/docs/PRODUCT_SCOPE.md) |
 | Architecture | [Desktop/docs/ARCHITECTURE.md](Desktop/docs/ARCHITECTURE.md) |

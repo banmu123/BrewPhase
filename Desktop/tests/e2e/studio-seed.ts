@@ -120,13 +120,80 @@ export const SEED = {
 export const SEED_TEXT_NOTE =
   '水温 92 度、15 克粉、1:16。酸质明亮，尾段稍薄，下次把研磨调细半格。'
 
+/** 种子文案语言。默认中文，保持既有断言不变；README 的英文截图用 `'en'`。 */
+export type SeedLang = 'zh' | 'en'
+
+const SEED_COPY = {
+  zh: {
+    beans: [
+      ['耶加雪菲 日晒', '启程咖啡', '埃塞俄比亚 耶加雪菲', '日晒'],
+      ['哥伦比亚 粉波旁', 'Origen Lab', '哥伦比亚 慧兰', '水洗'],
+      ['危地马拉 薇薇特南果', '本地小批次', '危地马拉', '水洗']
+    ],
+    textNote: SEED_TEXT_NOTE,
+    records: {
+      image1Title: '晨光里的手冲',
+      image1Summary: '六点半的光刚好斜进来。',
+      image2Title: '周末的 Espresso',
+      text2Summary: '把豆子分装成每包 15 克，早上就不用再称。',
+      videoTitle: '拉花练习：第三次',
+      videoSummary: '奶泡还是偏厚，明天把进气时间缩短。'
+    },
+    canvases: ['风味轮草稿', '萃取参数实验'],
+    brews: {
+      method: '手冲',
+      grind: '中细',
+      notes: [
+        '第一段注水 40 克，30 秒后第二段。',
+        '研磨调细半格，甜感明显，尾段不再发干。',
+        '水温降到 90 度，酸质更干净。'
+      ]
+    }
+  },
+  en: {
+    beans: [
+      ['Yirgacheffe Natural', 'Daybreak Coffee', 'Yirgacheffe, Ethiopia', 'Natural'],
+      ['Colombia Pink Bourbon', 'Origen Lab', 'Huila, Colombia', 'Washed'],
+      ['Guatemala Huehuetenango', 'Local Micro-lot', 'Huehuetenango, Guatemala', 'Washed']
+    ],
+    textNote:
+      '92°C, 15 g in, 1:16. Bright acidity, a thin finish — grind one notch finer next time.',
+    records: {
+      image1Title: 'Pour-over in the morning light',
+      image1Summary: 'The sun hits the counter at half past six.',
+      image2Title: 'Weekend espresso',
+      text2Summary: 'Pre-portion the beans into 15 g doses so the morning needs no scale.',
+      videoTitle: 'Latte art, third attempt',
+      videoSummary: 'Milk still too thick — shorten the aeration tomorrow.'
+    },
+    canvases: ['Flavour wheel draft', 'Extraction experiments'],
+    brews: {
+      method: 'Pour-over',
+      grind: 'Medium-fine',
+      notes: [
+        '40 g bloom, second pour at 0:30.',
+        'Half a notch finer — sweeter, and the finish stopped drying out.',
+        'Dropped to 90°C; the acidity reads cleaner.'
+      ]
+    }
+  }
+} as const
+
 /**
  * 三个空间都有真实数据的库：3 包豆子、7 条记录（两条图片、两条链接、
  * 两条文字、一条视频）、2 块画布（带节点）。
  *
  * 排序按 createdAt 递增写入，最新的是视频记录 —— 首页 Deck 第一张就是它。
+ *
+ * `lang` 只影响**文案**（豆名、记录标题、画布名），结构、ID、时间戳完全一样，
+ * 所以中英文截图可以逐像素对照排版。默认中文，既有用例不必改。
  */
-export function seedStudioDatabase(appData: string): void {
+export function seedStudioDatabase(
+  appData: string,
+  lang: SeedLang = 'zh',
+  options: { freshRoast?: boolean } = {}
+): void {
+  const copy = SEED_COPY[lang]
   mkdirSync(appData, { recursive: true })
   const mediaDir = join(appData, 'media')
   writeSwatches(mediaDir)
@@ -136,6 +203,10 @@ export function seedStudioDatabase(appData: string): void {
   db.pragma(`user_version = ${migrations.length}`)
 
   const base = 1_790_000_000_000
+  // 风味阶段是按「今天」算的：固定 base 会让烘焙日期停在 2026-09，
+  // 截图里所有豆子都变成 Day 60+ 的 Declining。README 截图传 freshRoast，
+  // 让烘焙日期跟着当天走（6 天前 = 峰值窗口），其他用例仍用固定的 base。
+  const roastAnchor = options.freshRoast ? Date.now() : base
   const insertBean = db.prepare(
     `insert into beans (id, name, roaster, origin, process, roast_level, roast_date, purchase_date,
       weight_g, remaining_g, price, channel, image_path, flavor_tags_raw, notes, status, is_sample,
@@ -143,9 +214,9 @@ export function seedStudioDatabase(appData: string): void {
      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, ?)`
   )
   const beanRows: Array<[string, string, string, string, string, number, number, number, string | null]> = [
-    [SEED.beans[0], '耶加雪菲 日晒', '启程咖啡', '埃塞俄比亚 耶加雪菲', '日晒', 200, 168, 12, 'beanpack1.png'],
-    [SEED.beans[1], '哥伦比亚 粉波旁', 'Origen Lab', '哥伦比亚 慧兰', '水洗', 250, 233, 8, 'beanpack2.png'],
-    [SEED.beans[2], '危地马拉 薇薇特南果', '本地小批次', '危地马拉', '水洗', 200, 196, 2, null]
+    [SEED.beans[0], copy.beans[0][0], copy.beans[0][1], copy.beans[0][2], copy.beans[0][3], 200, 168, 12, 'beanpack1.png'],
+    [SEED.beans[1], copy.beans[1][0], copy.beans[1][1], copy.beans[1][2], copy.beans[1][3], 250, 233, 8, 'beanpack2.png'],
+    [SEED.beans[2], copy.beans[2][0], copy.beans[2][1], copy.beans[2][2], copy.beans[2][3], 200, 196, 2, null]
   ]
   beanRows.forEach((row, index) => {
     insertBean.run(
@@ -155,8 +226,8 @@ export function seedStudioDatabase(appData: string): void {
       row[3],
       row[4],
       'medium',
-      base - 6 * 86_400_000,
-      base - 5 * 86_400_000,
+      roastAnchor - 6 * 86_400_000,
+      roastAnchor - 5 * 86_400_000,
       row[5],
       row[6],
       row[7],
@@ -166,6 +237,44 @@ export function seedStudioDatabase(appData: string): void {
       '',
       base + index * 1000,
       base + index * 1000
+    )
+  })
+
+  // 三支冲煮：只挂在第一包豆上，让 Coffee 页有「Brews · 3」和最近一次的参数，
+  // 而不是一张只有豆名的空架子。分数与风味强度写的是真值，不是占位 0。
+  const insertBrew = db.prepare(
+    `insert into brews (id, bean_id, date, method, grinder, grind_size, water_temp, coffee_g,
+      water_g, time_seconds, score, acidity, sweetness, bitterness, body, aftertaste,
+      flavor_tags_raw, notes, stock_deducted_g, created_at)
+     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  )
+  const brewRows: Array<[number, number, string]> = [
+    [roastAnchor - 3 * 86_400_000, 92, copy.brews.notes[0]],
+    [roastAnchor - 2 * 86_400_000, 92, copy.brews.notes[1]],
+    [roastAnchor - 1 * 86_400_000, 90, copy.brews.notes[2]]
+  ]
+  brewRows.forEach((row, index) => {
+    insertBrew.run(
+      `eeeeeeee-1111-4111-8111-00000000000${index + 1}`,
+      SEED.beans[0],
+      row[0],
+      copy.brews.method,
+      'Comandante C40',
+      copy.brews.grind,
+      row[1],
+      15,
+      240,
+      150,
+      4,
+      4,
+      4,
+      1,
+      3,
+      3,
+      'citrus, jasmine',
+      row[2],
+      15,
+      row[0]
     )
   })
 
@@ -203,10 +312,10 @@ export function seedStudioDatabase(appData: string): void {
     {
       id: SEED.records.image1,
       carrier: 'image',
-      title: '晨光里的手冲',
+      title: copy.records.image1Title,
       media: 'studioshot1.png',
       preview: 'studioshot1_thumb.png',
-      summary: '六点半的光刚好斜进来。',
+      summary: copy.records.image1Summary,
       offset: 4
     },
     {
@@ -224,7 +333,7 @@ export function seedStudioDatabase(appData: string): void {
       id: SEED.records.text1,
       carrier: 'text',
       title: '',
-      note: SEED_TEXT_NOTE,
+      note: copy.textNote,
       offset: 5
     },
     {
@@ -240,7 +349,7 @@ export function seedStudioDatabase(appData: string): void {
     {
       id: SEED.records.image2,
       carrier: 'image',
-      title: '周末的 Espresso',
+      title: copy.records.image2Title,
       media: 'studioshot2.png',
       preview: 'studioshot2_thumb.png',
       offset: 6
@@ -249,15 +358,15 @@ export function seedStudioDatabase(appData: string): void {
       id: SEED.records.text2,
       carrier: 'text',
       title: '',
-      summary: '把豆子分装成每包 15 克，早上就不用再称。',
+      summary: copy.records.text2Summary,
       offset: 7
     },
     {
       id: SEED.records.video1,
       carrier: 'video',
-      title: '拉花练习：第三次',
+      title: copy.records.videoTitle,
       preview: 'studioshot3_thumb.png',
-      summary: '奶泡还是偏厚，明天把进气时间缩短。',
+      summary: copy.records.videoSummary,
       offset: 9
     }
   ]
@@ -290,8 +399,8 @@ export function seedStudioDatabase(appData: string): void {
   const insertCanvas = db.prepare(
     'insert into canvases (id, name, note, is_sample, created_at, updated_at) values (?, ?, ?, 0, ?, ?)'
   )
-  insertCanvas.run(SEED.canvases[0], '风味轮草稿', '', base, base + 5_000)
-  insertCanvas.run(SEED.canvases[1], '萃取参数实验', '', base, base + 9_000)
+  insertCanvas.run(SEED.canvases[0], copy.canvases[0], '', base, base + 5_000)
+  insertCanvas.run(SEED.canvases[1], copy.canvases[1], '', base, base + 9_000)
 
   const insertNode = db.prepare(
     `insert into canvas_nodes (id, canvas_id, record_id, position_x, position_y, width, height,
