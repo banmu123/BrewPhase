@@ -21,7 +21,7 @@ keep the notes, links and images you collect, and to arrange them in a space tha
 
 <p>
   <a href="https://apps.apple.com/us/app/brewphase/id6815591631"><img src="https://img.shields.io/badge/App%20Store-BrewPhase%201.1-0D96F6?style=for-the-badge&logo=appstore&logoColor=white" alt="Download BrewPhase on the App Store" /></a>
-  <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.1.3/BrewPhase-0.1.3-mac-arm64.dmg"><img src="https://img.shields.io/badge/Download-macOS%20arm64-30372f?style=for-the-badge&logo=apple&logoColor=white" alt="Download BrewPhase for macOS" /></a>
+  <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.1.4/BrewPhase-0.1.4-mac-arm64.dmg"><img src="https://img.shields.io/badge/Download-macOS%20arm64-30372f?style=for-the-badge&logo=apple&logoColor=white" alt="Download BrewPhase for macOS" /></a>
   <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.1.3/BrewPhase-0.1.3-win-x64.exe"><img src="https://img.shields.io/badge/Download-Windows%20x64-30372f?style=for-the-badge&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGgxMS4zNzd2MTEuMzcySDB6bTEyLjYyMyAwSDI0djExLjM3MkgxMi42MjN6TTAgMTIuNjIzaDExLjM3N1YyNEgwem0xMi42MjMgMEgyNFYyNEgxMi42MjN6Ii8%2BPC9zdmc%2B" alt="Download BrewPhase for Windows" /></a>
   <a href="https://github.com/banmu123/BrewPhase"><img src="https://img.shields.io/badge/Source-GitHub-30372f?style=for-the-badge&logo=github&logoColor=white" alt="BrewPhase on GitHub" /></a>
 </p>
@@ -52,7 +52,7 @@ only on `desktop-v*` tags or manual dispatch. This repository has no test-on-eve
 
 <p>
   <a href="https://apps.apple.com/us/app/brewphase/id6815591631"><img src="https://img.shields.io/badge/App%20Store-BrewPhase%201.1-0D96F6?style=for-the-badge&logo=appstore&logoColor=white" alt="Download BrewPhase on the App Store" /></a>
-  <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.1.3/BrewPhase-0.1.3-mac-arm64.dmg"><img src="https://img.shields.io/badge/⬇%20macOS%20arm64-.dmg-30372f?style=for-the-badge&logo=apple&logoColor=white" alt="Download BrewPhase for macOS" /></a>
+  <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.1.4/BrewPhase-0.1.4-mac-arm64.dmg"><img src="https://img.shields.io/badge/⬇%20macOS%20arm64-.dmg-30372f?style=for-the-badge&logo=apple&logoColor=white" alt="Download BrewPhase for macOS" /></a>
   <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.1.3/BrewPhase-0.1.3-win-x64.exe"><img src="https://img.shields.io/badge/⬇%20Windows%20x64-.exe-30372f?style=for-the-badge&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGgxMS4zNzd2MTEuMzcySDB6bTEyLjYyMyAwSDI0djExLjM3MkgxMi42MjN6TTAgMTIuNjIzaDExLjM3N1YyNEgwem0xMi42MjMgMEgyNFYyNEgxMi42MjN6Ii8%2BPC9zdmc%2B" alt="Download BrewPhase for Windows" /></a>
   <a href="https://github.com/banmu123/BrewPhase"><img src="https://img.shields.io/badge/Source-GitHub-30372f?style=for-the-badge&logo=github&logoColor=white" alt="BrewPhase on GitHub" /></a>
 </p>
@@ -60,20 +60,23 @@ only on `desktop-v*` tags or manual dispatch. This repository has no test-on-eve
 | Platform              | Get it                                                                                                                                            |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **iPhone · iOS 18+**  | **[BrewPhase 1.1 on the App Store](https://apps.apple.com/us/app/brewphase/id6815591631)** — free, US storefront, English + Simplified Chinese    |
-| **macOS · Desktop**   | **[BrewPhase Desktop 0.1.3 — macOS arm64 (prerelease)](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.1.3)** — Developer ID signed, hardened runtime, **Apple notarized with a stapled ticket**: Gatekeeper opens it normally, no right-click workaround. Apple Silicon only. Includes update awareness (checks GitHub Releases and shows a badge in Settings → General; downloads stay manual). |
+| **macOS · Desktop**   | **[BrewPhase Desktop 0.1.4 — macOS arm64 (prerelease)](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.1.4)** — per-card AI workspaces (notes, reference files, context building) and local reply intelligence in the roundtable; Developer ID signed, hardened runtime, **Apple notarized with a stapled ticket**: Gatekeeper opens it normally, no right-click workaround. Apple Silicon only. Includes update awareness (checks GitHub Releases and shows a badge in Settings → General; downloads stay manual). |
 | **Windows · Desktop** | **[BrewPhase Desktop 0.1.3 — Windows x64 (prerelease)](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.1.3)** — NSIS `.exe` + `.sha256`, unsigned (SmartScreen will warn), built by CI from `main`; includes update awareness (check + notify, manual download). Not installed/smoke-tested on real hardware. |
 | **Linux · Desktop**   | No artifact. An `AppImage` target is kept in the config only; it is not built or verified.                                                        |
 | **Source**            | `git clone https://github.com/banmu123/BrewPhase.git`                                                                                             |
 
-The [Releases page](https://github.com/banmu123/BrewPhase/releases) carries four prereleases:
-**desktop-v0.1.3** (published 2026-11-15) with the notarized + stapled macOS arm64 `.dmg`/`.zip`
-(signed dmg, notarized app), the unsigned Windows x64 NSIS `.exe`, and update awareness in
-Settings → General,
+The [Releases page](https://github.com/banmu123/BrewPhase/releases) carries five prereleases:
+**desktop-v0.1.4** (published 2026-11-16) with per-card AI workspaces, a right-rail workspace layout
+and local reply intelligence, shipped as a notarized + stapled macOS arm64 `.dmg`/`.zip` (signed dmg,
+notarized app),
+**desktop-v0.1.3** (2026-11-15) with the same notarized macOS packaging, update awareness in
+Settings → General, and the unsigned Windows x64 NSIS `.exe`,
 **desktop-v0.1.2** with a Developer ID signed but **not notarized** macOS build (Apple had returned
 403 on the team agreement, so first launch needed right-click → **Open**) plus an earlier unsigned
 Windows x64 NSIS `.exe`, **desktop-v0.1.1** (2026-11-11, signed + notarized + stapled macOS), and
 **desktop-v0.1.0** (2026-11-10) with an earlier macOS build — each with `.sha256` files,
-anonymous-downloadable. 0.1.3 supersedes 0.1.2 on both platforms: use it instead of the older dmg/exe.
+anonymous-downloadable. 0.1.4 supersedes 0.1.3 on macOS; the Windows build stays at 0.1.3 until a
+0.1.4 `windows-latest` run publishes an installer.
 The Windows build has no
 Authenticode
 signature yet, so Windows Defender
@@ -237,8 +240,8 @@ replay, not confidentiality. TLS is planned, not shipped.
 |---|---|---|
 | **iOS · App Store** | **Available** — [1.1](https://apps.apple.com/us/app/brewphase/id6815591631) | iPhone only, iOS 18.0+, free, US storefront. Ships the Coffee notebook; no Records / Canvas / sync. |
 | **iOS · `main` (2.0)** | **In development — not published** | Coffee + Records + Canvas + LAN sync exist in source. Not submitted as 2.0. |
-| **macOS · Desktop** | **Published (prerelease)** | Latest arm64 `.dmg` / `.zip` in `desktop-v0.1.3`, Developer ID signed with hardened runtime, **notarized and stapled** — Gatekeeper opens normally. `desktop-v0.1.2` was signed but not notarized (superseded). Includes update awareness (check + notify, manual download). No Intel build. |
-| **Windows · Desktop** | **Published (prerelease), unsigned** | NSIS x64 `.exe` in `desktop-v0.1.3` (previous: `desktop-v0.1.2`, `desktop-v0.1.0`), built by the `windows-latest` CI job from `main`. Includes update awareness. No Authenticode certificate, not installed/smoke-tested on real hardware; MCP V1 unsupported. |
+| **macOS · Desktop** | **Published (prerelease)** | Latest arm64 `.dmg` / `.zip` in `desktop-v0.1.4` (per-card AI workspaces, right-rail layout, local reply intelligence), Developer ID signed with hardened runtime, **notarized and stapled** — Gatekeeper opens normally. `desktop-v0.1.2` was signed but not notarized (superseded). Includes update awareness (check + notify, manual download). No Intel build. |
+| **Windows · Desktop** | **Published (prerelease), unsigned** | NSIS x64 `.exe` in `desktop-v0.1.3` — newest Windows artifact; `desktop-v0.1.4` has no Windows build yet (previous: `desktop-v0.1.2`, `desktop-v0.1.0`), built by the `windows-latest` CI job from `main`. Includes update awareness. No Authenticode certificate, not installed/smoke-tested on real hardware; MCP V1 unsupported. |
 | **Linux · Desktop** | **Not supported yet** | `AppImage` target kept in the config; no build, no verification. |
 | **MCP** | **Built, not published** | Desktop-only. macOS / Linux via Unix socket; Windows Named Pipe permissions unverified, no TCP fallback. |
 

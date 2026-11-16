@@ -15,8 +15,8 @@ BrewPhase 起初是一本咖啡笔记：从烘焙日期跟着一包豆走到最�
 <div align="center">
 
 [![App Store](https://img.shields.io/badge/App%20Store-BrewPhase%201.1-0D96F6?logo=appstore&logoColor=white)](https://apps.apple.com/us/app/brewphase/id6815591631)
-[![macOS arm64](https://img.shields.io/badge/Download-macOS%20arm64-30372f?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.1.3/BrewPhase-0.1.3-mac-arm64.dmg)
-[![Windows x64](https://img.shields.io/badge/Download-Windows%20x64-30372f?style=for-the-badge&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGgxMS4zNzd2MTEuMzcySDB6bTEyLjYyMyAwSDI0djExLjM3MkgxMi42MjN6TTAgMTIuNjIzaDExLjM3N1YyNEgwem0xMi42MjMgMEgyNFYyNEgxMi42MjN6Ii8%2BPC9zdmc%2B&logoColor=white)](https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.1.2/BrewPhase-0.1.2-win-x64.exe)
+[![macOS arm64](https://img.shields.io/badge/Download-macOS%20arm64-30372f?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.1.4/BrewPhase-0.1.4-mac-arm64.dmg)
+[![Windows x64](https://img.shields.io/badge/Download-Windows%20x64-30372f?style=for-the-badge&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGgxMS4zNzd2MTEuMzcySDB6bTEyLjYyMyAwSDI0djExLjM3MkgxMi42MjN6TTAgMTIuNjIzaDExLjM3N1YyNEgwem0xMi42MjMgMEgyNFYyNEgxMi42MjN6Ii8%2BPC9zdmc%2B&logoColor=white)](https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.1.3/BrewPhase-0.1.3-win-x64.exe)
 [![GitHub Stars](https://img.shields.io/github/stars/banmu123/BrewPhase?style=social)](https://github.com/banmu123/BrewPhase)
 [![Desktop Release](https://github.com/banmu123/BrewPhase/actions/workflows/desktop-release.yml/badge.svg)](https://github.com/banmu123/BrewPhase/actions/workflows/desktop-release.yml)
 ![iOS](https://img.shields.io/badge/iOS-18.0%2B-000000?logo=apple&logoColor=white)
@@ -36,26 +36,30 @@ tag 或手动触发时运行。本仓库目前还没有「每次 push 都跑测�
 
 <p>
   <a href="https://apps.apple.com/us/app/brewphase/id6815591631"><img src="https://img.shields.io/badge/App%20Store-BrewPhase%201.1-0D96F6?style=for-the-badge&logo=appstore&logoColor=white" alt="在 App Store 下载 BrewPhase" /></a>
-  <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.1.3/BrewPhase-0.1.3-mac-arm64.dmg"><img src="https://img.shields.io/badge/⬇%20macOS%20arm64-.dmg-30372f?style=for-the-badge&logo=apple&logoColor=white" alt="下载 macOS 版 BrewPhase" /></a>
-  <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.1.2/BrewPhase-0.1.2-win-x64.exe"><img src="https://img.shields.io/badge/⬇%20Windows%20x64-.exe-30372f?style=for-the-badge&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGgxMS4zNzd2MTEuMzcySDB6bTEyLjYyMyAwSDI0djExLjM3MkgxMi42MjN6TTAgMTIuNjIzaDExLjM3N1YyNEgwem0xMi42MjMgMEgyNFYyNEgxMi42MjN6Ii8%2BPC9zdmc%2B" alt="下载 Windows 版 BrewPhase" /></a>
+  <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.1.4/BrewPhase-0.1.4-mac-arm64.dmg"><img src="https://img.shields.io/badge/⬇%20macOS%20arm64-.dmg-30372f?style=for-the-badge&logo=apple&logoColor=white" alt="下载 macOS 版 BrewPhase" /></a>
+  <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.1.3/BrewPhase-0.1.3-win-x64.exe"><img src="https://img.shields.io/badge/⬇%20Windows%20x64-.exe-30372f?style=for-the-badge&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGgxMS4zNzd2MTEuMzcySDB6bTEyLjYyMyAwSDI0djExLjM3MkgxMi42MjN6TTAgMTIuNjIzaDExLjM3N1YyNEgwem0xMi42MjMgMEgyNFYyNEgxMi42MjN6Ii8%2BPC9zdmc%2B" alt="下载 Windows 版 BrewPhase" /></a>
   <a href="https://github.com/banmu123/BrewPhase"><img src="https://img.shields.io/badge/Source-GitHub-30372f?style=for-the-badge&logo=github&logoColor=white" alt="在 GitHub 查看源码" /></a>
 </p>
 
 | 端 | 获取方式 |
 |---|---|
 | **iPhone · iOS 18+** | **[App Store 上的 BrewPhase 1.1](https://apps.apple.com/us/app/brewphase/id6815591631)** —— 免费，美区，中英双语 |
-| **macOS · 桌面端** | **[BrewPhase Desktop 0.1.3 — macOS arm64（prerelease）](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.1.3)** — Developer ID 签名 + hardened runtime，**已通过 Apple 公证并 staple 票据**，首次启动不再需要右键 → 打开；仅 Apple Silicon。新增版本感知（检查 GitHub Releases，在设置 → 常规显示提示，下载仍需手动）。 |
-| **Windows · 桌面端** | **[BrewPhase Desktop 0.1.2 — Windows x64（prerelease）](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.1.2)** — NSIS `.exe` + `.sha256`，未签名（SmartScreen 会拦截提示），尚未在 Windows 实机安装与冒烟验证。 |
+| **macOS · 桌面端** | **[BrewPhase Desktop 0.1.4 — macOS arm64（prerelease）](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.1.4)** — 每张 AI 卡片带独立本地工作区（笔记、参考文件、上下文构建），圆桌新增本地回复智能；Developer ID 签名 + hardened runtime，**已通过 Apple 公证并 staple 票据**，首次启动不再需要右键 → 打开；仅 Apple Silicon。含版本感知（检查 GitHub Releases，在设置 → 常规显示提示，下载仍需手动）。 |
+| **Windows · 桌面端** | **[BrewPhase Desktop 0.1.3 — Windows x64（prerelease）](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.1.3)** — NSIS `.exe` + `.sha256`，未签名（SmartScreen 会拦截提示），0.1.4 暂无 Windows 构建，这是最新的 Windows 产物；尚未在 Windows 实机安装与冒烟验证。 |
 | **Linux · 桌面端** | 无产物。配置里保留了 `AppImage` target，仅此而已，未构建、未验证。 |
 | **源码** | `git clone https://github.com/banmu123/BrewPhase.git` |
 
-[Releases 页面](https://github.com/banmu123/BrewPhase/releases)已发布四个 prerelease：
-**desktop-v0.1.3**（2026-11-15）提供已签名 + 公证 + staple 的 macOS arm64 `.dmg`/`.zip`，
-并新增版本感知（设置 → 常规 → 检查更新）；**desktop-v0.1.2** 的 macOS 包只签名未公证
+[Releases 页面](https://github.com/banmu123/BrewPhase/releases)已发布五个 prerelease：
+**desktop-v0.1.4**（2026-11-16）提供已签名 + 公证 + staple 的 macOS arm64 `.dmg`/`.zip`，
+新增每张 AI 卡片的本地工作区（笔记 / 参考文件 / 上下文构建）、右侧竖栏布局与本地回复智能；
+**desktop-v0.1.3**（2026-11-15）同样签名 + 公证 + staple，并首次加入版本感知
+（设置 → 常规 → 检查更新）与未签名的 Windows x64 NSIS `.exe`；
+**desktop-v0.1.2** 的 macOS 包只签名未公证
 （当时 Apple 因团队协议返回 403，首次启动需右键 → 打开），**0.1.3 已取代它**；
 **desktop-v0.1.1**（2026-11-11）是此前已公证 + staple 的 macOS 构建；
 **desktop-v0.1.0**（2026-11-10）提供上一版 macOS 构建与未签名的 Windows x64 NSIS `.exe`，
 均附 `.sha256` 校验文件，可匿名下载。
+0.1.4 在 macOS 上取代 0.1.3；Windows 侧仍以 0.1.3 为最新，直到 0.1.4 的 Windows 构建发布。
 之前那个「Apple 无法验证…恶意软件」的弹窗是未公证导致的 Gatekeeper 提示，
 不是恶意软件告警：0.1.2 的 Developer ID 签名有效、SHA-256 与官方一致；
 0.1.3 已重新公证并 staple，直接双击打开即可。
@@ -189,8 +193,8 @@ Records、Canvas、桌面端与 MCP 只存在于 `main` —— 已实现，但**
 |---|---|---|
 | **iOS · App Store** | **已发布 Available** —— [1.1](https://apps.apple.com/us/app/brewphase/id6815591631) | 仅 iPhone，iOS 18.0+，免费，美区；只含 Coffee 笔记本，没有 Records / Canvas / 同步。 |
 | **iOS · `main`（2.0）** | **开发中，未发布** | 源码里已有 Coffee + Records + Canvas + 局域网同步，尚未作为 2.0 提交。 |
-| **macOS · 桌面端** | **已发布（prerelease）** | arm64 `.dmg` / `.zip` 在 `desktop-v0.1.3`，Developer ID 签名 + hardened runtime，**已公证 + staple**，首次启动直接打开即可。`desktop-v0.1.2` 只签名未公证，已被取代。已实现版本检查提示（自动安装更新仍未实现）。没有 Intel 构建。 |
-| **Windows · 桌面端** | **已发布（prerelease），未签名** | NSIS x64 `.exe` 在 `desktop-v0.1.0`，由 `windows-latest` CI job 产出。无 Authenticode 证书，未在实机安装/冒烟验证；不支持 MCP V1。 |
+| **macOS · 桌面端** | **已发布（prerelease）** | arm64 `.dmg` / `.zip` 在 `desktop-v0.1.4`（每张 AI 卡片的本地工作区、右侧竖栏布局、本地回复智能），Developer ID 签名 + hardened runtime，**已公证 + staple**，首次启动直接打开即可。`desktop-v0.1.2` 只签名未公证，已被取代。已实现版本检查提示（自动安装更新仍未实现）。没有 Intel 构建。 |
+| **Windows · 桌面端** | **已发布（prerelease），未签名** | NSIS x64 `.exe` 在 `desktop-v0.1.3`——目前最新的 Windows 产物，`desktop-v0.1.4` 暂无 Windows 构建；由 `windows-latest` CI job 产出。无 Authenticode 证书，未在实机安装/冒烟验证；不支持 MCP V1。 |
 | **Linux · 桌面端** | **暂不支持** | 配置里保留 `AppImage` target；无构建、无验证。 |
 | **MCP** | **已构建，未发布** | 仅桌面端。macOS / Linux 走 Unix socket；Windows Named Pipe 权限未验证，不提供 TCP 退化。 |
 
