@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
+import { DEFAULT_MAX_BUCKETS } from "./security/rate-limit.js";
 
 /**
  * 统一环境变量入口。所有配置必须经过这里校验，禁止在业务代码里直接读 process.env。
@@ -79,6 +80,8 @@ export type Env = {
     maxAuthorize: number;
     maxToken: number;
     maxAuth: number;
+    /** 桶数量硬上限（生产恒为 DEFAULT_MAX_BUCKETS，仅供测试注入小值）。 */
+    maxBuckets: number;
   };
 
   corsOrigins: string[];
@@ -193,6 +196,8 @@ export function loadEnv(input: Record<string, string | undefined>): Env {
       maxAuthorize: parsed.RATE_LIMIT_MAX_AUTHORIZE,
       maxToken: parsed.RATE_LIMIT_MAX_TOKEN,
       maxAuth: parsed.RATE_LIMIT_MAX_AUTH,
+      // 刻意不从环境变量读：桶上限是防御性常量，不该被部署配置放大。
+      maxBuckets: DEFAULT_MAX_BUCKETS,
     },
 
     corsOrigins,

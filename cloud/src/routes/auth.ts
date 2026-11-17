@@ -60,6 +60,7 @@ export function routeAuth(app: AppHono, ctx: AppContext): void {
     windowMs: ctx.env.rateLimit.windowMs,
     trustProxy: ctx.env.trustProxy,
     trustedHops: ctx.env.trustProxyHops,
+    maxBuckets: ctx.env.rateLimit.maxBuckets,
   });
   const requireAuth = createRequireAuth(ctx);
 

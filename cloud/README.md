@@ -134,9 +134,24 @@ curl https://your-domain/ready    # {"status":"ready"}
 
 - 反向代理（Nginx/Caddy）终结 TLS。**TRUST_PROXY 的信任边界**：
   - `TRUST_PROXY=false`（默认）：完全忽略 `X-Forwarded-For`，客户端伪造头不影响限流与审计 IP。
-  - `TRUST_PROXY=true`：从 XFF **右端**跳过 `TRUST_PROXY_HOPS`（默认 1，可选 1–5）个可信代理
-    条目后取客户端 IP。右端条目由离服务最近的可信代理写入，客户端伪造左侧条目无法改变
-    选中值，也无法借此创建新限流桶（桶总量另有硬上限）。
+  - `TRUST_PROXY=true`：只信任**右端**（离服务最近）代理写入的条目，从 XFF 右端跳过
+    `TRUST_PROXY_HOPS`（默认 1，可选 1–5）个可信代理条目后取客户端 IP。客户端伪造左侧条目
+    无法改变选中值，也无法借此创建新限流桶（桶总量另有硬上限）。选中的条目必须是合法
+    IPv4/IPv6 字面量，否则连同「头缺失 / 层数不足 / 头超长」一起回退 socket 地址——带上端口的
+    地址、主机名、字符填充都不会被当成限流键。
+  - **`TRUST_PROXY_HOPS` 的含义取决于代理是追加式还是覆盖式，两者不能混用同一套取值：**
+
+    **追加式（append）** —— 每层可信代理把来源 IP **追加**到 XFF 右侧，链路逐跳保留。
+    `TRUST_PROXY_HOPS` 应等于真实追加链路上的可信代理层数：单层代理为 1，两层为 2。
+    客户端的伪造条目只会被推到更左侧，永远不落在选中位置。
+
+    **覆盖式（overwrite）** —— 代理用客户端 IP **覆盖**整个 XFF，只保留单条。
+    `HOPS=1` 仅适用于能保证该条目就是原始客户端 IP 的**单层**覆盖场景。
+    **多层覆盖式代理不能设成 `HOPS=2` 或更大**：覆盖式下 XFF 恒为单条，`HOPS≥2` 会因
+    「条目数不足」回退 socket 地址，而这些请求的 socket 对端是同一个上游代理，结果是
+    **所有用户共享同一个限流桶**，正常用户会被互相拖累触发 429。
+  - **推荐做法**：生产使用经过明确配置的**追加式**代理链，并保证应用端口不能被绕过可信代理
+    直接访问；若只有单层代理，覆盖式也可以（最简单）。
   - **部署红线**：开启 TRUST_PROXY 的前提是服务端口不可被客户端绕过代理直接访问，
     否则直连请求自带的 XFF 头会占据右端位置。
   - Nginx 单层（推荐，覆盖式，最简单可靠）：
@@ -146,14 +161,22 @@ curl https://your-domain/ready    # {"status":"ready"}
     # 应用环境：TRUST_PROXY=true TRUST_PROXY_HOPS=1
     ```
 
-  - Nginx 追加式（保留链路时）：应用取右端第 N 跳，伪造左侧条目无效：
+  - Nginx 追加式（需要保留链路时）：应用取右端第 N 跳，伪造左侧条目无效：
 
     ```nginx
+    # 单层代理
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;  # 追加式
-    # 应用环境：TRUST_PROXY=true TRUST_PROXY_HOPS=1（单层代理时右端即真实客户端 IP）
+    # 应用环境：TRUST_PROXY=true TRUST_PROXY_HOPS=1（右端即真实客户端 IP）
     ```
 
-  - Caddy：默认自动设置 `X-Forwarded-For`（追加式），按上一种方式配置。
+    ```nginx
+    # 两层追加式（例如 CDN + 本机 Nginx）：XFF = "客户端, CDN" → HOPS=2
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    # 应用环境：TRUST_PROXY=true TRUST_PROXY_HOPS=2
+    ```
+
+  - Caddy：默认自动设置 `X-Forwarded-For`（追加式），按追加式配置，`HOPS` 取链路上的
+    代理层数。
 - 密钥轮换：设置新的 `JWT_SIGNING_KEY` 并把旧值放入 `JWT_SIGNING_KEY_PREVIOUS`，
   存量 Access Token 验证平滑过渡；Refresh Token 不受签名密钥影响。
 - CORS 默认关闭；如需开放（例如未来 Web 客户端），显式设置 `CORS_ORIGINS`。
@@ -169,4 +192,6 @@ curl https://your-domain/ready    # {"status":"ready"}
   回调错误重定向只指向事务中存储的合法地址（无开放重定向）。
 - Refresh Token Rotation + Token Family 重放检测（30 秒并发宽限窗口，
   窗口外重放撤销整族）。
-- 限流（每 IP 固定窗口，进程内存实现；水平扩容时需换共享存储实现）。
+- 限流（每 IP 固定窗口，进程内存实现；水平扩容时需换共享存储实现）。桶数量有硬上限
+  `maxBuckets`（生产固定 10000，不读环境变量），超出后未知来源进入按端点共享的 overflow
+  桶——劣化方向是「全体限速」，不会因伪造来源无限建桶而耗尽内存。

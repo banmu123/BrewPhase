@@ -8,7 +8,7 @@ import { createLogger } from "../../src/logger.js";
 import { createKeyRing } from "../../src/sessions/jwt.js";
 import { pkceChallengeFromVerifier, randomToken } from "../../src/security/crypto.js";
 import { ensureDatabaseOrThrow, getTestDb, resetDb } from "./db.js";
-import { makeTestEnv } from "./env.js";
+import { makeTestEnv, type TestEnvOverrides } from "./env.js";
 import {
   startMockGithub,
   startMockGoogle,
@@ -38,7 +38,7 @@ export interface Harness {
   close(): Promise<void>;
 }
 
-export async function createHarness(overrides: Partial<Env> = {}): Promise<Harness> {
+export async function createHarness(overrides: TestEnvOverrides = {}): Promise<Harness> {
   await ensureDatabaseOrThrow();
   const mockGoogle = await startMockGoogle();
   const mockGithub = await startMockGithub();

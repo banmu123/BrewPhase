@@ -23,6 +23,7 @@ export function routeOauth(app: AppHono, ctx: AppContext): void {
     windowMs: ctx.env.rateLimit.windowMs,
     trustProxy: ctx.env.trustProxy,
     trustedHops: ctx.env.trustProxyHops,
+    maxBuckets: ctx.env.rateLimit.maxBuckets,
   });
   const tokenLimiter = rateLimit({
     name: "token",
@@ -30,6 +31,7 @@ export function routeOauth(app: AppHono, ctx: AppContext): void {
     windowMs: ctx.env.rateLimit.windowMs,
     trustProxy: ctx.env.trustProxy,
     trustedHops: ctx.env.trustProxyHops,
+    maxBuckets: ctx.env.rateLimit.maxBuckets,
   });
 
   /**

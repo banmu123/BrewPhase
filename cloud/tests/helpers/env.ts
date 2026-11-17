@@ -1,11 +1,22 @@
 import type { Env } from "../../src/env.js";
+import { DEFAULT_MAX_BUCKETS } from "../../src/security/rate-limit.js";
 
 export const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL ??
   "postgres://brewphase:brewphase@127.0.0.1:54329/brewphase_cloud_test";
 
+/**
+ * 测试用 Env 覆盖：`rateLimit` 允许**部分**覆盖。
+ *
+ * `Partial<Env>` 会把嵌套的 `rateLimit` 当成整体必填，导致每个只想改 maxAuth
+ * 的用例都得把 maxBuckets 一起抄一遍。这里只放宽这一层，其余字段语义不变。
+ */
+export type TestEnvOverrides = Omit<Partial<Env>, "rateLimit"> & {
+  rateLimit?: Partial<Env["rateLimit"]>;
+};
+
 /** 构造完整测试 Env（不读 process.env，避免测试相互污染）。 */
-export function makeTestEnv(overrides: Partial<Env> = {}): Env {
+export function makeTestEnv(overrides: TestEnvOverrides = {}): Env {
   const base: Env = {
     nodeEnv: "test",
     isProduction: false,
@@ -32,6 +43,7 @@ export function makeTestEnv(overrides: Partial<Env> = {}): Env {
       maxAuthorize: 30,
       maxToken: 20,
       maxAuth: 30,
+      maxBuckets: DEFAULT_MAX_BUCKETS,
     },
 
     corsOrigins: [],

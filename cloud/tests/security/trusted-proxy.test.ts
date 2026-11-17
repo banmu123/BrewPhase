@@ -11,7 +11,12 @@ import { createHarness, refresh, type Harness } from "../helpers/harness.js";
  *   （右端第 N 跳由可信代理写入）→ 伪造不能创建新桶 → 429；
  * - trustProxy=true + 覆盖式 XFF：单条目即真实客户端 IP，不同 IP 不同桶；
  * - 多层代理：TRUST_PROXY_HOPS=N 从右端跳过 N 个条目；
- * - 畸形 / 缺失头：回退 socket 地址（app.request 下为 unknown）。
+ * - 畸形 / 缺失头：回退 socket 地址（app.request 下为 unknown）；
+ * - **N-1 严格 IP 校验**：只有纯 IPv4/IPv6 字面量可作限流键，带端口、字符填充、
+ *   多段点分等一律回退 socket，绝不把未校验字符串当键。
+ *
+ * 桶上限（maxBuckets）的真实 boundary 测试在 `rate-limit-buckets.test.ts`——
+ * 那需要注入小上限才能触发 overflow 分支，与本文件的解析断言分开。
  */
 
 const FAKE_TOKEN = "fake-token-0123456789abcdef";
@@ -132,13 +137,84 @@ describe("trusted proxy & IP rate limiting (I-1)", () => {
       expect(statuses[4]).toBe(429);
     });
   });
+});
 
-  it("bucket cap: overflow semantics stay functional and bounded", async () => {
+/**
+ * N-1：严格 IP 字面量校验。
+ *
+ * 断言的是**最终限流身份**，不是一个独立的正则函数：用 maxAuth=1 的限流器，
+ * 对两个**不同**的取值各发一次请求——
+ * - 两者都被接受 → 各自独立桶 → 第二次不是 429；
+ * - 两者都被拒绝 → 一起回退 socket（"unknown"）→ 第二次必然 429。
+ * 这样「接受」与「回退」在观测上完全不重叠，不依赖实现细节。
+ */
+describe("strict IP literal validation (N-1)", () => {
+  let strict: Harness;
+
+  beforeAll(async () => {
+    strict = await createHarness({
+      trustProxy: true,
+      trustProxyHops: 1,
+      rateLimit: { windowMs: 60_000, maxAuthorize: 30, maxToken: 20, maxAuth: 1, maxBuckets: 10_000 },
+    });
+  });
+
+  afterAll(async () => {
+    await strict.close();
+  });
+
+  /** 两个不同取值各发一次；返回 [第一个, 第二个] 的状态码。 */
+  async function probe(a: string, b: string): Promise<[number, number]> {
     resetRateLimiter();
-    // 桶硬上限（MAX_BUCKETS）已在实现层防御无限建桶；本用例锁定正常路径不受影响：
-    // trustProxy=false 下所有请求共享同一 socket 身份桶，伪造头不增加桶数量
-    //（append-style 用例已在 trustProxy=true 下断言同一性质）。
-    const statuses = await hammer(plain, {}, 3);
-    expect(statuses).toEqual([401, 401, 401]);
+    const first = (await refresh(strict, FAKE_TOKEN, { "x-forwarded-for": a })).status;
+    const second = (await refresh(strict, FAKE_TOKEN, { "x-forwarded-for": b })).status;
+    return [first, second];
+  }
+
+  // 合法 IPv4 / IPv6：各自独立成桶，互不影响（max=1 时第二次仍不是 429）
+  it.each([
+    ["IPv4", "203.0.113.10", "198.51.100.7"],
+    ["loopback IPv4", "127.0.0.1", "127.0.0.2"],
+    ["IPv6", "2001:db8::1", "2001:db8::2"],
+    ["loopback IPv6", "::1", "::2"],
+    ["IPv4-mapped IPv6", "::ffff:203.0.113.10", "::ffff:203.0.113.11"],
+  ])("accepts a valid %s literal as its own bucket key", async (_label, a, b) => {
+    expect(await probe(a, b)).toEqual([401, 401]);
+  });
+
+  // 同样的两个取值再发一次 → 第二次命中同一桶 → 429（证明键确实是该 IP）
+  it("the same valid IP twice lands in one bucket", async () => {
+    expect(await probe("203.0.113.10", "203.0.113.10")).toEqual([401, 429]);
+  });
+
+  // 非法取值：两个**不同**的非法值都回退到同一 socket 身份 → 第二次 429
+  it.each([
+    ["IPv4 with port", "203.0.113.10:44321", "198.51.100.7:44321"],
+    ["bare hex word", "deadbeef", "cafebabe"],
+    ["dots only", "...", "...."],
+    ["colon only", ":", ":::"],
+    ["five-part dotted", "1.2.3.4.5", "1.2.3.4.6"],
+    ["bracketed IPv6", "[::1]", "[::2]"],
+    ["hostname", "example.com", "example.org"],
+    ["IPv4 with leading zeros", "010.1.1.1", "010.1.1.2"],
+    ["CIDR", "203.0.113.0/24", "198.51.100.0/24"],
+    ["padded spaces around port", "203.0.113.10 : 443", "198.51.100.7 : 443"],
+  ])("rejects %s and falls back to the socket identity", async (_label, a, b) => {
+    expect(await probe(a, b)).toEqual([401, 429]);
+  });
+
+  it("empty X-Forwarded-For falls back to the socket identity", async () => {
+    resetRateLimiter();
+    const first = (await refresh(strict, FAKE_TOKEN, { "x-forwarded-for": "" })).status;
+    const second = (await refresh(strict, FAKE_TOKEN, { "x-forwarded-for": "203.0.113.10" })).status;
+    // 空头回退 socket；随后一个合法 IP 是全新桶 → 401（若空头被当成键，这里会是 401 也一样，
+    // 因此额外断言：把空头与另一个非法值配对，必须同桶 → 429）
+    expect([first, second]).toEqual([401, 401]);
+    expect(await probe("", "")).toEqual([401, 429]);
+  });
+
+  it("over-long X-Forwarded-For falls back to the socket identity", async () => {
+    const long = "203.0.113.10, ".repeat(300); // > 2048 字符
+    expect(await probe(long, long + "x")).toEqual([401, 429]);
   });
 });
