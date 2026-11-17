@@ -166,6 +166,17 @@ if (candidate && isIP(candidate) !== 0) {
 | `/beta` IP4 | 429 | beta 自己的 overflow 到 2 |
 | `/alpha` IP5 | 429 | alpha 的 overflow 同样到 2 |
 
+### 桶数量的实际上界（O-1 修正）
+
+**Map 实际桶数量上界 = `maxBuckets` + 实际创建的端点 overflow 桶数量**，不是严格的 `maxBuckets`：
+overflow 桶自身也占一个 Map 条目，创建它时 `buckets.size` 会超过 `cap`。
+
+- 生产默认 `maxBuckets = 10000`；当前三个限流端点（`auth` / `authorize` / `token`）都触发
+  overflow 时，实际条目数理论上界为 **10003**。
+- 测试侧同样体现：`maxBuckets=3`、单端点上界为 `3 + 1 = 4`；按端点隔离用例（`maxBuckets=2`、
+  3 个端点）为 `2 + 3 = 5`，与实测 `{total:5, overflow:3}` 一致。
+- 影响：多出与端点数同阶的少量条目，**无安全影响**；`maxBuckets` 仍是建桶增长的有效封顶。
+
 ### 并发场景
 
 30 个互不相同的来源 `Promise.all` 同时首次请求（`max=1000` 避免计数干扰）：
@@ -201,7 +212,9 @@ if (candidate && isIP(candidate) !== 0) {
 3. **推荐做法**：生产用明确配置的追加式链，且应用端口不能被绕过可信代理直连。
 4. 新增「两层追加式」的 Nginx 示例（`HOPS=2`），保留原有单层覆盖式与单层追加式示例。
 5. 保留并强化**部署红线**（端口不可直连）。
-6. 「安全边界」段补一句桶上限：`maxBuckets` 生产固定 10000、不读环境变量，超限后进按端点共享的 overflow，劣化方向是「全体限速」而非内存耗尽。
+6. 「安全边界」段补一句桶上限：`maxBuckets` 生产固定 10000、不读环境变量，Map 实际条目上界为
+   `maxBuckets` + 端点 overflow 桶数（当前三端点即 10003），超限后进按端点共享的 overflow，
+   劣化方向是「全体限速」而非内存耗尽。
 
 `.env.example` 的 `TRUST_PROXY_HOPS` 注释同步补一句：追加式=真实层数、覆盖式只能为 1、多层覆盖式请改用追加式。
 
@@ -269,7 +282,7 @@ if (candidate && isIP(candidate) !== 0) {
 | 新增 `rateLimitStats()` 导出 | 只返回计数，不返回桶键，不含 IP；生产代码不调用它 | 无泄露 |
 | `Env` 类型新增必填 `maxBuckets` | 生产由 `DEFAULT_MAX_BUCKETS` 填充；测试侧放宽为部分覆盖。未新增环境变量，部署行为不变 | 无风险 |
 | 全局 `Map` 与既有 `resetRateLimiter()` 机制 | 未改动，仍为单实例内存实现；水平扩容需换共享存储（既有已知限制，非本次引入） | 无新增 |
-| overflow 桶本身成为热点 | 桶满后未知来源共享一个桶，可能互相拖累 429——这是**刻意选择的劣化方向**（fail-closed），且只在 10000 个活跃桶时才可能触达 | 已文档化 |
+| overflow 桶本身成为热点 | 桶满后未知来源共享一个桶，可能互相拖累 429——这是**刻意选择的劣化方向**（fail-closed），且只在约 10000 个活跃桶（上界 10003，见 §4 O-1）时才可能触达 | 已文档化 |
 | 迁移 / 依赖 | 无 Schema 变更、无依赖变化（`node:net` 内置） | 无 |
 
 **未发现新攻击面**：`isIP` 只做字符串判定，无正则回溯风险；选中的值仍只作为桶键与 `hashIp` 输入（不参与 SQL / 路径 / HTML）。
