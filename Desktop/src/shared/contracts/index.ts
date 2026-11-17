@@ -79,6 +79,7 @@ import type {
   ReplyDetail,
   ReplySegment
 } from './reply-intelligence'
+import type { AccountProvider, AccountSnapshot } from './account'
 import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from './version'
 
 export * from './version'
@@ -99,6 +100,7 @@ export * from './data-location'
 export * from './update'
 export * from './local-workspace'
 export * from './reply-intelligence'
+export * from './account'
 export * from './validation/ipc'
 
 /**
@@ -241,6 +243,27 @@ export interface RendererApi {
     conflicts: () => Promise<SyncConflictItem[]>
     resolveConflict: (id: string, resolution: 'local' | 'remote') => Promise<SyncStatus>
     onChanged: (listener: () => void) => () => void
+  }
+  /**
+   * Cloud Account（Phase 1.2）：登录 / 恢复 / 退出。
+   *
+   * 独立于 `sync`：同步用的是本机局域网配对 token，这里是云端身份，
+   * 两者不共享凭据、不互相覆盖。返回值永远是**安全快照**——
+   * 没有任何 Access / Refresh Token，也没有 PKCE verifier。
+   *
+   * `login` 会等到回调完成（最长 5 分钟）才 resolve；中间状态（pending /
+   * 校验中）通过 `onChanged` 广播，界面不必依赖这个 Promise 的时序。
+   */
+  account: {
+    status: () => Promise<AccountSnapshot>
+    login: (provider: AccountProvider) => Promise<AccountSnapshot>
+    /** 取消进行中的登录（关端口，回到未登录）。 */
+    cancelLogin: () => Promise<AccountSnapshot>
+    /** 手动向服务端重新确认会话（离线时保持登录，只更新校验时间与提示）。 */
+    refresh: () => Promise<AccountSnapshot>
+    /** 退出登录：只删凭据文件，本地数据一条不动。 */
+    signOut: () => Promise<AccountSnapshot>
+    onChanged: (listener: (snapshot: AccountSnapshot) => void) => () => void
   }
   canvas: {
     list: () => Promise<Canvas[]>

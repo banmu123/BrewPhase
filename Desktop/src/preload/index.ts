@@ -14,6 +14,7 @@ import {
   type RoundtableSnapshot
 } from '../shared/roundtable'
 import { ROUNDTABLE_AI_TASK_CHANGED_CHANNEL } from '../shared/contracts/roundtable-ai'
+import { ACCOUNT_CHANGED_CHANNEL } from '../shared/contracts/account'
 import { UPDATE_CHANGED_CHANNEL, type UpdateCheckResult } from '../shared/contracts/update'
 import type { RendererApi } from '../shared/contracts'
 
@@ -224,6 +225,20 @@ const api: RendererApi = {
       const wrapped = () => listener()
       ipcRenderer.on('sync:changed', wrapped)
       return () => ipcRenderer.removeListener('sync:changed', wrapped)
+    }
+  },
+  // Cloud Account：只传 provider 名字。授权码 / state / PKCE / Token 都在
+  // 主进程内部流转，这条桥没有任何「提交 code 或 token」的入口。
+  account: {
+    status: () => invoke(IPC.accountStatus),
+    login: (provider) => invoke(IPC.accountLogin, { provider }),
+    cancelLogin: () => invoke(IPC.accountCancelLogin),
+    refresh: () => invoke(IPC.accountRefresh),
+    signOut: () => invoke(IPC.accountSignOut),
+    onChanged: (listener) => {
+      const wrapped = (_event: unknown, payload: unknown) => listener(payload as never)
+      ipcRenderer.on(ACCOUNT_CHANGED_CHANNEL, wrapped)
+      return () => ipcRenderer.removeListener(ACCOUNT_CHANGED_CHANNEL, wrapped)
     }
   },
   canvas: {
