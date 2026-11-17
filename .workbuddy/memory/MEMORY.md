@@ -21,6 +21,11 @@ CoffeeAI×ChatGPT 交接唯一权威：`Tools/CoffeeAI/review_queue/GPT_WORKFLOW
   **IP 写循环逐个试**；HEAD 通不代表能推（`Empty reply` = 换 IP）。SSH 不通。
   **zsh 不给字符串变量分词**：IP 列表用数组。打包/公证加 `-u NODE_OPTIONS
   NODE_TLS_REJECT_UNAUTHORIZED=0`。
+* **Windows（czk win 机器）push 方案不同**：hosts 同样劫持 github → 127.0.0.1，git 2.55
+  schannel 后端 + 环境代理 `127.0.0.1:51726`；`http.schannelCheckRevoke=false` 和
+  `CURL_SSL_NO_REVOKE=1` **都不生效**（CRYPT_E_NO_REVOCATION_CHECK），直连真实 IP 也不通。
+  **可用：`git -c http.sslVerify=false -c http.version=HTTP/1.1 push`**（跳过吊销检查；
+  一次性 `-c` 不落配置）。curl 本身两条通道都通（`--ssl-no-revoke`）。
 
 ## 本地化（`Tools/Localization/`）
 
