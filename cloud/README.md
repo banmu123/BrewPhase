@@ -47,13 +47,37 @@ docker run -d --name brewphase-cloud-pg \
 # 2. 配置环境变量
 cp .env.example .env   # 填入 DATABASE_URL 与 Provider 凭据
 # Secret 生成：openssl rand -base64 48
+# .env 由 `pnpm dev` / `pnpm db:migrate` 自动加载（仅非 production），
+# 且不覆盖 shell / 容器已注入的同名变量；不需要再装 dotenv。
 
-# 3. 应用数据库迁移
+# 3. 应用数据库迁移（幂等，可重复执行；不会删库或重置数据）
 pnpm db:migrate
 
 # 4. 启动开发服务（tsx watch）
 pnpm dev
 ```
+
+启动后自检：
+
+```bash
+curl -s http://127.0.0.1:3000/health   # {"status":"ok",...}
+curl -s http://127.0.0.1:3000/ready    # {"status":"ready"}；数据库不可用时 503
+```
+
+启动纪律：`DATABASE_URL` 缺失、格式非法、或数据库连不上时进程直接退出（exit 1），
+日志里给出具体是哪一项——不会「假装启动成功」。
+
+若本机直连 Google 受阻（授权页能打开，但回调后立刻失败，日志出现
+`Google token endpoint is unreachable` 或回调耗时超过 10 秒超时），在 `.env` 里配
+`HTTPS_PROXY` 让 Provider 出网走本机代理：
+
+```dotenv
+HTTPS_PROXY=http://127.0.0.1:7900   # 换成本机实际代理端口
+NO_PROXY=localhost,127.0.0.1        # 可选
+```
+
+只支持 HTTP(S) 代理（不支持 SOCKS），隧道之上仍是正常的 TLS 校验（不会关闭证书验证）；
+未配置时行为与之前完全一致。
 
 Provider 凭据配置：
 
@@ -63,6 +87,12 @@ Provider 凭据配置：
 - **GitHub**：Settings → Developer settings → OAuth Apps，
   Authorization callback URL 填 `{BASE_URL}/oauth/callback/github`，
   不申请任何 scope（只读公开资料，邮箱可空）。
+
+本地 `BASE_URL=http://127.0.0.1:3000` 时，两处回调分别是
+`http://127.0.0.1:3000/oauth/callback/google` 与
+`http://127.0.0.1:3000/oauth/callback/github`。**Provider 侧登记的值必须与
+`BASE_URL` 拼出来的字符串逐字符一致**：`localhost` 与 `127.0.0.1` 在 Provider
+看来是两个不同的 redirect_uri，混用会直接 `redirect_uri_mismatch`。
 
 两个 Client Secret 只存在云端环境变量中；Desktop 端零密钥、零 Provider Token。
 

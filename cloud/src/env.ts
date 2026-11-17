@@ -103,7 +103,10 @@ function warn(message: string): void {
   console.warn(`[env] ${message}`);
 }
 
-function enforceProductionSecrets(input: Record<string, string | undefined>): void {
+function enforceProductionSecrets(
+  input: Record<string, string | undefined>,
+  baseUrl: string,
+): void {
   const problems: string[] = [];
   const jwtKey = input.JWT_SIGNING_KEY;
   if (!jwtKey) {
@@ -123,8 +126,10 @@ function enforceProductionSecrets(input: Record<string, string | undefined>): vo
   if (!input.GITHUB_CLIENT_ID || !input.GITHUB_CLIENT_SECRET) {
     problems.push("GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET are required in production");
   }
-  if (input.BASE_URL?.startsWith("http://")) {
-    problems.push("BASE_URL must use https in production");
+  // 用解析后的值判断：BASE_URL 有 http://localhost:3000 的默认值，若只看原始输入，
+  // 生产环境漏配 BASE_URL 会静默把 JWT iss 与 Provider 回调指向 localhost。
+  if (!baseUrl.startsWith("https://")) {
+    problems.push("BASE_URL must be an explicitly set https URL in production");
   }
   if (problems.length > 0) {
     throw new Error(
@@ -134,10 +139,26 @@ function enforceProductionSecrets(input: Record<string, string | undefined>): vo
 }
 
 export function loadEnv(input: Record<string, string | undefined>): Env {
-  const parsed = rawSchema.parse(input);
+  let parsed: z.infer<typeof rawSchema>;
+  try {
+    parsed = rawSchema.parse(input);
+  } catch (error) {
+    // 默认的 ZodError 只给一行 JSON，本地起服务时几乎无法定位。这里翻译成
+    // 「变量名 + 原因」的清单，并且只列变量名，绝不回显任何值。
+    if (error instanceof z.ZodError) {
+      const problems = error.issues.map((issue) => {
+        const field = issue.path.length > 0 ? issue.path.join(".") : "(root)";
+        return `${field}: ${issue.message}`;
+      });
+      throw new Error(
+        `[env] invalid configuration — check cloud/.env or the process environment:\n  - ${problems.join("\n  - ")}`,
+      );
+    }
+    throw error;
+  }
 
   if (parsed.NODE_ENV === "production") {
-    enforceProductionSecrets(input);
+    enforceProductionSecrets(input, parsed.BASE_URL.replace(/\/+$/, ""));
   }
 
   let jwtSigningKey = parsed.JWT_SIGNING_KEY;
