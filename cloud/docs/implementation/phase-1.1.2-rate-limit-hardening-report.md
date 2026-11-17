@@ -173,8 +173,18 @@ overflow 桶自身也占一个 Map 条目，创建它时 `buckets.size` 会超�
 
 - 生产默认 `maxBuckets = 10000`；当前三个限流端点（`auth` / `authorize` / `token`）都触发
   overflow 时，实际条目数理论上界为 **10003**。
-- 测试侧同样体现：`maxBuckets=3`、单端点上界为 `3 + 1 = 4`；按端点隔离用例（`maxBuckets=2`、
-  3 个端点）为 `2 + 3 = 5`，与实测 `{total:5, overflow:3}` 一致。
+- 测试侧的对应断言（`tests/security/rate-limit-buckets.test.ts`）：
+  - `maxBuckets=3`、单端点：`3 + 1 = 4` → 断言 `{ total: 4, overflow: 1 }`
+    （`caps bucket creation and funnels unknown sources into one shared overflow bucket`）；
+  - 按端点隔离用例（`maxBuckets=1`、**两个**端点 `alpha` / `beta`）：`1 + 2 = 3` →
+    断言 `{ total: 3, overflow: 2 }`（`each endpoint gets its own overflow bucket, and they
+    do not bleed into each other`）；
+  - `maxBuckets=5`、单端点、60 个来源：`5 + 1 = 6` → 断言 `{ total: 6, overflow: 1 }`
+    并附 `total <= 5 + 1`。
+  - 生产三端点 `10000 + 3 = 10003` 由同一公式推导（每端点至多一个 overflow 桶，
+    `overflowKey(name)` 按 `name` 区分）；1.1.2.2 补了直接断言：
+    `three endpoints (production shape): total = maxBuckets + 3`（`maxBuckets=2`、三个端点 →
+    `{ total: 5, overflow: 3 }`）。
 - 影响：多出与端点数同阶的少量条目，**无安全影响**；`maxBuckets` 仍是建桶增长的有效封顶。
 
 ### 并发场景
@@ -206,7 +216,7 @@ overflow 桶自身也占一个 Map 条目，创建它时 `buckets.size` 会超�
 
 `cloud/README.md` 的 TRUST_PROXY 段重写为结构化对照：
 
-1. **追加式（append）**：每层代理把来源 IP 追加到右侧，`TRUST_PROXY_HOPS` **应等于真实代理层数**（单层 1、两层 2）；客户端伪造条目只会被推到更左侧。
+1. **追加式（append）**：每层代理把来源 IP 追加到右侧，`TRUST_PROXY_HOPS` **必须等于真实代理层数**（单层 1、两层 2）；在层数匹配的前提下，客户端伪造条目不改变选中值。
 2. **覆盖式（overwrite）**：代理覆盖整个 XFF 只留单条，`HOPS=1` 仅适用于能保证该条目就是原始客户端 IP 的**单层**场景；
    **明确写出「多层覆盖式不能设成 HOPS≥2」及其后果**——XFF 恒为单条，`HOPS≥2` 会因条目数不足回退 socket，而 socket 对端是同一个上游代理，结果是**所有用户共享同一限流桶**，正常用户互相拖累触发 429。
 3. **推荐做法**：生产用明确配置的追加式链，且应用端口不能被绕过可信代理直连。
@@ -217,6 +227,24 @@ overflow 桶自身也占一个 Map 条目，创建它时 `buckets.size` 会超�
    劣化方向是「全体限速」而非内存耗尽。
 
 `.env.example` 的 `TRUST_PROXY_HOPS` 注释同步补一句：追加式=真实层数、覆盖式只能为 1、多层覆盖式请改用追加式。
+
+### 5.1 HOPS 配错的两个方向（1.1.2.2 更正）
+
+1.1.2.1 曾把「`HOPS` 偏小」的后果写成「回退 socket 地址」——**该说法不成立**。按
+`index = entries.length - max(1, hops)`，实际行为是四象限：
+
+| HOPS 相对真实层数 N | 客户端是否自带伪造 XFF | 选中值 | 后果 |
+|---|---|---|---|
+| 偏小（< N） | 无关 | 上游**代理 IP**（不回退 socket） | 该代理后的用户共享一个桶 → 429（fail-closed） |
+| 相等（= N） | 有伪造 | **客户端真实 IP** | 伪造被推到左侧，无法换桶 |
+| 偏大（> N） | 无 | 条目不足 → **回退 socket**（有代理时 socket 对端就是最近一跳代理） | 所有用户共享一个桶 → 429（fail-closed） |
+| 偏大（> N） | 有 | **攻击者自填的伪造值** | 每伪造值一个新桶 → 限流被绕过（fail-open） |
+
+只有「偏大且无伪造」才回退 socket；「偏小」取到的是代理 IP。1.1.2.1 的文档把这两行混在一起了。
+
+**算法未改**：`clientIp` 与本阶段之前逐字相同（去注释后 95 行代码完全一致），本次只修正
+README / `.env.example` / 代码注释。回归测试 `tests/security/hops-mismatch.test.ts` 锁定上述
+四象限，并做过变异验证——把实现改成旧文档声称的「偏小即回退 socket」后，该文件 8 条用例立刻失败。
 
 ---
 
@@ -235,6 +263,10 @@ overflow 桶自身也占一个 Map 条目，创建它时 `buckets.size` 会超�
 - N-2（5）：默认常量、上限 + 共享 overflow 完整链路、按端点独立 overflow、大量来源增长封顶、并发首次请求。
 
 **原有 91 条全部继续通过**，无断言放松：113 = 91 − 1（被替换的假用例）+ 18 + 5。
+
+> **1.1.2.2 追加**：F-1 回归测试 `tests/security/hops-mismatch.test.ts`（22 条）与三端点上限
+> 断言（`rate-limit-buckets.test.ts` 新增 1 条）使当前总数为 **10 文件 / 136 测试**。
+> 上表与 §7 的 113 是 **1.1.2 提交时点**的记录，保留不动。
 
 ---
 

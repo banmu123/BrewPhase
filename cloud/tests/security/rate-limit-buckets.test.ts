@@ -147,6 +147,28 @@ describe("bucket cap & overflow buckets (N-2)", () => {
     expect(rateLimitStats()).toEqual({ total: 3, overflow: 2 });
   });
 
+  it("three endpoints (production shape): total = maxBuckets + 3", async () => {
+    // 生产恰好三个限流端点（auth / authorize / token）。这里用 maxBuckets=2 验证
+    // 「每端点至多一个 overflow 桶」这条推导：2 + 3 = 5，其中 overflow 桶 3 个。
+    const app = createTestApp();
+    mount(app, { name: "auth", max: 1_000, maxBuckets: 2 });
+    mount(app, { name: "authorize", max: 1_000, maxBuckets: 2 });
+    mount(app, { name: "token", max: 1_000, maxBuckets: 2 });
+
+    const ip = (n: number) => `192.0.2.${n}`;
+    // 每个端点各来 4 个不同来源：前 2 个建成正常桶或触及上限，其余进本端点的 overflow
+    for (const name of ["auth", "authorize", "token"]) {
+      for (const n of [1, 2, 3, 4]) {
+        expect(await hit(app, `/${name}`, ip(n))).toBe(200);
+      }
+    }
+
+    const stats = rateLimitStats();
+    expect(stats).toEqual({ total: 5, overflow: 3 });
+    // 公式：上限 + 已创建 overflow 桶的端点数（生产 10000 + 3 = 10003）
+    expect(stats.total).toBe(2 + 3);
+  });
+
   it("bucket count stays bounded no matter how many distinct sources arrive", async () => {
     const app = createTestApp();
     mount(app, { name: "probe", max: 1_000, maxBuckets: 5 });
