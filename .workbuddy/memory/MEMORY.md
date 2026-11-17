@@ -51,6 +51,15 @@
 * 服务端 `isValidLocalCallbackUri` 只认 `http://127.0.0.1:<port>/callback`：必须起一次性回环 HTTP 服务，**没有深链**，也别碰 `brewphase://pair`。
 * 四个模块分工：`credentials.ts`（safeStorage 密文，外层只有 version/alg/payload；加密不可用则拒绝落盘，绝不退化明文）／`oauth-callback-server.ts`（只 `GET /callback`、Host 必须 `127.0.0.1:<port>` 防 rebinding、state 常量时间比对且不匹配继续等）／`cloud-client.ts`（注入 FetchLike、AbortController 超时、`redirect:'manual'`）／`account-service.ts`（唯一状态机：generation 丢弃过期异步结果、refresh 单飞、**网络失败 ≠ 会话失效**，只有 401 才清凭据）。
 * 凭据放 `userData/account/`（不是业务数据目录，换数据目录不复制）；本地库零新增表。`signOut()` 先清本地再尽力撤销服务端。
+
+## Remote MCP（`Desktop/docs/REMOTE_MCP_*.md`，Phase 1.0 仅设计）
+
+* 现有 Cloud **不能直接当 MCP OAuth**：`isValidLocalCallbackUri` 只认 127.0.0.1，`/oauth/token` 无 `grant_type`。**必须新建路由组，禁止放宽旧白名单**。
+* 设备体系从零建：`auth_sessions.device_id` 是纯预留（`body.ts` 从不写入）。设备身份用 Ed25519，`bp_dev_*` 与 `bp_mcp_*` 两套凭据域物理隔离。
+* 远程只开 4 scope / 8 工具（不含 work_context / direction）；两端各存白名单并取交集。
+* 协议要点：`deadline_ms` 用**绝对时间**；`id`（每次投递）与 `idem`（意图摘要）分离；16 错误码 + 12 close code，**4xxx 一律不重连**。
+* Gateway 的 MCP 层别手写：SDK 已导出 `createMcpHandler` / `WebStandardStreamableHTTPServerTransport` / `requireBearerAuth` / `buildOAuthProtectedResourceMetadata`。
+* 任务书里的 `RoastBatch` / `Bag` **不存在**，烘焙内嵌 `beans`、库存是 `remaining_g`。
 * IPC：`account:status/login/cancel-login/refresh/sign-out` + `account:changed`；`login` 只收 provider 名，没有「提交 code/token」通道。
 
 ## Desktop：Studio Desk / 外观
