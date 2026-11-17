@@ -3399,6 +3399,77 @@ textarea {
   color: var(--ink-faint);
 }
 
+/*
+ * 问候行：标题后面可以跟账户标识（头像 + 名称）。
+ * 未登录时不渲染那个元素，这一行就只剩标题，版面与改动前完全一致。
+ * 用 flex + baseline 对齐：中文字体的字形底与小写英文名在同一视觉基线上。
+ */
+.studio-hero__greeting {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  min-height: calc(clamp(30px, 3.05vw, 40px) * 1.16);
+}
+
+/* 头像 + 名称：一个安静的「谁在桌前」，不是工具栏按钮。 */
+.studio-account {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 2px 4px 2px 2px;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--ink-soft);
+  cursor: pointer;
+  border-radius: 999px;
+  transition: color 120ms ease;
+}
+
+.studio-account:hover,
+.studio-account:focus-visible {
+  color: var(--ink);
+}
+
+.studio-account:focus-visible {
+  outline: 2px solid var(--hairline-strong);
+  outline-offset: 3px;
+}
+
+.studio-account__avatar {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--card);
+  /* 用发丝线做一圈边：浅色头像贴白底时才不会糊成一团。 */
+  box-shadow: 0 0 0 1px var(--hairline-strong);
+}
+
+.studio-account__avatar--initial {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--ink-soft);
+  background: var(--well);
+}
+
+.studio-account__name {
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+
 .studio-hero__title {
   margin: 2px 0 0;
   font-family: var(--serif);

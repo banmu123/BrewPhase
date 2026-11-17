@@ -175,3 +175,153 @@ test('云账户：已登录重启、Cloud 不可达仍保持登录、主动退�
     rmSync(userData, { recursive: true, force: true })
   }
 })
+
+/**
+ * 首页问候区右上角的账户标识（头像 + 名称）。
+ *
+ * 三条状态都得钉住：
+ * 1. 未登录**不渲染**——首页默认形态不因为「有云账户这回事」多出占位；
+ * 2. 已登录显示头像与名称，且与问候语同一行、垂直居中（版面不跳）；
+ * 3. 头像地址加载失败退回首字母，不留破图。
+ *
+ * 与上面第三条一样，密文由本机真实 safeStorage 现生成——这是在没有真实
+ * Google/GitHub 授权的前提下，唯一能构造「已登录」的可靠方式。
+ */
+/** 连不上的回环端口：登录态要被验证，但不能真的打到开发机上正在跑的 Cloud。 */
+const UNREACHABLE_CLOUD = 'http://127.0.0.1:1'
+
+async function seedCredentials(userData: string, account: Record<string, unknown>): Promise<void> {
+  const first = await electron.launch({
+    args: ['.', '--no-sandbox', '--disable-gpu'],
+    env: launchEnv(userData, UNREACHABLE_CLOUD)
+  })
+  await first.firstWindow()
+  const payload = await first.evaluate(async ({ safeStorage }, value) => {
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('safeStorage unavailable on this host')
+    return safeStorage.encryptString(JSON.stringify(value)).toString('base64')
+  }, account)
+  await first.close()
+
+  mkdirSync(join(userData, 'account'), { recursive: true })
+  writeFileSync(
+    join(userData, 'account', 'credentials.json'),
+    JSON.stringify({ version: 1, alg: 'safeStorage-v1', payload }),
+    { mode: 0o600 }
+  )
+}
+
+async function heroMetrics(page: Page) {
+  return await page.evaluate(() => {
+    const title = document.querySelector('.studio-hero__title')
+    const badge = document.querySelector('.studio-account')
+    const name = document.querySelector('.studio-account__name')
+    const hero = document.querySelector('.studio-hero')
+    const rect = (el: Element | null) => (el ? el.getBoundingClientRect() : null)
+    const tr = rect(title)
+    const br = rect(badge)
+    const nr = rect(name)
+    return {
+      hasBadge: Boolean(badge),
+      heroHeight: hero ? Math.round(hero.getBoundingClientRect().height) : 0,
+      // 与问候语同一行且不重叠
+      sameRow: tr && br ? !(br.top >= tr.bottom || br.bottom <= tr.top) : null,
+      gap: tr && br ? Math.round(br.left - tr.right) : null,
+      centered: tr && br ? Math.abs((tr.top + tr.bottom) / 2 - (br.top + br.bottom) / 2) < 5 : null,
+      nameText: name?.textContent?.trim() ?? null,
+      nameTruncated: name ? name.scrollWidth > name.clientWidth + 1 : null,
+      nameBox: nr ? Math.round(nr.width) : null
+    }
+  })
+}
+
+test('首页问候区：未登录不显示账户标识，已登录显示头像与名称', async () => {
+  test.setTimeout(120_000)
+  const base = {
+    provider: 'google',
+    userId: 'user_hero_1',
+    displayName: 'Chenzk',
+    avatarUrl: null,
+    createdAt: '2026-01-02T03:04:05.000Z',
+    refreshToken: 'refresh-token-from-a-previous-session'
+  }
+
+  // —— 未登录：首页只有问候语，没有账户标识 ——
+  const signedOut = mkdtempSync(join(tmpdir(), 'brewphase-hero-out-'))
+  try {
+    // 必须显式指向**连不上**的端口：本机可能正跑着 Cloud，伪造的 refresh token
+    // 会被服务端判 401，桌面端按设计清掉凭据，断言就会变成「未登录」。
+    const { app, page } = await launch(signedOut, UNREACHABLE_CLOUD)
+    try {
+      const before = await heroMetrics(page)
+      expect(before.hasBadge).toBe(false)
+      const baselineHeight = before.heroHeight
+      expect(baselineHeight).toBeGreaterThan(0)
+
+      // —— 预置凭据后重启：同一版面高度下多出头像 + 名称 ——
+      await app.close()
+      await seedCredentials(signedOut, base)
+
+      const second = await launch(signedOut, UNREACHABLE_CLOUD)
+      try {
+        await expect(second.page.locator('.studio-account')).toBeVisible({ timeout: 20_000 })
+        const after = await heroMetrics(second.page)
+        expect(after.hasBadge).toBe(true)
+        expect(after.nameText).toBe('Chenzk')
+        expect(after.sameRow).toBe(true)
+        expect(after.centered).toBe(true)
+        expect(after.gap).toBeGreaterThan(0)
+        // 关键：加了一个头像，问候区高度不变——桌面不会因此下移。
+        expect(after.heroHeight).toBe(baselineHeight)
+        // 首字母兜底（没有头像时不出现 <img>）
+        await expect(second.page.locator('.studio-account__avatar--initial')).toHaveText('C')
+
+        // 点一下直达设置页的云账户分类
+        await second.page.getByRole('button', { name: '云账户：Chenzk' }).click()
+        await expect(second.page.getByRole('heading', { name: '已登录', exact: true })).toBeVisible()
+      } finally {
+        await second.app.close()
+      }
+    } finally {
+      // app 可能已在上面的分支里关过：close() 幂等
+      await app.close().catch(() => undefined)
+    }
+  } finally {
+    rmSync(signedOut, { recursive: true, force: true })
+  }
+})
+
+test('首页问候区：头像加载失败退回首字母，超长名称省略但不撑破版面', async () => {
+  test.setTimeout(120_000)
+  const userData = mkdtempSync(join(tmpdir(), 'brewphase-hero-broken-'))
+  try {
+    await seedCredentials(userData, {
+      provider: 'github',
+      userId: 'user_hero_2',
+      displayName: 'Chenzk-Wang-Extremely-Long-Display-Name-For-Testing',
+      // 不可达的主机：触发 <img> 的 onError
+      avatarUrl: 'https://avatars.invalid.example/u/2.png',
+      createdAt: '2026-01-02T03:04:05.000Z',
+      refreshToken: 'refresh-token-from-a-previous-session'
+    })
+
+    const { app, page } = await launch(userData, UNREACHABLE_CLOUD)
+    try {
+      await expect(page.locator('.studio-account')).toBeVisible({ timeout: 20_000 })
+      // 头像最终要退回字母，页面上不留破图。
+      await expect(page.locator('.studio-account__avatar--initial')).toBeVisible({ timeout: 20_000 })
+      await expect(page.locator('img.studio-account__avatar')).toHaveCount(0)
+
+      const metrics = await heroMetrics(page)
+      expect(metrics.nameTruncated).toBe(true)
+      expect(metrics.nameBox).toBeLessThanOrEqual(200)
+      // 名称被省略号收住，不产生横向滚动
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+      ).toBe(0)
+    } finally {
+      await app.close()
+    }
+  } finally {
+    rmSync(userData, { recursive: true, force: true })
+  }
+})

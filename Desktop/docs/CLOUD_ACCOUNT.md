@@ -218,6 +218,28 @@ Desktop：
 
 ---
 
+## 9bis. 首页账户标识（StudioHome）
+
+登录后，Studio Home 的问候语右侧多一个「谁在桌前」：头像 + 名称。
+
+- **未登录不渲染**：`StudioAccountBadge` 在 `state !== 'signed-in'` 时返回 `null`，
+  问候区高度与改动前完全一致（e2e 用 `heroHeight` 相等来做断言）。
+- **只读安全 DTO**：`AccountSnapshot.user` 里只有 `displayName` / `avatarUrl`，
+  组件拿不到也不需要任何 Token。
+- **头像兜底**：没有 `avatarUrl` 或图片加载失败时退回首字母；`referrerPolicy="no-referrer"`。
+- **名称截断**：`max-width: 16ch` + 省略号，超长名称不产生横向滚动。
+- **点击**：直达设置页「云账户」分类（复用 store 的 `openSettings('account')`）。
+
+验证（`tests/e2e/account.e2e.spec.ts` 后两条）：未登录无标识 → 预置真实 safeStorage
+密文后重启出现「C + Chenzk」且 `heroHeight` 不变 → 点击进入设置；以及头像地址不可达
+时退回字母、长名被省略且 `scrollWidth` 无溢出。
+
+> 注意：这两条 e2e 必须把 `BREWPHASE_CLOUD_BASE_URL` 指向**连不上**的回环端口。
+> 开发机上 Cloud 常驻 3000 时，预置的假 refresh token 会被服务端判 401，桌面端按
+> 「会话失效」清掉凭据，断言就变成未登录——这不是产品 bug，是测试环境串台。
+
+---
+
 ## 10. 本阶段实测结果（2026-11-17，macOS / feature/auth-electron）
 
 | 门禁 | 命令 | 结果 |
