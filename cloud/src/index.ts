@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import { createApp, createContextFromProcessEnv, startSweep } from "./app.js";
+import { loadLocalEnvFile } from "./env-file.js";
 
 /**
  * 生产/开发入口。启动纪律：
@@ -9,7 +10,13 @@ import { createApp, createContextFromProcessEnv, startSweep } from "./app.js";
  */
 
 async function main(): Promise<void> {
+  // 本地开发：.env 只补缺，不覆盖已注入的进程环境；生产直接跳过。
+  const envFile = loadLocalEnvFile();
+
   const ctx = createContextFromProcessEnv();
+  if (envFile) {
+    ctx.logger.info("env_file_loaded", { path: envFile });
+  }
 
   try {
     await ctx.db.ping();

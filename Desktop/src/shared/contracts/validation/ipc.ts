@@ -38,6 +38,7 @@ import {
   stageGoalInputSchema,
   stageGoalPatchSchema
 } from '../personal-direction'
+import { accountProviderSchema } from '../account'
 
 /**
  * IPC 的**唯一**契约清单：通道名 + 请求体校验 + 响应形状。
@@ -263,7 +264,16 @@ export const IPC = {
   replyDraftCreate: 'reply:draft:create',
   replyDraftUpdate: 'reply:draft:update',
   replyDraftRemove: 'reply:draft:remove',
-  replyDraftList: 'reply:draft:list'
+  replyDraftList: 'reply:draft:list',
+
+  // Cloud Account（Phase 1.2）：只有四个意图。**登录不接收任何凭据**——
+  // 入参只有一个 provider 名字；授权码、state、PKCE 全在主进程内产生与消费。
+  accountStatus: 'account:status',
+  accountLogin: 'account:login',
+  accountCancelLogin: 'account:cancel-login',
+  // 手动重新校验会话（设置页「刷新状态」）：只做一次，不带任何参数。
+  accountRefresh: 'account:refresh',
+  accountSignOut: 'account:sign-out'
 } as const
 
 export const ipcRequestSchemas = {
@@ -570,7 +580,16 @@ export const ipcRequestSchemas = {
   [IPC.replyDraftList]: z.object({
     replyId: z.string().uuid().nullable().optional(),
     limit: z.number().int().min(1).max(200).optional()
-  }).optional()
+  }).optional(),
+
+  // ---- Cloud Account（Phase 1.2）----
+  // 登录入参刻意只有 provider：没有 code / state / token 的入口，
+  // Renderer 也就无法「代用户完成登录」或把外部拿到的 token 塞进主进程。
+  [IPC.accountStatus]: z.void(),
+  [IPC.accountLogin]: z.object({ provider: accountProviderSchema }),
+  [IPC.accountCancelLogin]: z.void(),
+  [IPC.accountRefresh]: z.void(),
+  [IPC.accountSignOut]: z.void()
 } as const
 
 export type IpcChannel = keyof typeof ipcRequestSchemas

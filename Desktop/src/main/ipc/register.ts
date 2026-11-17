@@ -42,6 +42,7 @@ import {
 import { importImageFromDialog } from '../media/store'
 import { resolveRecordMetadata } from '../metadata'
 import type { SyncService } from '../sync/sync-service'
+import type { AccountService } from '../account/account-service'
 import type { BrowserManager } from '../browser/browser-manager'
 import type { BookmarkService } from '../browser/bookmark-service'
 import type { RoundtableService } from '../roundtable/roundtable-service'
@@ -91,6 +92,8 @@ export function registerIpc(params: {
   db: DatabaseHandle
   devServerUrl: string | null
   sync: SyncService
+  /** Cloud Account：登录 / 恢复 / 退出的唯一入口（无凭据快照）。 */
+  account: AccountService
   /** Application Service：Renderer 与 MCP 共用（记录写路径）。 */
   services: {
     records: RecordService
@@ -134,6 +137,7 @@ export function registerIpc(params: {
     db,
     devServerUrl,
     sync,
+    account,
     services,
     bridgeStatus,
     aiChat,
@@ -340,6 +344,20 @@ export function registerIpc(params: {
     const value = input as { id: string; resolution: 'local' | 'remote' }
     return sync.resolveConflict(value.id, value.resolution)
   })
+
+  // MARK: - Cloud Account
+  //
+  // 四个意图，没有第五个。入参只有 provider 名字：授权码、state、PKCE
+  // verifier 与 Token 全部在主进程内产生与消费，这条通道拿回的永远是无凭据
+  // 快照（见 `shared/contracts/account.ts`）。账户层与本地库完全解耦——
+  // 未登录时下面所有 channels 照常可用。
+  handle(IPC.accountStatus, () => account.snapshot())
+  handle(IPC.accountLogin, (input) =>
+    account.login((input as { provider: Parameters<AccountService['login']>[0] }).provider)
+  )
+  handle(IPC.accountCancelLogin, () => account.cancelLogin())
+  handle(IPC.accountRefresh, () => account.refresh())
+  handle(IPC.accountSignOut, () => account.signOut())
 
   // MARK: - AI 连接（MCP 客户端授权）
 

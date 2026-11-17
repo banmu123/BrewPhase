@@ -47,13 +47,37 @@ docker run -d --name brewphase-cloud-pg \
 # 2. 配置环境变量
 cp .env.example .env   # 填入 DATABASE_URL 与 Provider 凭据
 # Secret 生成：openssl rand -base64 48
+# .env 由 `pnpm dev` / `pnpm db:migrate` 自动加载（仅非 production），
+# 且不覆盖 shell / 容器已注入的同名变量；不需要再装 dotenv。
 
-# 3. 应用数据库迁移
+# 3. 应用数据库迁移（幂等，可重复执行；不会删库或重置数据）
 pnpm db:migrate
 
 # 4. 启动开发服务（tsx watch）
 pnpm dev
 ```
+
+启动后自检：
+
+```bash
+curl -s http://127.0.0.1:3000/health   # {"status":"ok",...}
+curl -s http://127.0.0.1:3000/ready    # {"status":"ready"}；数据库不可用时 503
+```
+
+启动纪律：`DATABASE_URL` 缺失、格式非法、或数据库连不上时进程直接退出（exit 1），
+日志里给出具体是哪一项——不会「假装启动成功」。
+
+若本机直连 Google 受阻（授权页能打开，但回调后立刻失败，日志出现
+`Google token endpoint is unreachable` 或回调耗时超过 10 秒超时），在 `.env` 里配
+`HTTPS_PROXY` 让 Provider 出网走本机代理：
+
+```dotenv
+HTTPS_PROXY=http://127.0.0.1:7900   # 换成本机实际代理端口
+NO_PROXY=localhost,127.0.0.1        # 可选
+```
+
+只支持 HTTP(S) 代理（不支持 SOCKS），隧道之上仍是正常的 TLS 校验（不会关闭证书验证）；
+未配置时行为与之前完全一致。
 
 Provider 凭据配置：
 
@@ -63,6 +87,12 @@ Provider 凭据配置：
 - **GitHub**：Settings → Developer settings → OAuth Apps，
   Authorization callback URL 填 `{BASE_URL}/oauth/callback/github`，
   不申请任何 scope（只读公开资料，邮箱可空）。
+
+本地 `BASE_URL=http://127.0.0.1:3000` 时，两处回调分别是
+`http://127.0.0.1:3000/oauth/callback/google` 与
+`http://127.0.0.1:3000/oauth/callback/github`。**Provider 侧登记的值必须与
+`BASE_URL` 拼出来的字符串逐字符一致**：`localhost` 与 `127.0.0.1` 在 Provider
+看来是两个不同的 redirect_uri，混用会直接 `redirect_uri_mismatch`。
 
 两个 Client Secret 只存在云端环境变量中；Desktop 端零密钥、零 Provider Token。
 
@@ -196,6 +226,38 @@ curl https://your-domain/ready    # {"status":"ready"}
 - 密钥轮换：设置新的 `JWT_SIGNING_KEY` 并把旧值放入 `JWT_SIGNING_KEY_PREVIOUS`，
   存量 Access Token 验证平滑过渡；Refresh Token 不受签名密钥影响。
 - CORS 默认关闭；如需开放（例如未来 Web 客户端），显式设置 `CORS_ORIGINS`。
+
+### 反向代理的访问日志必须关闭
+
+**OAuth 回调是带凭据的 URL**：`/oauth/callback/<provider>?code=…&state=…`。一次性授权码与
+state 都在这条查询串里，而反向代理的默认访问日志会**原样记录 URI**——等于把授权码写进磁盘，
+日志一旦被读取（运维、备份、日志采集）就等同于凭据泄漏。
+
+因此反代侧不要开启访问日志（Caddy 用全局 `log { output discard }`，Nginx 用 `access_log off;`），
+需要排障时只保留错误日志。应用自身的请求日志只记方法/路径/状态/耗时，不记查询串，可以放心留。
+
+### 目标主机 IPv6 不可达时，必须关掉 Node 的地址族自动选择
+
+Node 20+ 默认启用 `autoSelectFamily`（Happy Eyeballs）：解析到多个地址时会并行尝试，
+**约 250ms 后放弃并让整个请求失败**。如果目标域名同时有 AAAA 记录、而运行环境到该
+IPv6 不可达，表现会是 Provider 请求以 `ETIMEDOUT` 快速失败——看起来像凭据或配置错误，
+实际是连接策略问题。
+
+典型症状：授权页能打开、回调立刻失败（几百毫秒级），而同一台机器用 `curl` 访问
+同一个域名却成功（curl 会自己逐个地址重试）。Google 的 `oauth2.googleapis.com` /
+`www.googleapis.com` 都有 AAAA 记录；GitHub 只有 A，所以「GitHub 能登、Google 不能」是
+这个问题的强特征。
+
+处理方式（容器里用环境变量即可，不需要改代码）：
+
+```yaml
+environment:
+  NODE_OPTIONS: "--max-old-space-size=<MB> --no-network-family-autoselection"
+```
+
+这条只影响地址族选择策略，**不降低 TLS 校验**（证书链与主机名校验照常）。不要用
+`--dns-result-order=ipv4first` 代替：它只调整解析结果顺序，仍会发起 IPv6 连接尝试，
+问题依旧。
 
 ## 安全边界（实现纪律）
 

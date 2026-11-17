@@ -1,4 +1,4 @@
-import { jwtVerify, createRemoteJWKSet } from "jose";
+import { jwtVerify, createRemoteJWKSet, customFetch } from "jose";
 import { sha256Hex, constantTimeEqual } from "../security/crypto.js";
 import { serverError } from "../security/errors.js";
 import type { ProviderAdapter, ProviderIdentity } from "./provider.js";
@@ -34,7 +34,12 @@ export function createGoogleProvider(
   let jwksCache: ReturnType<typeof createRemoteJWKSet> | undefined;
 
   const jwks = () => {
-    jwksCache ??= createRemoteJWKSet(new URL(config.jwksUrl));
+    // `customFetch` 必须显式传：jose 默认用全局 fetch，那条路不经过
+    // `resolveProviderFetch` 的代理，直连不通时 ID Token 验签会一直等到超时。
+    jwksCache ??= createRemoteJWKSet(new URL(config.jwksUrl), {
+      [customFetch]: (url, options) => fetchImpl(url, options),
+      timeoutDuration: 10_000,
+    });
     return jwksCache;
   };
 

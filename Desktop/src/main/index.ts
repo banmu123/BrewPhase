@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { app, BrowserWindow, net, protocol, screen, session } from 'electron'
+import { app, BrowserWindow, net, protocol, safeStorage, screen, session, shell } from 'electron'
 import { installApplicationMenu } from './app-menu'
 import { openDatabase, type DatabaseHandle } from './database/client'
 import { registerIpc } from './ipc/register'
@@ -51,6 +51,11 @@ import { UPDATE_CHANGED_CHANNEL } from '../shared/contracts/update'
 import { APP_VERSION } from '../shared/contracts/version'
 import { EMBED_FRAME_ORIGINS } from '../shared/link-embed'
 import { UpdateService } from './update/update-service'
+import { AccountService } from './account/account-service'
+import { CloudClient, resolveCloudBaseUrl } from './account/cloud-client'
+import { CredentialStore } from './account/credentials'
+import { startOAuthCallbackServer } from './account/oauth-callback-server'
+import { ACCOUNT_CHANGED_CHANNEL } from '../shared/contracts/account'
 
 /**
  * MCP STDIO 入口的绝对路径。
@@ -96,6 +101,8 @@ let roundtableViewManagerRef: RoundtableViewManager | null = null
 /** 主窗口的显式引用：getAllWindows 的顺序不可靠（浮窗加入后尤其如此）。 */
 let mainWindowRef: BrowserWindow | null = null
 let aiChatService: AIChatService | null = null
+/** Cloud Account：退出时要关掉可能还开着的本机回调端口。 */
+let accountService: AccountService | null = null
 let quitting = false
 const devServerUrl = process.env.ELECTRON_RENDERER_URL ?? null
 
@@ -518,10 +525,48 @@ function bootstrap(): void {
     }
   })
 
+  // Cloud Account（Phase 1.2）：登录 / 恢复 / 退出。
+  //
+  // - 凭据单独一个文件，放在 **userData** 而不是业务数据目录：它跟记录、媒体
+  //   无关，换数据目录时不该被复制过去，退出登录也只删这一个文件；
+  // - safeStorage 只在 app ready 之后可用，所以构造放在 bootstrap 里；
+  // - restore() 只读本地密文，网络校验在后台跑：Cloud 挂了也不影响启动；
+  // - 广播给所有窗口，与 browser/roundtable/update 同一模式（主进程是唯一事实来源）。
+  const cloudBaseUrl = resolveCloudBaseUrl()
+  const account = new AccountService({
+    cloud: new CloudClient({
+      baseUrl: cloudBaseUrl,
+      fetchImpl: (url, init) => net.fetch(url, init)
+    }),
+    store: new CredentialStore({
+      filePath: join(app.getPath('userData'), 'account', 'credentials.json'),
+      secretBox: {
+        available: () => safeStorage.isEncryptionAvailable(),
+        encrypt: (plain) => safeStorage.encryptString(plain),
+        decrypt: (payload) => safeStorage.decryptString(payload)
+      },
+      log: (message) => console.warn(message)
+    }),
+    // 只打开主进程用 CloudClient 拼出来的地址（protocol 由 resolveCloudBaseUrl 限制）。
+    openExternal: async (url) => {
+      await shell.openExternal(url)
+    },
+    startCallback: (params) => startOAuthCallbackServer(params),
+    broadcast: (snapshot) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (window.isDestroyed()) continue
+        window.webContents.send(ACCOUNT_CHANGED_CHANNEL, snapshot)
+      }
+    }
+  })
+  accountService = account
+  account.restore()
+
   registerIpc({
     db,
     devServerUrl,
     sync: syncService,
+    account,
     services: { records, clients, workContexts, personalDirection },
     aiChat: aiChatService,
     roundtableAI: participantService,
@@ -607,6 +652,9 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', (event) => {
+  // 登录进行中退出：先关本机回调端口，不留悬挂监听。
+  accountService?.dispose()
+  accountService = null
   // 浏览器浮窗持有原生 WebContentsView：不主动释放会留下孤儿 webContents，
   // 退出过程中可能报「对象已销毁」。
   browserManager?.dispose()
