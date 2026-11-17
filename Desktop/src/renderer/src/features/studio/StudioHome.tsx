@@ -9,6 +9,7 @@ import { CoffeeStack } from './CoffeeStack'
 import { RecordsStack } from './RecordsStack'
 import { CanvasStack } from './CanvasStack'
 import { StackSection } from './StackSection'
+import { StudioAccountBadge } from './StudioAccountBadge'
 import { useTimeGreeting } from './useTimeGreeting'
 import { WebCardShelf } from './WebCardShelf'
 import { RoundtableSection } from './RoundtableSection'
@@ -62,7 +63,12 @@ export function StudioHome() {
       <div className="studio-home__inner">
         <header className="studio-hero">
           <span className="overline">{t.studio.overline}</span>
-          <h1 className="studio-hero__title">{t.studio.greeting[greeting]}</h1>
+          {/* 已登录时问候语后面跟「谁在桌前」：头像 + 名称就贴在「下午好」这一行；
+              未登录时 StudioAccountBadge 返回 null，这一行与改动前完全一样。 */}
+          <div className="studio-hero__greeting">
+            <h1 className="studio-hero__title">{t.studio.greeting[greeting]}</h1>
+            <StudioAccountBadge />
+          </div>
           <p className="studio-hero__sub">{t.studio.greetingSubtitle}</p>
         </header>
 

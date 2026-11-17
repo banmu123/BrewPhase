@@ -6,6 +6,7 @@ import { createLogger } from "./logger.js";
 import { createDb } from "./db/client.js";
 import { oauthCodes, oauthTransactions } from "./db/schema.js";
 import { loadEnv } from "./env.js";
+import { resolveProviderFetch } from "./net/proxy-fetch.js";
 import { createProviders } from "./oauth/providers.js";
 import { respondError, AppError } from "./security/errors.js";
 import { routeAuth } from "./routes/auth.js";
@@ -19,7 +20,7 @@ export function createContextFromProcessEnv(): AppContext {
   return {
     env,
     db: createDb(env.databaseUrl),
-    providers: createProviders(env),
+    providers: createProviders(env, resolveProviderFetch(process.env)),
     logger,
     keyRing: createKeyRing(env.jwtSigningKey, env.jwtSigningKeyPrevious),
   };

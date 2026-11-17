@@ -4,6 +4,7 @@ export const settings = {
   subtitle: 'Manage the app, data and connections',
   nav: {
     general: 'General',
+    account: 'Cloud account',
     sync: 'Device sync',
     browser: 'Browser',
     chrome: 'Chrome extension',
@@ -205,5 +206,56 @@ export const settings = {
     removeConfirmBody: (name: string) => `Only the registration is removed — the folder “${name}” and its files are not touched.`,
     boundCards: (n: number) => `${n} card${n === 1 ? '' : 's'} bound`,
     addFailed: 'Could not add this folder'
+  },
+
+  account: {
+    title: 'Cloud account',
+    subtitle: 'Sign in to BrewPhase Cloud for a cross-device identity',
+    lead: 'Signing in only establishes a cloud identity. Beans, brews, tastings, records and canvases still live on this computer and are never uploaded automatically.',
+    signedOut: 'Not signed in',
+    signedOutHint: 'Every local feature works without an account, and the app starts normally when the cloud is unreachable.',
+    loginWith: (provider: string) => `Continue with ${provider}`,
+    pending: 'Waiting for the browser…',
+    pendingHint: 'This page updates by itself once you finish. You can close the browser tab then.',
+    pendingExpires: (text: string) => `This attempt is valid until ${text}`,
+    cancel: 'Cancel sign-in',
+    cancelling: 'Cancelling…',
+    signedIn: 'Signed in',
+    displayName: 'Name',
+    provider: 'Sign-in method',
+    providerName: {
+      google: 'Google',
+      github: 'GitHub'
+    },
+    accountId: 'Account ID',
+    memberSince: 'Member since',
+    displayNameFallback: '(no display name)',
+    signOut: 'Sign out',
+    signOutTitle: 'Sign out of the cloud account?',
+    signOutBody: 'Only the credentials on this computer are removed. Beans, records, canvases and media are kept, and device sync is unaffected.',
+    checking: 'Confirming the session with the server…',
+    verifiedAt: (text: string) => `Last confirmed: ${text}`,
+    notVerified: 'Not confirmed with the server since launch (still signed in while offline)',
+    storageEncrypted: 'The session is encrypted at rest with the system secret store (safeStorage); no plaintext ever touches disk.',
+    storageUnavailable: 'The system secret store is unavailable, so this session stays in memory and will not survive a restart.',
+    cloudBase: 'Service address',
+    localDataNote: 'Cloud account and device sync are separate credentials: signing in here never changes LAN pairing or sync tokens.',
+    refresh: 'Refresh status',
+    noticeTitle: 'The last attempt did not finish',
+    notice: {
+      cancelled: 'Sign-in was cancelled.',
+      timeout: 'Timed out waiting for authorization. Please try again.',
+      'provider-denied': 'Access was denied on the authorization page.',
+      'invalid-state': 'The callback failed validation (state mismatch), so this attempt was discarded.',
+      'exchange-failed': 'The authorization code could not be exchanged. Please try again.',
+      'cloud-unreachable': 'The cloud service is unreachable. Check your network or the service address.',
+      'cloud-timeout': 'The cloud service timed out.',
+      'session-expired': 'The session expired. Please sign in again; local data is untouched.',
+      'storage-unavailable': 'The system secret store is unavailable, so the session cannot be saved here.',
+      'storage-failed': 'Stored credentials could not be read, so you are signed out.',
+      'login-in-progress': 'Another sign-in is already waiting for authorization. Finish or cancel it first.',
+      'browser-open-failed': 'The system browser could not be opened. Check your default browser.',
+      unknown: 'Sign-in did not complete. Please try again.'
+    }
   }
 }

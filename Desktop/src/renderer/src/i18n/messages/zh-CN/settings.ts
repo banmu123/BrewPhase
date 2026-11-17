@@ -4,6 +4,7 @@ export const settings = {
   subtitle: '管理应用、数据与连接',
   nav: {
     general: '常规',
+    account: '云账户',
     sync: '设备同步',
     browser: '浏览器',
     chrome: 'Chrome 扩展',
@@ -200,5 +201,56 @@ export const settings = {
     removeConfirmBody: (name: string) => `只删除登记——文件夹「${name}」与其中的文件不会被改动。`,
     boundCards: (n: number) => `${n} 张卡片绑定`,
     addFailed: '无法添加这个文件夹'
+  },
+
+  account: {
+    title: '云账户',
+    subtitle: '登录 BrewPhase Cloud，用于跨设备的云端身份',
+    lead: '登录只建立云端身份。豆子、冲煮、品鉴、记录与画布仍然只存在这台电脑上，不会自动上传。',
+    signedOut: '未登录',
+    signedOutHint: '不登录也能完整使用所有本地功能；云服务不可用时应用照常启动。',
+    loginWith: (provider: string) => `使用 ${provider} 登录`,
+    pending: '等待浏览器授权…',
+    pendingHint: '授权完成后会自动回到这里，可以关掉浏览器那个标签页。',
+    pendingExpires: (text: string) => `本次授权在 ${text} 前有效`,
+    cancel: '取消登录',
+    cancelling: '正在取消…',
+    signedIn: '已登录',
+    displayName: '名称',
+    provider: '登录方式',
+    providerName: {
+      google: 'Google',
+      github: 'GitHub'
+    },
+    accountId: '账户 ID',
+    memberSince: '注册时间',
+    displayNameFallback: '（未提供显示名称）',
+    signOut: '退出登录',
+    signOutTitle: '退出云账户？',
+    signOutBody: '只清除这台电脑上的登录凭据。豆子、记录、画布与媒体不会被删除，局域网同步也不受影响。',
+    checking: '正在向服务端确认会话…',
+    verifiedAt: (text: string) => `上次确认：${text}`,
+    notVerified: '本次启动尚未与服务端确认（离线时仍算已登录）',
+    storageEncrypted: '登录状态以系统安全存储（safeStorage）加密保存在本机，明文不会落盘。',
+    storageUnavailable: '系统安全存储不可用：本次登录只保留在内存里，重启后需要重新登录。',
+    cloudBase: '服务地址',
+    localDataNote: '云账户与设备同步是两套独立认证：在这里登录不会改动局域网配对，也不会替换同步 token。',
+    refresh: '刷新状态',
+    noticeTitle: '上次操作没有完成',
+    notice: {
+      cancelled: '已取消登录。',
+      timeout: '等待授权超时，请重新发起登录。',
+      'provider-denied': '你在授权页拒绝了访问。',
+      'invalid-state': '回调校验失败（state 不匹配），本次登录已作废。',
+      'exchange-failed': '授权码兑换失败，请重新登录。',
+      'cloud-unreachable': '无法连接云服务，请检查网络或服务地址。',
+      'cloud-timeout': '云服务响应超时。',
+      'session-expired': '登录已过期，请重新登录。本地数据不受影响。',
+      'storage-unavailable': '系统安全存储不可用，登录状态无法保存到本机。',
+      'storage-failed': '本机登录凭据读取失败，已按未登录处理。',
+      'login-in-progress': '已有一次登录在等待授权，请先完成或取消。',
+      'browser-open-failed': '无法打开系统浏览器，请检查默认浏览器设置。',
+      unknown: '登录未能完成，请重试。'
+    }
   }
 }

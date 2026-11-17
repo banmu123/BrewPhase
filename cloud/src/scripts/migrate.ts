@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createDb, runMigrations } from "../db/client.js";
+import { loadLocalEnvFile } from "../env-file.js";
 
 /**
  * 数据库迁移入口（生产部署专用命令）。
@@ -12,6 +13,8 @@ import { createDb, runMigrations } from "../db/client.js";
  */
 
 async function main(): Promise<void> {
+  // 迁移只需要 DATABASE_URL；本地 .env 同样只在开发环境补齐缺失值。
+  loadLocalEnvFile();
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
     console.error("[migrate] DATABASE_URL is required");
