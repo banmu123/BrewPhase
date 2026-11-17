@@ -132,8 +132,28 @@ curl https://your-domain/health   # {"status":"ok",...}
 curl https://your-domain/ready    # {"status":"ready"}
 ```
 
-- 反向代理（Nginx/Caddy）终结 TLS；若代理改写客户端 IP，设置 `TRUST_PROXY=true`
-  并确保传递 `X-Forwarded-For`。
+- 反向代理（Nginx/Caddy）终结 TLS。**TRUST_PROXY 的信任边界**：
+  - `TRUST_PROXY=false`（默认）：完全忽略 `X-Forwarded-For`，客户端伪造头不影响限流与审计 IP。
+  - `TRUST_PROXY=true`：从 XFF **右端**跳过 `TRUST_PROXY_HOPS`（默认 1，可选 1–5）个可信代理
+    条目后取客户端 IP。右端条目由离服务最近的可信代理写入，客户端伪造左侧条目无法改变
+    选中值，也无法借此创建新限流桶（桶总量另有硬上限）。
+  - **部署红线**：开启 TRUST_PROXY 的前提是服务端口不可被客户端绕过代理直接访问，
+    否则直连请求自带的 XFF 头会占据右端位置。
+  - Nginx 单层（推荐，覆盖式，最简单可靠）：
+
+    ```nginx
+    proxy_set_header X-Forwarded-For $remote_addr;   # 覆盖式：客户端无法注入
+    # 应用环境：TRUST_PROXY=true TRUST_PROXY_HOPS=1
+    ```
+
+  - Nginx 追加式（保留链路时）：应用取右端第 N 跳，伪造左侧条目无效：
+
+    ```nginx
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;  # 追加式
+    # 应用环境：TRUST_PROXY=true TRUST_PROXY_HOPS=1（单层代理时右端即真实客户端 IP）
+    ```
+
+  - Caddy：默认自动设置 `X-Forwarded-For`（追加式），按上一种方式配置。
 - 密钥轮换：设置新的 `JWT_SIGNING_KEY` 并把旧值放入 `JWT_SIGNING_KEY_PREVIOUS`，
   存量 Access Token 验证平滑过渡；Refresh Token 不受签名密钥影响。
 - CORS 默认关闭；如需开放（例如未来 Web 客户端），显式设置 `CORS_ORIGINS`。

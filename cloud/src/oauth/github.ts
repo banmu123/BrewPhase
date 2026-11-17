@@ -49,43 +49,65 @@ export function createGithubProvider(
     },
 
     async exchangeAndVerify({ code, cloudRedirectUri }) {
-      const tokenResp = await fetchWithTimeout(config.tokenUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Accept: "application/json",
-        },
-        body: new URLSearchParams({
-          client_id: config.clientId,
-          client_secret: config.clientSecret,
-          code,
-          redirect_uri: cloudRedirectUri,
-        }),
-      });
+      let tokenResp: Response;
+      try {
+        tokenResp = await fetchWithTimeout(config.tokenUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Accept: "application/json",
+          },
+          body: new URLSearchParams({
+            client_id: config.clientId,
+            client_secret: config.clientSecret,
+            code,
+            redirect_uri: cloudRedirectUri,
+          }),
+        });
+      } catch {
+        // 网络层失败（DNS/连接/超时）：统一映射为 AppError，不外泄堆栈
+        throw serverError("GitHub token endpoint is unreachable");
+      }
       if (!tokenResp.ok) {
         throw serverError("GitHub token endpoint rejected the authorization code");
       }
-      const tokenData = (await tokenResp.json()) as {
-        access_token?: string;
-        error?: string;
-        error_description?: string;
-      };
+      let tokenData: { access_token?: string; error?: string; error_description?: string };
+      try {
+        tokenData = (await tokenResp.json()) as {
+          access_token?: string;
+          error?: string;
+          error_description?: string;
+        };
+      } catch {
+        // 2xx 但 body 非 JSON：同样不得泄露为未处理异常
+        throw serverError("GitHub token endpoint returned a malformed response");
+      }
       const accessToken = tokenData.access_token;
       if (!accessToken) {
         throw serverError("GitHub did not return an access token");
       }
 
-      const userResp = await fetchWithTimeout(`${config.apiBase}/user`, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: "application/vnd.github+json",
-          "User-Agent": "BrewPhase-Cloud",
-        },
-      });
+      let userResp: Response;
+      try {
+        userResp = await fetchWithTimeout(`${config.apiBase}/user`, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Accept: "application/vnd.github+json",
+            "User-Agent": "BrewPhase-Cloud",
+          },
+        });
+      } catch {
+        throw serverError("GitHub user API is unreachable");
+      }
       if (!userResp.ok) {
         throw serverError("GitHub user API request failed");
       }
-      const profile = (await userResp.json()) as GithubUserProfile;
+      let profile: GithubUserProfile;
+      try {
+        profile = (await userResp.json()) as GithubUserProfile;
+      } catch {
+        throw serverError("GitHub user API returned a malformed response");
+      }
       if (typeof profile.id !== "number" || !Number.isInteger(profile.id)) {
         throw serverError("GitHub profile is missing numeric id");
       }

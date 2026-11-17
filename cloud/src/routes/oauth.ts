@@ -22,12 +22,14 @@ export function routeOauth(app: AppHono, ctx: AppContext): void {
     max: ctx.env.rateLimit.maxAuthorize,
     windowMs: ctx.env.rateLimit.windowMs,
     trustProxy: ctx.env.trustProxy,
+    trustedHops: ctx.env.trustProxyHops,
   });
   const tokenLimiter = rateLimit({
     name: "token",
     max: ctx.env.rateLimit.maxToken,
     windowMs: ctx.env.rateLimit.windowMs,
     trustProxy: ctx.env.trustProxy,
+    trustedHops: ctx.env.trustProxyHops,
   });
 
   /**

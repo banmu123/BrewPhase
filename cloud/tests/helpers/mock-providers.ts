@@ -50,6 +50,8 @@ export interface MockGithubIdentity {
   name?: string | null;
   avatar_url?: string | null;
   email?: string | null;
+  /** 故障注入：/user 端点返回 2xx 非 JSON 垃圾体（I-6 测试） */
+  badUserJson?: boolean;
 }
 
 interface GoogleTokenPayload {
@@ -58,12 +60,18 @@ interface GoogleTokenPayload {
   redirectUri: string;
   useWrongKey?: boolean;
   failToken?: boolean;
+  /** 故障注入：token 端点返回 2xx 非 JSON 垃圾体（I-6 测试） */
+  badJson?: boolean;
+  /** 故障注入：token 端点返回合法 JSON 但缺 id_token 字段（I-6 测试） */
+  omitIdToken?: boolean;
 }
 
 interface GithubTokenPayload {
   identity: MockGithubIdentity;
   redirectUri: string;
   failToken?: boolean;
+  /** 故障注入：token 端点返回 2xx 非 JSON 垃圾体（I-6 测试） */
+  badJson?: boolean;
 }
 
 export interface MockHttpServer {
@@ -98,6 +106,11 @@ export async function startMockGoogle(): Promise<MockHttpServer> {
         const params = new URLSearchParams(await readBody(req));
         const payload = decodePayload<GoogleTokenPayload>(params.get("code") ?? "");
 
+        if (payload.badJson) {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end("not-json{{{");
+          return;
+        }
         if (payload.failToken) {
           res.writeHead(500, { "content-type": "application/json" });
           res.end(JSON.stringify({ error: "mock_provider_error" }));
@@ -136,12 +149,16 @@ export async function startMockGoogle(): Promise<MockHttpServer> {
 
         res.writeHead(200, { "content-type": "application/json" });
         res.end(
-          JSON.stringify({
-            access_token: "ya29.mock-access-token",
-            id_token: idToken,
-            token_type: "Bearer",
-            expires_in: 3600,
-          }),
+          JSON.stringify(
+            payload.omitIdToken
+              ? { access_token: "ya29.mock", token_type: "Bearer", expires_in: 3600 }
+              : {
+                  access_token: "ya29.mock-access-token",
+                  id_token: idToken,
+                  token_type: "Bearer",
+                  expires_in: 3600,
+                },
+          ),
         );
         return;
       }
@@ -165,6 +182,11 @@ export async function startMockGithub(): Promise<MockHttpServer> {
         const params = new URLSearchParams(await readBody(req));
         const payload = decodePayload<GithubTokenPayload>(params.get("code") ?? "");
 
+        if (payload.badJson) {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end("not-json{{{");
+          return;
+        }
         if (payload.failToken) {
           res.writeHead(500, { "content-type": "application/json" });
           res.end(JSON.stringify({ error: "mock_provider_error" }));
@@ -204,6 +226,11 @@ export async function startMockGithub(): Promise<MockHttpServer> {
           return;
         }
         const identity = decodePayload<MockGithubIdentity>(token.slice(4));
+        if (identity.badUserJson) {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end("not-json{{{");
+          return;
+        }
         res.writeHead(200, { "content-type": "application/json" });
         res.end(
           JSON.stringify({

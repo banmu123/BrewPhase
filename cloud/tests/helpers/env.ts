@@ -36,6 +36,7 @@ export function makeTestEnv(overrides: Partial<Env> = {}): Env {
 
     corsOrigins: [],
     trustProxy: false,
+    trustProxyHops: 1,
     logLevel: "error",
 
     googleAuthUrl: "https://accounts.google.com/o/oauth2/v2/auth",

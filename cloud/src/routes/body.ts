@@ -41,7 +41,7 @@ export async function readStringFields(c: Context): Promise<Record<string, strin
 }
 
 export function sessionMetaFromRequest(c: Context, env: Env): SessionMeta {
-  const ip = clientIp(c, env.trustProxy);
+  const ip = clientIp(c, env.trustProxy, env.trustProxyHops);
   return {
     userAgent: c.req.header("user-agent") ?? "",
     ipHash: hashIp(env.sessionTokenPepper, ip),

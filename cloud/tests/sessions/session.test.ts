@@ -258,3 +258,71 @@ describe("access token (JWT) validation", () => {
     }
   });
 });
+
+describe("refresh grace window semantics (I-2)", () => {
+  it("grace retries create no second session, never revoke the family, and audit correctly", async () => {
+    const { tokens } = await fullGoogleLogin(harness, { sub: "grace-audit-sub", email: "ga@example.com", email_verified: true, name: "GA" });
+
+    // 合法轮换：T → T'（旧 T 进入 revoked+replaced 状态）
+    const r1 = await refresh(harness, tokens.refreshToken);
+    expect(r1.status).toBe(200);
+    const t1 = (await r1.json()) as { refresh_token: string };
+
+    // grace 窗口内旧 token 重放若干次：每次 401，不得建新会话、不得撤族
+    for (let i = 0; i < 3; i++) {
+      const retry = await refresh(harness, tokens.refreshToken);
+      expect(retry.status).toBe(401);
+    }
+
+    // 会话数：恰 2 行（原始 + 轮换产物），grace 重试没有创建第三个会话
+    const sessions = await harness.db.sql<{ count: string }[]>`
+      select count(*)::text as count from auth_sessions`;
+    expect(sessions[0]?.count).toBe("2");
+
+    // family 未被撤销：胜者的 token 仍然可以继续轮换
+    const r2 = await refresh(harness, t1.refresh_token);
+    expect(r2.status).toBe(200);
+
+    // 审计事件：3 次 refresh_grace_reuse，均关联 family 与会话，零 reuse 误报
+    const events = await harness.db.sql<
+      { session_id: string | null; detail: Record<string, unknown> }[]
+    >`select session_id, detail from auth_events where event_type = 'refresh_grace_reuse'`;
+    expect(events).toHaveLength(3);
+    for (const event of events) {
+      expect(event.session_id).toBeTruthy();
+      expect(event.detail).toHaveProperty("family");
+      expect(event.detail).toHaveProperty("sinceRevokeMs");
+    }
+
+    // 审计纪律：任何事件字段中不得出现明文 refresh token
+    const allDetails = await harness.db.sql<{ detail: Record<string, unknown> }[]>`
+      select detail from auth_events`;
+    const serialized = JSON.stringify(allDetails.map((row) => row.detail));
+    expect(serialized).not.toContain(tokens.refreshToken);
+    expect(serialized).not.toContain(t1.refresh_token);
+  });
+
+  it("grace events are never misrecorded as refresh_success", async () => {
+    const { tokens } = await fullGoogleLogin(harness, { sub: "grace-misrecord-sub", email: "gm@example.com", email_verified: true, name: "GM" });
+    const r1 = await refresh(harness, tokens.refreshToken);
+    const t1 = (await r1.json()) as { refresh_token: string };
+    await refresh(harness, tokens.refreshToken); // grace 拒绝
+    await refresh(harness, tokens.refreshToken); // grace 拒绝
+
+    // refresh_success 事件数 == 成功轮换次数（1 次初始轮换），grace 拒绝未混入
+    const success = await harness.db.sql<{ count: string }[]>`
+      select count(*)::text as count from auth_events where event_type = 'refresh_success'`;
+    // 初始 exchange 不算 refresh_success（login_success），此处只有 1 次轮换成功
+    expect(success[0]?.count).toBe("1");
+    const grace = await harness.db.sql<{ count: string }[]>`
+      select count(*)::text as count from auth_events where event_type = 'refresh_grace_reuse'`;
+    expect(grace[0]?.count).toBe("2");
+
+    // 窗口结束后重放仍然撤族（既有语义保持）
+    await backdateAllRevocations(harness, 61);
+    const replay = await refresh(harness, tokens.refreshToken);
+    expect(replay.status).toBe(401);
+    const dead = await refresh(harness, t1.refresh_token);
+    expect(dead.status).toBe(401);
+  });
+});

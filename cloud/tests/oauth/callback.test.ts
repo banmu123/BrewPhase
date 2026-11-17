@@ -237,3 +237,158 @@ describe("callback: provider failures and error redirects", () => {
     void exchangeCode;
   });
 });
+
+describe("transaction atomic consumption (I-4)", () => {
+  it("concurrent duplicate provider callbacks: exactly one consumes the transaction", async () => {
+    const state = desktopState();
+    const start = await startAuthorize(harness, { provider: "google", state });
+    const payload = { identity: googleIdentity, nonce: start.nonce };
+
+    // 同一个 PR.CS 的回调同时到达两次
+    const [r1, r2] = await Promise.all([
+      providerCallback(harness, "google", { combinedState: start.combinedState, ...payload }),
+      providerCallback(harness, "google", { combinedState: start.combinedState, ...payload }),
+    ]);
+
+    // 恰好一个 302 携带授权码；另一个是可预期的 400 invalid_grant（不是 500）
+    const statuses = [r1.resp.status, r2.resp.status].sort();
+    expect(statuses).toEqual([302, 400]);
+    const codes = [r1.code, r2.code].filter((c) => c !== null);
+    expect(codes).toHaveLength(1);
+
+    // 失败方响应体为统一 JSON 错误
+    const failed = r1.resp.status === 400 ? r1.resp : r2.resp;
+    const failedBody = (await failed.json()) as { error: string };
+    expect(failedBody.error).toBe("invalid_grant");
+
+    // 最多一条授权码；事务被消费；不产生重复用户
+    const counts = await harness.db.sql<
+      { codes: string; txs: string; users: string; identities: string }[]
+    >`select
+        (select count(*)::text from oauth_codes) as codes,
+        (select count(*)::text from oauth_transactions) as txs,
+        (select count(*)::text from users) as users,
+        (select count(*)::text from user_identities) as identities`;
+    expect(counts[0]).toMatchObject({ codes: "1", txs: "0", users: "1", identities: "1" });
+  });
+});
+
+describe("concurrent first-time login (I-5)", () => {
+  it("two authorize flows racing the same identity both succeed onto one user", async () => {
+    // 两个独立授权流程（两个标签页），同一 Google 身份并发完成回调
+    const identity: MockGoogleIdentity = { sub: "two-tabs-sub", email: "tabs@example.com", email_verified: true, name: "Tabs" };
+    const s1 = await startAuthorize(harness, { provider: "google" });
+    const s2 = await startAuthorize(harness, { provider: "google" });
+    const [c1, c2] = await Promise.all([
+      providerCallback(harness, "google", { combinedState: s1.combinedState, identity, nonce: s1.nonce }),
+      providerCallback(harness, "google", { combinedState: s2.combinedState, identity, nonce: s2.nonce }),
+    ]);
+
+    // 两个回调都成功（23505 冲突方经重读复用，不再外泄 500）
+    expect(c1.resp.status).toBe(302);
+    expect(c2.resp.status).toBe(302);
+    expect(c1.error).toBeNull();
+    expect(c2.error).toBeNull();
+    expect(c1.code).toBeTruthy();
+    expect(c2.code).toBeTruthy();
+    expect(c1.code).not.toBe(c2.code); // 各自独立的一次性授权码
+
+    // 两条授权码各自兑换，落到同一个用户
+    const e1 = await exchangeCode(harness, { code: c1.code ?? "", verifier: s1.verifier });
+    const e2 = await exchangeCode(harness, { code: c2.code ?? "", verifier: s2.verifier });
+    expect(e1.status).toBe(200);
+    expect(e2.status).toBe(200);
+    const t1 = (await e1.json()) as { access_token: string };
+    const t2 = (await e2.json()) as { access_token: string };
+    const me1 = (await (await authedGet(harness, "/auth/me", t1.access_token)).json()) as { id: string };
+    const me2 = (await (await authedGet(harness, "/auth/me", t2.access_token)).json()) as { id: string };
+    expect(me1.id).toBe(me2.id);
+
+    // 最终状态：恰好 1 用户 / 1 身份 / 2 个合法会话
+    const counts = await harness.db.sql<
+      { users: string; identities: string; sessions: string }[]
+    >`select
+        (select count(*)::text from users) as users,
+        (select count(*)::text from user_identities) as identities,
+        (select count(*)::text from auth_sessions) as sessions`;
+    expect(counts[0]).toMatchObject({ users: "1", identities: "1", sessions: "2" });
+  });
+});
+
+describe("provider infrastructure failures (I-6)", () => {
+  const identity: MockGoogleIdentity = { sub: "infra-fail-sub", email: "infra@example.com", email_verified: true, name: "Infra" };
+
+  async function expectServerErrorRedirect(
+    args: Pick<
+      Parameters<typeof providerCallback>[2],
+      "identity" | "useWrongKey" | "failToken" | "badJson" | "omitIdToken"
+    > & { provider: "google" | "github" },
+  ): Promise<void> {
+    const provider = args.provider;
+    const start = await startAuthorize(harness, { provider });
+    const cb = await providerCallback(harness, provider, {
+      combinedState: start.combinedState,
+      identity: args.identity,
+      nonce: start.nonce,
+      useWrongKey: args.useWrongKey,
+      failToken: args.failToken,
+      badJson: args.badJson,
+      omitIdToken: args.omitIdToken,
+    });
+    // 失败以 OAuth error 重定向（不是意外 500），且不携带授权码
+    expect(cb.resp.status).toBe(302);
+    expect(cb.error).toBe("server_error");
+    expect(cb.code).toBeNull();
+    expect(cb.clientState).toBe(start.state);
+    expect(cb.location.startsWith(DESKTOP_REDIRECT)).toBe(true);
+    // 事务保持已消费状态（不复活、不残留）
+    const txs = await harness.db.sql<{ count: string }[]>`
+      select count(*)::text as count from oauth_transactions`;
+    expect(txs[0]?.count).toBe("0");
+    // 用户未被创建
+    const users = await harness.db.sql<{ count: string }[]>`
+      select count(*)::text as count from users`;
+    expect(users[0]?.count).toBe("0");
+    await resetDb(harness.db);
+  }
+
+  it("google token endpoint returns malformed JSON", async () => {
+    await expectServerErrorRedirect({ provider: "google", identity, badJson: true });
+  });
+
+  it("google token endpoint returns JSON without id_token", async () => {
+    await expectServerErrorRedirect({ provider: "google", identity, omitIdToken: true });
+  });
+
+  it("github token endpoint returns malformed JSON", async () => {
+    await expectServerErrorRedirect({ provider: "github", identity: githubIdentity, badJson: true });
+  });
+
+  it("github user API returns malformed JSON", async () => {
+    await expectServerErrorRedirect({
+      provider: "github",
+      identity: { ...githubIdentity, badUserJson: true },
+    });
+  });
+
+  it("provider endpoint unreachable (connection refused)", async () => {
+    const isolated = await createHarness();
+    try {
+      await isolated.mockGoogle.close(); // 模拟 Provider 端口不可达
+      const start = await startAuthorize(isolated, { provider: "google" });
+      const cb = await providerCallback(isolated, "google", {
+        combinedState: start.combinedState,
+        identity,
+        nonce: start.nonce,
+      });
+      expect(cb.resp.status).toBe(302);
+      expect(cb.error).toBe("server_error");
+      expect(cb.code).toBeNull();
+      const txs = await isolated.db.sql<{ count: string }[]>`
+        select count(*)::text as count from oauth_transactions`;
+      expect(txs[0]?.count).toBe("0");
+    } finally {
+      await isolated.close();
+    }
+  });
+});

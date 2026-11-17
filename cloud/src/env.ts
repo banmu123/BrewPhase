@@ -39,6 +39,8 @@ const rawSchema = z.object({
     .string()
     .default("false")
     .transform((v) => v === "true" || v === "1"),
+  // 可信代理层数：XFF 右端跳过 N 个条目后取客户端 IP（默认 1 = 单层反代）
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(1).max(5).default(1),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 
   // Provider 端点覆盖（测试/私有化部署用）
@@ -81,6 +83,8 @@ export type Env = {
 
   corsOrigins: string[];
   trustProxy: boolean;
+  /** XFF 右端跳过的可信代理条目数（1 = 单层反代）。 */
+  trustProxyHops: number;
   logLevel: "debug" | "info" | "warn" | "error";
 
   googleAuthUrl: string;
@@ -193,6 +197,7 @@ export function loadEnv(input: Record<string, string | undefined>): Env {
 
     corsOrigins,
     trustProxy: parsed.TRUST_PROXY,
+    trustProxyHops: parsed.TRUST_PROXY_HOPS,
     logLevel: parsed.LOG_LEVEL,
 
     googleAuthUrl:

@@ -33,6 +33,8 @@ export interface Harness {
   app: AppHono;
   db: DbHandle;
   ctx: AppContext;
+  mockGoogle: { url: string; close(): Promise<void> };
+  mockGithub: { url: string; close(): Promise<void> };
   close(): Promise<void>;
 }
 
@@ -68,6 +70,8 @@ export async function createHarness(overrides: Partial<Env> = {}): Promise<Harne
     app,
     db,
     ctx,
+    mockGoogle,
+    mockGithub,
     close: async () => {
       await mockGoogle.close();
       await mockGithub.close();
@@ -91,6 +95,10 @@ export interface AuthorizeStart {
   authorizeUrl: URL | null;
   combinedState: string;
   nonce: string | undefined;
+  /** 与 authorize 阶段 challenge 配对的 verifier（兑换时必须使用） */
+  verifier: string;
+  /** 发起时使用的 client state（回传比对用） */
+  state: string;
 }
 
 export async function startAuthorize(
@@ -104,11 +112,11 @@ export async function startAuthorize(
 ): Promise<AuthorizeStart> {
   const provider = opts.provider ?? "google";
   const state = opts.state ?? desktopState();
-  const challenge = opts.challenge ?? desktopPkce().challenge;
+  const { verifier, challenge } = desktopPkce();
   const redirectUri = opts.redirectUri ?? DESKTOP_REDIRECT;
   const resp = await h.app.request(
     `/oauth/authorize?provider=${provider}&state=${state}` +
-      `&code_challenge=${challenge}&redirect_uri=${encodeURIComponent(redirectUri)}`,
+      `&code_challenge=${opts.challenge ?? challenge}&redirect_uri=${encodeURIComponent(redirectUri)}`,
   );
   const location = resp.headers.get("location");
   const authorizeUrl = location ? new URL(location) : null;
@@ -117,6 +125,8 @@ export async function startAuthorize(
     authorizeUrl,
     combinedState: authorizeUrl?.searchParams.get("state") ?? "",
     nonce: authorizeUrl?.searchParams.get("nonce") ?? undefined,
+    verifier,
+    state,
   };
 }
 
@@ -126,6 +136,10 @@ export interface ProviderCallbackArgs {
   nonce?: string;
   useWrongKey?: boolean;
   failToken?: boolean;
+  /** I-6 故障注入：provider token 端点返回 2xx 非 JSON */
+  badJson?: boolean;
+  /** I-6 故障注入：Google token 响应合法 JSON 但缺 id_token */
+  omitIdToken?: boolean;
   /** 覆盖发给 Cloud 回调的 code（默认用构造好的 provider code） */
   rawCode?: string;
   omitCode?: boolean;
@@ -156,11 +170,14 @@ export async function providerCallback(
           redirectUri: cloudRedirectUri,
           useWrongKey: args.useWrongKey,
           failToken: args.failToken,
+          badJson: args.badJson,
+          omitIdToken: args.omitIdToken,
         }
       : {
           identity: args.identity as MockGithubIdentity,
           redirectUri: cloudRedirectUri,
           failToken: args.failToken,
+          badJson: args.badJson,
         };
   const providerCode =
     provider === "google"
@@ -170,6 +187,7 @@ export async function providerCallback(
             identity: args.identity as MockGithubIdentity,
             redirectUri: cloudRedirectUri,
             failToken: args.failToken,
+            badJson: args.badJson,
           }),
           "utf8",
         ).toString("base64url");

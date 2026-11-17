@@ -5,16 +5,21 @@ import type { Database } from "../db/client.js";
 import { oauthCodes } from "../db/schema.js";
 import { findOrCreateUserWithIdentity } from "../users/user-service.js";
 import { isProviderName, type ProviderMap } from "./providers.js";
-import { deleteTransaction, resolveTransactionByProviderState } from "./state.js";
+import { consumeOauthTransaction } from "./state.js";
 
 /**
- * Provider 回调编排：验证 Provider State → 交换并验证第三方身份 →
- * 映射/创建 BrewPhase 用户 → 签发一次性授权码 → 重定向回 Desktop 本机回调。
+ * Provider 回调编排：原子消费 Transaction（双 State / Provider / CS 完整性校验）
+ * → 交换并验证第三方身份 → 映射/创建 BrewPhase 用户 → 签发一次性授权码 →
+ * 重定向回 Desktop 本机回调。
  *
- * 错误重定向约定：只有当事务存在（redirect_uri 已通过 authorize 校验）时才以
- * error=...&error_description=...&state=<client_state> 重定向回 Desktop；
- * 事务不存在（state 无效/重放/过期/被篡改）时抛错走统一 JSON 错误页，
- * 绝不重定向到任何未知地址（防开放重定向）。
+ * 事务在身份交换之前即被原子消费（条件 DELETE RETURNING）：并发重复回调只有
+ * 一个请求能进入后续流程，**同一个事务最多签发一条授权码**。消费后任何失败
+ * （Provider 交换失败 / 账户不可用 / 非预期异常）都不会复活事务，失败路径用
+ * 消费行中已通过 authorize 校验的 redirect_uri 以 OAuth error 重定向。
+ *
+ * 错误重定向约定：事务无效（state 错误 / 重放 / 已消费 / 过期 / 被篡改 /
+ * provider 不匹配）时抛错走统一 JSON 错误页，绝不重定向到任何未知地址
+ * （防开放重定向）。
  *
  * Provider Token 的生命周期只在本函数调用栈内：用于换取身份后即被丢弃，
  * 不落库、不返回 Desktop、不打日志。
@@ -67,13 +72,10 @@ export async function handleProviderCallback(
     throw new AppError("invalid_grant", 400, "Missing state parameter");
   }
 
-  const transaction = await resolveTransactionByProviderState(
-    deps.db,
-    provider,
-    input.state,
-  );
+  // 原子消费：state 错误 / 重放 / 已消费 / 过期 / 被篡改 / provider 不匹配
+  // 都在此处被拒绝（400 JSON，不重定向）。成功的请求独占该事务。
+  const transaction = await consumeOauthTransaction(deps.db, provider, input.state);
   if (!transaction) {
-    // state 错误 / 重放 / 过期 / provider 不匹配 / 被篡改：拒绝且不重定向
     await recordAuthEvent(deps.db, {
       eventType: "login_failed",
       provider: provider,
@@ -83,19 +85,15 @@ export async function handleProviderCallback(
     throw new AppError("invalid_grant", 400, "Invalid or expired OAuth state");
   }
 
-  const failWithRedirect = async (
-    errorCode: string,
-    description: string,
-  ): Promise<CallbackOutcome> => {
-    await deleteTransaction(deps.db, transaction.id);
-    return {
-      redirectUrl: buildRedirect(transaction.redirectUri, {
-        error: errorCode,
-        error_description: description,
-        state: transaction.clientState,
-      }),
-    };
-  };
+  // 事务已被本请求独占；失败路径不再需要清理，只需用消费行里已校验的
+  // redirect_uri / client_state 以 OAuth error 重定向回 Desktop。
+  const failWithRedirect = (errorCode: string, description: string): CallbackOutcome => ({
+    redirectUrl: buildRedirect(transaction.redirectUri, {
+      error: errorCode,
+      error_description: description,
+      state: transaction.clientState,
+    }),
+  });
 
   try {
     if (!input.code) {
@@ -105,7 +103,7 @@ export async function handleProviderCallback(
         ipHash: meta.ipHash,
         detail: { reason: "provider_denied" },
       });
-      return await failWithRedirect("access_denied", "Provider denied the authorization request");
+      return failWithRedirect("access_denied", "Provider denied the authorization request");
     }
 
     // Provider 授权码只能在 Cloud 侧使用；换取身份后 Provider Token 随栈帧销毁
@@ -140,8 +138,6 @@ export async function handleProviderCallback(
         redirectUri: transaction.redirectUri,
         expiresAt: new Date(now.getTime() + deps.oauthCodeTtlSeconds * 1000),
       });
-      // 事务即用即焚：完成（或失败）后立即清理
-      await deleteTransaction(tx, transaction.id);
 
       await recordAuthEvent(tx, {
         eventType: "login_success",
@@ -165,17 +161,15 @@ export async function handleProviderCallback(
       await recordAuthEvent(deps.db, {
         eventType: "login_failed",
         provider: provider,
-        userId: undefined,
         ipHash: meta.ipHash,
         detail: { reason: err.code },
       });
-      return await failWithRedirect(
+      return failWithRedirect(
         err.code === "account_suspended" ? "access_denied" : "server_error",
         err.expose ? err.message : "Provider sign-in failed",
       );
     }
-    // 非预期错误：清理事务后继续抛出，由 onError 统一处理
-    await deleteTransaction(deps.db, transaction.id);
+    // 非预期程序错误：不做用户拒绝伪装，事务保持已消费状态，交给 onError 统一 500
     throw err;
   }
 }

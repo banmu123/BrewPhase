@@ -40,12 +40,26 @@ export function createRequireAuth(ctx: AppContext) {
   };
 }
 
+/**
+ * 统一的用户可见性检查：/auth/me 与 /auth/identities 共用，
+ * 保证「用户不存在或已删除」在所有带 Bearer 的读接口上一致返回 401。
+ * suspended 用户保留只读可见性（响应携带 status 供客户端响应，约定见实施报告）。
+ */
+async function loadAuthedUser(ctx: AppContext, userId: string) {
+  const user = await findUserById(ctx.db.db, userId);
+  if (!user || user.status === "deleted") {
+    throw invalidToken();
+  }
+  return user;
+}
+
 export function routeAuth(app: AppHono, ctx: AppContext): void {
   const authLimiter = rateLimit({
     name: "auth",
     max: ctx.env.rateLimit.maxAuth,
     windowMs: ctx.env.rateLimit.windowMs,
     trustProxy: ctx.env.trustProxy,
+    trustedHops: ctx.env.trustProxyHops,
   });
   const requireAuth = createRequireAuth(ctx);
 
@@ -98,10 +112,7 @@ export function routeAuth(app: AppHono, ctx: AppContext): void {
   /** 当前用户资料（Renderer 永远只拿 DTO，拿不到任何 Token）。 */
   app.get("/auth/me", requireAuth, async (c) => {
     const claims = c.get("authClaims");
-    const user = await findUserById(ctx.db.db, claims.userId);
-    if (!user || user.status === "deleted") {
-      throw invalidToken();
-    }
+    const user = await loadAuthedUser(ctx, claims.userId);
     return c.json({
       id: user.id,
       status: user.status,
@@ -111,9 +122,10 @@ export function routeAuth(app: AppHono, ctx: AppContext): void {
     });
   });
 
-  /** 当前用户绑定的第三方身份列表（无任何凭据信息）。 */
+  /** 当前用户绑定的第三方身份列表（无任何凭据信息）。与 /auth/me 一致的用户状态检查。 */
   app.get("/auth/identities", requireAuth, async (c) => {
     const claims = c.get("authClaims");
+    await loadAuthedUser(ctx, claims.userId);
     const identities = await listIdentities(ctx.db.db, claims.userId);
     return c.json({
       identities: identities.map((identity) => ({

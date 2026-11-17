@@ -77,7 +77,19 @@ export interface ResolvedTransaction {
  * 用 Provider 回显的 state 解析事务。任何失败（未知哈希、provider 不匹配、
  * 过期、client state 被篡改）都返回 null，并尽量删除已落库的事务行。
  */
-export async function resolveTransactionByProviderState(
+/**
+ * 原子消费 OAuth Transaction（I-4 整改）。
+ *
+ * 校验通过后立刻以条件 `DELETE ... RETURNING` 消费：并发重复回调只有一个请求
+ * 能拿到行，其余得到 undefined（「已被消费」）。由此保证**同一个事务最多签发
+ * 一条授权码**；Provider 授权码交换、用户映射、授权码签发都发生在消费成功之后，
+ * 因此消费前的双 State / Provider 绑定 / CS 完整性校验语义完全保留。
+ *
+ * 消费即烧毁的取舍：消费后若 Provider 交换失败，事务不会复活（客户端需重新
+ * 发起授权）——回调失败路径会用消费行中的 redirect_uri 以 OAuth error 重定向，
+ * 属 OAuth 常见语义（事务 TTL 300s，重试成本极低）。
+ */
+export async function consumeOauthTransaction(
   db: Database,
   provider: ProviderName,
   combinedState: string,
@@ -107,6 +119,15 @@ export async function resolveTransactionByProviderState(
     return undefined;
   }
 
+  // 原子消费：并发竞争时只有一个 DELETE 能拿到行（行锁排队后前者删除、后者空手）
+  const consumed = await db
+    .delete(oauthTransactions)
+    .where(eq(oauthTransactions.id, row.id))
+    .returning({ id: oauthTransactions.id });
+  if (consumed.length === 0) {
+    return undefined;
+  }
+
   return {
     id: row.id,
     provider: row.provider,
@@ -115,8 +136,4 @@ export async function resolveTransactionByProviderState(
     nonceHash: row.nonceHash,
     clientState,
   };
-}
-
-export async function deleteTransaction(db: Database, transactionId: string): Promise<void> {
-  await db.delete(oauthTransactions).where(eq(oauthTransactions.id, transactionId));
 }

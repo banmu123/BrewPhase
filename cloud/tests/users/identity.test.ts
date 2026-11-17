@@ -146,3 +146,99 @@ describe("identity service invariants", () => {
     void listIdentities;
   });
 });
+
+describe("auth identities access control (I-3)", () => {
+  it("active user reads identities; suspended keeps read visibility; deleted and missing user get 401", async () => {
+    const { tokens } = await fullGoogleLogin(harness, {
+      sub: "access-control-sub",
+      email: "ac@example.com",
+      email_verified: true,
+      name: "Access Control",
+    });
+    const me = (await (await authedGet(harness, "/auth/me", tokens.accessToken)).json()) as { id: string };
+
+    // active：正常访问
+    const active = await authedGet(harness, "/auth/identities", tokens.accessToken);
+    expect(active.status).toBe(200);
+    expect(((await active.json()) as { identities: unknown[] }).identities).toHaveLength(1);
+
+    // suspended：遵循现有约定（与 /auth/me 一致保留只读可见性）
+    await harness.db.sql`update users set status = 'suspended' where id = ${me.id}`;
+    const suspendedMe = await authedGet(harness, "/auth/me", tokens.accessToken);
+    expect(suspendedMe.status).toBe(200);
+    const suspendedIds = await authedGet(harness, "/auth/identities", tokens.accessToken);
+    expect(suspendedIds.status).toBe(200);
+
+    // deleted：统一 401（不再返回身份列表）
+    await harness.db.sql`update users set status = 'deleted' where id = ${me.id}`;
+    const deletedMe = await authedGet(harness, "/auth/me", tokens.accessToken);
+    expect(deletedMe.status).toBe(401);
+    const deletedIds = await authedGet(harness, "/auth/identities", tokens.accessToken);
+    expect(deletedIds.status).toBe(401);
+
+    // 用户记录不存在（行被删除）：统一 401
+    await harness.db.sql`delete from users where id = ${me.id}`;
+    const missingIds = await authedGet(harness, "/auth/identities", tokens.accessToken);
+    expect(missingIds.status).toBe(401);
+    const missingMe = await authedGet(harness, "/auth/me", tokens.accessToken);
+    expect(missingMe.status).toBe(401);
+  });
+});
+
+describe("concurrent first-time identity creation (I-5)", () => {
+  it("parallel findOrCreateUserWithIdentity for the same subject resolves to one user", async () => {
+    const db = (await getTestDb()).db;
+    const identity = {
+      provider: "google" as const,
+      subject: "svc-concurrent-sub",
+      email: "svc-concurrent@example.com",
+      emailVerified: true,
+      displayName: "Concurrent Creator",
+      avatarUrl: null,
+    };
+
+    const [a, b] = await Promise.all([
+      findOrCreateUserWithIdentity(db, identity),
+      findOrCreateUserWithIdentity(db, identity),
+    ]);
+
+    // 两个并发请求都得到可预期结果，且指向同一个用户
+    expect(a.user.id).toBe(b.user.id);
+    expect(a.identity.providerSubject).toBe(identity.subject);
+    expect(b.identity.providerSubject).toBe(identity.subject);
+    expect(a.created || b.created).toBe(true);
+
+    // 最终只存在一个 users、一条 identity（唯一约束 + 重读复用）
+    const counts = await harness.db.sql<
+      { users: string; identities: string }[]
+    >`select
+        (select count(*)::text from users) as users,
+        (select count(*)::text from user_identities) as identities`;
+    expect(counts[0]).toMatchObject({ users: "1", identities: "1" });
+  });
+
+  it("same email via different providers still creates two independent users", async () => {
+    const db = (await getTestDb()).db;
+    const email = "shared-23505@example.com";
+    const a = await findOrCreateUserWithIdentity(db, {
+      provider: "google",
+      subject: "google-shared-email",
+      email,
+      emailVerified: true,
+      displayName: "Google Side",
+      avatarUrl: null,
+    });
+    const b = await findOrCreateUserWithIdentity(db, {
+      provider: "github",
+      subject: "github-shared-email",
+      email,
+      emailVerified: false,
+      displayName: "GitHub Side",
+      avatarUrl: null,
+    });
+    expect(a.user.id).not.toBe(b.user.id);
+    const counts = await harness.db.sql<{ count: string }[]>`
+      select count(*)::text as count from users`;
+    expect(counts[0]?.count).toBe("2");
+  });
+});

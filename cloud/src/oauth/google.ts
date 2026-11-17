@@ -57,24 +57,36 @@ export function createGoogleProvider(
     },
 
     async exchangeAndVerify({ code, cloudRedirectUri, expectedNonceHash }) {
-      const tokenResp = await fetchWithTimeout(config.tokenUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Accept: "application/json",
-        },
-        body: new URLSearchParams({
-          code,
-          client_id: config.clientId,
-          client_secret: config.clientSecret,
-          redirect_uri: cloudRedirectUri,
-          grant_type: "authorization_code",
-        }),
-      });
+      let tokenResp: Response;
+      try {
+        tokenResp = await fetchWithTimeout(config.tokenUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Accept: "application/json",
+          },
+          body: new URLSearchParams({
+            code,
+            client_id: config.clientId,
+            client_secret: config.clientSecret,
+            redirect_uri: cloudRedirectUri,
+            grant_type: "authorization_code",
+          }),
+        });
+      } catch {
+        // 网络层失败（DNS/连接/超时）：统一映射为 AppError，不外泄堆栈
+        throw serverError("Google token endpoint is unreachable");
+      }
       if (!tokenResp.ok) {
         throw serverError("Google token endpoint rejected the authorization code");
       }
-      const tokenData = (await tokenResp.json()) as { id_token?: string; error?: string };
+      let tokenData: { id_token?: string; error?: string };
+      try {
+        tokenData = (await tokenResp.json()) as { id_token?: string; error?: string };
+      } catch {
+        // 2xx 但 body 非 JSON：同样不得泄露为未处理异常
+        throw serverError("Google token endpoint returned a malformed response");
+      }
       if (!tokenData.id_token) {
         throw serverError("Google did not return an ID token");
       }
