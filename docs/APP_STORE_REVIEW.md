@@ -102,3 +102,98 @@ Other notes:
 - 示例画布的节点走 `CanvasNodeStore.add`（与用户手动添加同一条路径），不是写死坐标。
 - 新增文案要登记到 `Tools/Localization/strings.py`，然后
   `python3 Tools/Localization/generate.py && python3 Tools/Localization/check.py`。
+
+---
+
+## 五、桌面同步的演示视频（需要录）
+
+### 为什么必须录
+
+iOS 端的配对**只有扫二维码一条路**，没有手输配对码。桌面端生成的码
+`PAIRING_TTL_MS = 120_000`（两分钟）且**一次性**（验证成功即把 hash 置空），
+二维码里还带着 Mac 在局域网里的地址。这意味着审核员要复现必须同时具备：
+
+1. 一台装了 BrewPhase Desktop 的 Mac（`desktop-v0.1.4`，GitHub 上的 prerelease）；
+2. 和 iPhone 在**同一个局域网**；
+3. 在两分钟内完成扫码。
+
+这三条在 Apple 的审核环境里都不成立。按 2.1 App Completeness 的通行做法，
+**功能依赖第二台设备或无法复现的环境时，要在审核备注里附一段演示视频**，
+否则很容易收到「we were unable to review this feature」并要求补充材料，
+白耗一轮队列。
+
+### 录多长、录什么
+
+**40–55 秒，一条不剪辑的连续录屏即可，不要配乐、不要做宣传片。** 审核要看的是
+「这个功能真的能跑」，不是好看。
+
+建议按这个顺序录（时长是目标值，不是硬要求）：
+
+| 时间 | 画面 | 要让人看到什么 |
+|---|---|---|
+| 0:00–0:05 | Mac：设置 → 设备同步 → 启用局域网同步 → 连接新设备 | 二维码出现，页面上有「2 分钟后失效」 |
+| 0:05–0:10 | iPhone：首页「桌面空间」卡片（副标题「尚未配对 · 连接桌面端」）→ 点「扫描二维码」 | 权限提示（相机）正常弹出并允许 |
+| 0:10–0:18 | 相机对准 Mac 屏幕 | 扫码成功 → 「已读取二维码」→「正在验证桌面端信息并保存连接…」 |
+| 0:18–0:24 | iPhone 配对完成 | 设备面板出现（Mac 名称 / 上次同步） |
+| 0:24–0:32 | iPhone 上新建一条记录，再点「立即同步」 | 同步统计数字变化（记录数 / 媒体数） |
+| 0:32–0:44 | 切到 Mac，打开 Records（或画布） | 刚在 iPhone 上记的那条**真的出现在 Mac 上**；画布上节点也在 |
+| 0:44–0:50 | 可留：iPhone 解除配对，选「只解除配对」 | 说明两种解除后果的差别 |
+
+**关键的一镜是 0:32–0:44**：必须在 Mac 上看到 iPhone 刚写的那条内容。没有这一镜，
+视频就只是「配上了」，证明不了同步。
+
+### 录制时的几个具体建议
+
+- **把两端界面都切到英文再录**：应用内就能切（更多 → 应用 → 语言；Mac 端同样有语言项）。
+  审核员多数看英文，省掉一道翻译。
+- **手机用真机，不要模拟器**：模拟器没有摄像头，扫码这一步过不去。
+- Mac 端用**已公证的 0.1.4 官方包**录，不要用 dev 模式（窗口标题会带 dev 字样，
+  看起来不像正式版本）。
+- 先打开示例数据（更多 → 数据 → 示例数据），这样记录页不是空的，0:32 那一镜有东西可看。
+- 录之前把 Mac 的**防火墙询问**和 iPhone 的**本地网络权限**都先点过一次，
+  免得录制中弹出系统弹窗耽误时间。
+- 屏幕录制用系统自带的 `Cmd+Shift+5` 就够；分辨率 1080p，H.264，文件控制在几十 MB。
+
+### 视频放哪里
+
+两种都行，建议**两个都做**：
+
+1. **直接当附件传**：App Store Connect → App Review Information → 附件区，放 `.mp4`/`.mov`。
+   审核员不用点外链，最不容易出岔子。
+2. **再补一个链接**贴在 Notes 里：YouTube 设为 **Unlisted**（不是 Private），或 Vimeo
+   无密码链接。**不要用**需要登录或有区域限制的网盘、视频号——审核员打不开会直接问你要。
+
+### 配套要写进 Notes 的话
+
+视频之外，用一句话把边界说清楚，避免审核员以为功能缺失：
+
+```
+Desktop sync is optional. Every feature described in the app — Coffee, Records, Canvas,
+sample data, Ask, export and backup — works without pairing. The sync entry only appears
+under More → Data → Desktop sync and on the home screen; it requires the macOS companion
+app on the same local network. A short demo video is attached showing pairing and a record
+syncing from iPhone to Mac.
+```
+
+中文版：
+
+```
+桌面同步是可选的。应用内的全部功能——咖啡、记录、画布、示例数据、问一问、导出与备份——
+不配对也能完整使用。同步入口只出现在「更多 → 数据 → 桌面同步」和首页；它需要同一局域网内
+装有 macOS 端。附件是一段演示视频，包含配对与一条记录从 iPhone 同步到 Mac 的过程。
+```
+
+### 顺带一个风险点
+
+iOS 端「还没有安装？下载桌面端」这一行指向
+`https://github.com/banmu123/BrewPhase/releases`（`AppLinks.desktopDownload`）。
+它链的是**另一个平台的桌面软件**，不是 iOS 应用，通常不会被当成 2.3.10 处理；
+但如果审核对「引导站外下载」敏感，这是页面上唯一一处外部跳转。
+
+三个选项，按保守程度排：
+
+1. **保留**（现状）。多数带桌面客户端的应用都这么做，风险低。
+2. **改成纯文字**，只写「可在电脑上配合 BrewPhase Desktop 使用」，不放链接。
+3. **这版先隐藏**这一行（保留配对功能），等桌面端正式发布再放回来。
+
+如果这版想尽量一次过，选 2 的成本最低：一句话的事，不影响功能。
