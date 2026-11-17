@@ -44,6 +44,14 @@
 * `BASE_URL` 决定 Provider 回调，必须与控制台登记逐字符一致（`localhost`≠`127.0.0.1`）；Desktop 回调固定 `http://127.0.0.1:<port>/callback`。
 * 本机 3000 常被 `/Users/banmu/productPage` 占用（**不要杀**）；验证用 `PORT=3100 BASE_URL=http://127.0.0.1:3100 pnpm dev`。
 * **Node 直连 Google 不通**（token/JWKS timeout），GitHub 正常；系统代理 7900 对 Google 可用但 Node env-proxy 不行。本地 DB `brewphase-cloud-pg`(5432)，测试 `brewphase-cloud-test-pg`(54329)；迁移幂等。
+* Provider 出网走 `src/net/proxy-fetch.ts`（自建 CONNECT，**不用** Node env-proxy——那套在 7900 下全超时）。
+
+## Desktop：Cloud 账号（`src/main/account/`）
+
+* 服务端 `isValidLocalCallbackUri` 只认 `http://127.0.0.1:<port>/callback`：必须起一次性回环 HTTP 服务，**没有深链**，也别碰 `brewphase://pair`。
+* 四个模块分工：`credentials.ts`（safeStorage 密文，外层只有 version/alg/payload；加密不可用则拒绝落盘，绝不退化明文）／`oauth-callback-server.ts`（只 `GET /callback`、Host 必须 `127.0.0.1:<port>` 防 rebinding、state 常量时间比对且不匹配继续等）／`cloud-client.ts`（注入 FetchLike、AbortController 超时、`redirect:'manual'`）／`account-service.ts`（唯一状态机：generation 丢弃过期异步结果、refresh 单飞、**网络失败 ≠ 会话失效**，只有 401 才清凭据）。
+* 凭据放 `userData/account/`（不是业务数据目录，换数据目录不复制）；本地库零新增表。`signOut()` 先清本地再尽力撤销服务端。
+* IPC：`account:status/login/cancel-login/refresh/sign-out` + `account:changed`；`login` 只收 provider 名，没有「提交 code/token」通道。
 
 ## Desktop：Studio Desk / 外观
 
