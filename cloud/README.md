@@ -227,6 +227,38 @@ curl https://your-domain/ready    # {"status":"ready"}
   存量 Access Token 验证平滑过渡；Refresh Token 不受签名密钥影响。
 - CORS 默认关闭；如需开放（例如未来 Web 客户端），显式设置 `CORS_ORIGINS`。
 
+### 反向代理的访问日志必须关闭
+
+**OAuth 回调是带凭据的 URL**：`/oauth/callback/<provider>?code=…&state=…`。一次性授权码与
+state 都在这条查询串里，而反向代理的默认访问日志会**原样记录 URI**——等于把授权码写进磁盘，
+日志一旦被读取（运维、备份、日志采集）就等同于凭据泄漏。
+
+因此反代侧不要开启访问日志（Caddy 用全局 `log { output discard }`，Nginx 用 `access_log off;`），
+需要排障时只保留错误日志。应用自身的请求日志只记方法/路径/状态/耗时，不记查询串，可以放心留。
+
+### 目标主机 IPv6 不可达时，必须关掉 Node 的地址族自动选择
+
+Node 20+ 默认启用 `autoSelectFamily`（Happy Eyeballs）：解析到多个地址时会并行尝试，
+**约 250ms 后放弃并让整个请求失败**。如果目标域名同时有 AAAA 记录、而运行环境到该
+IPv6 不可达，表现会是 Provider 请求以 `ETIMEDOUT` 快速失败——看起来像凭据或配置错误，
+实际是连接策略问题。
+
+典型症状：授权页能打开、回调立刻失败（几百毫秒级），而同一台机器用 `curl` 访问
+同一个域名却成功（curl 会自己逐个地址重试）。Google 的 `oauth2.googleapis.com` /
+`www.googleapis.com` 都有 AAAA 记录；GitHub 只有 A，所以「GitHub 能登、Google 不能」是
+这个问题的强特征。
+
+处理方式（容器里用环境变量即可，不需要改代码）：
+
+```yaml
+environment:
+  NODE_OPTIONS: "--max-old-space-size=<MB> --no-network-family-autoselection"
+```
+
+这条只影响地址族选择策略，**不降低 TLS 校验**（证书链与主机名校验照常）。不要用
+`--dns-result-order=ipv4first` 代替：它只调整解析结果顺序，仍会发起 IPv6 连接尝试，
+问题依旧。
+
 ## 安全边界（实现纪律）
 
 - refresh token / OAuth 授权码 / 双 State / nonce / IP：数据库只存
