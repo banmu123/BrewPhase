@@ -47,6 +47,12 @@ Cloud 收到 bye / 检测到 close：
 
 ### 11.2 设备撤销
 
+> **Phase 1.2B.1 已实现的部分**：① 持久化（`POST/DELETE` 路由的条件 UPDATE）
+> → ② `registry.unbind` → 发 `bye(reason)` → close 4003/4005。
+> 清理失败**不回滚**已持久化的状态：`cleanupConnection()` 在 route 层吞掉
+> 异常并记日志，因为撤销生效的判据是「转发前查设备状态」，不是「连接已断」。
+> 故障注入用例见 `cloud/tests/link/link-server.test.ts` G 组。
+
 ```
 ① 持久化（同步，事务）
    Cloud: mcp_devices.status = 'revoked', revoked_at = now()
@@ -282,6 +288,14 @@ interface ConnectionRegistry {
 | 启动断言 | `GATEWAY_EXPECTED_REPLICAS` 环境变量（默认 `1`）；`> 1` 时**拒绝启动**并打印「需要 Phase 1.4 的共享路由表」 |
 | 就绪探测 | `/ready` 增加 `instance_id` 与 `connection_count`；运维可据此发现「两台都在接流量」 |
 | 部署文档 | README / 部署清单写明：Phase 1.2–1.3 期间 `replicas` 必须为 1，滚动更新用 `maxSurge=0, maxUnavailable=1` |
+
+**Phase 1.2B.1 的落地方式**（三层都已实现，但仍**不能**防止运维误配）：
+
+| 层 | 实现 | 可观测信号 |
+|---|---|---|
+| 启动断言 | `GATEWAY_EXPECTED_REPLICAS`：缺省 1；`> 1` **拒绝启动**并提示需要 Phase 1.4 的共享路由表；非正整数按环境校验失败 | 进程起不来（日志里有明确的 `must be 1`） |
+| 就绪探测 | `GET /ready` 返回 `{status, instance_id, connection_count}` | 逐个拉 LB 后端，看到**两个不同的 `instance_id`** 就已经是多实例了 |
+| 实例标识 | 每次启动生成 `gw_<8 hex>`，同时写进启动日志与 `hello_ok.instance_id` | Desktop 侧诊断页可直接看到自己连的是哪台 |
 
 换 `instance_id` 的能力保留，是为了 Phase 1.4 换 Redis 实现时**不需要改协议**。
 

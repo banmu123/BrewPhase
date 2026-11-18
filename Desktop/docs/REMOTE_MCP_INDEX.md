@@ -30,6 +30,12 @@
 | 权限与身份 | `REMOTE_MCP_SECURITY.md` | 0.0* 修订摘要、§0 前提、§1 信任边界、§2 五层权限（含 §2.6 五身份）、§3 Token 生命周期 |
 | 状态与威胁 | `REMOTE_MCP_SECURITY_OPERATIONS.md` | §4 状态机与撤销、§5 跨用户隔离、§6 数据隐私与审计、§7 威胁模型与 ST 矩阵、§8 与 Local 边界、§9 OPEN QUESTION |
 
+## 3a. 运维族
+
+| 册 | 文件 | 内容 |
+|---|---|---|
+| 部署约束 | `REMOTE_MCP_DEPLOYMENT.md` | §1 单副本、§2 滚动更新、§3 重启后果、§4 反代、§5 环境变量、§6 健康检查、§7 停机、§8 自查清单 |
+
 ## 4. 阶段族
 
 | 册 | 文件 | 章节 |
@@ -112,3 +118,33 @@ ConnectionRegistry、心跳、req/res 转发、`grant_update` 在线同步、MCP
 **未改动**：错误码仍是 19 个（`PROTOCOL_VIOLATION` 复用，不新增）；ST 仍是 26 条
 （只补落点说明，不新增编号、不改阻断级别）；OQ 仍是 23 项。
 **Test 基线**：978 → **1188**（1.1B 的 1111 + 1.1B.1 的 77）。
+
+## 10. Phase 1.2B.1：Cloud WSS 接入与连接管理（已实现）
+
+范围与验收结果见 `REMOTE_MCP_PHASES_ROADMAP.md` §2.0 / §2.4 的结果表。要点：
+
+| 项 | 落地 | 权威 |
+|---|---|---|
+| WSS 接入 | 同一 `http.Server` 上挂 `upgrade`（`ws` `noServer` + `@hono/node-server` 的 `createServer` 注入），不开第二个端口 | 协议 §4.1 / §4.1.1 |
+| Upgrade 预检 | path 精确、**query 一律拒**、Host 白名单（不看 `X-Forwarded-Host`）、子协议、token 形态 | 协议 §4.1.1 |
+| 设备认证 | `sha256(token)` 命中 + `status='active'` + **`token_expires_at`**（不是 `expires_at`） | 协议 §4.3 第 2–4 步 |
+| hello 验签 | 13 字段闭合键集、域分隔规范串、严格 base64url、±120s | 协议 §4.2 / §4.2.1 |
+| 黄金向量 | `fixtures/remote-mcp/hello-v1.json`，**Cloud 与 Desktop 读同一份** | 本文 §10；协议 §4.2.1 |
+| NonceStore | 进程内、有界 8192、fail-closed、monotonic、无 await | 协议 §4.3 第 7 步 |
+| ConnectionRegistry | 每用户一条；`unbind` 带 `connectionId` 比对；先 bind 新再断旧 | 协议 §4.6 / §12.2 |
+| 心跳 | 20s ping / 60s 空闲 / 3 次未回应 → 4008；`seq` 必须回显当前 ping | 协议 §5.1 |
+| 撤停联动 | 先落库 → `unbind` → `bye` → close 4003/4005；清理失败不回滚 | 生命周期 §11.2 |
+| 单实例约束 | `GATEWAY_EXPECTED_REPLICAS>1` **拒绝启动**；`/ready` 带 `instance_id` + `connection_count` | 生命周期 §12.2 |
+| 迁移 | `0002_mcp_grant_epoch`：只给 `mcp_grants` 加 `epoch DEFAULT 1` + `CHECK >= 1` | 协议运行时 §6.5 |
+
+**新增契约**：无新增错误码（仍是 19）、无新增 ST 编号、无新增 OQ。
+唯一的语义修正：协议 §4.3 第 4 步 `expires_at` → **`token_expires_at`**。
+
+**明确未做**（属 1.2B.2）：`req`/`res`/`cancel` 转发、`grant_update` 在线同步、
+`install` 未 ack 阻断、`max_inflight` 调度、`delivery_id` 缓存重投、`deadline_ms` 预算、
+轮换 `rotating`（B13）、MCP OAuth、`/mcp`、写工具、Redis 多实例。
+
+**Test 基线**：Cloud 224 → **377**；Desktop 1209 → **1219**。
+
+**部署约束**：Phase 1.2–1.3 必须**单副本**；滚动更新 `maxSurge=0, maxUnavailable=1`；
+进程重启会断开所有在线设备，Desktop 按 1001 退避重连。

@@ -59,6 +59,37 @@ req/res 转发、grant_update 在线同步、MCP OAuth（属 1.2B / 1.3）。
 
 范围：B5–B9、B11、B13、B14。前置条件是 1.2A 的管理面已经能签发并撤销设备凭证。
 
+### 2.0 子阶段划分（Phase 1.2B.1 定稿）
+
+1.2B 太大，拆成两个可独立验收的子阶段。**分界线是「连接层 / 转发层」**：
+
+| 子阶段 | 范围 | 状态 |
+|---|---|---|
+| **1.2B.1** | B5（WSS 接入 + hello 握手）、B6（ConnectionRegistry）、B7（心跳）、B9（撤停联动）、B11（运维断言） | ✅ **已完成** |
+| **1.2B.2** | B8（req/res/cancel 转发）、B13（轮换 `rotating`）、B14（转发前跨用户校验）、`grant_update` 在线同步 | 待做 |
+
+**1.2B.1 的验收边界（必须原样引用，不许省略）**：
+> 只证明 Cloud Gateway 能**安全接入设备、验证身份、维护连接与心跳**。
+> 它**不代表** Cloud 已经能向 Desktop 转发 MCP 请求——那条链路在 1.2B.2。
+
+**1.2B.1 实际交付**：
+
+| 项 | 落地 |
+|---|---|
+| WSS 接入 | 同一个 `http.Server` 上挂 `upgrade`（`ws` 的 `noServer` 模式 + `@hono/node-server` 的 `createServer` 注入），**不开第二个端口** |
+| 模块 | `cloud/src/link/{link-server,handshake,connection-registry,nonce-store,heartbeat,schemas,index}.ts` + `cloud/src/server.ts`（生产与测试共用同一个装配函数） |
+| 迁移 | `0002_mcp_grant_epoch`：只给 `mcp_grants` 加 `epoch INTEGER NOT NULL DEFAULT 1` + `CHECK (epoch >= 1)` |
+| 帧上限 | 传输层 `maxPayload = 1 MiB`；ws 的超限 close `1009` 被翻译成协议要求的 **4009**（否则 Desktop 会按「可重连」处理，一个客户端 bug 变成重连风暴） |
+| 黄金向量 | `fixtures/remote-mcp/hello-v1.json`，Cloud 与 Desktop 的测试**读同一个文件** |
+| 测试 | Cloud **224 → 377**（+153，7 个新文件） |
+
+**1.2A 遗留的两处取舍，本次处理结果**：
+
+| 取舍 | 结果 |
+|---|---|
+| `token_expires_at` 无人校验 | ✅ **已修**：握手第 4 步改为读 `token_expires_at`；协议 §4.3 第 4 步同步修正（原文写的是 `expires_at`，那会让每台设备在注册 5 分钟后被判死） |
+| 注册并发配额可能多出一台 | ⏸ **不修**：需要部分唯一索引或行锁，而配额不是安全边界（用户只能多注册自己的设备）。留作运维容忍项 |
+
 ### 2.1 范围
 
 | # | 能力 |
@@ -129,6 +160,26 @@ cloud/tests/{mcp-devices,link}/*.test.ts
    且 `revoked_at IS NULL` 的 grant；`install` 未 ack 时该 grant 的 `req` 不得转发；
    `revoke` 后旧 `grant_ctx` 在 Cloud 侧即被拒（ST-1 的补充，不替代 ST-1）。
 10. **迁移幂等**：`grant_epoch` 列对已有行取默认值 0，重复执行不报错。
+
+> **Phase 1.2B.1 的实际结果**（对照上表，只覆盖 B5/B6/B7/B9/B11）：
+>
+> | 验收项 | 结果 |
+> |---|---|
+> | 两台设备不能同时在线 | ✅ 旧连接收到 `drain{grace_ms:0}` + close `4006` |
+> | 撤销后旧 token 握手 `4003`、`lookup` 为 null | ✅ |
+> | 先 bind 后 `hello_ok` | ✅ `hello_ok.connection_id` 与 registry 表项逐字相同 |
+> | 撤销顺序可测（`unbind` 人为抛错） | ✅ 注入后仍拒绝旧 token |
+> | 并发领取只有一个成功 | ✅（1.2A 已验） |
+> | ST-1 / ST-2 / ST-11 / ST-12 | ST-2 ✅、ST-11 ✅、ST-12 ✅；**ST-1 属 1.2B.2**（没有 `req` 就没有「转发前校验」） |
+> | 9 条身份路由响应不变 | ✅ 1.2A 的 224 条测试原样全绿 |
+> | 6 张旧表结构未变 | ✅ 真实基线逐列比对 |
+> | Grant 上下文快照 | ✅ `hello_ok.grants` 只含同 user 且未撤销；`grant_update` 属 1.2B.2 |
+> | 迁移幂等 | ✅ 0002 重复执行不改变数据，旧行 `epoch = 1` |
+>
+> **1.2B.2 必须先做的第一件事**：`rotating` 状态（B13）。轮换窗口内旧连接仍持有
+> 有效 session；若不先落地「旧连接的新 `req` 立刻被拒」，转发层一开就是一个
+> 可用的越权窗口。
+
 
 ### 2.5 风险
 

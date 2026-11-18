@@ -183,6 +183,23 @@ Remote MCP 不需要在 SQL 层加 `where user_id = ?`——因为 Desktop 的 S
 
 落地：`cloud/tests/mcp-devices/security.test.ts`（7 条）。
 
+#### 6.2.2 WSS 链路的日志边界（Phase 1.2B.1）
+
+长连接的日志风险与 HTTP 不同：**帧内容**从来不该进日志，而**连接事件**
+必须留下足够排障的信息。两条规则：
+
+| 规则 | 落地 |
+|---|---|
+| 只记事件与标识，不记帧 | `link_established` / `link_handshake_rejected` / `link_heartbeat_timeout` / `link_superseded` / `link_frame_too_large` / `link_binary_frame`；字段只有 `connectionId`、`deviceId` 前 8 位、`kind`、`grants` 数、`version` |
+| `close reason` 是**固定文案** | `REMOTE_CLOSE_REASON` 里全是短句（`unauthorized` / `version unsupported` / `device revoked`…）。它会被 Desktop 记进日志、显示在界面上，也可能出现在中间设备日志里——所以不能带 device_id、token 片段或版本细节 |
+
+**Upgrade 拒绝的响应体只含 `{"error":"<固定串>"}`**，不含任何请求头回显
+（`Authorization` 就在请求头里）。
+
+验证：`cloud/tests/link/link-server.test.ts` 的「HTTP 访问日志不包含 token」用例
+同时做正反断言——既断言日志里没有 `bp_dev_`，也断言 `link_established`
+**确实**被记录了。只做前者的话，日志器整个坏掉也是绿的。
+
 ### 6.3 用户可见性
 
 用户必须能在界面里看到，且能一键断：
@@ -540,6 +557,14 @@ mcp_operation_log`），让 SQLite 报错，再断言业务仍成功、计数真
 | **ST-10** | 审计数据库写入失败 | 1.1B | Desktop | 注入 `writeAudit` 抛错：`res.ok=true` 且结果正确；`consecutiveFailures=1`；`remote:status` 暴露；stderr 有告警；**下一行审计成功即归零** | ✅ 是 |
 | **ST-11** | Cloud 重启后 Desktop 自动恢复连接 | 1.2 | Integration | 退避重连成功；**不重放**任何旧 `delivery_id`（缓存已清空）；Cloud 侧旧在途请求已以 `DEVICE_OFFLINE` 结束 | ✅ 是 |
 | **ST-12** | 设备 Token 被撤销后继续握手 | 1.2 | Cloud | 第 3 步 `status='revoked'` → close `4003`；且路由表无残留（`lookup` 为 null） | ✅ 是 |
+
+**Phase 1.2B.1 的落点与结果**（三条都在连接层，不依赖 `req` 转发）：
+
+| ST | 落点 | 结果 |
+|---|---|---|
+| ST-2 | `cloud/tests/link/link-server.test.ts` B 组：A 的 token + B 的私钥签名，且 `hello.device_id` 写成 A | ✅ close `4001`。**两个判据都在**：签名用 A 的公钥验失败，以及 `device_id ≠ token 对应设备` |
+| ST-11 | 同文件 D 组：旧实例关停 → 新实例起来 → registry 为空 → 重新握手成功 | ✅。「不重放旧 `delivery_id`」这一半**要等 1.2B.2 的缓存**才有对象可测——现在没有 `req`，也就没有 `delivery_id`。如实标注为部分覆盖 |
+| ST-12 | 同文件 G 组：先落库 `revoked`，再 `disconnectDevice`，再用旧 token 握手 | ✅ close `4003` + `lookupByDevice` 为 null；另有故障注入变体（`unbind` 抛错后仍拒绝） |
 
 **补充五项（与 §2.6 生命周期、§8.5 竞态直接相关）**：
 

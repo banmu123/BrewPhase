@@ -465,6 +465,32 @@ wss://<gateway-host>/device-link
 - 服务端必须校验 `Host`（`hostHeaderValidationResponse` 的语义），拒绝与配置不符的连接。
 - 子协议：`Sec-WebSocket-Protocol: brewphase.remote.v1`（便于未来并行支持多版本）。
 
+#### 4.1.1 Upgrade 预检的四条边界（Phase 1.2B.1 定稿）
+
+Upgrade 是**普通 HTTP 请求**，所以它的失败是 HTTP 状态码，不是 close code。
+两者不能混用：对未升级的 socket 发 close frame，对端只会看到一段乱码响应；
+而对已升级的连接回 401，客户端会当成网络错误无限重连。
+
+| 检查 | 拒绝方式 | 说明 |
+|---|---|---|
+| path 精确等于 `/device-link` | 404 | 前缀/尾斜杠都不接受 |
+| **path 带任何 query** | 400 | 见下 |
+| `Host` 命中配置白名单 | 403 | **只看 `Host`，不看 `X-Forwarded-Host`** |
+| `Origin`（若存在）命中白名单 | 403 | 不存在则放行（原生客户端） |
+| `Sec-WebSocket-Protocol` 含 `brewphase.remote.v1` | 400 | |
+| `Authorization` 形态匹配 `^bp_dev_…` | 401 | 只做形态，**不查库**（见下） |
+
+三条实现取舍：
+
+1. **任何 query 一律 400**。这不是洁癖：`?token=…` 会被反向代理的 access log
+   原样记下来。让「把凭证放进 URL」在协议层就无法表达，比靠 review 保证可靠。
+2. **Host 比较忽略端口**。端口不是安全边界（连接已经落在监听者身上），
+   DNS rebinding 的判据是 hostname。因此 `Host: 127.0.0.1:3100` 与白名单里的
+   `127.0.0.1` 视为匹配。
+3. **token 的哈希查库不在 Upgrade 做**。它要读数据库，而 Upgrade 阶段没有
+   连接上下文可以挂超时与审计；把 IO 放在这里会让一个慢查询卡住整个 upgrade
+   队列。形态检查（同步、无状态）在 Upgrade，哈希命中在握手第 2 步。
+
 **Desktop 侧的承载方式（Phase 1.1B.1 实测并定稿）**：用 Electron 主进程的
 `net.WebSocket(url, { headers, protocols })`。Spike（Electron 45.2.3 真实主进程）
 实测结果：
@@ -557,10 +583,10 @@ serviceable=true
 **最后**才做有状态、会「消耗」nonce 的检查。
 
 ```
-1. Authorization header 存在且匹配 `^bp_dev_[A-Za-z0-9_-]{16,}$` → 否则 4001
+1. Authorization header 存在且匹配 `^bp_dev_[A-Za-z0-9_-]{16,}$` → 否则 4001（Upgrade 阶段，HTTP 401）
 2. sha256(token) 命中 mcp_devices.token_hash        → 否则 4001
 3. status = 'active'（pending→4001 / suspended→4005 / revoked→4003）
-4. mcp_devices.expires_at > now                     → 否则 4001
+4. **mcp_devices.token_expires_at > now**           → 否则 4001
 5. |cloud_now - ts| ≤ 120_000                       → 否则 4001
 6. Ed25519 验签（mcp_devices.public_key）            → 否则 4001
 7. **原子** nonce check-and-record（120s 窗口）      → 否则 4001（replay）
@@ -570,10 +596,35 @@ serviceable=true
     `revoked_at IS NULL` 的 grant，生成 `grant_ctx` + 设备级 `grant_epoch`（§6.5）
 ```
 
+> **第 4 步是 `token_expires_at`，不是 `expires_at`（Phase 1.2B.1 修正）**。
+> 原文写的是 `mcp_devices.expires_at > now`，那是 **pending 注册窗口**
+> （注册后 300 秒内必须确认 + 领取）。用它判断已领取设备，会让**每一台正常
+> 设备在注册 5 分钟后全部被判死**——因为该字段在领取之后再也没有被推进过。
+>
+> 三个时间字段的分工（混用即 bug）：
+>
+> | 字段 | 含义 | 谁读 |
+> |---|---|---|
+> | `expires_at` | pending 窗口 | 确认、领取、sweep |
+> | `token_issued_at` | 首次领取时刻（非空 = 已领取） | 一次性领取的判据 |
+> | `token_expires_at` | device_token 寿命（30 天） | **WSS 握手第 4 步** |
+>
+> 回归锁在 `cloud/tests/link/link-server.test.ts`：同一个用例里
+> `expires_at` 已过期而 `token_expires_at` 有效，必须**允许**握手。
+
 **第 7 步的原子性要求**：`nonceStore.checkAndRecord(nonce)` 内部的
 「查存在 + 记录」之间**不得有 `await`**。若拆成 `has()` 然后 `await something`
-再 `set()`，两个并发的重放请求都能通过。现有 `sync/auth.ts:57-78` 的
-`NonceStore` 就是「一次调用内完成」，直接复用即可。
+再 `set()`，两个并发的重放请求都能通过。
+
+Cloud 侧实现见 `cloud/src/link/nonce-store.ts`（**进程内**、有界、fail-closed）：
+
+| 性质 | 实现 |
+|---|---|
+| 原子性 | 公开方法**没有 async**（结构保证，不是纪律） |
+| 时钟 | monotonic（`performance.now()`）；`Date.now()` 被回拨会让过期项「复活」 |
+| 容量 | 8192；**到达上限拒绝新 nonce**，绝不驱逐仍有效项 |
+| 容量耗尽的响应 | close **1011**（不是 4001）——它既不是重放也不是凭据错误，而 4001 会让 Desktop 清掉本地私钥 |
+| 重启 | 表随进程消失（如实记录）。代价仅限「重启前发出的 nonce 可再用一次」，且换来的只是一条新连接，不是任何数据 |
 
 **为什么验签（6）在 nonce（7）之前**：先用公钥挡掉无效请求，避免攻击者用随机
 nonce 灌满去重表。反之（先记 nonce 再验签）会让未认证的流量消耗内存。
@@ -705,6 +756,16 @@ Phase 1.0 §13.1 写的「后续帧必须匹配 `connection_id`」作废。
 - 先 bind 再断旧，是为了避免「旧连接已死、新连接还没进表」的空窗（§12.4）。
 - 多设备并行属 Phase 1.4，需要 `mcp_devices.is_primary` 与用户选择（OQ-9）。
 
+**Phase 1.2B.1 的实现约束（`cloud/src/link/connection-registry.ts`）**：
+
+| 约束 | 为什么 |
+|---|---|
+| 路由键是 `userId`，表项里记 `deviceId` | 「每用户一条」是协议规则；键成 `(user, device)` 就允许同用户两条并存 |
+| `lookup(userId, deviceId)` 在 deviceId 不匹配时返回 `null` | 顶替之后旧设备**不能借到**新连接，否则请求会打到别人的会话上 |
+| `unbind` 必须同时比对 `deviceId` 与 `connectionId` | 旧连接的 close 回调到达顺序没有任何保证；只按 user 删会把**新**连接删掉，而新连接还活着 |
+| `bind` 返回 `displaced` | 顶替动作由调用方驱动（发 drain 再 close），注册表不碰 socket |
+| 实现同步、接口异步 | Phase 1.4 换 Redis 时调用方不用改；而**实现里不 await** 是「先 bind 新再断旧」原子性的前提 |
+
 ### 4.7 握手失败的 close code
 
 见 §9。**失败时不下发任何业务信息**，错误详情只进 Cloud 日志（含 device_id 前缀）。
@@ -727,6 +788,18 @@ Phase 1.0 §13.1 写的「后续帧必须匹配 `connection_id`」作废。
   写指标不写库。
 - **连续 3 次未收到 `pong`（默认 60s）→ close `4008 HEARTBEAT_TIMEOUT`**，
   并把该连接从路由表删除、`mcp_devices.last_seen_at` 更新为最后成功 `pong` 的时间。
+
+**Phase 1.2B.1 的实现细节（`cloud/src/link/heartbeat.ts`）**：
+
+| 判据 | 说明 |
+|---|---|
+| 空闲基准 = **连接建立时刻** | 旧写法在 `lastPongAt === null` 时直接 return，于是「握手成功但再没收到 pong」这种最常见的半开连接（NAT 超时、LB 掉表）永远不会被判死 |
+| 双判据 | `missed >= 3` **且** `now - lastValidPong >= idle_timeout_ms`，任一条成立即 close 4008。前者抓「ping 有发但没回应」，后者抓「定时器被节流/没跑」 |
+| pong 的 `seq` 必须等于**最近一次** ping | 迟到的 pong 不能证明此刻链路还通；错误 seq 不计入、也不刷新 |
+| 其他帧不算心跳 | 只回 `status` 而不回 `pong` 的客户端会正常被判死——「上行已断」正是最需要发现的那种故障 |
+| RTT 用 monotonic | `Date.now()` 一次 NTP 回拨就能把 RTT 变成负数或几十秒 |
+| `last_seen_at` 只在有效 pong 后写 | 协议原文如此；写库失败只记日志，不影响连接 |
+| 关闭必清 timer | 心跳超时、对端 close、我们主动断开、停机，四条路都走同一个幂等收敛 |
 - Desktop 侧若 90s 未收到任何 `ping`（Cloud 卡死/半开连接），主动 close 并重连。
   这条是必需的：只靠 Cloud 单向探测，NAT 半开时 Desktop 会永远「以为在线」。
 
