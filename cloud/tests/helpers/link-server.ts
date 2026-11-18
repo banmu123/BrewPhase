@@ -1,7 +1,12 @@
 import { WebSocket } from "ws";
 import { createApp } from "../../src/app.js";
 import type { AppContext } from "../../src/context.js";
-import { createLinkServer, type LinkServer } from "../../src/link/index.js";
+import {
+  createLinkServer,
+  type LinkLifecycleHooks,
+  type LinkServer,
+} from "../../src/link/index.js";
+import type { ConnectionRegistry } from "../../src/link/connection-registry.js";
 import { NonceStore } from "../../src/link/nonce-store.js";
 import { startCloudServer, type CloudServer } from "../../src/server.js";
 import { createLogger } from "../../src/logger.js";
@@ -44,6 +49,10 @@ export async function createLinkHarness(
     logLevel?: "debug" | "info" | "warn" | "error";
     /** 是否清空业务表（默认 true）。模拟「Cloud 重启但数据库不变」时传 false。 */
     resetDb?: boolean;
+    /** **仅并发测试使用**：在精确的 await 边界暂停握手。 */
+    lifecycleHooks?: LinkLifecycleHooks;
+    /** **仅并发测试使用**：包一层 registry（例如让 bind 变慢）。 */
+    registry?: ConnectionRegistry;
   } = {},
 ): Promise<LinkHarness> {
   await ensureDatabaseOrThrow();
@@ -55,6 +64,8 @@ export async function createLinkHarness(
     now,
     logLevel,
     resetDb: shouldReset = true,
+    lifecycleHooks,
+    registry: customRegistry,
     ...envOverrides
   } = options;
 
@@ -81,6 +92,8 @@ export async function createLinkHarness(
     idleTimeoutMs,
     helloTimeoutMs,
     now,
+    lifecycleHooks,
+    registry: customRegistry,
   });
   ctx.link = link;
   ctx.instanceId = link.instanceId;

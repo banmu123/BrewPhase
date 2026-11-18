@@ -5,6 +5,8 @@ import { WebSocket, WebSocketServer } from "ws";
 import type { AppContext } from "../context.js";
 import { mcpDevices } from "../db/schema.js";
 import { DEVICE_TOKEN_PATTERN } from "../mcp-devices/device-token.js";
+import { sha256Hex } from "../security/crypto.js";
+import { admitDevice, type AdmissionFailure } from "./admission.js";
 import {
   createMemoryConnectionRegistry,
   type ConnectionInfo,
@@ -93,6 +95,8 @@ export interface LinkServerOptions {
   nowMono?: () => number;
   /** epoch 毫秒（测试注入：golden fixture 的 ts 是固定值）。 */
   now?: () => number;
+  /** **仅测试使用**：在精确的 await 边界暂停，用于确定性构造并发顺序。 */
+  lifecycleHooks?: LinkLifecycleHooks;
 }
 
 export interface LinkServer {
@@ -105,10 +109,61 @@ export interface LinkServer {
   /** 设备被暂停/撤销后的连接清理（route 层在**持久化之后**调用）。 */
   disconnectDevice(deviceId: string, reason: DisconnectReason): Promise<void>;
   connectionCount(): number;
+  /**
+   * **诊断/测试用**：等所有进行中的握手落定。
+   *
+   * 与 `shutdown()` 内部用的是同一个等待。对外暴露它的理由：并发测试
+   * 必须能问「那条被取消的握手现在到底跑完了没有」，否则断言会跑在
+   * 协程恢复之前——那种测试会同时对**正确**和**错误**的实现说绿
+   * （第一版 T1/T3 就是这么假绿的）。
+   */
+  awaitHandshakes(timeoutMs?: number): Promise<void>;
+  /**
+   * **诊断用**：每条活动连接的生命周期事实。
+   *
+   * 存在的理由不是「方便调试」，而是并发正确性**必须可断言**：
+   * 「没有遗漏的 hello timer / 心跳 timer」「没有 bound 但已 closing 的连接」
+   * 这两条没法从外部行为观察，只能把内部事实读出来。
+   * 生产代码不读它（`/ready` 只读 `connectionCount()`）。
+   */
+  inspect(): LinkConnectionSnapshot[];
   readonly instanceId: string;
   readonly registry: ConnectionRegistry;
 }
 
+/** 单条连接的生命周期快照（诊断用，不含任何凭据）。 */
+export interface LinkConnectionSnapshot {
+  connectionId: string;
+  deviceId: string;
+  state: LiveConnection["state"];
+  closing: boolean;
+  bound: boolean;
+  released: boolean;
+  /** 心跳定时器是否仍在跑。停机/关闭后必须为 false。 */
+  heartbeatRunning: boolean;
+  /** hello 超时定时器是否仍挂着。握手结束或关闭后必须为 false。 */
+  helloTimeoutArmed: boolean;
+}
+
+/**
+ * 连接生命周期：五个状态 + 三个**互相独立**的事实。
+ *
+ * 为什么不是「一个 closed 布尔」——那正是 1.2B.1 留下幽灵路由的原因：
+ * `closed` 同时被当成「socket 没了」和「路由已清理」，于是
+ * 「close 发生在 bind 之前」时它把后续的清理也一并短路掉了。
+ *
+ * | 事实 | 含义 | 谁改 |
+ * |---|---|---|
+ * | `state` | 对外可见的协议阶段 | 见下 |
+ * | `closing` | **已决定关闭**；此后禁止任何 bind | close 事件 / 主动关 / 停机 |
+ * | `bound` | registry 里**确实**存在本 connectionId 的表项 | bind 成功那一刻 |
+ * | `released` | 路由已解绑（或从未需要解绑） | `releaseRoute` |
+ *
+ * 关键不变量：`closing && bound && !released` 是一个**必须被清理**的状态。
+ * 它可能出现在「close 在 bind 之前到达、bind 随后完成」这条路径上——
+ * 那条路径下 `converge()` 已经跑完（当时 `bound=false`，无事可做），
+ * 所以清理只能由 **binder 自己**在恢复执行时完成。
+ */
 interface LiveConnection {
   ws: WebSocket;
   connectionId: string;
@@ -117,9 +172,34 @@ interface LiveConnection {
   deviceId: string;
   heartbeat: HeartbeatController;
   helloTimeout: NodeJS.Timeout | null;
-  state: "awaiting_hello" | "handshaking" | "active" | "closing";
-  /** `onClosed` 的幂等闸门（close 事件、心跳超时、主动断开三条路都会进来）。 */
-  closed: boolean;
+  state: "awaiting_hello" | "handshaking" | "active" | "closing" | "closed";
+  /** 已决定关闭。**唯一**的 bind 准入判据之一。 */
+  closing: boolean;
+  /** registry 里存在本 connectionId 的表项。 */
+  bound: boolean;
+  /** 路由已释放。与 `bound` 分开，才不会被幂等短路挡住迟到的 bind。 */
+  released: boolean;
+  /** `converge()` 的幂等闸门（close / 心跳超时 / 主动断开 / 停机四条路）。 */
+  convergePromise: Promise<void> | null;
+}
+
+/**
+ * **仅测试使用**的生命周期钩子。
+ *
+ * 并发正确性没法用 `setTimeout(随机)` 验证——那样测的是调度运气。要确定性地
+ * 构造「握手停在 grant 查询、此时撤销已提交」这类顺序，必须在**精确的 await
+ * 边界**上能暂停。生产不传这些钩子，走的是同一条代码路径（钩子调用点是
+ * `await` 一个恒等函数，不影响时序语义）。
+ */
+export interface LinkLifecycleHooks {
+  /** 在 `verifyHandshake` 之前（其内部的数据库查询尚未发出）。 */
+  beforeVerify?: (connectionId: string) => Promise<void> | void;
+  /** 在加载 grant 快照之前（设备认证已通过，尚无任何路由）。 */
+  beforeGrants?: (connectionId: string) => Promise<void> | void;
+  /** 在准入事务之前（仍未持有行锁）。 */
+  beforeAdmission?: (connectionId: string) => Promise<void> | void;
+  /** 在事务**内**、已经持有行锁、bind 之前：用来构造「bind 与撤停抢锁」的顺序。 */
+  insideAdmission?: (connectionId: string) => Promise<void> | void;
 }
 
 export function createLinkServer(options: LinkServerOptions): LinkServer {
@@ -134,6 +214,7 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
   const idleTimeoutMs = options.idleTimeoutMs ?? REMOTE_IDLE_TIMEOUT_MS;
   const nowMono = options.nowMono ?? (() => performance.now());
   const now = options.now ?? (() => Date.now());
+  const hooks = options.lifecycleHooks;
 
   /**
    * `maxPayload` 是**传输层**硬上限：ws 在解析帧头时就能发现超限并停止读取，
@@ -157,6 +238,19 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
    */
   const tokenBySocket = new WeakMap<WebSocket, string>();
   let accepting = true;
+  /**
+   * 停机中。与 `accepting` 分开：
+   *
+   * - `accepting` 只管「还接不接受新的 Upgrade」；
+   * - `shuttingDown` 是**所有进行中的握手**必须看到的取消信号。
+   *
+   * 缺了它就有一条真实路径：`shutdown()` 里 `registry.clear()` 之后，
+   * 一个卡在授权查询上的握手恢复执行并 `bind()` —— 于是停机完成时
+   * `connectionCount()` 是 1，而那条连接永远不会再被处理。
+   */
+  let shuttingDown = false;
+  /** 进行中的握手。停机时必须等它们落定再清表（见 shutdown）。 */
+  const inFlightHandshakes = new Set<Promise<void>>();
 
   // MARK: - Upgrade 预检
 
@@ -249,7 +343,7 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
         ctx.logger.info("link_heartbeat_timeout", { connectionId });
         // 先收敛（清路由与定时器），再关 socket：只关 socket 的话，registry
         // 里会留一条指向死连接的路由，而 close 事件是异步的。
-        void onClosed(connection);
+        void converge(connection);
         closeWith(ws, code, reason);
       },
     });
@@ -262,7 +356,10 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
       heartbeat,
       helloTimeout: null,
       state: "awaiting_hello",
-      closed: false,
+      closing: false,
+      bound: false,
+      released: false,
+      convergePromise: null,
     };
     live.set(connectionId, connection);
 
@@ -277,14 +374,24 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
 
     // 超时未发 hello → 4007。不能让没完成握手的 socket 无限占用资源。
     connection.helloTimeout = setTimeout(() => {
-      if (connection.state !== "awaiting_hello" && connection.state !== "handshaking") return;
+      // `closing` 已经把「已决定关闭」表达清楚了，不必再枚举状态：
+      // 反过来的写法（只认 awaiting_hello / handshaking）会让一个恰好在这
+      // 两个状态之间被顶替的 socket 收不到 4007 也收不到 4006。
+      if (connection.closing) return;
       ctx.logger.info("link_hello_timeout", { connectionId });
-      void onClosed(connection);
+      void converge(connection);
       closeWith(ws, REMOTE_CLOSE.HELLO_TIMEOUT, REMOTE_CLOSE_REASON.HELLO_TIMEOUT);
     }, helloTimeoutMs);
     connection.helloTimeout.unref?.();
 
     ws.on("message", (data: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
+      // 已决定关闭：后续帧一律不处理。
+      //
+      // 这一条同时挡住两件事：close 与 message 在同一个 tick 里到达时的顺序，
+      // 以及「握手被取消后，Desktop 又发了一帧」这种延迟。少了它，一个已取消
+      // 的连接仍可能推进状态机。
+      if (connection.closing) return;
+
       // 协议 §2：只允许 UTF-8 文本帧。
       if (isBinary) {
         ctx.logger.warn("link_binary_frame", { connectionId });
@@ -300,7 +407,7 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
     });
 
     ws.on("close", () => {
-      void onClosed(connection);
+      void converge(connection);
     });
   });
 
@@ -312,11 +419,11 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
     // 这条不是优化：`message` 事件是同步派发的，第二个 hello 可能在第一个
     // 还在 `await` 数据库时就到达。没有这道门，两个 hello 会并发执行
     // bind，而「先 bind 新的再断旧的」的原子性就没了。
-    if (connection.state === "handshaking" || connection.state === "closing") return;
+    if (connection.closing || connection.state === "handshaking") return;
 
     if (connection.state === "awaiting_hello") {
       connection.state = "handshaking";
-      await onHello(connection, raw);
+      onHello(connection, raw);
       return;
     }
 
@@ -363,7 +470,7 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
       case "bye": {
         const parsed = byeSchema.safeParse(json);
         if (parsed.success) ctx.logger.info("link_client_bye", { connectionId: connection.connectionId });
-        void onClosed(connection);
+        void converge(connection);
         closeWith(connection.ws, REMOTE_CLOSE.NORMAL, "bye");
         return;
       }
@@ -374,127 +481,224 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
     }
   };
 
-  const onHello = async (connection: LiveConnection, raw: string): Promise<void> => {
+  /**
+   * 握手主流程。**每一个 await 之后都要重新确认自己还该继续**。
+   *
+   * 这不是「多检查几次更保险」，而是唯一正确的写法：`connection.closing`
+   * 可能在任意一次 await 期间被 close 事件、hello 超时、顶替或停机置起，
+   * 而 await 之后的代码不知道自己已经过期了。
+   *
+   * | await 点 | 期间可能发生 | 必须做的事 |
+   * |---|---|---|
+   * | `verifyHandshake`（DB） | 客户端断开 / hello 超时 | 直接收敛，**不得**继续 |
+   * | `loadGrantRows`（DB） | 同上 + 停机 | 同上 |
+   * | `admitDevice`（事务 + 行锁） | 撤停抢锁 | 失败即拒绝；成功后**再查一次** |
+   */
+  const handshake = async (connection: LiveConnection, raw: string): Promise<void> => {
     const token = tokenBySocket.get(connection.ws) ?? "";
     // token 只在这一刻需要；删掉引用，之后的任何代码路径都读不到它。
     tokenBySocket.delete(connection.ws);
 
-    const result = await verifyHandshake({ db: ctx.db.db, nonces, now }, { deviceToken: token, raw }).catch(
-      (err: unknown) => {
-        ctx.logger.error("link_handshake_error", {
-          connectionId: connection.connectionId,
-          error: errorCode(err),
-        });
-        return null;
-      },
-    );
+    /** 本连接是否已被取消（自己关了、或者 Cloud 在停机）。 */
+    const cancelled = (): boolean => connection.closing || shuttingDown;
 
-    if (!result) {
-      void onClosed(connection);
-      closeWith(connection.ws, REMOTE_CLOSE.INTERNAL_ERROR, REMOTE_CLOSE_REASON.INTERNAL_ERROR);
-      return;
-    }
-    if (!result.ok) {
-      const mapped = mapHandshakeFailure(result.failure);
-      ctx.logger.info("link_handshake_rejected", {
-        connectionId: connection.connectionId,
-        kind: result.failure.kind,
-        detail: result.failure.kind === "protocol" ? result.failure.detail : undefined,
-      });
-      void onClosed(connection);
-      closeWith(connection.ws, mapped.code, mapped.reason);
-      return;
-    }
-
-    // ---- 构造 hello_ok：先查授权，再 bind，**最后**才发 ----
-    //
-    // 顺序不可交换：先发 hello_ok 再 bind 的话，Desktop 会在「Cloud 已经
-    // 认为握手完成」之后的一小段时间里查不到路由——而那恰好是它最可能
-    // 立刻开始工作的时刻（协议 §12.4）。
-    const device = result.device;
-    let grants;
     try {
-      grants = await loadGrantRows(ctx.db.db, device.userId);
+      // ---- 第 1–8 步：认证、验签、nonce、版本 ----
+      //
+      // 这一步读到的设备状态是**快照**，只用于尽早拒绝便宜的错误。
+      // 真正生效的判定在 `admitDevice` 的行锁内（见该文件顶部说明）。
+      await hooks?.beforeVerify?.(connection.connectionId);
+      if (cancelled()) return await abortHandshake(connection);
+
+      const result = await verifyHandshake({ db: ctx.db.db, nonces, now }, { deviceToken: token, raw });
+      if (cancelled()) return await abortHandshake(connection);
+
+      if (!result.ok) {
+        const mapped = mapHandshakeFailure(result.failure);
+        ctx.logger.info("link_handshake_rejected", {
+          connectionId: connection.connectionId,
+          phase: "verify",
+          kind: result.failure.kind,
+          detail: result.failure.kind === "protocol" ? result.failure.detail : undefined,
+        });
+        return await abortHandshake(connection, mapped.code, mapped.reason);
+      }
+
+      // ---- 授权快照（锁外查，避免把行锁持有时间拉长）----
+      //
+      // `result.device.userId` / `.id` 是不可变列，用它查 grant 是安全的；
+      // 而 `status` / `tokenExpiresAt` 会变，所以那两个不看这份快照。
+      await hooks?.beforeGrants?.(connection.connectionId);
+      if (cancelled()) return await abortHandshake(connection);
+
+      const grants = await loadGrantRows(ctx.db.db, result.device.userId);
+      if (cancelled()) return await abortHandshake(connection);
+
+      // grant_ctx 每条连接重新生成：一次性引用，不落盘、不复用。
+      const snapshots = toGrantSnapshots(grants, () => makeGrantContext());
+      const tokenHash = sha256Hex(token);
+      const admissionNow = new Date(now());
+
+      await hooks?.beforeAdmission?.(connection.connectionId);
+      if (cancelled()) return await abortHandshake(connection);
+
+      // ---- 准入：行锁内重新验证 + bind（线性化点 = COMMIT）----
+      const admission = await admitDevice(
+        ctx.db.db,
+        { deviceId: result.device.id, tokenHash, now: admissionNow },
+        async (device) => {
+          await hooks?.insideAdmission?.(connection.connectionId);
+
+          // 锁已经拿到，但连接可能在这期间被取消。此时**不 bind**：
+          // 事务提交后什么都不留，比「先 bind 再 unbound」少一次可见窗口。
+          if (cancelled()) return { cancelled: true as const };
+
+          const bound = await registry.bind(
+            {
+              userId: device.userId,
+              deviceId: device.id,
+              connectionId: connection.connectionId,
+              instanceId,
+              serviceable: result.hello.serviceable,
+            },
+            nowMono(),
+          );
+          // 三个事实同时更新：`bound` 一旦为 true，任何清理路径都必须解绑。
+          connection.userId = device.userId;
+          connection.deviceId = device.id;
+          connection.bound = true;
+          return { cancelled: false as const, bound };
+        },
+      );
+
+      if (!admission.ok) {
+        const mapped = mapAdmissionFailure(admission.failure);
+        ctx.logger.info("link_handshake_rejected", {
+          connectionId: connection.connectionId,
+          phase: "admission",
+          kind: admission.failure,
+        });
+        return await abortHandshake(connection, mapped.code, mapped.reason);
+      }
+
+      if (admission.value.cancelled) return await abortHandshake(connection);
+
+      // 顶替：新连接已经生效（事务已提交），现在才处理旧的。
+      if (admission.value.bound.displaced) {
+        ctx.logger.info("link_superseded", {
+          connectionId: admission.value.bound.displaced.connectionId,
+          by: connection.connectionId,
+          device: admission.value.bound.displaced.deviceId.slice(0, 8),
+        });
+        supersede(admission.value.bound.displaced);
+      }
+
+      // ---- 迟到的 bind：**必须在这里解绑** ----
+      //
+      // 这条分支就是 1.2B.1 留下幽灵路由的位置。close 事件可能在上面的
+      // `await admitDevice` 期间到达，那时 `bound` 还是 false，所以
+      // `converge()` 无事可做（它的幂等 promise 已经 resolve）。清理只能由
+      // 恢复执行的**这里**完成——而 `releaseRoute` 有意不复用 `converge`
+      // 的幂等闸门，正是为了不被那次「已经跑完的清理」短路。
+      if (cancelled()) {
+        ctx.logger.info("link_bind_after_close", { connectionId: connection.connectionId });
+        await releaseRoute(connection);
+        return await abortHandshake(connection);
+      }
+
+      const helloOk: HelloOk = {
+        v: 1,
+        type: "hello_ok",
+        ts: now(),
+        connection_id: connection.connectionId,
+        instance_id: instanceId,
+        server_time: now(),
+        heartbeat_ms: heartbeatMs,
+        idle_timeout_ms: idleTimeoutMs,
+        max_inflight: REMOTE_MAX_INFLIGHT,
+        max_frame_bytes: REMOTE_MAX_FRAME_BYTES,
+        // 写死的 8 个只读工具，与协议 §4.4 逐项一致。
+        allowed_tools: [...REMOTE_TOOLS],
+        // 用**行锁内读到**的代数，不是 verify 阶段的旧快照。
+        grant_epoch: admission.device.grantEpoch,
+        grants: snapshots,
+      };
+
+      if (!sendJson(connection.ws, helloOk)) {
+        // 发送失败（对端已关）：不能留一条「已 bind 但没有 socket」的路由。
+        await releaseRoute(connection);
+        return await abortHandshake(connection);
+      }
+
+      // 最后一道闸：`sendJson` 是同步的，但 close 事件可能在上一个 tick
+      // 已经把它标成 closing（此时 readyState 仍是 OPEN 的窗口极窄，
+      // 但这条判断不花钱，且让「已关闭不能进 active」成为结构事实）。
+      if (cancelled()) {
+        await releaseRoute(connection);
+        return await abortHandshake(connection);
+      }
+
+      connection.state = "active";
+      if (connection.helloTimeout) {
+        clearTimeout(connection.helloTimeout);
+        connection.helloTimeout = null;
+      }
+      connection.heartbeat.start();
+      ctx.logger.info("link_established", {
+        connectionId: connection.connectionId,
+        device: admission.device.id.slice(0, 8),
+        grants: snapshots.length,
+        version: result.negotiatedVersion,
+        serviceable: result.hello.serviceable,
+      });
     } catch (err) {
-      ctx.logger.error("link_grant_load_failed", {
+      // 任何未预期异常（DB 抖动、钩子抛错、registry 实现抛错）都收敛到
+      // 1011 + 确保路由不残留。**不能**让它冒成 unhandled rejection：
+      // 那会让进程退出，而一条连接的问题不该影响整台 Gateway。
+      ctx.logger.error("link_handshake_error", {
         connectionId: connection.connectionId,
         error: errorCode(err),
       });
-      void onClosed(connection);
-      closeWith(connection.ws, REMOTE_CLOSE.INTERNAL_ERROR, REMOTE_CLOSE_REASON.INTERNAL_ERROR);
-      return;
+      await releaseRoute(connection);
+      await abortHandshake(connection, REMOTE_CLOSE.INTERNAL_ERROR, REMOTE_CLOSE_REASON.INTERNAL_ERROR);
     }
+  };
 
-    // grant_ctx 每条连接重新生成：一次性引用，不落盘、不复用。
-    const snapshots = toGrantSnapshots(grants, () => makeGrantContext());
-
-    connection.userId = device.userId;
-    connection.deviceId = device.id;
-
-    const bound = await registry.bind(
-      {
-        userId: device.userId,
-        deviceId: device.id,
-        connectionId: connection.connectionId,
-        instanceId,
-        serviceable: result.hello.serviceable,
-      },
-      nowMono(),
-    );
-
-    // 顶替：新连接已经生效，现在才处理旧的。
-    if (bound.displaced) {
-      ctx.logger.info("link_superseded", {
-        connectionId: bound.displaced.connectionId,
-        by: connection.connectionId,
-        device: bound.displaced.deviceId.slice(0, 8),
-      });
-      supersede(bound.displaced);
-    }
-
-    const helloOk: HelloOk = {
-      v: 1,
-      type: "hello_ok",
-      ts: now(),
-      connection_id: connection.connectionId,
-      instance_id: instanceId,
-      server_time: now(),
-      heartbeat_ms: heartbeatMs,
-      idle_timeout_ms: idleTimeoutMs,
-      max_inflight: REMOTE_MAX_INFLIGHT,
-      max_frame_bytes: REMOTE_MAX_FRAME_BYTES,
-      // 写死的 8 个只读工具，与协议 §4.4 逐项一致。
-      allowed_tools: [...REMOTE_TOOLS],
-      grant_epoch: device.grantEpoch,
-      grants: snapshots,
-    };
-
-    if (!sendJson(connection.ws, helloOk)) {
-      // 发送失败（对端已关）：不能留一条「已 bind 但没有 socket」的路由。
-      void onClosed(connection);
-      closeWith(connection.ws, REMOTE_CLOSE.GOING_AWAY, REMOTE_CLOSE_REASON.GOING_AWAY);
-      return;
-    }
-
-    connection.state = "active";
-    if (connection.helloTimeout) {
-      clearTimeout(connection.helloTimeout);
-      connection.helloTimeout = null;
-    }
-    connection.heartbeat.start();
-    ctx.logger.info("link_established", {
-      connectionId: connection.connectionId,
-      device: device.id.slice(0, 8),
-      grants: snapshots.length,
-      version: result.negotiatedVersion,
-      serviceable: result.hello.serviceable,
+  /**
+   * 登记一次握手。停机时必须能等到它落定，否则 `registry.clear()` 之后
+   * 还可能有一次 bind 把表项写回来。
+   */
+  const onHello = (connection: LiveConnection, raw: string): void => {
+    // 先登记再挂 finally：`add` 必须在 `delete` 之前，否则一个**同步**完成的
+    // 握手（例如解析就失败的帧）会让 finally 先跑，留下一个已 settle 的
+    // promise 永远躺在集合里——`awaitHandshakes` 之后仍会看到它。
+    const task: Promise<void> = handshake(connection, raw);
+    inFlightHandshakes.add(task);
+    void task.finally(() => {
+      inFlightHandshakes.delete(task);
     });
+  };
+
+  /**
+   * 握手被取消时的统一出口。
+   *
+   * 先 `converge`（清定时器、摘表、释放路由）再关 socket：反过来的话，
+   * socket 的 close 事件与我们的收敛会竞争，虽然最终仍会收敛，但日志里
+   * 会出现两条「关闭原因不同」的记录——排障时非常误导。
+   */
+  const abortHandshake = async (connection: LiveConnection, code?: number, reason?: string): Promise<void> => {
+    await converge(connection);
+    if (code !== undefined && reason !== undefined) closeWith(connection.ws, code, reason);
+    else closeWith(connection.ws, REMOTE_CLOSE.GOING_AWAY, REMOTE_CLOSE_REASON.GOING_AWAY);
   };
 
   /** 顶替旧连接：`drain{grace_ms:0}` → close 4006。 */
   const supersede = (info: ConnectionInfo): void => {
     const target = live.get(info.connectionId);
     if (!target) return;
+    // 标 closing 而不只是 state：`closing` 是**所有**路径共用的取消信号，
+    // 只改 state 会让一个正在握手的旧连接看不到自己已被顶替。
+    target.closing = true;
     target.state = "closing";
     target.heartbeat.stop();
     const drain: DrainFrame = {
@@ -509,10 +713,42 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
     closeWith(target.ws, REMOTE_CLOSE.SUPERSEDED, REMOTE_CLOSE_REASON.SUPERSEDED);
   };
 
-  /** 收敛连接：幂等。清定时器、清路由（带 connectionId 比对）、摘表。 */
-  const onClosed = async (connection: LiveConnection): Promise<void> => {
-    if (connection.closed) return;
-    connection.closed = true;
+  /**
+   * 释放本连接在路由表里的表项。**幂等，但不复用 `converge` 的闸门。**
+   *
+   * 为什么必须独立成一个函数：`converge()` 只跑一次，而「bind 晚于 close」
+   * 这条路径要求**第二次**清理。用同一个 memoized promise 会让它被前一次
+   * 的「无事可做」短路掉——那正是幽灵路由的成因。
+   *
+   * 三重身份（userId + deviceId + connectionId）由 `registry.unbind` 强制：
+   * 迟到的清理不能删掉顶替它的新连接。
+   */
+  const releaseRoute = async (connection: LiveConnection): Promise<void> => {
+    if (!connection.bound || connection.released) return;
+    connection.released = true;
+    try {
+      await registry.unbind(connection.userId, connection.deviceId, connection.connectionId);
+    } catch (err) {
+      // 解绑失败 = 路由可能残留。不重试（内存实现不会抛；将来的 Redis 实现
+      // 由 TTL 兜底），但必须留痕，并允许停机时的 `registry.clear()` 收尾。
+      connection.released = false;
+      ctx.logger.error("link_unbind_failed", {
+        connectionId: connection.connectionId,
+        error: errorCode(err),
+      });
+    }
+  };
+
+  /**
+   * 连接收敛：**幂等**。清定时器、摘 live 表、释放路由。
+   *
+   * close 事件、心跳超时、主动断开、顶替、停机五条路都走它，所以它必须能被
+   * 重复调用而不产生副作用。但它**不是**「路由已清理」的唯一判据——
+   * 见 `releaseRoute` 的说明。
+   */
+  const converge = (connection: LiveConnection): Promise<void> => {
+    if (connection.convergePromise) return connection.convergePromise;
+    connection.closing = true;
     connection.state = "closing";
     connection.heartbeat.stop();
     if (connection.helloTimeout) {
@@ -520,10 +756,11 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
       connection.helloTimeout = null;
     }
     live.delete(connection.connectionId);
-    if (connection.userId) {
-      // **必须带 connectionId**：迟到的 close 回调不能删掉顶替它的新连接。
-      await registry.unbind(connection.userId, connection.deviceId, connection.connectionId);
-    }
+    connection.convergePromise = (async () => {
+      await releaseRoute(connection);
+      connection.state = "closed";
+    })();
+    return connection.convergePromise;
   };
 
   // MARK: - 对外
@@ -532,6 +769,10 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
     const info = await registry.lookupByDevice(deviceId);
     // 没有连接 = 正常情况（设备离线）。**不抛错**：调用方已经完成持久化，
     // 清理失败不能回滚它（安全运维 §4.1）。
+    //
+    // 注意：「此刻没有连接」不等于「以后不会有」——一个正在握手的连接可能
+    // 在此之后才 bind。那个窗口由 `admitAndBind` 的行锁关掉：本函数的
+    // UPDATE 若先提交，握手在锁内就会读到新状态并拒绝。
     if (!info) return;
 
     const target = live.get(info.connectionId);
@@ -540,7 +781,14 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
     await registry.unbind(info.userId, info.deviceId, info.connectionId);
     if (!target) return;
 
+    // 标 closing 之后再发 bye：反过来的话，这条连接可能在「已收到 bye、
+    // 尚未关闭」的窗口里被当成仍然可用（虽然本阶段不转发，但语义要正确）。
+    target.closing = true;
     target.state = "closing";
+    // `bound` 已由上面的 unbind 处理；把 released 置为 true，避免后续
+    // converge 再解绑一次（那次会因 connectionId 已被删除而返回 false，
+    // 但状态标记不该依赖「恰好是幂等的」）。
+    target.released = true;
     target.heartbeat.stop();
     const code = reason === "revoked" ? REMOTE_CLOSE.DEVICE_REVOKED : REMOTE_CLOSE.DEVICE_SUSPENDED;
     const text =
@@ -550,35 +798,52 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
     closeWith(target.ws, code, text);
   };
 
+  /**
+   * 有序停机。
+   *
+   * 顺序里有两处**不能交换**：
+   *
+   * 1. `shuttingDown = true` 必须在**任何 await 之前**。它是所有进行中握手
+   *    的取消信号；晚一步，那些握手就会在 clear 之后 bind 回来。
+   * 2. `await waitForHandshakes()` 必须在 `registry.clear()` **之前**。
+   *    清表后再等，只能看到表项被重新写回去。
+   */
   const shutdown = async (): Promise<void> => {
-    // 1. 停收新连接（handleUpgrade 顶部判 accepting）。
+    // 1. 停收新连接（handleUpgrade 顶部判 accepting），并通知进行中的握手取消。
     accepting = false;
+    shuttingDown = true;
     // 2. 停心跳，通知所有连接。
     const targets = [...live.values()];
     for (const target of targets) {
+      target.closing = true;
       target.state = "closing";
       target.heartbeat.stop();
       if (target.helloTimeout) {
         clearTimeout(target.helloTimeout);
         target.helloTimeout = null;
       }
-      const drain: DrainFrame = { v: 1, type: "drain", ts: now(), reason: "shutdown", grace_ms: 0 };
+      const drain: DrainFrame = { v: 1, ts: now(), type: "drain", reason: "shutdown", grace_ms: 0 };
       sendJson(target.ws, drain);
       const bye: ByeFrame = { v: 1, type: "bye", ts: now(), reason: "shutdown" };
       sendJson(target.ws, bye);
       // 1001 = 服务端下线，Desktop 应退避重连（协议 §9.3）。
       closeWith(target.ws, REMOTE_CLOSE.GOING_AWAY, REMOTE_CLOSE_REASON.GOING_AWAY);
     }
-    // 3. 等 socket 真正关闭，但**不无限等**：卡住的 TCP 对端不该拖住停机。
+    // 3. 等所有**进行中的握手**落定。它们看到 shuttingDown 后会自行收敛，
+    //    但收敛是异步的（要 await unbind）。不等的话，`registry.clear()`
+    //    之后可能出现一次 bind。
+    await waitForHandshakes(inFlightHandshakes, 1000);
+    // 4. 等 socket 真正关闭，但**不无限等**：卡住的 TCP 对端不该拖住停机。
     await waitForClose(targets, 1000);
     for (const target of targets) {
       if (target.ws.readyState !== WebSocket.CLOSED) target.ws.terminate();
-      target.closed = true;
     }
-    // 4. 清表。此时 connection_count 必须归零。
+    // 5. 逐个收敛，确保每条连接的路由都被释放（幂等，重复调用无害）。
+    await Promise.all(targets.map((target) => converge(target)));
+    // 6. 清表。此时 connection_count 必须归零。
     registry.clear();
     live.clear();
-    // 5. 关闭 ws 服务端（不再接受 upgrade）。
+    // 7. 关闭 ws 服务端（不再接受 upgrade）。
     await new Promise<void>((resolve) => {
       wss.close(() => resolve());
     });
@@ -594,6 +859,18 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
     shutdown,
     disconnectDevice,
     connectionCount: () => registry.count(),
+    awaitHandshakes: (timeoutMs = 2000) => waitForHandshakes(inFlightHandshakes, timeoutMs),
+    inspect: () =>
+      [...live.values()].map((connection) => ({
+        connectionId: connection.connectionId,
+        deviceId: connection.deviceId,
+        state: connection.state,
+        closing: connection.closing,
+        bound: connection.bound,
+        released: connection.released,
+        heartbeatRunning: connection.heartbeat.running(),
+        helloTimeoutArmed: connection.helloTimeout !== null,
+      })),
     instanceId,
     registry,
   };
@@ -677,6 +954,26 @@ function mapHandshakeFailure(failure: HandshakeFailure): { code: number; reason:
   }
 }
 
+/**
+ * 准入失败 → close code。
+ *
+ * 与 `mapHandshakeFailure` 分开而不是合并：两者的输入域不同，而合并会诱使
+ * 有人把 `AdmissionFailure` 加进 `HandshakeFailure` 的联合类型里——
+ * 那两类错误发生在完全不同的阶段（无锁预检 / 行锁内终审），混在一起会让
+ * 「到底哪一步判死的」这个排障问题失去答案。
+ */
+function mapAdmissionFailure(failure: AdmissionFailure): { code: number; reason: string } {
+  switch (failure) {
+    case "revoked":
+      return { code: REMOTE_CLOSE.DEVICE_REVOKED, reason: REMOTE_CLOSE_REASON.DEVICE_REVOKED };
+    case "suspended":
+      return { code: REMOTE_CLOSE.DEVICE_SUSPENDED, reason: REMOTE_CLOSE_REASON.DEVICE_SUSPENDED };
+    case "unauthorized":
+    default:
+      return { code: REMOTE_CLOSE.UNAUTHORIZED, reason: REMOTE_CLOSE_REASON.UNAUTHORIZED };
+  }
+}
+
 function isOversizeError(err: unknown): boolean {
   return (
     typeof err === "object" &&
@@ -716,6 +1013,32 @@ async function recordLastSeen(ctx: AppContext, deviceId: string): Promise<void> 
     await ctx.db.db.update(mcpDevices).set({ lastSeenAt: new Date() }).where(eq(mcpDevices.id, deviceId));
   } catch (err) {
     ctx.logger.warn("link_last_seen_update_failed", { error: errorCode(err) });
+  }
+}
+
+/**
+ * 等一批进行中的握手落定，但有上限。
+ *
+ * 为什么需要：停机时 `registry.clear()` 必须发生在**所有 bind 之后**。
+ * 一个卡在数据库查询上的握手若在 clear 之后恢复并 bind，表里就会多出
+ * 一条指向已终止 socket 的路由，而 `connectionCount()` 会一直报 1。
+ *
+ * 为什么要有上限：一个永不返回的数据库查询不该把停机拖住。
+ * 超时之后仍由「握手看到 `shuttingDown` 就自行收敛」兜底——那一条是
+ * 结构保证，不依赖这里的等待成功。
+ */
+async function waitForHandshakes(tasks: ReadonlySet<Promise<unknown>>, timeoutMs: number): Promise<void> {
+  if (tasks.size === 0) return;
+  const all = Promise.allSettled([...tasks]);
+  let timer: NodeJS.Timeout | null = null;
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+    timer.unref?.();
+  });
+  try {
+    await Promise.race([all.then(() => undefined), deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

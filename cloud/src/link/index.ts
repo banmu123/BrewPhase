@@ -12,9 +12,12 @@
 export {
   createLinkServer,
   type DisconnectReason,
+  type LinkConnectionSnapshot,
+  type LinkLifecycleHooks,
   type LinkServer,
   type LinkServerOptions,
 } from "./link-server.js";
+export { admitDevice, type AdmissionFailure, type AdmissionOutcome, type AdmittedDevice } from "./admission.js";
 export {
   createMemoryConnectionRegistry,
   type BindResult,
