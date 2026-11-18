@@ -10,7 +10,9 @@ export async function getTestDb(): Promise<DbHandle> {
 
 /** 清空全部业务表（保留 schema），测试之间互相隔离。 */
 export async function resetDb(handle: DbHandle): Promise<void> {
-  await handle.sql`truncate table mcp_grants, mcp_devices, auth_events, oauth_codes, oauth_transactions, auth_sessions, user_identities, users restart identity cascade`;
+  // 五张 MCP OAuth 表（0003）显式列出而不是靠 `cascade` 传递：
+  // `mcp_oauth_clients` 没有指向 users 的外键，漏掉它会跨用例泄漏注册项。
+  await handle.sql`truncate table mcp_refresh_tokens, mcp_sessions, mcp_auth_codes, mcp_auth_requests, mcp_oauth_clients, mcp_grants, mcp_devices, auth_events, oauth_codes, oauth_transactions, auth_sessions, user_identities, users restart identity cascade`;
 }
 
 export async function closeTestDb(): Promise<void> {

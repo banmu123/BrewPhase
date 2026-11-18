@@ -322,3 +322,286 @@ export const mcpGrants = pgTable(
     check("mcp_grants_epoch_check", sql`${t.epoch} >= 1`),
   ],
 );
+
+// ---------------------------------------------------------------------------
+// MCP OAuth（Phase 1.3.1-A，migration 0003）
+//
+// 这五张表只承载**授权**，不承载**执行**：工具调用能不能做，仍由
+// `mcp_grants` + Desktop 的 `grant_ctx` 决定（安全 §2.2）。
+//
+// 一条贯穿五张表的纪律：**`client_id` 一律不建外键**。理由见
+// `mcpOauthClients` 上方的长注释——这不是遗漏，是刻意与 `mcp_grants` 对齐。
+// ---------------------------------------------------------------------------
+
+/**
+ * 一个已注册的 MCP 客户端（预注册 / CIMD / DCR 三种来源）。
+ *
+ * **为什么 `clientId` 在其它三张表里没有外键**（Phase 1.3.1-A 的决定）：
+ *
+ * 1. `mcp_grants.client_id` 本来就没有外键，而它才是**授权的权威记录**。
+ *    在新表上建外键会造出「grant 不受约束、session 受约束」的不一致。
+ * 2. 这张表是**注册缓存**，不是归属主体：CIMD 的元数据会重新抓取、
+ *    预注册项可以下线、DCR 项可以清理，而已经发生的授权不该因此消失。
+ * 3. 加 `ON DELETE CASCADE` 会在删除 client 时连带删掉授权码与会话——正是
+ *    「为了方便而扩大级联」的典型；加 `ON DELETE RESTRICT` 又会让
+ *    「客户端下线」必须先手工按顺序清理，且无法处理历史 grant。
+ *
+ * 需要的完整性是「session 的 client_id 与它的 grant 一致」，那是一条**跨列**
+ * 不变量（要复合外键指向 `mcp_grants(user_id, client_id, resource)`），
+ * 代价远大于收益，由应用层在同一次写入里保证。
+ */
+export const mcpOauthClients = pgTable(
+  "mcp_oauth_clients",
+  {
+    /** 预注册 id / CIMD 的 client metadata URL / DCR 生成的 id。 */
+    clientId: text("client_id").primaryKey(),
+    /** 同意页展示用。规范要求同意页显示发起方名称。 */
+    clientName: text("client_name").notNull(),
+    clientUri: text("client_uri"),
+    /** 只用于 `<img referrerpolicy="no-referrer">`；**从不抓取**（SSRF）。 */
+    logoUri: text("logo_uri"),
+    /** 完整 URI 列表，授权请求按**精确字符串**匹配其中一个。 */
+    redirectUris: text("redirect_uris").array().notNull(),
+    grantTypes: text("grant_types")
+      .array()
+      .notNull()
+      .default(sql`ARRAY['authorization_code', 'refresh_token']::text[]`),
+    /** 只支持公共客户端：有 client_secret 就意味着要管密钥轮换与泄露响应。 */
+    tokenEndpointAuthMethod: text("token_endpoint_auth_method").notNull().default("none"),
+    /** pre_registered | cimd | dcr */
+    registrationSource: text("registration_source").notNull(),
+    /** CIMD 元数据的抓取时刻（预注册项为 NULL）。 */
+    metadataFetchedAt: timestamp("metadata_fetched_at", { withTimezone: true, mode: "date" }),
+    /** CIMD 缓存到期；到期后必须重新抓取，而不是永久信任首次结果。 */
+    metadataCacheExpiresAt: timestamp("metadata_cache_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    check(
+      "mcp_oauth_clients_source_check",
+      sql`${t.registrationSource} in ('pre_registered', 'cimd', 'dcr')`,
+    ),
+    check("mcp_oauth_clients_auth_method_check", sql`${t.tokenEndpointAuthMethod} = 'none'`),
+    // 用 `cardinality` 而不是设计稿里的 `array_length`：后者对空数组返回 NULL，
+    // 而 CHECK 遇到 NULL 视为通过——空 `redirect_uris` 会被静默放行。
+    check(
+      "mcp_oauth_clients_redirect_uris_check",
+      sql`cardinality(${t.redirectUris}) between 1 and 5`,
+    ),
+    // 只允许本服务实现的两个 grant：写了 `client_credentials` 的注册项
+    // 不该能落库，否则「注册成功但永远换不到 token」要等到联调才发现。
+    check(
+      "mcp_oauth_clients_grant_types_check",
+      sql`${t.grantTypes} <@ ARRAY['authorization_code', 'refresh_token']::text[]`,
+    ),
+  ],
+);
+
+/**
+ * 一次浏览器授权请求的短期状态（10 分钟）。
+ *
+ * 它是 1.3.0 设计里完全缺失的那块：没有它，「用户登录完成后回到哪个授权请求」
+ * 无处可放。`id` 就是 `rid`，出现在 `Location` 与同意页表单里。
+ *
+ * `state` / `code_challenge` **不存哈希**：它们是客户端的东西，不是我们的凭据。
+ * `state` 必须逐字节原样回传，存哈希就还不了。
+ */
+export const mcpAuthRequests = pgTable(
+  "mcp_auth_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    clientId: text("client_id").notNull(),
+    /** 已与注册值精确匹配过的完整 URI。 */
+    redirectUri: text("redirect_uri").notNull(),
+    /** 客户端**请求**的 scope；用户只能在此子集内收窄。 */
+    scope: text("scope").array().notNull(),
+    /** 必须逐字符等于 `MCP_RESOURCE`。 */
+    resource: text("resource").notNull(),
+    /** 客户端 `state`，原样回传；缺失时为 NULL（不是 `''`，避免与空串混淆）。 */
+    state: text("state"),
+    codeChallenge: text("code_challenge").notNull(),
+    codeChallengeMethod: text("code_challenge_method").notNull().default("S256"),
+    /** `sha256("mcp-csrf"‖csrf)`；明文只在渲染的 HTML 里。 */
+    csrfHash: text("csrf_hash").notNull(),
+    /** `sha256("mcp-browser"‖sid)`；NULL = 尚未绑定（TOFU 首次绑定）。 */
+    browserBindingHash: text("browser_binding_hash"),
+    /** NULL = 还没登录。登录与否是这一列，不是 Cookie。 */
+    userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
+    /** google | github；NULL = 未选。 */
+    provider: text("provider"),
+    /** Provider State 的哈希；回调按此反查。回调前为 NULL，因此唯一索引允许多行 NULL。 */
+    providerStateHash: text("provider_state_hash"),
+    /** Google OIDC nonce 哈希；GitHub 流程为空串。 */
+    nonceHash: text("nonce_hash").notNull().default(""),
+    /** 一次性 Provider 回调的消费时刻。非空即「这个 PR 已经用掉」。 */
+    providerConsumedAt: timestamp("provider_consumed_at", { withTimezone: true, mode: "date" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("mcp_auth_requests_provider_state_uq").on(t.providerStateHash),
+    index("mcp_auth_requests_expires_idx").on(t.expiresAt),
+    index("mcp_auth_requests_user_idx").on(t.userId),
+    check(
+      "mcp_auth_requests_provider_check",
+      sql`${t.provider} is null or ${t.provider} in ('google', 'github')`,
+    ),
+    // 只接受 S256：`plain` 等于没有 PKCE（verifier 会随 code 一起泄露）。
+    check("mcp_auth_requests_pkce_method_check", sql`${t.codeChallengeMethod} = 'S256'`),
+  ],
+);
+
+/**
+ * MCP 专用授权码（60 秒，一次性）。
+ *
+ * 与 Desktop 登录的 `oauth_codes` **不共用**：那张表没有 `grant_id` /
+ * `scope` / `resource`，三者都是 MCP 授权语义的必需项。
+ */
+export const mcpAuthCodes = pgTable(
+  "mcp_auth_codes",
+  {
+    /** `sha256("mcp-code"‖code)`；明文只在 302 的 `Location` 里出现一次。 */
+    codeHash: text("code_hash").primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    clientId: text("client_id").notNull(),
+    /** 同意时 upsert 出的 grant；删 grant 连带删未兑换的码。 */
+    grantId: uuid("grant_id")
+      .notNull()
+      .references(() => mcpGrants.id, { onDelete: "cascade" }),
+    redirectUri: text("redirect_uri").notNull(),
+    codeChallenge: text("code_challenge").notNull(),
+    /** **用户实际勾选**的子集，可能少于请求的 scope。 */
+    scope: text("scope").array().notNull(),
+    resource: text("resource").notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true, mode: "date" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    // sweep 扫过期码；grant_id 索引给级联删除用（PG 不为外键自动建索引）。
+    index("mcp_auth_codes_expires_idx").on(t.expiresAt),
+    index("mcp_auth_codes_grant_idx").on(t.grantId),
+  ],
+);
+
+/**
+ * 一次 MCP 授权的**长期身份**（OAuth 会话）。
+ *
+ * `id` 就是 JWT 的 `sid`：**授权时生成一次，之后永远不变**。这条是
+ * 「正常刷新」与「授权被收回」能够区分的唯一依据（设计 §9.6）：
+ *
+ * - 正常 refresh 只写 `mcp_refresh_tokens`，`sid` 不变 → 旧 Access Token
+ *   仍可用到自己 `exp`；
+ * - 会话撤销 → `sid` 查不到 → 旧 Access Token 立即失效。
+ *
+ * `created_at` 与 `absolute_expires_at` 都是**不可变列**：后者只能在 INSERT
+ * 时算一次（`created_at + 90d`）。任何 `UPDATE ... SET absolute_expires_at`
+ * 都会让「90 天绝对上限」变成「每次刷新续 90 天」。
+ */
+export const mcpSessions = pgTable(
+  "mcp_sessions",
+  {
+    /** = JWT `sid`。 */
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    grantId: uuid("grant_id")
+      .notNull()
+      .references(() => mcpGrants.id, { onDelete: "cascade" }),
+    clientId: text("client_id").notNull(),
+    /** 本次授权实际授予的 scope（step-up 时更新为 union）。 */
+    issuedScope: text("issued_scope").array().notNull(),
+    resource: text("resource").notNull(),
+    /** **不可变**：90 天的起点。 */
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    /** **不可变** `= created_at + 90d`。 */
+    absoluteExpiresAt: timestamp("absolute_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
+    /** user_revoke | grant_revoked | refresh_reuse | client_revoke */
+    revokedReason: text("revoked_reason"),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    ipHash: text("ip_hash").notNull().default(""),
+    userAgent: text("user_agent").notNull().default(""),
+  },
+  (t) => [
+    index("mcp_sessions_user_idx").on(t.userId),
+    // 「撤销 grant 时找出它的全部 session」是撤销路径的唯一查询。
+    index("mcp_sessions_grant_idx").on(t.grantId),
+    // 过期判定与清理扫描。
+    index("mcp_sessions_absolute_expires_idx").on(t.absoluteExpiresAt),
+    check(
+      "mcp_sessions_revoked_reason_check",
+      sql`${t.revokedReason} is null or ${t.revokedReason} in ('user_revoke', 'grant_revoked', 'refresh_reuse', 'client_revoke')`,
+    ),
+    // 绝对上限必须晚于起点。反过来的行意味着「出生即过期」，
+    // 那不该是数据，而该是插入代码里的 bug。
+    check("mcp_sessions_absolute_expiry_check", sql`${t.absoluteExpiresAt} > ${t.createdAt}`),
+  ],
+);
+
+/**
+ * 某一代 Refresh Token 凭据。
+ *
+ * **Session 即族根**：不设 `token_family` 列。`auth_sessions` 需要它是因为
+ * 一次登录会派生出多条并行会话；这里一次授权只有一条 Session，
+ * family 恒等于 `session_id`，多一列只多一处可能不一致。
+ *
+ * **关键不变量（数据库强制）**：同一个 `session_id` 最多只能有一条
+ * `consumed_at IS NULL` 的行。没有它，并发刷新可以各自「找到当前这代」
+ * 并各自签出新 token，于是同一会话同时存在两个有效 refresh token——
+ * 重放检测随即失去意义。这条不能只靠应用代码。
+ */
+export const mcpRefreshTokens = pgTable(
+  "mcp_refresh_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** 族根。删 Session 即删全部代凭据。 */
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => mcpSessions.id, { onDelete: "cascade" }),
+    /** `sha256("mcp-refresh"‖token)`；明文不落库。 */
+    tokenHash: text("token_hash").notNull().unique(),
+    /** 1, 2, 3…；只用于排障与顺序断言，不参与鉴权。 */
+    generation: integer("generation").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    /** `= min(created_at + 30d, session.absolute_expires_at)`。 */
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+    /** 被轮换掉的时刻；NULL = 当前这代。旧行**保留**用于重放检测。 */
+    consumedAt: timestamp("consumed_at", { withTimezone: true, mode: "date" }),
+    /** 下一代的 id。**无外键**：历史链允许独立清理（与 `auth_sessions.replaced_by` 同理）。 */
+    replacedBy: uuid("replaced_by"),
+    ipHash: text("ip_hash").notNull().default(""),
+    userAgent: text("user_agent").notNull().default(""),
+  },
+  (t) => [
+    uniqueIndex("mcp_refresh_tokens_session_generation_uq").on(t.sessionId, t.generation),
+    // 「每个会话最多一条有效凭据」——部分唯一索引，是本模型的核心约束。
+    uniqueIndex("mcp_refresh_tokens_session_active_uq")
+      .on(t.sessionId)
+      .where(sql`${t.consumedAt} is null`),
+    index("mcp_refresh_tokens_expires_idx").on(t.expiresAt),
+    check("mcp_refresh_tokens_generation_check", sql`${t.generation} >= 1`),
+    check("mcp_refresh_tokens_expiry_check", sql`${t.expiresAt} > ${t.createdAt}`),
+  ],
+);
