@@ -115,12 +115,13 @@
 
 | # | 待验证 | 验证方式 | 层 | 状态 |
 |---|---|---|---|---|
-| S1 | MCP SDK 能否在本仓库跑起 `/mcp` | `cloud/` 临时目录（不提交）用 `createMcpHandler` + `WebStandardStreamableHTTPServerTransport` 起 echo server，用 `@modelcontextprotocol/client` 走 `initialize`→`tools/list`→`tools/call` | A | **P** |
+| S1 | MCP SDK 能否在本仓库跑起 `/mcp` | 用 `createMcpHandler(...)` + `@modelcontextprotocol/client` 走 `initialize`→`tools/list`→`tools/call`；**不要**手接 `WebStandardStreamableHTTPServerTransport`（`createMcpHandler` 已内部封装，返回 `{fetch, notify, bus, close}`） | A | **L**（1.3.0 已实测：modern `server/discover` 与 legacy `initialize` 同时可用，见 `REMOTE_MCP_PHASE_1_3_DESIGN.md` §1.3） |
 | S2 | `buildOAuthProtectedResourceMetadata` 输出形状 | 调用该函数打印 JSON，对照 RFC 9728 | A | **P** |
 | S3 | `requireBearerAuth` 的 `resource` 校验 | 传错 `aud` 的 token，确认拒绝 | A + C | **P** |
-| S4 | ChatGPT 是否要求 DCR | 无法本地验证 | B | **P**（只能等 C） |
-| S5 | ChatGPT 是否要求 `outputSchema` / SSE | 无法本地验证 | B | **P**（只能等 C） |
-| S6 | `resource` 参数是否被 ChatGPT 发送 | 无法本地验证 | B | **P**（只能等 C） |
+| S4 | ChatGPT 是否要求 DCR | 无法本地验证（规范已把 DCR 标为弃用，见设计 §7.1） | B | **P**（只能等 C） |
+| S5 | ChatGPT 是否要求 `outputSchema` | 无法本地验证 | B | **P**（只能等 C） |
+| S5b | ~~ChatGPT 是否要求 `GET /mcp` 的 SSE~~ | **已由规范否定**：2026-07-28 移除 GET 流，`GET`/`DELETE` 恒 `405` | A | **已关闭**（不是待验证项） |
+| S6 | `resource` 参数是否被 ChatGPT 发送 | 无法本地验证 | B | **P**（只能等 C；**最高危**，见设计 §14 N5） |
 | S7 | Electron 45 主进程 `WebSocket` | `app.evaluate(() => typeof WebSocket)` + 实际建连 | — | **P**（1.1B 第一天必须转 E） |
 | S8 | Electron 主进程 Ed25519 往返 | `app.evaluate` 跑 `generateKeyPairSync('ed25519')` + sign/verify | — | **L**（系统 Node v22.22.2 已通过）→ 需补 **E** |
 

@@ -561,6 +561,28 @@ Desktop 的 `error.code` 原样透传给 ChatGPT，不做二次映射。因此�
 - 禁止把 `ApplicationError.code`（`VALIDATION_ERROR` / `STALE_RECORD` 等）
   直接外泄——网关层做一次白名单映射，未登记的一律 `INTERNAL_ERROR`
 
+#### 9.2.1 传输层 JSON-RPC 码不是业务码（Phase 1.3.0）
+
+`/mcp` 端点除了业务错误（19 个 `REMOTE_ERROR_CODES`）之外，还会产生**传输层**
+的 JSON-RPC 错误。两者**不在同一张表里**，实现时不得混用：
+
+| JSON-RPC 码 | 含义 | HTTP | 出现位置 |
+|---|---|---|---|
+| `-32020` | `HeaderMismatch`：`MCP-Protocol-Version` 与请求体 `_meta` 不一致 | `400` | 传输层 |
+| `-32022` | `UnsupportedProtocolVersionError`（`data.supported` 列出支持版本） | `400` | 传输层 |
+| `-32601` | `Method not found` | `404` | 传输层 |
+| `-32600` / `-32700` | 请求/解析非法 | `400` | 传输层 |
+| `-32000` | 方法不允许（`GET` / `DELETE` 打到 `/mcp`） | `405` | 传输层 |
+
+**三条纪律**：
+
+1. **不把上表加进 `REMOTE_ERROR_CODES`**：那是 Desktop 执行结果码的封闭集合
+   （19 个），加进去会让「Desktop 报了什么」与「网关拒了什么」混成一个域。
+2. **不把业务码映射成 `-32xxx`**：`GRANT_REVOKED` 就是 `GRANT_REVOKED`，
+   它出现在 `res.error.code` 里，不在 JSON-RPC `error.code` 里。
+3. 上表由 SDK 产出（实测见 `REMOTE_MCP_PHASE_1_3_DESIGN.md` §1.3），
+   网关**不重新实现**这套分类。
+
 ### 9.3 WSS close code
 
 | code | 含义 | Desktop 是否应重连 |

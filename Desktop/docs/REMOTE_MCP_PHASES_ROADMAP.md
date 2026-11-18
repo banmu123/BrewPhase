@@ -438,8 +438,9 @@ cloud/src/app.ts                        （挂新路由；不碰现有 9 条）
 cloud/tests/{mcp-devices,link}/*.test.ts
 ```
 
-> **`auth_sessions.session_kind` 不在 1.2**：它只被 MCP OAuth 的 refresh 需要，
-> 属 Phase 1.3（OQ-3 定稿后再加）。
+> **`auth_sessions.session_kind` 不会加**（OQ-3 已于 1.3.0 定稿）：MCP 的
+> refresh 走独立 `mcp_sessions` 表，`auth_sessions` 保持零改动。详见
+> `REMOTE_MCP_PHASE_1_3_DESIGN.md` §9。
 
 ### 2.3 测试要求
 
@@ -518,43 +519,79 @@ cloud/tests/{mcp-devices,link}/*.test.ts
 
 ## Phase 1.3 — Cloud MCP 前端与独立 OAuth AS
 
-### 3.1 范围
+> **本节的实现要求已由 Phase 1.3.0 重新冻结。** 完整设计（规范对照、
+> 双时代策略、OAuth 时序、Discovery 结构、OQ-3 决策、数据表草案、
+> 测试矩阵、`NOT VERIFIED` 清单）见
+> **`REMOTE_MCP_PHASE_1_3_DESIGN.md`**。当本节与该文件冲突时以该文件为准。
+>
+> **1.3.0 修订了四处会直接写错实现的说法**：
+> 1. `initialize` 属 **legacy** 时代；2026-07-28 的 modern 客户端用逐请求
+>    `_meta` + `server/discover`，**没有** `initialize`。两者都要服务。
+> 2. `GET /mcp` 的 SSE 流已被规范**移除**，恒返回 `405`；不是「以后再加」。
+> 3. DCR 已**弃用**（`MAY`），不是唯一注册路径；CIMD 才是规范首选。
+> 4. 协议层会话（`Mcp-Session-Id`）已被移除；我们**不生成**任何协议层会话。
+>    OQ-3 的「会话」指的是 OAuth refresh 容器，两件事无关。
 
-| # | 能力 |
-|---|---|
-| C1 | `POST /mcp`：`createMcpHandler` + `WebStandardStreamableHTTPServerTransport` |
-| C2 | 工具面：8 个只读工具，schema 与 Desktop `TOOL_DEFINITIONS` 一致（一致性测试） |
-| C3 | MCP OAuth AS：`/authorize`（含 consent 页）、`/token`（`grant_type` 双分支）、`/register`（DCR） |
-| C4 | 元数据：`/.well-known/oauth-protected-resource`、`/.well-known/oauth-authorization-server` |
-| C5 | 表：`mcp_oauth_clients`、`mcp_auth_codes`（**`mcp_grants` 已在 1.2 建**，本阶段只写入 grant，不重建） |
-| C6 | Scope 校验：Cloud 侧**逐 grant**（按 `mcp_grants` 与上下文）+ Desktop 侧**逐请求**（按 `grant_ctx`） |
-| C7 | 401 challenge：`WWW-Authenticate: Bearer resource_metadata="…"` |
-| C8 | 日志纪律：只 tool/status/duration/error_code/delivery_id/**`jti` 前 8 位**/`grant_id`（安全 §3.2.1、协议 §13.3） |
-| C9 | **MCP 专用 JWT**：`signMcpAccessToken` / `verifyMcpAccessToken`，`aud = MCP_RESOURCE`（≠ `brewphase-desktop`）；**不改**现有 `signAccessToken` |
-| C10 | **会话归属**：按 OQ-3 结论落地（`mcp_sessions` 独立表 或 `auth_sessions.session_kind`），保证 MCP 登出不撤销 Desktop 登录 |
-| C11 | **真实 ChatGPT 验收**（见 §3.4 门禁表）——只有这一阶段能做 |
+### 3.0 拆分（1.3.0 冻结）
+
+| 子阶段 | 主题 | 产出 |
+|---|---|---|
+| **1.3.0** | 规范对齐与设计冻结 | 本文件 + `REMOTE_MCP_PHASE_1_3_DESIGN.md`；**零代码** |
+| **1.3.1** | MCP OAuth 基础设施 | 迁移 `0003`、`mcp_sessions`、authorize/token/register、PRM/AS 元数据、consent 页、与 Desktop 登录隔离 |
+| **1.3.2** | Streamable HTTP 与工具服务 | `POST /mcp`（dual-era）、Bearer + audience + grant 回查、8 个只读工具、错误面、日志纪律 |
+| **1.3.3** | 真实客户端联调 | Inspector、ChatGPT、Grok、refresh 行为、撤销/离线/异常恢复、回填 `NOT VERIFIED` |
+
+### 3.1 范围（1.3.1 + 1.3.2）
+
+| # | 能力 | 子阶段 |
+|---|---|---|
+| C1 | `POST /mcp`：`createMcpHandler(...).fetch`（SDK 已内部封装 transport，**不再手接** `WebStandardStreamableHTTPServerTransport`） | 1.3.2 |
+| C2 | 工具面：8 个只读工具，schema 与 Desktop `TOOL_DEFINITIONS` 一致（一致性测试） | 1.3.2 |
+| C3 | MCP OAuth AS：`/mcp/oauth/authorize`（含 consent 页）、`/mcp/oauth/token`（`authorization_code` + `refresh_token`）、`/mcp/oauth/register`（DCR，**默认关闭**）、`/mcp/oauth/revoke` | 1.3.1 |
+| C4 | 元数据：`/.well-known/oauth-protected-resource`（含 path-inserted 变体）、`/.well-known/oauth-authorization-server` | 1.3.1 |
+| C5 | 表：`mcp_oauth_clients`、`mcp_sessions`、`mcp_auth_codes`（**`mcp_grants` 已在 1.2 建**，本阶段只写入 grant，不重建） | 1.3.1 |
+| C6 | Scope 校验：Cloud 侧**逐 grant**（每次 `/mcp` 回查 `mcp_grants`）+ Desktop 侧**逐请求**（按 `grant_ctx`） | 1.3.2 |
+| C7 | 401 / 403 challenge：`WWW-Authenticate: Bearer resource_metadata="…", scope="…"`（403 另带 `error="insufficient_scope"`） | 1.3.2 |
+| C8 | 日志纪律：只 tool/status/duration/error_code/delivery_id/**`jti` 前 8 位**/`grant_id`（安全 §3.2.1、协议 §13.3） | 1.3.2 |
+| C9 | **MCP 专用 JWT**：`signMcpAccessToken` / `verifyMcpAccessToken`，`aud = MCP_RESOURCE`（= `<baseUrl>/mcp`，≠ `brewphase-desktop`）；**不改**现有 `signAccessToken` | 1.3.1 |
+| C10 | **会话归属**：**独立 `mcp_sessions` 表**（OQ-3 已定，见设计 §9）；**不改** `auth_sessions` | 1.3.1 |
+| C11 | **真实客户端验收**（见 §3.4 门禁表）——只有 1.3.3 能做 | 1.3.3 |
 
 ### 3.2 关键差异（与现有登录 OAuth）
 
 | 项 | 现有 `/oauth/*` | 新增 MCP AS |
 |---|---|---|
-| `redirect_uri` | **只允许** `http://127.0.0.1:<port>/callback`（正则硬编码） | 允许 DCR 注册的 https（或 localhost），**但仍精确匹配，不用通配** |
+| 路径组 | `/oauth/*` | **`/mcp/oauth/*`**（元数据仍在根 `/.well-known/*`，RFC 要求） |
+| `redirect_uri` | **只允许** `http://127.0.0.1:<port>/callback`（正则硬编码） | 注册表**精确匹配**（可 https，可 localhost），**不用通配** |
 | `grant_type` | 无此字段（`tokenRequestSchema` 只有 code/verifier/redirect_uri） | 必须支持 `authorization_code` + `refresh_token` |
 | scope | 无（JWT 无 scope claim） | 必须携带、必须校验、必须在同意页逐项展示 |
 | `aud` | 硬编码 `brewphase-desktop` | `MCP_RESOURCE`（新常量），两套 token 互不通用 |
-| 客户端 | 只有第一方 Desktop | 第三方（ChatGPT），需 `mcp_oauth_clients` |
+| 会话表 | `auth_sessions` | `mcp_sessions`（独立，生命周期不同） |
+| 客户端 | 只有第一方 Desktop | 第三方（ChatGPT 等） |
 | 用户同意 | 无 consent 页 | **必须有**（逐项列 4 个 scope） |
 
 **必须新建路由组，不得改动现有 `/oauth/authorize` 的白名单**——那条白名单是
 Desktop 登录的安全边界，放宽它等于允许任意站点做 redirect 劫持。
 
+**协议版本策略**（1.3.0 新增，实现必须遵守）：`POST /mcp` 同时服务
+modern（2026-07-28）与 legacy（2025-06-18/25），用
+`createMcpHandler(..., { legacy: 'stateless' })`；**不发** `Mcp-Session-Id`；
+`GET`/`DELETE` 恒 `405`。见设计 §3。
+
 ### 3.3 测试要求
 
-- 授权码：PKCE S256、一次性、60s、`redirect_uri` 严格匹配 ≥ 12 条
+- 授权码：PKCE S256、一次性、60s、`redirect_uri` 严格匹配 ≥ 14 条
 - scope：请求多于授予 → 拒；token 的 `scope` 与 grant 一致 ≥ 8 条
 - **`aud` 隔离**（双向）：Desktop 登录 token 打 `/mcp` → 401；MCP token 打
-  `/auth/me` → 401 ≥ 4 条
-- `/mcp`：无 token → 401 + `WWW-Authenticate`；错 `aud` → 401；撤销 grant → 401 ≥ 10 条
+  `/auth/me` → 401 ≥ 6 条
+- 刷新：轮换 / 重放撤族 / 宽限窗口 / **绝对上限（90 天，锚 `created_at`）** ≥ 10 条
+- 三方隔离矩阵（设计 §9.6）：MCP 登出不踢 Desktop、Desktop 登出不撤 MCP ≥ 14 条
+- Discovery：PRM（root + path）/ AS 元数据 / `iss` / `issuer` 逐字符一致 ≥ 10 条
+- CIMD SSRF：私网 / 回环 / 重定向 / 超大 / 超时 / 非 JSON ≥ 10 条
+- `/mcp`：无 token → 401 + `WWW-Authenticate`；错 `aud` → 401；撤销 grant → 403 ≥ 10 条
+- **协议面错误码**：头体版本不一致 → `400` + `-32020`；不支持版本 → `400` + `-32022`；
+  未知方法 → `404` + `-32601`；`GET`/`DELETE` → `405` ≥ 16 条
+- **双时代**：modern `server/discover` 与 legacy `initialize` 各一遍 ≥ 8 条
 - **`/mcp` 重放语义（P0-2 回归门禁，ST-25 / ST-26）**：同一 access token 连续 10 次
   `tools/call` 全部成功；并发 2 次同 `jti`、来源指纹不同 → 两次都成功、只告警不返回 4xx
   （安全 §3.2.1、生命周期 §15.2）≥ 4 条。**任何「按 `jti` 去重」的实现都会让本组测试变红**
@@ -565,43 +602,53 @@ Desktop 登录的安全边界，放宽它等于允许任意站点做 redirect �
   但不含 token 原文、工具参数、结果 ≥ 3 条
 - 工具一致性：Cloud 的 8 个 schema 与 Desktop 深度相等（fixture 对比）
 - 日志：用含哨兵字符串的参数跑一次，grep 日志与 DB，0 命中
-- **回归**：cloud 161 条 + Desktop 949 条全绿；现有 9 条身份路由响应不变
+- **回归**：Cloud 557 条全绿（只增不减）+ Desktop 1265 条全绿；现有 9 条身份路由响应不变
 
 ### 3.4 验收标准
 
-1. 用 MCP 官方 client（`@modelcontextprotocol/client`）完成：
-   `initialize` → `tools/list`（8 个）→ `tools/call search_records` → 拿到数据。
-2. 撤销 grant 后同一 token 立即 401（不是等 15 分钟）。
+1. **双时代连通**：用现代请求完成 `server/discover` → `tools/list`（8 个）→
+   `tools/call search_records`；用 legacy 请求完成 `initialize` → 同上。
+2. 撤销 grant 后同一 token 立即 403（不是等 15 分钟）。
 3. 授权页正确列出 4 个 scope 与对应数据范围的可读描述。
 4. 现有 Desktop 登录流程**完全不受影响**：`/oauth/authorize` 传非 127.0.0.1
-   的 `redirect_uri` 仍返回 400；登录 token 仍只能用于 `/auth/*`。
+   的 `redirect_uri` 仍返回 400；登录 token 仍只能用于 `/auth/*`；
+   `auth_sessions` 的 `information_schema` 逐列不变。
 5. **同 token 多次调用不被误杀（P0-2）**：一个 15 分钟 TTL 的 access token 在其生命周期内
    连续完成 10 次 `tools/call` 全部成功（ST-25）；日志里只有 `jti` 前 8 位，无完整 token、
    无工具参数、无结果。**「按 `jti` 去重」的实现直接判不通过**。
 6. **撤销的授权闭环（P0-1，Cloud 侧）**：撤销 grant 后 Cloud 在该 WSS 上发
-   `grant_update`（`epoch+1`）→ Desktop 回 `grant_update_ack` → 之后同 token 的新调用 401；
+   `grant_update`（`epoch+1`）→ Desktop 回 `grant_update_ack` → 之后同 token 的新调用 403；
    若 ack 超时，按 fail-closed 处理：Cloud **暂停向该设备路由全部 grant**（不只被撤销的
    那一个），直到重新握手（协议 §6.5.2 规则 3）。
+   **注意**：`/mcp` 的 403 不依赖 ack——准入在 Cloud 内完成，撤销对 HTTP 侧是立即的。
 
-**真实 ChatGPT 验收门禁（本阶段独有，缺一不可通过）**：
+**真实客户端验收门禁（1.3.3 独有，缺一不可通过）**：
 
 | # | 门禁 | 通过判据 | 失败后果 |
 |---|---|---|---|
 | G1 | OAuth 授权完成 | ChatGPT 能走完 authorize → consent → token，拿到可用于 `/mcp` 的 token | 阶段不通过 |
-| G2 | `initialize` + `tools/list` | 列出 8 个工具且描述可读 | 阶段不通过 |
+| G2 | **legacy 时代**：`initialize` + `tools/list` | 列出 8 个工具且描述可读（若客户端用 legacy） | 阶段不通过 |
+| G2' | **modern 时代**：`server/discover` + `tools/list` | `supportedVersions` 含客户端所选版本，列出 8 个工具 | 阶段不通过 |
 | G3 | 一次真实 `tools/call` | 返回真实数据（与桌面端一致） | 阶段不通过 |
-| G4 | 撤销后立即失效 | Web 撤销 grant 后：(a) ChatGPT 下一次调用收到 401（Cloud 侧立即，不等 token 过期）；(b) 撤销瞬间已在途的调用，Desktop 回 `GRANT_REVOKED` 且**不回传数据**（P0-1 闭环） | 阶段不通过 |
+| G4 | 撤销后立即失效 | Web 撤销 grant 后：(a) ChatGPT 下一次调用收到 403（Cloud 侧立即，不等 token 过期）；(b) 撤销瞬间已在途的调用，Desktop 回 `GRANT_REVOKED` 且**不回传数据**（P0-1 闭环） | 阶段不通过 |
 | G5 | 离线语义 | 关闭桌面端后，ChatGPT 收到 `DEVICE_OFFLINE` 而不是超时/空结果 | 阶段不通过 |
-| G6 | 是否需要 DCR / `outputSchema` / SSE | **记录实测结论**，回填协议 §15.1 的 B 层 | 不阻塞通过，但必须记录 |
+| G6 | 注册方式与 `resource` 参数 | **记录实测**：客户端用预注册 / CIMD / DCR 中的哪一种；是否发送 `resource` | 不阻塞通过，但必须记录 |
+
+> **G2 与 G2' 至少一条通过；两条都通过更好**（说明 dual-era 生效）。
+> G6 里的「是否发送 `resource`」是**最高危未知项**：若客户端不发，
+> 严格校验会导致连不上，届时的取舍见设计 §14 的 N5。
 
 **不得把 Mock 结果当成 G1–G5 的证据。** 若无法进行真实联调，本阶段只能标记为
 `NOT VERIFIED`，并按 1.0.1 的 OQ-B/OQ-C 保留开放状态。
 
 ### 3.5 风险
 
-- **ChatGPT 的 MCP OAuth 实现细节未验证**（DCR 是否必需、是否要求 `resource`
-  参数、是否支持 `refresh_token`）——本阶段最大不确定性，必须尽早真实联调。
-- `outputSchema` / `annotations` 是否被要求，会影响工具描述形态。
+- **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、
+  是否支持 `refresh_token`）——1.3.3 的最大不确定性，必须尽早真实验证。
+  设计已把三种注册方式全部留出入口，因此**不赌单一方式**。
+- **`resource` 参数的严格性**：规范要求双向 MUST，但客户端可能不发（N5）。
+  这是「合规」与「能连上」唯一可能正面冲突的地方。
+- SDK 的双时代行为目前由实测锁定（设计 §1.3）；升级 SDK 必须重跑该表。
 - HS256 对称密钥意味着 AS 与 `/mcp` 校验方共用同一 secret（同一进程内可接受）；
   若未来拆分服务，需改 RS256 或共享密钥管理——**本阶段不拆**。
 
@@ -632,7 +679,7 @@ Desktop 登录的安全边界，放宽它等于允许任意站点做 redirect �
 |---|---|---|
 | E2E 加密（Desktop 生成会话密钥，Cloud 只转发密文） | Cloud 看不到数据 | Cloud 无法做结果过滤；密钥协商增加一轮；调试困难 |
 | 写入工具（`create_record` 等） | 远程可记录 | 需要持久幂等 + 用户确认 UI + 更复杂的威胁模型 |
-| SSE 长连接（`GET /mcp`） | 支持服务端推送 | 多实例下需要事件总线 |
+| `subscriptions/listen`（通知流） | 支持服务端推送（如记录变更） | **注意**：2026-07-28 已移除 `GET /mcp` 的 SSE 流，长连接通知改由 `subscriptions/listen` 承载。多实例下需要事件总线 |
 | 断线排队 | 体验连续 | 与「明确失败优于延迟成功」冲突（协议 §10.3） |
 
 **建议**：E2E 加密单独评估；写入工具至少等到 1.4 稳定后再做；断线排队**不做**。

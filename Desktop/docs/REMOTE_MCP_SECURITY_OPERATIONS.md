@@ -56,7 +56,7 @@ revoked   → （终态，不可恢复）
 
 | 触发 | ① 先做（同步、持久化） | ② 再做（异步、可失败） | Desktop 动作 | 生效依据 |
 |---|---|---|---|---|
-| Web 撤销 grant | `mcp_grants.revoked_at = now()`，**先停路由**，`grant_epoch + 1` | 发 `grant_update{op:"revoke"}`；撤销该 grant 的 MCP refresh（若 OQ-3 选独立表） | 移除上下文 + 清该 grant 缓存 + 在途结果不外传 + `grant_update_ack` | 上下文失效 + 请求前查 grant |
+| Web 撤销 grant | `mcp_grants.revoked_at = now()`，**先停路由**，`grant_epoch + 1`；**同一事务内**把该 grant 的全部 `mcp_sessions.revoked_at = now()`（OQ-3 已定：独立表） | 发 `grant_update{op:"revoke"}`（R2 的 `markSyncLag` 收口） | 移除上下文 + 清该 grant 缓存 + 在途结果不外传 + `grant_update_ack` | 上下文失效 + **每次 `/mcp` 回查 grant**（不依赖 ack） |
 | Web 撤销设备 | `mcp_devices.status='revoked'` | 删连接表项 → 发 `bye(revoked)` → close `4003` | 删 `remote/device.json`，`linkState='blocked'`，不重连 | 连接表 + 请求前查设备状态 |
 | Desktop 用户关开关 | **`local_state` 写 `off`** | `POST /mcp-devices/{id}/suspend` → 断 WSS | 立即拒绝一切 `req` | 本地判定，不依赖 Cloud |
 | Desktop 用户开开关 | `local_state` 写 `on` | 连接 WSS（若未注册先走注册） | 进入 `connecting` | — |
@@ -881,11 +881,11 @@ ST-1 ~ ST-3、ST-11 ~ ST-12；1.3 必须通过 **ST-25 ~ ST-26**。
 |---|---|---|---|---|---|
 | OQ-5 | 审计连续失败是否熔断远程开关 | 产品权衡 | 用户 | 1.4 | 否 |
 | OQ-6 | 是否需要 E2E 加密（Cloud 只见密文） | 产品权衡；会影响 Cloud 侧过滤能力 | 用户 | 1.5 | 否 |
-| OQ-7 | DCR 是否必需 | ChatGPT 行为 | 真实联调 | 1.3 | 否 |
+| OQ-7 | DCR 是否必需 | **规范已把 DCR 标为弃用（`MAY`）**；客户端是否仍要求 DCR 属 `NOT VERIFIED` | 1.3.3 真实联调（三方注册入口已全部预留，不赌单一方式） | 1.3.3 | 否（默认关闭，可按需开启） |
 | OQ-8 | 设备确认码是否必须走 Web | 产品流程；取决于是否有 Web 设置页 | 用户 | 1.2 | 否（默认 Web） |
 | OQ-9 | 多设备路由策略 | 产品决策 | 用户 | 1.2（默认单连接顶替）、1.4 | 否 |
 | OQ-10 | Cloud 审计/日志留存 30 天是否满足合规 | 合规要求外部 | 用户 | 1.2 | 否 |
-| OQ-3 | MCP 会话归属（`session_kind` vs `mcp_sessions`） | 取决于是否复用 rotation | 1.3 设计 | 1.3 | 否 |
+| OQ-3 | ~~MCP 会话归属（`session_kind` vs `mcp_sessions`）~~ | **已关闭（1.3.0）**：独立 `mcp_sessions`，`auth_sessions` 零改动 | 1.3.0 设计冻结 | **已定稿** | 否 |
 | **OQ-16** | **写工具开放后，HTTP 层如何做发送者约束**（DPoP vs per-request nonce vs mTLS） | 只读工具重放无副作用；写工具会改变状态，必须引入发送者约束，但选型取决于真实客户端能力 | 1.5 设计 | 1.5（写工具之前） | 否 |
 | OQ-E1 | Electron 主进程 Ed25519 是否与系统 Node 一致 | 系统 Node 已实测，Electron 未验证 | 1.1B 第一天 spike | 1.1B | 否（低风险） |
 | OQ-E2 | Windows DPAPI / Linux keyring 的 `safeStorage` 行为 | 需对应实机 | 1.1B 后期 | 1.1B（若含 Windows） | 否，若首发仅 macOS |

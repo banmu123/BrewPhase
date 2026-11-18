@@ -68,7 +68,7 @@ Remote MCP**：没有设备模型、没有标准 OAuth 授权服务器、没有 
 |---|---|---|
 | 入口 | `McpServer` + `StdioServerTransport` | `Desktop/src/mcp/stdio.ts:2-3, 87-98` |
 | SDK | `@modelcontextprotocol/server` `^2.4.0` | `Desktop/package.json` |
-| 协议版本 | `LATEST_PROTOCOL_VERSION` = **`2026-07-28`**（与现有 `MCP_ARCHITECTURE.md` 的「2026-07-28 spec」一致）。其余可接受版本由 SDK 常量 `SUPPORTED_PROTOCOL_VERSIONS` 决定，**待运行时确认**（源码中以压缩形式定义，未静态读取） | `node_modules/@modelcontextprotocol/server/dist` |
+| 协议版本 | **实测值**：`LATEST_PROTOCOL_VERSION` = **`2025-11-25`**；`SUPPORTED_PROTOCOL_VERSIONS` = `["2025-11-25","2025-06-18","2025-03-26","2024-11-05","2024-10-07"]`。这两个常量描述的是**旧 `Server` 类**的上界，**不是** `createMcpHandler` 的能力上界——后者实测同时服务现代（`server/discover` → `supportedVersions: ["2026-07-28"]`）与 legacy（`initialize` → `2025-06-18`）。详见 `REMOTE_MCP_PHASE_1_3_DESIGN.md` §1.3 | `node_modules/@modelcontextprotocol/server`（运行时导入读取） |
 | 传输 | AI 客户端 ↔ MCP 进程：**STDIO JSON-RPC**；MCP 进程 ↔ Main：**本地 socket + NDJSON** | `stdio.ts:97`、`bridge-client.ts:53-73` |
 | 构建 | 独立 Vite 配置打成单文件 `out/mcp/stdio.mjs`（911 kB），只 external `node:*` | `Desktop/vite.mcp.config.ts` |
 | 打包校验 | `scripts/verify-mcp-runtime.mjs` | `package.json` → `verify:mcp-runtime` |

@@ -793,12 +793,22 @@ MCP token 打 `/auth/me` 同样被拒。**这是 B6 的关闭方式。**
 **写工具开放前必须重评**：只读工具重放只造成重复读；一旦开放写工具，必须引入
 发送者约束（DPoP，RFC 9449）或 per-request nonce。见 `OQ-16`。
 
-> **refresh 的归属是 `OPEN QUESTION`（OQ-3）**：现有 `auth_sessions` **没有**
-> `session_kind`（Phase 1.0 文档误写为「独立 family `session_kind='mcp'`」）。
-> 两条可选路径：① migration 给 `auth_sessions` 加 `session_kind TEXT NOT NULL
-> DEFAULT 'desktop'`；② 新建 `mcp_sessions` 表，完全独立于登录会话。
-> **倾向 ②**——MCP 客户端的登出绝不该碰用户的 Desktop 登录会话，独立表在结构上
-> 保证这一点。定稿在 Phase 1.3。
+> **refresh 的归属已定稿（OQ-3 关闭，Phase 1.3.0）**：采用**独立 `mcp_sessions` 表**，
+> **不改** `auth_sessions`（现有表没有、也不该有 `session_kind`）。
+>
+> 决定性理由有三条，均来自真实代码而非偏好：
+> 1. `auth_sessions.refresh_token_hash` 是**全局 UNIQUE**——两个域的 token 挤在同一
+>    唯一性域里，任一侧的清理都会波及另一侧；
+> 2. `logoutByRefreshToken()` 与 `rotateRefreshToken()` 的复用检测都会**撤销整个
+>    `token_family`**——共表时 MCP 客户端登出（或并发刷新被误判为盗用）会直接踢掉
+>    Desktop 登录；
+> 3. `auth_sessions` 没有 `client_id` / `grant_id` / `scope` / `resource`，
+>    加进去等于一张表两种语义，且现有 340+ 条会话测试的每条查询都要记得按
+>    kind 过滤——漏一处就是越权或误踢。
+>
+> 完整状态机、轮换流程与「登出/撤销/过期」行为矩阵见
+> **`REMOTE_MCP_PHASE_1_3_DESIGN.md` §9**。该矩阵是 OQ-3 的验收本体：
+> 任何一行出现跨域联动（MCP 登出影响 Desktop、Desktop 登出撤 MCP）即违反决策。
 
 ### 3.3 `device_token`
 

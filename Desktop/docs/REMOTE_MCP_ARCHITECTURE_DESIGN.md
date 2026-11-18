@@ -565,7 +565,7 @@ Gateway 只做「认证 → 授权 → 路由 → 转发 → 回传」。
 | B4 | Desktop 无 WS 客户端 | 无法出站 | 新增 `src/main/remote/`；Electron 45 内置 Node 22 **需实测**全局 `WebSocket`，否则加 `ws` |
 | B5 | 无连接路由表 | 多实例不可用 | 第一版**单实例**（运维约束，非技术强制）；多实例需 Redis，写入 Phase 1.4 |
 | **B6** | **JWT `aud` 硬编码为 `brewphase-desktop`**（`sessions/jwt.ts:15,58,97`），`verifyAccessToken` 强制校验该值；claims 只有 `sub/sid/iss/aud/iat/exp/jti`，**无 scope、无 grant** | MCP access token 若沿用此 audience，则 Desktop 登录 token 可被当作 MCP token 使用（反之亦然），且 scope 无处可取 | Phase 1.3 新增 **MCP 专用签发/校验路径**（同 keyring、不同 `aud`、附加 `grant_id` + `scope`），不改现有 `signAccessToken` 行为 |
-| **B7** | **`auth_sessions` 无 `session_kind`**（列：`id/user_id/refresh_token_hash/token_family/device_id/device_name/user_agent/ip_hash/expires_at/revoked_at/replaced_by/created_at/last_used_at`） | 无法在会话层区分「Desktop 登录」与「MCP client 会话」，登出会互相牵连 | Phase 1.3 migration 加 `session_kind TEXT NOT NULL DEFAULT 'desktop'`；或用独立 `mcp_sessions` 表（`OPEN QUESTION` OQ-3） |
+| **B7** | **`auth_sessions` 无 `session_kind`**（列：`id/user_id/refresh_token_hash/token_family/device_id/device_name/user_agent/ip_hash/expires_at/revoked_at/replaced_by/created_at/last_used_at`） | 无法在会话层区分「Desktop 登录」与「MCP client 会话」，登出会互相牵连 | **OQ-3 已关闭（Phase 1.3.0）**：新建独立 `mcp_sessions` 表，**不改** `auth_sessions`。理由见 `REMOTE_MCP_PHASE_1_3_DESIGN.md` §9.2（全局 UNIQUE 的 `refresh_token_hash`、`logoutByRefreshToken` 撤整族、缺少 `client_id`/`grant_id`） |
 
 ### 7.2 高危风险
 
@@ -591,7 +591,7 @@ Gateway 只做「认证 → 授权 → 路由 → 转发 → 回传」。
 |---|---|---|---|---|---|
 | OQ-1 | `executeTool` 的错误码：内部统一一套再映射，还是两套词表 | 取决于实现时的错误分类粒度；不影响对外契约 | 1.1A 实现者 | 1.1A | 否（倾向内部 6 个码 + 各自映射） |
 | OQ-2 | `createShape`（6 种响应形状）放执行层还是留 Local | Remote 只用只读工具，不需要它 | 1.1A 实现者 | 1.1A | 否（倾向留 Local） |
-| OQ-3 | MCP 会话用 `auth_sessions.session_kind` 还是独立 `mcp_sessions` 表 | `auth_sessions` 当前无该列；取决于是否复用 refresh rotation | 1.3 设计 | 1.3 | 否 |
+| OQ-3 | ~~MCP 会话用 `auth_sessions.session_kind` 还是独立 `mcp_sessions` 表~~ | **已关闭（1.3.0）**：选独立 `mcp_sessions`；`auth_sessions` 零改动 | 1.3 设计 | **已定稿** | 否 |
 | OQ-4 | 同用户多设备路由策略（主设备 / 任选 / 广播） | 产品决策 | 用户 | 1.2（默认单连接顶替）、1.4 | 否 |
 | OQ-5 | **审计连续失败是否熔断远程开关**（含 6 项待评估条件，见安全 §6.5.7） | 产品权衡：阈值、持续时间、错误类型、恢复方式都未定 | 用户 | 1.4 | 否（**第一版不熔断**，只告警） |
 | OQ-6 | 是否需要 E2E 加密（Cloud 只见密文） | 会影响 Cloud 侧过滤能力 | 用户 | 1.5 | 否 |

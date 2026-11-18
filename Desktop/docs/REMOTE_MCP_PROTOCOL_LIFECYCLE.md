@@ -523,15 +523,22 @@ Desktop: 收到 4003 → 删 device.json → blocked → 不重连 → 界面「
 
 ## 15. Gateway 必须暴露的 HTTP 端点
 
+> **Phase 1.3.0 修订**：本节原先把 `/authorize`、`/token`、`/register` 写成根路径，
+> 与现有 Desktop 登录的 `/oauth/*` 存在命名碰撞风险；且未区分 MCP 的两个协议
+> 时代。现按 `REMOTE_MCP_PHASE_1_3_DESIGN.md`（下称「设计 §x」）冻结如下。
+> **唯一权威**是设计文件；本节只保留端点清单。
+
 | 方法 | 路径 | 用途 | 备注 |
 |---|---|---|---|
-| `POST` | `/mcp` | MCP Streamable HTTP | 用 SDK `createMcpHandler` + `WebStandardStreamableHTTPServerTransport` |
-| `GET` | `/.well-known/oauth-protected-resource` | RFC 9728 保护资源元数据 | SDK `buildOAuthProtectedResourceMetadata` |
-| `GET` | `/.well-known/oauth-authorization-server` | RFC 8414 AS 元数据 | SDK `oauthMetadataResponse` |
-| `POST` | `/register` | DCR（RFC 7591） | 是否需要「待确认」（见安全文档 §9） |
-| `GET` | `/authorize` | 授权（含 consent 页） | **必须接受非 127.0.0.1 的 redirect_uri**（与现有登录 OAuth 的关键差异） |
-| `POST` | `/token` | `grant_type=authorization_code\|refresh_token` | **必须支持 `grant_type`**（与现有 `/oauth/token` 的差异） |
-| `POST` | `/revoke` | RFC 7009 | 可选 |
+| `POST` | `/mcp` | MCP Streamable HTTP（唯一 MCP 端点） | SDK `createMcpHandler(...).fetch`（SDK 内部已封装 transport） |
+| `GET`/`DELETE` | `/mcp` | — | **恒 `405`**：规范已移除 GET 流与协议层会话（设计 §4.1） |
+| `GET` | `/.well-known/oauth-protected-resource` | RFC 9728 保护资源元数据 | 同时提供 path-inserted 变体 `…/oauth-protected-resource/mcp`（设计 §6.2） |
+| `GET` | `/.well-known/oauth-authorization-server` | RFC 8414 AS 元数据 | SDK `oauthMetadataResponse`；`issuer` 必须与 URL 逐字符一致 |
+| `GET` | `/mcp/oauth/authorize` | 授权入口 | **与根 `/oauth/authorize` 物理分离**；consent 在 `/mcp/consent` |
+| `POST` | `/mcp/oauth/token` | `grant_type=authorization_code\|refresh_token` | **必须支持 `grant_type`**（与现有 `/oauth/token` 的差异） |
+| `POST` | `/mcp/oauth/register` | DCR（RFC 7591） | **已弃用，默认关闭**；`MCP_DCR_ENABLED=false` 时元数据不暴露 `registration_endpoint` |
+| `POST` | `/mcp/oauth/revoke` | RFC 7009 | 撤销该 refresh token 所属 family；**不**撤 grant |
+| `POST` | `/mcp/consent` | 用户批准 / 拒绝 | 需已登录（复用 `/auth/*`） |
 | `POST` | `/mcp-devices/register` | 设备注册（§3.2） | 需用户 Bearer |
 | `POST` | `/mcp-devices/{id}/confirm` | 用户确认码（§3.3） | Web 设置页 |
 | `POST` | `/mcp-devices/{id}/credentials` | 领取 device_token（§3.4） | 需 Bearer + 请求体 `claim_secret`（**不入 URL**） |
@@ -543,21 +550,24 @@ Desktop: 收到 4003 → 删 device.json → blocked → 不重连 → 界面「
 | `GET` | `/ready` | 就绪（新增 `instance_id` / `connection_count`） | 扩展现有 |
 
 `/mcp` 必须：
-- 校验 `Authorization: Bearer`，失败返回 401 + `WWW-Authenticate: Bearer resource_metadata="…"`
-- 校验 `Host` 与 `Origin`（SDK 的 `hostHeaderValidationResponse` / `originValidationResponse`）
-- 请求体上限 256 KB（MCP 请求本身不含大数据）
-- 不支持 `GET` 的 SSE 长连接（第一版只要请求-响应；ChatGPT 若要求 SSE，Phase 1.3 再加）
+- 校验 `Authorization: Bearer`，失败返回 401 + `WWW-Authenticate: Bearer resource_metadata="…", scope="…"`
+- 校验 `Host` 与 `Origin`（SDK 的 `hostHeaderValidationResponse` / `originValidationResponse`）；
+  `Origin` **存在且非法** → `403`；无 `Origin`（服务端到服务端）→ 通过
+- 请求体上限 256 KB（MCP 请求本身不含大数据）；超限 `413`
+- **不提供** `GET` 的 SSE 长连接（`405`）。长连接通知在 2026-07-28 由
+  `subscriptions/listen` 承载，属 Phase 1.5 可选增强
 
-### 15.1 OAuth 相关的三层要求必须分开（Phase 1.0.1）
+### 15.1 OAuth 相关的三层要求必须分开（Phase 1.0.1，1.3.0 修订）
 
 | 层 | 内容 | 当前状态 |
 |---|---|---|
-| **A. MCP 官方协议要求** | Streamable HTTP（`POST /mcp`，可选 SSE）、`initialize` / `tools/list` / `tools/call`、RFC 9728 保护资源元数据、`WWW-Authenticate` 带 `resource_metadata`、RFC 8707 `resource` 参数、PKCE S256 | SDK 已提供实现（`createMcpHandler`、`WebStandardStreamableHTTPServerTransport`、`buildOAuthProtectedResourceMetadata`、`requireBearerAuth`、`checkResourceAllowed`）——**协议层不用手写** |
-| **B. ChatGPT 实际接入要求** | 是否必须 DCR、是否必须 `outputSchema`、是否发送 `notifications/cancelled`、是否要求 SSE `GET /mcp`、`resource` 是否必填 | **未验证**（OQ-B/OQ-C）。**Phase 1.0.1 不得断言任何一条**，Phase 1.3 用真实客户端验收 |
-| **C. BrewPhase 自身安全策略** | `redirect_uri` 精确匹配（不走通配）、scope 必须在同意页逐项展示、`aud` 绑定 resource、token 15 分钟、撤销立即生效 | 已设计（本文 + 安全文档），与 A/B 无关，**不因 ChatGPT 的要求而放宽** |
+| **A. MCP 官方协议要求** | Streamable HTTP（`POST /mcp`，**仅 POST**）、**双时代**（modern：逐请求 `_meta` + `server/discover`；legacy：`initialize` + `tools/list` + `tools/call`）、RFC 9728 保护资源元数据、`WWW-Authenticate` 带 `resource_metadata`、RFC 8707 `resource` 参数、PKCE S256、`iss`（RFC 9207） | SDK 已提供实现（`createMcpHandler`、`buildOAuthProtectedResourceMetadata`、`oauthMetadataResponse`、`requireBearerAuth`、`checkResourceAllowed`）——**协议层不用手写**。双时代行为已实测（设计 §1.3） |
+| **B. ChatGPT 实际接入要求** | 用哪个协议版本、是否必须 DCR、是否支持 CIMD、是否必须 `outputSchema`、是否发送 `resource`、refresh 是否被使用 | **`NOT VERIFIED`**（OQ-B/OQ-C）。**任何文档不得断言其中一条**；1.3.3 用真实客户端验收后回填 |
+| **C. BrewPhase 自身安全策略** | `redirect_uri` 精确匹配（不走通配）、scope 必须在同意页逐项展示、`aud` 绑定 resource、token 15 分钟、撤销立即生效、CIMD 抓取防 SSRF | 已设计（本文 + 安全文档 + 设计 §7.3），与 A/B 无关，**不因 ChatGPT 的要求而放宽** |
 
-**不允许的推断**：不能说「ChatGPT 一定要求 DCR」或「ChatGPT 一定不支持 refresh」。
-这些只能由真实联调确定。Phase 1.0.1 只把它们列为验收门禁项。
+**不允许的推断**：不能说「ChatGPT 一定要求 DCR」或「ChatGPT 一定用 `initialize`」。
+这些只能由真实联调确定。**但设计不需要押注**：dual-era 让两种假设同时成立
+（设计 §3.1）——这是 1.3.0 相对旧设计最重要的修正。
 
 ### 15.2 `/mcp` 的请求级重放语义（Phase 0 / P0-2）
 

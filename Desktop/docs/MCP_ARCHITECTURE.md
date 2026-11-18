@@ -44,7 +44,7 @@ Bridge 连接失败即返回 `APP_NOT_RUNNING`。
 
 | 段 | 传输 | 说明 |
 |---|---|---|
-| AI 客户端 → MCP Server | STDIO | 官方 `@modelcontextprotocol/server` v2.4.0（2026-07-28 spec） |
+| AI 客户端 → MCP Server | STDIO | 官方 `@modelcontextprotocol/server` v2.4.0（其 `LATEST_PROTOCOL_VERSION` 为 `2025-11-25`；现代时代 `2026-07-28` 由 `createMcpHandler` 提供，见 `REMOTE_MCP_PHASE_1_3_DESIGN.md` §1.3） |
 | MCP Server → Main | Unix domain socket | NDJSON：一行一个请求/响应，单行 ≤ 1MB |
 
 Windows 的 Named Pipe 权限隔离在 V1 未验证，因此 **V1 只支持 macOS / Linux**；

@@ -263,3 +263,70 @@ R1 收口了「派发与撤销」；R2 收口「`syncLag` 置位之后，**队�
 
 **Test 基线**：Cloud 540 → **557**；Desktop 1265（未改动）。
 真实构建产物联调 **25/25**；同一脚本在修复前的构建上 **19/25**，且多写出一条 `req`。
+
+## 15. Phase 1.3.0：规范对齐与设计冻结（已冻结，未实现）
+
+**这是 Phase 1.3 的唯一设计基线**：`REMOTE_MCP_PHASE_1_3_DESIGN.md`（下称「设计」）。
+本阶段**零生产代码、零迁移、零依赖变更**；只做规范核对、OQ-3 定稿与文档修订。
+
+### 15.1 规范版本
+
+| 项 | 值 |
+|---|---|
+| MCP 最新正式版本 | **`2026-07-28`**（2026-11-18 实查 `/specification/latest`） |
+| 该版关键变更 | 移除 **GET SSE 流**；移除**协议层会话**（`Mcp-Session-Id`）；`initialize` 改为 legacy；modern 用逐请求 `_meta` + `server/discover` |
+| 授权 | OAuth 2.1 + RFC 9728 PRM +（RFC 8414 / OIDC Discovery）+ RFC 8707 `resource` + RFC 9207 `iss` |
+| 客户端注册 | CIMD（SHOULD，首选）/ 预注册（允许）/ **DCR（MAY，已弃用）** |
+
+### 15.2 四条会直接写错实现的事实（1.3.0 修正）
+
+| # | 修正 | 权威 |
+|---|---|---|
+| 1 | `initialize` 只属 **legacy**；modern 没有它，用 `server/discover` | 设计 §3.1；路线图 §3.0/§3.4 |
+| 2 | `GET`/`DELETE /mcp` 恒 `405`；不是「以后再加」 | 设计 §4.1；生命周期 §15 |
+| 3 | DCR 已弃用，**不是唯一注册路径**；CIMD 才是首选 | 设计 §7.1；路线图 §3.1 C3 |
+| 4 | 协议层会话已移除；OQ-3 的「会话」是 OAuth refresh 容器，两件事无关 | 设计 §16；安全 §3.2 |
+
+### 15.3 关键技术判断（均为实测，非推测）
+
+| 判断 | 证据 |
+|---|---|
+| Cloud **无** MCP SDK；Desktop 有 `@modelcontextprotocol/server@2.4.0` | `package.json` / `node_modules` |
+| 该版本是 npm `latest` | `npm view … version` → `2.4.0` |
+| `SUPPORTED_PROTOCOL_VERSIONS` 只到 `2025-11-25` | 运行时导入读取 |
+| **但** `createMcpHandler` 实测**同时**服务 modern（`server/discover` → `supportedVersions:["2026-07-28"]`）与 legacy（`initialize` → `2025-06-18`） | 直接构造 `Request` 喂 `handler.fetch` |
+| 规范要求的错误面由 SDK 产出：`-32020` / `-32022` / `-32601` / `405` | 同上 |
+
+→ 因此采用 **dual-era**（`legacy: 'stateless'`），**不押注**客户端用哪一代。
+
+### 15.4 OQ-3 定稿
+
+**独立 `mcp_sessions` 表，`auth_sessions` 零改动。** 三条决定性理由来自真实代码：
+全局 UNIQUE 的 `refresh_token_hash`、`logoutByRefreshToken`/重放检测**撤整族**、
+缺少 `client_id`/`grant_id`/`scope`/`resource`。完整决策、状态机、轮换流程与
+「登出/撤销/过期」矩阵见设计 §9。
+
+### 15.5 Phase 1.3 拆分
+
+| 子阶段 | 主题 |
+|---|---|
+| **1.3.0** | 本阶段：规范对齐与设计冻结 |
+| **1.3.1** | MCP OAuth 基础设施（迁移 `0003`、`mcp_sessions`、authorize/token/register、PRM/AS 元数据、consent、与 Desktop 登录隔离） |
+| **1.3.2** | Streamable HTTP 与工具服务（`POST /mcp` dual-era、Bearer + audience + grant 回查、8 工具、错误面、日志） |
+| **1.3.3** | 真实客户端联调（Inspector、ChatGPT、Grok、refresh、撤销/离线/异常） |
+
+### 15.6 本阶段修订的文件
+
+| 文件 | 修订 |
+|---|---|
+| `REMOTE_MCP_PHASE_1_3_DESIGN.md` | **新增**（唯一基线，16 节） |
+| `REMOTE_MCP_PHASES_ROADMAP.md` | §3.0 拆分；§3.1 端点组与 dual-era；§3.2 路由组与版本策略；§3.3/3.4 测试与门禁（G2/G2'）；§3.5 风险；§2.1 前的 1.3 交叉引用；Phase 1.5 的 SSE 条目改为 `subscriptions/listen` |
+| `REMOTE_MCP_PROTOCOL_LIFECYCLE.md` | §15 端点表（`/mcp/oauth/*` 分离、`/mcp/consent`、GET/DELETE 405）；§15.1 三层要求（dual-era） |
+| `REMOTE_MCP_PROTOCOL_RUNTIME.md` | §9.2.1 新增：传输层 JSON-RPC 码（`-32020`/`-32022`/`-32601`/`-32000`）不属 19 个业务码 |
+| `REMOTE_MCP_SECURITY.md` | §3.2 末：OQ-3 定稿与三条代码级理由 |
+| `REMOTE_MCP_SECURITY_OPERATIONS.md` | §4.1 撤销矩阵（grant 撤销同事务撤 `mcp_sessions`）；§9 OQ-3/OQ-7 行 |
+| `REMOTE_MCP_ARCHITECTURE_DESIGN.md` | §7.1 B7；§7.3 OQ-3 |
+| `REMOTE_MCP_INDEX.md` | 本节 |
+
+**未改动**：`cloud/**`、`Desktop/src/**`、`cloud/src/db/migrations/`、
+`auth_sessions`、任何依赖版本。
