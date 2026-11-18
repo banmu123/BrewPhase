@@ -16,7 +16,18 @@ export type ErrorCode =
   | "access_denied"
   | "account_suspended"
   | "rate_limited"
-  | "server_error";
+  | "server_error"
+  // ---- Remote MCP 设备管理（Phase 1.2A，协议 §3.2–§3.5）----
+  | "invalid_public_key"
+  | "device_limit"
+  | "device_exists"
+  | "device_not_found"
+  | "already_active"
+  | "confirm_expired"
+  | "invalid_confirm_code"
+  | "claim_mismatch"
+  | "credentials_already_issued"
+  | "invalid_device_state";
 
 export class AppError extends Error {
   readonly code: ErrorCode;
@@ -66,6 +77,50 @@ export const rateLimited = (retryAfterSeconds: number) =>
 
 export const serverError = (description = "Internal server error") =>
   new AppError("server_error", 500, description, { expose: false });
+
+// ---- Remote MCP 设备管理 ----
+//
+// 所有 description 都是**固定文案**：不含请求体、不含任何 secret 片段、
+// 不拼接用户输入。这样即使某天这些错误被原样回显，也不会成为泄漏通道。
+
+export const invalidPublicKey = () =>
+  new AppError("invalid_public_key", 400, "public_key must be base64url of 32 bytes");
+
+export const deviceLimitReached = () =>
+  new AppError("device_limit", 429, "too many devices for this account");
+
+export const deviceExists = () =>
+  new AppError("device_exists", 409, "this device is already registered");
+
+/**
+ * 「不存在」与「不是你的」返回**同一个** 404。
+ *
+ * 分开会把设备 id 变成一条存在性探针：攻击者持任意账号即可枚举别人的
+ * 设备 id（uuid 虽难猜，但一旦从别处泄漏就能确认归属）。
+ */
+export const deviceNotFound = () => new AppError("device_not_found", 404, "device not found");
+
+export const alreadyActive = () => new AppError("already_active", 409, "device is already active");
+
+export const confirmExpired = () =>
+  new AppError("confirm_expired", 410, "confirmation window has expired");
+
+export const invalidConfirmCode = () =>
+  new AppError("invalid_confirm_code", 400, "invalid confirmation code");
+
+/** 固定文案：不回显 claim_secret，也不区分「格式不对」与「值不对」。 */
+export const claimMismatch = () => new AppError("claim_mismatch", 403, "claim rejected");
+
+export const credentialsAlreadyIssued = () =>
+  new AppError("credentials_already_issued", 409, "credentials were already issued");
+
+/**
+ * 状态机不允许的转换（撤销后 resume、重复 suspend 等）。
+ *
+ * 用 409 而不是 400：请求本身合法，只是与当前状态冲突。
+ */
+export const invalidDeviceState = (description: string) =>
+  new AppError("invalid_device_state", 409, description);
 
 export interface ErrorBody {
   error: ErrorCode;

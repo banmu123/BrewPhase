@@ -10,7 +10,7 @@ export async function getTestDb(): Promise<DbHandle> {
 
 /** 清空全部业务表（保留 schema），测试之间互相隔离。 */
 export async function resetDb(handle: DbHandle): Promise<void> {
-  await handle.sql`truncate table auth_events, oauth_codes, oauth_transactions, auth_sessions, user_identities, users restart identity cascade`;
+  await handle.sql`truncate table mcp_grants, mcp_devices, auth_events, oauth_codes, oauth_transactions, auth_sessions, user_identities, users restart identity cascade`;
 }
 
 export async function closeTestDb(): Promise<void> {

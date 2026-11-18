@@ -1,10 +1,10 @@
 import { Hono } from "hono";
-import { lt } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import type { AppContext, AppHono } from "./context.js";
 import { createKeyRing, type AccessClaims } from "./sessions/jwt.js";
 import { createLogger } from "./logger.js";
 import { createDb } from "./db/client.js";
-import { oauthCodes, oauthTransactions } from "./db/schema.js";
+import { mcpDevices, oauthCodes, oauthTransactions } from "./db/schema.js";
 import { loadEnv } from "./env.js";
 import { resolveProviderFetch } from "./net/proxy-fetch.js";
 import { createProviders } from "./oauth/providers.js";
@@ -12,6 +12,7 @@ import { respondError, AppError } from "./security/errors.js";
 import { routeAuth } from "./routes/auth.js";
 import { routeHealth } from "./routes/health.js";
 import { routeOauth } from "./routes/oauth.js";
+import { routeMcpDevices } from "./mcp-devices/index.js";
 
 /** 从进程环境装配完整应用上下文（生产入口用；测试自己构造 AppContext）。 */
 export function createContextFromProcessEnv(): AppContext {
@@ -87,6 +88,9 @@ export function createApp(ctx: AppContext): AppHono {
   routeHealth(app, ctx);
   routeOauth(app, ctx);
   routeAuth(app, ctx);
+  // Remote MCP 设备管理（Phase 1.2A）。挂在这里而不是混进 routeAuth：
+  // 设备面的路由与账号面的路由有各自的限流桶与错误码域。
+  routeMcpDevices(app, ctx);
 
   return app;
 }
@@ -95,7 +99,24 @@ export interface SweepHandle {
   stop(): void;
 }
 
-/** 周期清理过期 OAuth Transaction 与一次性授权码（测试中可手动调用 sweepOnce）。 */
+/**
+ * 周期清理过期 OAuth Transaction、一次性授权码与过期未确认的设备
+ * （测试中可手动调用 sweepOnce）。
+ *
+ * ## 设备清理的边界（Phase 1.2A）
+ *
+ * 只删 `status='pending'` 且 `expires_at < now` 的行。
+ *
+ * **不删 active / suspended / revoked**，理由各不相同：
+ * - `active` / `suspended` 是活设备，删了等于未经用户同意撤销；
+ * - `revoked` 是**审计历史**（谁在什么时候注册过什么），删了永久消失；
+ * - `pending` 且已过期的是「用户点了注册但没去确认」的残骸，留着只会
+ *   让设备列表堆满没用的条目，且它的 `claim_secret` 还在（虽然已过期）。
+ *
+ * 另外注意用的是 `expiresAt`（pending 窗口）而**不是** `tokenExpiresAt`
+ * （device_token 寿命）：后者过期只意味着需要重新领取/轮换，
+ * 不代表设备该消失。
+ */
 export function startSweep(ctx: AppContext, intervalMs = 60_000): SweepHandle {
   const sweepOnce = async (): Promise<void> => {
     const now = new Date();
@@ -107,10 +128,15 @@ export function startSweep(ctx: AppContext, intervalMs = 60_000): SweepHandle {
       .delete(oauthCodes)
       .where(lt(oauthCodes.expiresAt, now))
       .returning({ hash: oauthCodes.codeHash });
-    if (transactions.length > 0 || codes.length > 0) {
+    const devices = await ctx.db.db
+      .delete(mcpDevices)
+      .where(and(eq(mcpDevices.status, "pending"), lt(mcpDevices.expiresAt, now)))
+      .returning({ id: mcpDevices.id });
+    if (transactions.length > 0 || codes.length > 0 || devices.length > 0) {
       ctx.logger.info("sweep_completed", {
         expiredTransactions: transactions.length,
         expiredCodes: codes.length,
+        expiredDevices: devices.length,
       });
     }
   };

@@ -8,6 +8,13 @@
       "when": 1794838063927,
       "tag": "0000_nasty_solo",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1794979492116,
+      "tag": "0001_remote_mcp_devices",
+      "breakpoints": true
     }
   ]
 }
