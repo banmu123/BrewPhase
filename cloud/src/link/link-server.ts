@@ -7,6 +7,7 @@ import { mcpDevices } from "../db/schema.js";
 import { DEVICE_TOKEN_PATTERN } from "../mcp-devices/device-token.js";
 import { sha256Hex } from "../security/crypto.js";
 import { admitDevice, type AdmissionFailure } from "./admission.js";
+import { gatewayResource } from "./dispatch-guard.js";
 import {
   createMemoryConnectionRegistry,
   type ConnectionInfo,
@@ -21,6 +22,13 @@ import {
   verifyHandshake,
   type HandshakeFailure,
 } from "./handshake.js";
+import {
+  createForwarder,
+  type DispatchToolCallInput,
+  type Forwarder,
+  type GrantSyncOutcome,
+} from "./forwarder.js";
+import type { DispatchResult } from "./request-registry.js";
 import { createHeartbeat, type HeartbeatController } from "./heartbeat.js";
 import { NonceStore } from "./nonce-store.js";
 import {
@@ -95,6 +103,14 @@ export interface LinkServerOptions {
   nowMono?: () => number;
   /** epoch 毫秒（测试注入：golden fixture 的 ts 是固定值）。 */
   now?: () => number;
+  /**
+   * 转发层扫描间隔（毫秒）。`0` = 不自转，由调用方显式 `sweep()`。
+   *
+   * 为什么默认**自转**：超时与 ack 超时是这台机器的兜底判据，任何一条
+   * 忘了扫描都会让「设备看起来忙」持续到断线。测试传 0 是为了避免真实
+   * 定时器在断言之间偷偷改变状态——那是并发测试最难查的一种抖动。
+   */
+  sweepIntervalMs?: number;
   /** **仅测试使用**：在精确的 await 边界暂停，用于确定性构造并发顺序。 */
   lifecycleHooks?: LinkLifecycleHooks;
 }
@@ -135,6 +151,24 @@ export interface LinkServer {
    * 仍应再查一次——两者代价相同，而多一道判据不会有害。
    */
   isRotating(deviceId: string): Promise<boolean>;
+  /**
+   * 派发一次工具调用（协议运行时 §6.1）。
+   *
+   * **唯一**的派发入口：路由层（未来的 `/mcp`）只能通过它发请求，看不到
+   * socket、registry 或 grant_ctx——那三样一旦暴露，HTTP 路由就会长出
+   * 「直接操作连接」的代码，而所有跨用户校验都在这一层之后。
+   */
+  dispatchToolCall(input: DispatchToolCallInput): Promise<DispatchResult>;
+  /** 把一条 grant 增量下发给在线设备（Phase 1.3 的 OAuth 授权路径会调用它）。 */
+  installGrant(input: Parameters<Forwarder["installGrant"]>[0]): Promise<GrantSyncOutcome>;
+  /** 撤销一条 grant：先停路由、再发帧、再等 ack。 */
+  revokeGrant(input: Parameters<Forwarder["revokeGrant"]>[0]): Promise<GrantSyncOutcome>;
+  /** scope 变更：旧 ctx revoke → ack → 新 ctx install → ack。 */
+  replaceGrant(input: Parameters<Forwarder["replaceGrant"]>[0]): Promise<GrantSyncOutcome>;
+  /** 扫描超时 / 排队预算 / ack 超时。生产由定时器驱动；测试显式调用。 */
+  sweep(nowMono?: number): void;
+  /** **诊断用**：转发层的连接级授权状态与计数。 */
+  inspectForwarder(): ReturnType<Forwarder["inspect"]>;
   connectionCount(): number;
   /**
    * **诊断/测试用**：等所有进行中的握手落定。
@@ -295,6 +329,59 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
   let shuttingDown = false;
   /** 进行中的握手。停机时必须等它们落定再清表（见 shutdown）。 */
   const inFlightHandshakes = new Set<Promise<void>>();
+
+  /**
+   * 写出一个出站帧。
+   *
+   * 三条检查都是必需的：
+   * - `live` 里找不到 = 连接已收敛（此时 socket 正在关闭）；
+   * - `closing` = 已决定关闭，写出只会得到一个半关闭的 socket；
+   * - `readyState` = 传输层自己的事实，可能与我们的标记短暂不一致。
+   *
+   * 任何一条不满足都返回 false，让调用方按 `DEVICE_OFFLINE` 收敛——
+   * **绝不**静默丢弃：一个「发出去了」的假象会让调用方等到 deadline。
+   */
+  const sendToConnection = (connectionId: string, text: string): boolean => {
+    const target = live.get(connectionId);
+    if (!target || target.closing) return false;
+    if (target.ws.readyState !== WebSocket.OPEN) return false;
+    try {
+      target.ws.send(text);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  /**
+   * 转发层。**它不持有 socket**：出站走 `sendToConnection`，入站由 onFrame
+   * 分发，连接生命周期由 onConnectionReady / onConnectionClosed 通知。
+   * 这样它可以被纯单元测试打穿（假连接、假时钟），而不需要每条用例开真 socket。
+   */
+  const forwarder = createForwarder({
+    db: ctx.db.db,
+    logger: ctx.logger,
+    resource: gatewayResource(ctx.env.baseUrl),
+    registry,
+    send: sendToConnection,
+    now: () => now(),
+    nowMono: () => nowMono(),
+  });
+
+  const sweepIntervalMs = options.sweepIntervalMs ?? 250;
+  const sweepTimer =
+    sweepIntervalMs > 0
+      ? setInterval(() => {
+          if (shuttingDown) return;
+          try {
+            forwarder.sweep(nowMono());
+          } catch (err) {
+            // 扫描是本机的兜底路径：它抛错不该让进程退出，但必须留下痕迹。
+            ctx.logger.error("link_sweep_failed", { error: errorCode(err) });
+          }
+        }, sweepIntervalMs)
+      : null;
+  sweepTimer?.unref?.();
 
   // MARK: - Upgrade 预检
 
@@ -519,9 +606,28 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
         closeWith(connection.ws, REMOTE_CLOSE.NORMAL, "bye");
         return;
       }
+      case "res": {
+        // 回包交给转发层。**它自己吞掉一切畸形/未知/重复**：一条来路不明的
+        // `res` 不能变成 HTTP 路由的 500，也不能变成调用方看到的「执行成功」。
+        forwarder.handleRes(connection.connectionId, json);
+        return;
+      }
+      case "grant_update_ack": {
+        forwarder.handleGrantAck(connection.connectionId, json);
+        return;
+      }
+      case "req":
+      case "cancel":
+        // Cloud 不发给自己：收到说明对端把方向搞反了。忽略而不是 4009——
+        // 前向兼容规则要求「未知/不该来的帧一律忽略」，而断连的代价远大于
+        // 一条走错方向的帧。
+        ctx.logger.warn("link_unexpected_direction", {
+          connectionId: connection.connectionId,
+          kind: type,
+        });
+        return;
       default:
-        // 未知 type / 本阶段不处理的帧（req / res / cancel / grant_update_ack）
-        // 一律忽略（协议 §2.2 的前向兼容规则）。1.2B.2 会在这里接 req/res。
+        // 未知 type 一律忽略（协议 §2.2 的前向兼容规则）。
         return;
     }
   };
@@ -675,6 +781,18 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
         return await abortHandshake(connection);
       }
 
+      // `hello_ok` 是同步屏障（协议 §6.5.1）：Desktop 在处理下一条帧之前会
+      // 原子替换整张授权表。所以**紧接着**（同一个同步块，中间没有 await）
+      // 把快照装进转发层——这样就不存在「连接已 ready 但授权还没装」的窗口，
+      // 也不必让派发路径去区分「刚握手完」与「一直是空授权」。
+      forwarder.onConnectionReady({
+        connectionId: connection.connectionId,
+        userId: admission.device.userId,
+        deviceId: admission.device.id,
+        grantEpoch: admission.device.grantEpoch,
+        grants: snapshots,
+      });
+
       // 最后一道闸：`sendJson` 是同步的，但 close 事件可能在上一个 tick
       // 已经把它标成 closing（此时 readyState 仍是 OPEN 的窗口极窄，
       // 但这条判断不花钱，且让「已关闭不能进 active」成为结构事实）。
@@ -801,6 +919,10 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
       connection.helloTimeout = null;
     }
     live.delete(connection.connectionId);
+    // **同步**通知转发层：那条连接上的在途请求必须立刻以 DEVICE_OFFLINE
+    // 结束，而不是等到 sweep 发现 deadline 过期。两者的差别是「调用方等
+    // 15 秒」与「调用方立刻知道设备掉了」。
+    forwarder.onConnectionClosed(connection.connectionId);
     connection.convergePromise = (async () => {
       await releaseRoute(connection);
       connection.state = "closed";
@@ -879,6 +1001,10 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
     }
 
     rotatingDevices.set(deviceId, info.connectionId);
+    // 先让转发层知道「这条连接的身份作废了」：它会把在途请求以
+    // `DEVICE_UNAUTHORIZED` 结束，并在路由项被删掉之后仍然答得出
+    // 「不是离线，是轮换」。
+    forwarder.onConnectionRotating(info.connectionId);
     await registry.markRotating(deviceId, info.connectionId);
     await registry.unbind(info.userId, info.deviceId, info.connectionId);
 
@@ -945,10 +1071,14 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
     }
     // 5. 逐个收敛，确保每条连接的路由都被释放（幂等，重复调用无害）。
     await Promise.all(targets.map((target) => converge(target)));
-    // 6. 清表。此时 connection_count 必须归零。
+    // 6. 收转发层：在途请求以 DEVICE_OFFLINE 结束，停掉扫描定时器。
+    //    顺序在 registry.clear() 之前——转发层的收敛可能还要读路由表。
+    forwarder.shutdown();
+    if (sweepTimer) clearInterval(sweepTimer);
+    // 7. 清表。此时 connection_count 必须归零。
     registry.clear();
     live.clear();
-    // 7. 关闭 ws 服务端（不再接受 upgrade）。
+    // 8. 关闭 ws 服务端（不再接受 upgrade）。
     await new Promise<void>((resolve) => {
       wss.close(() => resolve());
     });
@@ -965,6 +1095,12 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
     disconnectDevice,
     rotateConnection,
     isRotating,
+    dispatchToolCall: (input: DispatchToolCallInput) => forwarder.dispatchToolCall(input),
+    installGrant: (input) => forwarder.installGrant(input),
+    revokeGrant: (input) => forwarder.revokeGrant(input),
+    replaceGrant: (input) => forwarder.replaceGrant(input),
+    sweep: (nowMonoArg?: number) => forwarder.sweep(nowMonoArg),
+    inspectForwarder: () => forwarder.inspect(),
     connectionCount: () => registry.count(),
     awaitHandshakes: (timeoutMs = 2000) => waitForHandshakes(inFlightHandshakes, timeoutMs),
     inspect: () =>

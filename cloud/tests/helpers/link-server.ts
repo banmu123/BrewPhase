@@ -53,6 +53,13 @@ export async function createLinkHarness(
     lifecycleHooks?: LinkLifecycleHooks;
     /** **仅并发测试使用**：包一层 registry（例如让 bind 变慢）。 */
     registry?: ConnectionRegistry;
+    /**
+     * 转发层的自转扫描间隔。测试默认 **0（不自转）**。
+     *
+     * 真实定时器会在断言之间偷偷推进状态（超时、ack 超时），而那正是并发
+     * 测试里最难查的一种抖动：失败率随机器负载浮动。测试要显式 `sweep()`。
+     */
+    sweepIntervalMs?: number;
   } = {},
 ): Promise<LinkHarness> {
   await ensureDatabaseOrThrow();
@@ -66,6 +73,7 @@ export async function createLinkHarness(
     resetDb: shouldReset = true,
     lifecycleHooks,
     registry: customRegistry,
+    sweepIntervalMs = 0,
     ...envOverrides
   } = options;
 
@@ -94,6 +102,7 @@ export async function createLinkHarness(
     now,
     lifecycleHooks,
     registry: customRegistry,
+    sweepIntervalMs,
   });
   ctx.link = link;
   ctx.instanceId = link.instanceId;

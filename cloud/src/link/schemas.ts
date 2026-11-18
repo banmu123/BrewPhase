@@ -40,8 +40,120 @@ export const REMOTE_MAX_FRAME_BYTES = 1024 * 1024;
 export const REMOTE_HEARTBEAT_MS = 20_000;
 export const REMOTE_IDLE_TIMEOUT_MS = 60_000;
 
-/** 在途请求上限。Phase 1.2B.1 只下发，不调度。 */
+/**
+ * 连接级在途请求上限（`hello_ok.max_inflight`）。
+ *
+ * Phase 1.2B.1 只下发；1.2B.2.2 起 Cloud 自己**真正执行**这个限制
+ * （`request-registry.ts`）。Desktop 在 pong 里上报的 `inflight` 只是提示，
+ * 不参与限流判断——那是被限流方自己报的数。
+ */
 export const REMOTE_MAX_INFLIGHT = 2;
+
+/**
+ * 每用户 / 每设备的在途请求上限（安全运维的并发预算，不是协议字段）。
+ *
+ * 为什么用户级(4) > 设备级(2)：第一版每用户只有一条连接（协议 §4.6），
+ * 所以用户级的上限实际上永远不会先命中——它存在是为了 Phase 1.4 支持
+ * 多设备并行时**不需要再改一遍调度代码**。少写一层的代价是：等那一天到来时，
+ * 限流逻辑会被迫在「已经在跑热路径」上重构。
+ */
+export const REMOTE_USER_MAX_INFLIGHT = 4;
+export const REMOTE_DEVICE_MAX_INFLIGHT = 2;
+
+/** Gateway 侧排队预算：超过就 `DEVICE_BUSY`，不让调用方无限等（协议运行时 §7.2）。 */
+export const REMOTE_QUEUE_BUDGET_MS = 2_000;
+
+/**
+ * 队列长度上限。
+ *
+ * 有上限才有意义：没有它，一次设备卡死会让云端的待发帧无限堆积，
+ * 而每一个都持有一个 deadline 定时器——那是一个把「设备慢」放大成
+ * 「Gateway OOM」的放大器。
+ */
+export const REMOTE_QUEUE_MAX = 32;
+
+/** 单次工具调用的默认执行预算（写进 `deadline_ms`）。 */
+export const REMOTE_TOOL_BUDGET_MS = 15_000;
+
+/** 硬上限：任何 `clientDeadline` 都不能把预算推到这之外（协议运行时 §7.2）。 */
+export const REMOTE_HARD_DEADLINE_MS = 30_000;
+
+/**
+ * `grant_update` 等待 ack 的上限。
+ *
+ * 超时的后果很重（整台设备停服），所以这个值不能太小；但它也**不能**是
+ * 无限——「无法确认撤销已生效」必须有一个明确的收敛点，否则 Cloud 会永久
+ * 停在「不确定」状态里继续路由。
+ */
+export const REMOTE_GRANT_ACK_TIMEOUT_MS = 3_000;
+
+/**
+ * 业务错误码（协议运行时 §9.1，**唯一权威表**）。
+ *
+ * 19 个。Cloud 只产生其中一部分（它不产生 `INVALID_ARGUMENTS` 这类
+ * Desktop 侧执行错误），但常量表保持完整：`res.error.code` 的校验必须
+ * 用**全集**，否则 Desktop 报一个新码时 Cloud 会把它误判成畸形帧。
+ */
+export const REMOTE_ERROR_CODES = [
+  "DEVICE_OFFLINE",
+  "DEVICE_UNAUTHORIZED",
+  "DEVICE_REVOKED",
+  "DEVICE_SUSPENDED",
+  "REMOTE_DISABLED",
+  "DEVICE_BUSY",
+  "USER_MISMATCH",
+  "GRANT_CONTEXT_INVALID",
+  "GRANT_REVOKED",
+  "SCOPE_DENIED",
+  "TOOL_NOT_ALLOWED",
+  "INVALID_ARGUMENTS",
+  "NOT_FOUND",
+  "REQUEST_TIMEOUT",
+  "REQUEST_CANCELLED",
+  "REQUEST_TOO_LARGE",
+  "PROTOCOL_VERSION_UNSUPPORTED",
+  "PROTOCOL_VIOLATION",
+  "INTERNAL_ERROR",
+] as const;
+export type RemoteErrorCode = (typeof REMOTE_ERROR_CODES)[number];
+
+/**
+ * 工具 → 所需 scope（与 Desktop `REMOTE_TOOL_SCOPES` 逐项相同）。
+ *
+ * Cloud 侧保留这份映射是**必须**的：派发前的 scope 判定不能等 Desktop 做
+ * （那样「不该发出去的请求」已经离开了 Cloud）。两处都保留不是冗余——
+ * Cloud 的判据是「这条授权够不够派发」，Desktop 的判据是「本机愿意执行什么」。
+ */
+export const REMOTE_TOOL_SCOPES: Record<RemoteToolName, RemoteScope> = {
+  search_records: "records:read",
+  get_record: "records:read",
+  list_record_tags: "tags:read",
+  list_beans: "coffee:read",
+  list_brews: "coffee:read",
+  list_tastings: "coffee:read",
+  list_canvases: "canvas:read",
+  get_canvas: "canvas:read",
+};
+
+/** 该工具是否属于远程面（`REMOTE_TOOLS` 常量内）。 */
+export function isRemoteTool(tool: string): tool is RemoteToolName {
+  return (REMOTE_TOOLS as readonly string[]).includes(tool);
+}
+
+/** 工具所需 scope；未知工具返回 `null`。 */
+export function scopeForTool(tool: string): RemoteScope | null {
+  return isRemoteTool(tool) ? REMOTE_TOOL_SCOPES[tool] : null;
+}
+
+/** 错误码的可重试性（与 Desktop `isRetryableRemoteError` 同一张表）。 */
+export function isRetryableRemoteError(code: RemoteErrorCode): boolean {
+  return (
+    code === "DEVICE_OFFLINE" ||
+    code === "DEVICE_BUSY" ||
+    code === "REQUEST_TIMEOUT" ||
+    code === "INTERNAL_ERROR"
+  );
+}
 
 /** 握手时限：连接建立后 5 秒内必须收到 `hello`（协议 §4.2）。 */
 export const REMOTE_HELLO_TIMEOUT_MS = 5_000;
@@ -351,6 +463,103 @@ export interface ByeFrame {
   ts: number;
   reason: string;
 }
+
+/**
+ * `req`（Cloud → Desktop，协议运行时 §6.1）。
+ *
+ * 字段集与 Desktop `remoteReqSchema` 逐项相同。三条禁止（都是「两个事实来源」
+ * 的老问题）：
+ *
+ * - **没有** `user_id` / `grant_id` / `client_id` / `scopes`：身份与授权只在
+ *   `grant_ctx` 指向的上下文里，请求帧同时带「引用」和「自报身份」时，
+ *   实现者一定会误用后者；
+ * - **没有** `connection_id`：那是连接层的事实，帧里带一份就有了两个真相；
+ * - `grant_ctx` 只能由 Cloud 从**当前连接**的上下文映射得到，不接受调用方指定。
+ */
+export interface ReqFrame {
+  v: 1;
+  type: "req";
+  id: string;
+  ts: number;
+  tool: string;
+  arguments: unknown;
+  request_hash: string;
+  /** **绝对** epoch 毫秒（相对超时会在每一跳累积误差）。 */
+  deadline_ms: number;
+  grant_ctx: string;
+  trace?: { mcp_request_id?: string; received_at?: number };
+}
+
+/** `cancel`（Cloud → Desktop，协议运行时 §7.5）。 */
+export interface CancelFrame {
+  v: 1;
+  type: "cancel";
+  id: string;
+  ts: number;
+  reason: string;
+}
+
+/** `grant_update`（Cloud → Desktop，协议运行时 §6.5.2）。 */
+export interface GrantUpdateFrame {
+  v: 1;
+  type: "grant_update";
+  ts: number;
+  /** **设备级**代数，单调递增。不是单 grant 的 `epoch`。 */
+  grant_epoch: number;
+  op: "install" | "revoke";
+  grant?: GrantSnapshot;
+  grant_ctx?: string;
+  reason?: string;
+}
+
+/**
+ * `res`（Desktop → Cloud，协议运行时 §6.3）。
+ *
+ * `ok:true` 必须带 `data`（哪怕是 `null`），`ok:false` 必须带 `error`。
+ * 用 `refine` 而不是 `optional` 的直觉写法，是因为「`ok:true` 但没有 data」
+ * 会被下游当成「执行成功、结果为空」——那是一个**静默的错答案**。
+ */
+export const resSchema = z
+  .object({
+    v: z.literal(1),
+    type: z.literal("res"),
+    id: z.string().min(1).max(128),
+    ts: z.number().int(),
+    ok: z.boolean(),
+    data: z.unknown().optional(),
+    error: z
+      .object({
+        code: z.enum(REMOTE_ERROR_CODES),
+        message: z.string().max(400),
+        retryable: z.boolean(),
+      })
+      .strict()
+      .optional(),
+    meta: z
+      .object({
+        duration_ms: z.number().int().nonnegative(),
+        cached: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict()
+  .refine((value) => (value.ok ? value.data !== undefined : value.error !== undefined), {
+    message: "ok requires data; failure requires error",
+  });
+export type ResFrame = z.infer<typeof resSchema>;
+
+/** `grant_update_ack`（Desktop → Cloud，协议运行时 §6.5.2）。 */
+export const grantUpdateAckSchema = z
+  .object({
+    v: z.literal(1),
+    type: z.literal("grant_update_ack"),
+    ts: z.number().int(),
+    grant_epoch: z.number().int().nonnegative(),
+    applied: z.boolean(),
+    reason: z.string().max(64),
+  })
+  .strict();
+export type GrantUpdateAck = z.infer<typeof grantUpdateAckSchema>;
 
 /**
  * 版本区间协商（协议 §1.1 的公式，唯一实现）。

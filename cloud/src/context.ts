@@ -4,6 +4,8 @@ import type { Env } from "./env.js";
 import type { JwtKeyRing, AccessClaims } from "./sessions/jwt.js";
 import type { Logger } from "./logger.js";
 import type { ProviderMap } from "./oauth/providers.js";
+import type { DispatchToolCallInput, Forwarder, GrantSyncOutcome } from "./link/forwarder.js";
+import type { DispatchResult } from "./link/request-registry.js";
 
 export type AppHono = Hono<{ Variables: { authClaims: AccessClaims } }>;
 
@@ -46,4 +48,27 @@ export interface LinkControl {
    * 「旧连接已死、旧凭据仍然有效」的窗口，攻击者可以拿旧 token 重新握手。
    */
   rotateConnection(deviceId: string): Promise<boolean>;
+  /**
+   * 派发一次工具调用（协议运行时 §6.1）。
+   *
+   * 这是 Phase 1.3 的 `/mcp` 端点**唯一**会用的入口。刻意只收「语义参数」
+   * （用户、grant、工具、参数、截止时间），**不暴露** connectionId / grant_ctx /
+   * socket ——那三样一旦出现在签名里，路由层就会开始「顺手拿连接做点别的」，
+   * 而所有跨用户校验都在这一层之后。
+   *
+   * `userId` **只能**来自已验证的 MCP JWT `sub`。从请求体读它等于把授权
+   * 交给调用方自己声明。
+   */
+  dispatchToolCall(input: DispatchToolCallInput): Promise<DispatchResult>;
+  /**
+   * 把一条 grant 增量下发给在线设备并等待 ack。
+   *
+   * Phase 1.3 的 OAuth 授权/撤销路径会调用它。**未 ack 前该 grant 不可路由**
+   * （协议 §6.5.2 规则 2），所以调用方必须先落库再调这里，不能反过来。
+   */
+  installGrant(input: Parameters<Forwarder["installGrant"]>[0]): Promise<GrantSyncOutcome>;
+  /** 撤销一条 grant：**先停路由** → 发帧 → 等 ack。 */
+  revokeGrant(input: Parameters<Forwarder["revokeGrant"]>[0]): Promise<GrantSyncOutcome>;
+  /** scope 变更：旧 ctx revoke → ack → 新 ctx install → ack。 */
+  replaceGrant(input: Parameters<Forwarder["replaceGrant"]>[0]): Promise<GrantSyncOutcome>;
 }

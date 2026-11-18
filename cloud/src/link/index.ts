@@ -40,6 +40,37 @@ export {
   type NonceRecorder,
 } from "./handshake.js";
 export { NonceStore, type NonceRecordResult } from "./nonce-store.js";
+export {
+  computeRequestHash,
+  canonicalJson,
+} from "./request-hash.js";
+export {
+  createRequestRegistry,
+  resultOf,
+  type DispatchResult,
+  type PendingRequest,
+  type RegistryCounts,
+  type RequestRegistry,
+  type RequestState,
+  type ReserveOutcome,
+  type SweepOutcome,
+} from "./request-registry.js";
+export {
+  admitDispatch,
+  gatewayResource,
+  type DispatchAdmission,
+  type DispatchGuardInput,
+  type DispatchRejection,
+} from "./dispatch-guard.js";
+export {
+  computeDeadline,
+  createForwarder,
+  type DispatchToolCallInput,
+  type Forwarder,
+  type ForwarderDeps,
+  type ForwarderInspect,
+  type GrantSyncOutcome,
+} from "./forwarder.js";
 export { createHeartbeat, HEARTBEAT_MISS_LIMIT, type HeartbeatController } from "./heartbeat.js";
 export {
   decodeBase64UrlStrict,
@@ -56,13 +87,26 @@ export {
   REMOTE_LINK_PATH,
   REMOTE_MAX_CLOCK_SKEW_MS,
   REMOTE_MAX_FRAME_BYTES,
+  REMOTE_DEVICE_MAX_INFLIGHT,
+  REMOTE_ERROR_CODES,
+  REMOTE_GRANT_ACK_TIMEOUT_MS,
+  REMOTE_HARD_DEADLINE_MS,
   REMOTE_MAX_INFLIGHT,
   REMOTE_MAX_VERSION,
   REMOTE_MIN_VERSION,
   REMOTE_NONCE_WINDOW_MS,
   REMOTE_PROTOCOL_VERSION,
+  REMOTE_QUEUE_BUDGET_MS,
+  REMOTE_QUEUE_MAX,
   REMOTE_SCOPES,
+  REMOTE_TOOL_BUDGET_MS,
+  REMOTE_TOOL_SCOPES,
   REMOTE_TOOLS,
+  REMOTE_USER_MAX_INFLIGHT,
+  isRemoteTool,
+  isRetryableRemoteError,
+  scopeForTool,
+  type RemoteErrorCode,
   REMOTE_WS_SUBPROTOCOL,
   type GrantSnapshot,
   type Hello,
