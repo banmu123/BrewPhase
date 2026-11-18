@@ -68,7 +68,7 @@ req/res 转发、grant_update 在线同步、MCP OAuth（属 1.2B / 1.3）。
 | **1.2B.1** | B5（WSS 接入 + hello 握手）、B6（ConnectionRegistry）、B7（心跳）、B9（撤停联动）、B11（运维断言） | ✅ **已完成** |
 | **1.2B.1.2** | 连接生命周期与设备准入的并发收口（P1 幽灵路由 / P2 撤停与握手竞争） | ✅ **已完成**（见 §2.0.1） |
 | **1.2B.2.1** | B13（设备凭据轮换 + 连接级 `rotating`） | ✅ **已完成**（见 §2.0.2） |
-| **1.2B.2.2** | B8（req/res/cancel 转发）、B14（转发前跨用户校验）、`grant_update` 在线同步 | 待做 |
+| **1.2B.2.2** | B8（req/res/cancel 转发）、B14（转发前跨用户校验）、`grant_update` 在线同步 | ✅ **已完成**（见 §2.0.3） |
 
 #### 2.0.1 Phase 1.2B.1.2：两个竞态与修复
 
@@ -240,6 +240,62 @@ MCP OAuth、`/mcp`、写工具、Redis 多实例。
 
 > **ST-3 只覆盖了一半**：「轮换后旧连接发新请求 → 拒绝」需要 `req` 转发才有
 > 判据点。现在能证明的是「旧连接被摘除路由 + close 4010」与「旧凭据无法再握手」。
+
+#### 2.0.3 Phase 1.2B.2.2：请求转发、并发安全与 Grant 在线同步
+
+这是 1.2B 的最后一个子阶段：Cloud 第一次**真的**能把一条工具调用送到设备上，
+并把真实结果拿回来。它不开放任何公网端点（`/mcp` 属 Phase 1.3），
+所以验收判据全部落在「授权边界」与「生命周期收敛」上。
+
+**六个不可交换的顺序**
+
+| 顺序 | 写反的后果 |
+|---|---|
+| 准入（三身份 + grant + 设备 + token）→ 预留槽位 → 写出 | 先占槽位再查库，一次越权尝试会占掉一个正常请求的名额 |
+| DB 准入 → **重新核对 connectionId** → 写出 | 从查库到写出的窗口里连接可能被顶替，请求会落到别人的会话上 |
+| `revoke` 本地停路由 → 结束在途请求 → 发帧 → 等 ack | 先发帧：从「帧已写出」到「本地停路由」之间仍会派发已撤销的 ctx |
+| 每个 settle **恰好一次** → 归还三层计数 → pump 队列 | 漏 pump：释放出来的槽位要等下一条请求完成，队列会一直停泊 |
+| 超时 → `REQUEST_TIMEOUT` + `cancel(gateway_timeout)` | 只返回超时而不 cancel：设备白做一次查询（只读，可接受；但不 cancel 就永远不知道） |
+| 断线 → 该连接全部 pending 立刻 `DEVICE_OFFLINE` | 等 sweep 发现 deadline：调用方白等 15 秒 |
+
+**三层在途计数**（`request-registry.ts`）：连接 `max_inflight`(2) / 设备 2 / 用户 4。
+只做连接级在 Phase 1.4 多设备时直接失效；只做用户级挡不住「一台设备被打满」。
+三层都记，代价是三个 `Map`，收益是「不需要在支持多设备时重写热路径」。
+
+**两种 epoch 仍严格分离**：`mcp_devices.grant_epoch`（设备级，`grant_update` 的新旧门槛）
+与 `mcp_grants.epoch`（单 grant，scope 变更 +1）。派发时两个都要对：前者决定
+「这条连接上的上下文是否最新」，后者决定「`req` 引用的这条 grant 是否还是当前版本」。
+
+**验收结果**（实际执行，不是设计意图）：
+
+| 验收项 | 结果 |
+|---|---|
+| 正常往返（字段集 / hash / deadline / meta） | ✅ 34 条端到端（含 deadline / cancel） |
+| ST-1：A 的 grant + B 的身份（两个方向） | ✅ `USER_MISMATCH`，且**一个 req 帧都没发** |
+| 设备表归属被篡改（只查 grant 的实现会漏） | ✅ `USER_MISMATCH` |
+| ST-3 剩余一半：轮换后旧连接不再收 req | ✅ 新凭据重连后恢复 |
+| `rotating` 期间派发 | ✅ `DEVICE_UNAUTHORIZED` |
+| 三层限流 / 队列满 / 排队超预算 | ✅ `DEVICE_BUSY`；排队项不发 cancel |
+| deadline / 迟到 res / 断线 / 重复 res / 未知 res / 畸形 res | ✅ 各自收敛，不二次结算 |
+| 取消（排队中 / 已发出） | ✅ `REQUEST_CANCELLED` + `cancel(client_cancelled)` |
+| install 未 ack 不可路由 | ✅ `GRANT_CONTEXT_INVALID` |
+| install `applied=false` → 整台设备停路由 | ✅ `syncLag` |
+| revoke ack 超时 → 整台设备停路由 | ✅ `syncLag`；重连后由快照恢复 |
+| revoke 先停路由再发帧 | ✅ 帧到达、未 ack 时派发已被拒 |
+| scope 变更换 ctx（旧缓存不可回放） | ✅ `replaceGrant`：revoke 旧 → ack → install 新 → ack |
+| 单 grant epoch 与库不一致 | ✅ 拒发（防「scope 已变、ctx 未更新」） |
+| 设备离线 / rotating 时的同步 | ✅ 返回 `offline`，不伪造帧 |
+| 两端 `request_hash` 同一串 | ✅ 共享 `fixtures/remote-mcp/req-v1.json` |
+| 两端 `req` 字段集一致 | ✅ Cloud 接口 ↔ Desktop `remoteReqSchema` 合同测试 |
+
+**测试基线**：Cloud 432 → **528**（+96）；Desktop 1245 → **1265**（+20）。
+
+**明确没做**（属 Phase 1.3）：公网 `/mcp`（Streamable HTTP）、MCP OAuth / DCR、
+`/authorize` / `/token`、Inspector 与 ChatGPT 真实连接、写工具、Redis 多实例、
+`OAuth` 侧的授权落库（本阶段只做「下发 + 等 ack」）。
+
+> **本阶段完成不代表已经支持 ChatGPT 连接。** 它证明的是内部远程请求传输与
+> 授权机制已经打通，且任何一条越权/迟到/撤销后的路径都收敛到明确的错误码。
 
 ### 2.1 范围
 

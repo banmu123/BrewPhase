@@ -177,3 +177,37 @@ ConnectionRegistry、心跳、req/res 转发、`grant_update` 在线同步、MCP
 **Test 基线**：Cloud 393 → **432**；Desktop 1219 → **1245**。
 真实进程联调 13/13（旧凭据握手 → 轮换 200 → 旧连接 4010+bye → 旧 token 4001 →
 新 token 配旧私钥 4001 → 新凭据 hello_ok → 日志无明文 token）。
+
+## 12. Phase 1.2B.2.2：请求转发、并发安全与 Grant 在线同步（已实现）
+
+范围与验收结果见 `REMOTE_MCP_PHASES_ROADMAP.md` §2.0.3。要点：
+
+| 项 | 落地 | 权威 |
+|---|---|---|
+| 派发入口 | `LinkControl.dispatchToolCall({userId, grantId, tool, arguments, clientDeadline?, signal?})`，**不暴露** connection / ctx / device | 协议 §4.8 |
+| 准入 | 十项判据每次重读数据库（grants + devices 各查一次） | 运行时 §9.4 |
+| 跨用户（ST-1） | 三身份一致：JWT `sub` == `grant.user_id` == `device.user_id` | 安全 §12.1 |
+| `request_hash` | `sha256(canonicalJson{v,tool,arguments})`，共享 `fixtures/remote-mcp/req-v1.json` | 运行时 §8.2 |
+| 三层限流 | 连接 2 / 设备 2 / 用户 4；队列上限 32、预算 2s → `DEVICE_BUSY` | `request-registry.ts` |
+| deadline | 15s 默认 / 30s 硬上限 / `clientDeadline` 只收紧；超时 → `REQUEST_TIMEOUT` + `cancel(gateway_timeout)` | 运行时 §7.2 / §7.4 |
+| `cancel` | 排队中取消不发 `req`；已发出取消发 `cancel(client_cancelled)` | 运行时 §7.5 |
+| `res` 处理 | 四种忽略分开记日志（未知 / 重复 / 旧连接 / 畸形） | 运行时 §9.4 |
+| 断线 | 该连接全部 pending 立刻 `DEVICE_OFFLINE`（不等 deadline） | 生命周期 §10.3 |
+| 轮换 | 该连接全部 pending 立刻 `DEVICE_UNAUTHORIZED`（不可重试） | 生命周期 §11.6 |
+| grant install | 未 ack 不可路由；`applied=false` / ack 超时 → `grant_sync_lag`（整台设备停路由） | 运行时 §6.5.2 |
+| grant revoke | **先停路由** → 结束在途 → 发帧 → 等 ack | 运行时 §6.5.2 |
+| scope 变更 | `replaceGrant`：revoke 旧 ctx → ack → install 新 ctx → ack | 安全 §2.7 |
+| 两种 epoch | 设备级 `mcp_devices.grant_epoch`（持久化递增）与单 grant `mcp_grants.epoch` 严格分离 | 运行时 §6.5.2 |
+
+**迁移**：**无**。设备级 `grant_epoch` 早已存在（0001），本阶段只做 `+1` 的原子 UPDATE。
+
+**新增契约**：无新增错误码（仍 19）、无新增 close code、无新增帧类型。
+
+**明确没做**（属 Phase 1.3）：公网 `/mcp`（Streamable HTTP）、MCP OAuth / DCR、
+`/authorize` / `/token`、Inspector 与 ChatGPT 真实连接、写工具、Redis 多实例、
+OAuth 侧的授权落库。
+
+**Test 基线**：Cloud 432 → **530**；Desktop 1245 → **1265**。
+真实构建产物联调 15/15（`dist/` + 真 PostgreSQL + 真 `ws`）：
+握手 → 派发 → 真实 `res` → 跨用户被拒（且不发帧）→ rotating 后 `DEVICE_UNAUTHORIZED` →
+轮换 `4010` → 新凭据重连 → 停机 `1001` → 计数归零。

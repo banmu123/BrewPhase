@@ -595,6 +595,59 @@ Desktop 的 `error.code` 原样透传给 ChatGPT，不做二次映射。因此�
 
 ---
 
+### 9.4 Cloud 侧转发层的实现约束（Phase 1.2B.2.2）
+
+协议的前九节描述「帧长什么样」；这一节记录**实现时被证明必须固定下来的顺序**。
+全部来自 `cloud/src/link/{dispatch-guard,request-registry,forwarder}.ts`。
+
+**准入的十个判据，每次派发都重读数据库**
+
+| # | 判据 | 失败 |
+|---|---|---|
+| 1 | 连接属于该 `userId` | `USER_MISMATCH` |
+| 2 | 连接不处于 rotating | `DEVICE_UNAUTHORIZED` |
+| 3 | grant 存在 | `GRANT_CONTEXT_INVALID` |
+| 4 | `grant.user_id == userId` | `USER_MISMATCH`（ST-1） |
+| 5 | grant 未撤销 | `GRANT_REVOKED` |
+| 6 | `grant.resource == 本服务 resource` | `GRANT_CONTEXT_INVALID` |
+| 7 | 工具在 8 个白名单内 | `TOOL_NOT_ALLOWED` |
+| 8 | scope 覆盖该工具 | `SCOPE_DENIED` |
+| 9 | `device.user_id == userId` | `USER_MISMATCH` |
+| 10 | `status == active` 且 `token_expires_at > now` | `DEVICE_REVOKED` / `DEVICE_SUSPENDED` / `DEVICE_UNAUTHORIZED` |
+
+第 3–6 条读 `mcp_grants`，第 9–10 条读 `mcp_devices`——**两张表各查一次，归属关系逐次核对**。
+只查一半的实现会分别漏掉「B 的 token + A 的 grant」与「A 的身份 + B 的设备」。
+
+**写出去之前的最后一次核对**：DB 准入之后重新 `lookup(userId, deviceId)` 并比对
+`connectionId`。从查库到写出的窗口里连接可能被顶替，而 `registry` 是唯一知道
+「此刻哪条连接有效」的地方。
+
+**`res` 的四种忽略**（都不是错误，都不该让调用方收到 5xx）：
+
+| 情况 | 处理 |
+|---|---|
+| 未知 `id` | 忽略（`link_unknown_res`，warn） |
+| 已结算的 `id` | 忽略（`link_duplicate_res`，debug） |
+| `connectionId` 不匹配 | 忽略（`link_res_from_other_connection`，warn） |
+| 形状非法 | 忽略（`link_malformed_res`，warn） |
+
+**四种忽略必须分开记日志**：合成一条「无效 res」会让「Cloud 在等一个永远不会来的
+`res`」这类故障彻底看不见——而那正是最需要发现的一种。
+
+**在途计数的三层生命周期**
+
+| 事件 | 动作 |
+|---|---|
+| 预留 | 三层各 +1（admitted）；排队项**不占**任何计数 |
+| `promote` | 排队项转 `sent` 时才 +1 |
+| 结算（res / 超时 / 断线 / 取消 / 撤销） | 三层各 −1，**恰好一次**（`released` 标志） |
+| 连接断开 | 该连接全部（含排队项）以 `DEVICE_OFFLINE` 结束 |
+| 轮换 | 该连接全部以 `DEVICE_UNAUTHORIZED` 结束（不可重试） |
+| grant 撤销 | 该 ctx 全部以 `GRANT_REVOKED` 结束 |
+
+**为什么排队项不占计数**：它还没发出去，占着计数就等于「凭空多一个在途」，
+会让设备明明空闲却报 `DEVICE_BUSY`。
+
 ## 10. 断线检测与重连
 
 ### 10.1 Desktop 侧的断线判定

@@ -798,6 +798,36 @@ Phase 1.0 §13.1 写的「后续帧必须匹配 `connection_id`」作废。
 
 ---
 
+### 4.8 Cloud 的派发入口（Phase 1.2B.2.2）
+
+Cloud 侧**唯一**的派发入口是 `LinkControl.dispatchToolCall`（`cloud/src/context.ts`）：
+
+```ts
+dispatchToolCall({
+  userId,          // 只能来自已验证的 MCP JWT `sub`
+  grantId,         // 只能来自已认证的授权上下文
+  tool, arguments,
+  clientDeadline?, // 只能收紧预算，不能延长
+  signal?,         // 调用方取消
+  trace?
+}): Promise<DispatchResult>
+```
+
+三条**刻意不暴露**的东西，每一条都对应一类真实事故：
+
+| 不暴露 | 暴露了会怎样 |
+|---|---|
+| `connectionId` / socket | HTTP 路由会开始「顺手拿连接做点别的」，绕过准入 |
+| `grant_ctx` | 调用方可以指定任意上下文 → `grant_ctx` 变成可猜的授权引用 |
+| `deviceId` | 派发变成「指名道姓发给某台设备」，而正确的问题是「这个用户此刻在哪台设备上」 |
+
+`grant_ctx` 由 Cloud 从**当前连接**的上下文表里按 `grantId` 反查得到；反查不到
+就是 `GRANT_CONTEXT_INVALID`——这同时覆盖了「握手后才新增的 grant」与
+「scope 变更后的旧上下文」两种情形。
+
+**`/mcp` 本身仍属 Phase 1.3。** 本阶段只把内部入口做对：它已经是一个可以被
+OAuth 授权层直接调用的、无状态的语义接口。
+
 ## 5. 心跳与在线状态
 
 ### 5.1 心跳
