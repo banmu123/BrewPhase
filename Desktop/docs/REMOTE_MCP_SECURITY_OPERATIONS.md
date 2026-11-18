@@ -172,6 +172,59 @@ token 永久丢失（Cloud 不补发），下次启动带着已作废的旧 toke
 会被误吞，结果是 socket 已死、状态停在 connecting、没有任何定时器，
 连接永久假死而日志只有一行「during rotation」。
 
+### 4.1.5 派发与撤销的线性化（Phase 1.2B.2.2-R1）
+
+「撤销在下一个请求就生效」这句话有一个前提：**撤销能看见那条请求**。
+
+派发路径上有两段 `await`（准入查库、最终连接核对）。若请求在第二段期间还没
+登记进 `RequestRegistry`，`revokeInstalled()` 里的 `rejectByGrantCtx` 会看到
+一个空集合、判定「无在途请求」并顺利完成；派发随后恢复，带着一个**刚刚被撤销
+的 `grant_ctx`** 把 `req` 写出去。撤销本身没有任何报错——这是最坏的形状：
+一次成功的撤销，和一条用着已撤销授权的请求。
+
+**线性化点因此定在 `reserve()`**，它必须早于任何并发敏感的 `await`：
+
+```
+… → 准入（DB） → ctx 核对 → 预算 → reserve ──┬──→ 最终核对（await）→ 写 req
+                                             └── 从这一刻起撤销一定找得到它
+```
+
+| 谁先发生 | 结果 |
+|---|---|
+| 撤销先命中（`rejectByGrantCtx`） | 派发返回 `GRANT_REVOKED`，**不写 `req`** |
+| `reserve` 先完成 | 撤销结算它（排队项也一起），调用方拿不到撤销前的读取结果 |
+
+三条附带约束：
+
+1. **`settled` 之后绝不再写**。`sendEntry()` 首行判 `settled`，最终核对在任何
+   `await` 之后**再判一次**——两处都要有，因为「检查」与「写出」之间只要多一个
+   `await`，前一处就不成立了。
+2. **取消同理**。`AbortSignal` 在 `reserve` 之前就已 aborted 时，直接返回
+   `REQUEST_CANCELLED` 而不查库；在窗口内 aborted 时，结算后不写 `req`。
+3. **不重读数据库**。窗口内需要复核的只有内存事实：请求是否已结算、连接是否
+   仍是路由目标、`grant_ctx` 是否仍是当前映射。再查一次库只是把窗口换个形状，
+   并不消除它。
+
+**`rotating` 与 `offline` 必须分开报**：`ConnectionRegistry.lookup()` 对 rotating
+返回 `null`，所以「`null` ⇒ 离线」这条捷径会把「凭据已作废」报成「可重试的
+离线」，客户端会一直重试一个永远不会成功的连接。判据取转发层的
+`ConnSync.rotating`——它在 `onConnectionRotating()` 里**同步**置起，早于
+`markRotating`/`unbind`，也早于 socket 关闭。
+
+| 最终核对发现 | 错误码 | `retryable` |
+|---|---|---|
+| 路由项没了、连接已收敛 | `DEVICE_OFFLINE` | `true` |
+| rotating | `DEVICE_UNAUTHORIZED` | `false` |
+| 被另一条 `connectionId` 顶替 | `DEVICE_UNAUTHORIZED` | `false` |
+| `syncLag` | `GRANT_CONTEXT_INVALID` | `false` |
+| `grant_ctx` 已不是当前映射 | `GRANT_CONTEXT_INVALID` | `false` |
+
+**重复 `install` 的 fail-closed**：先 `revoke` 旧 ctx，只有结论是 `applied` /
+`not_installed` 才继续安装。`rejected` / `ack_timeout` / `offline` 一律停手——
+继续安装会新建 slot，其 ack 把 `installed` 置回 `true`，于是连接在 `syncLag=true`
+下重新开始路由，而 `syncLag` 只允许由重新握手清除。那等于让一次明确的同步失败
+自行失效。
+
 ### 4.2 与 Phase 1.0 的差异（修正点）
 
 | Phase 1.0 | Phase 1.0.1 | 原因 |
@@ -284,6 +337,18 @@ Remote MCP 不需要在 SQL 层加 `where user_id = ?`——因为 Desktop 的 S
 
 **Upgrade 拒绝的响应体只含 `{"error":"<固定串>"}`**，不含任何请求头回显
 （`Authorization` 就在请求头里）。
+
+**转发层的三种「撤销失败」不得合并成一个事件**（Phase 1.2B.2.2-R1）：
+
+| 事件 | 含义 | 排障方向 |
+|---|---|---|
+| `link_grant_apply_rejected`（warn） | Desktop 明确 `applied=false`，`syncLag` 已置 | 两端对协议的理解不一致，是 bug |
+| `link_grant_ack_timeout`（warn） | 帧写出去了，但 ack 没回来 | 设备卡住 / 网络 |
+| `link_grant_sync_offline`（warn） | 帧**根本没写出去**（连接不可写） | 连接已断，等重连即可 |
+
+三者都收敛到 `syncLag=true`（同样是 fail-closed），但把它们记成同一条日志会让
+「这台设备到底有没有收到撤销」这个问题永远没有答案。重复 install 被前两种
+挡下时另有 `link_grant_reinstall_aborted`，带 `reason` 字段。
 
 验证：`cloud/tests/link/link-server.test.ts` 的「HTTP 访问日志不包含 token」用例
 同时做正反断言——既断言日志里没有 `bp_dev_`，也断言 `link_established`

@@ -211,3 +211,30 @@ OAuth 侧的授权落库。
 真实构建产物联调 15/15（`dist/` + 真 PostgreSQL + 真 `ws`）：
 握手 → 派发 → 真实 `res` → 跨用户被拒（且不发帧）→ rotating 后 `DEVICE_UNAUTHORIZED` →
 轮换 `4010` → 新凭据重连 → 停机 `1001` → 计数归零。
+
+## 13. Phase 1.2B.2.2-R1：派发、撤销与取消的竞态加固（已实现）
+
+1.2B.2.2 验收的是**稳定态**；R1 补的是**窗口内**。四个问题的共同形状是
+「先检查、后 `await`、再写出去」。范围与验收结果见
+`REMOTE_MCP_PHASES_ROADMAP.md` §2.0.4。要点：
+
+| 项 | 落地 | 权威 |
+|---|---|---|
+| 线性化点 | `reserve()` 提到最终 `lookup` 之前；`settled` 之后绝不写 `req` | 运行时 §9.5.1 |
+| 撤销窗口 | `rejectByGrantCtx` 现在能命中「已登记、未写出」的请求（含排队项） | 安全运维 §4.1.5 |
+| 最终核对 | `await` 之后复核：已结算 / 连接仍在 / 未 rotating / `connectionId` 未变 / `grant_ctx` 仍是当前映射 | 运行时 §9.5.1 |
+| rotating 分类 | 用 `ConnSync.rotating` 判：`DEVICE_UNAUTHORIZED`（`retryable=false`），不再退化成 `DEVICE_OFFLINE` | 运行时 §9.5.3 |
+| AbortSignal | 进入前已 aborted → 直接 `REQUEST_CANCELLED`（不查库）；窗口内 aborted → 不写 `req` 也不发 `cancel` | 运行时 §9.5.2 |
+| `frameSent` | **内部事实**（不是协议字段）：只有真写出过 `req` 的请求才配收到 `cancel` | 运行时 §7.5 / §9.5.2 |
+| 重复 install | 只有 `applied` / `not_installed` 才继续；`rejected` / `ack_timeout` / `offline` 停手 | 运行时 §9.5.4 |
+| 三种失败日志 | `link_grant_apply_rejected` / `link_grant_ack_timeout` / `link_grant_sync_offline` 分开 | 安全运维 §6.2.2 |
+
+**迁移**：**无**。**新增契约**：无新增错误码 / close code / 帧字段（`frameSent`
+只活在 Cloud 进程内）。
+
+**新增测试**：`cloud/tests/link/dispatch-race.test.ts`（7 条，确定性 Deferred
+暂停 `registry.lookup`，不用 sleep）；`grant-sync.test.ts` 新增 3 条重复 install。
+
+**Test 基线**：Cloud 530 → **540**；Desktop 1265（未改动）。
+真实构建产物联调 **26/26**；同一脚本在修复前的构建上第一个判别点即失败
+（拿到 `DEVICE_OFFLINE/retryable=true` 而不是 `GRANT_REVOKED`）。

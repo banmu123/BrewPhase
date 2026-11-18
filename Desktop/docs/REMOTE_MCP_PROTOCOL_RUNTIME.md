@@ -304,6 +304,11 @@ Cloud 收到一个「迟到的成功」，与它已经告诉 AI 的结果矛盾�
 **取消只针对单个 `id`，不影响任何其它请求。** 第一版没有「多个 waiter 共享一次执行」，
 因此不存在「取消一个 waiter 影响另一个」的问题（§8.4）。
 
+**Cloud 只在 `req` 真的写出之后才发 `cancel`。** 「写没写过」是 Cloud 的内部事实
+（`frameSent`），不是协议字段：排队项，以及「已登记、被最终核对拦下」的项，
+Desktop 从没见过它们的 `id`，发 `cancel` 只会让对端去取消一个不存在的请求。
+超时（`gateway_timeout`）与取消（`client_cancelled`）走同一条判据。
+
 ---
 
 ## 8. 重复请求与缓存（Phase 1.0.1 重写，1.0.2 补齐语义）
@@ -618,9 +623,9 @@ Desktop 的 `error.code` 原样透传给 ChatGPT，不做二次映射。因此�
 第 3–6 条读 `mcp_grants`，第 9–10 条读 `mcp_devices`——**两张表各查一次，归属关系逐次核对**。
 只查一半的实现会分别漏掉「B 的 token + A 的 grant」与「A 的身份 + B 的设备」。
 
-**写出去之前的最后一次核对**：DB 准入之后重新 `lookup(userId, deviceId)` 并比对
-`connectionId`。从查库到写出的窗口里连接可能被顶替，而 `registry` 是唯一知道
-「此刻哪条连接有效」的地方。
+**写出去之前的最后一次核对**：**先**在 `RequestRegistry` 里登记（`reserve`），
+**再** `await lookup(userId, deviceId)` 比对 `connectionId`。顺序不能反：
+`reserve` 是「撤销能不能看见这条请求」的唯一判据，详见 §9.5。
 
 **`res` 的四种忽略**（都不是错误，都不该让调用方收到 5xx）：
 
@@ -647,6 +652,97 @@ Desktop 的 `error.code` 原样透传给 ChatGPT，不做二次映射。因此�
 
 **为什么排队项不占计数**：它还没发出去，占着计数就等于「凭空多一个在途」，
 会让设备明明空闲却报 `DEVICE_BUSY`。
+
+### 9.5 派发、撤销与取消的线性化（Phase 1.2B.2.2-R1）
+
+§9.4 说明「检查哪些东西」，这一节说明**这些检查之间那条不能跨过的线**。
+三个 bug 都出自同一种形状：*检查通过了，但在写出去之前，世界变了*。
+
+#### 9.5.1 线性化点是 `reserve()`，不是「最后一次核对」
+
+```
+准入（DB）→ grant ctx 核对 → 预算 → reserve ─┬─→ 最终核对（await lookup）
+                                              │        ↓  写 req
+                                              └─ 从这里起：撤销/轮换/断线/取消都找得到它
+```
+
+`revokeInstalled()` 的动作顺序是「删 `byGrantId` / 删 `byCtx` →
+`rejectByGrantCtx` → 发 `grant_update` → 等 ack」。第三条只能找到**已经登记**
+的请求。所以：
+
+| 顺序 | 结果 |
+|---|---|
+| 撤销先（`rejectByGrantCtx` 命中） | entry 已 `settled`，派发返回撤销原因，**不写 `req`** |
+| `reserve` 先（撤销随后） | 撤销一定能结算它（含排队项），**不写或写后不交付** |
+
+反过来（先 `lookup`、后 `reserve`）留出的窗口里，撤销会看到空集合、顺利完成，
+随后派发恢复执行，带着一个**刚刚撤销的 `grant_ctx`** 把 `req` 写出去。
+调用方看到的错误会指向「Desktop 不认这个上下文」，而真实原因是
+「Cloud 把一条已撤销的授权发了出去」。
+
+**最终核对必须复核四件事**（全部在 `await` 之后做，任何一个不成立就不写）：
+
+1. `entry.state === "settled"` → 返回**先发生的那件事**的错误码（撤销 → `GRANT_REVOKED`，取消 → `REQUEST_CANCELLED`）；
+2. 连接仍在 `conns` 里且不是 rotating；
+3. `lookup(userId, deviceId)` 仍返回同一条 `connectionId`；
+4. `byGrantId[grantId] === grantCtx`、`byCtx[grantCtx] === slot` 且 `slot.installed`。
+
+第 4 条是最后防线：**不重读数据库**。授权事实由准入给出，重查只会把窗口换成
+另一个形状（见 §9.4 的十条判据）。
+
+#### 9.5.2 `AbortSignal` 在两个阶段的语义
+
+| 阶段 | 行为 | 为什么不这样会错 |
+|---|---|---|
+| 调用之前已 aborted | **立即** `REQUEST_CANCELLED`，不查库、不登记、不占计数 | 为一个已经离开的调用方查两次库 |
+| 已登记、`req` 未写出 | 结算为 `REQUEST_CANCELLED`，**不写 `req`**，**不发 `cancel`** | 发了 `cancel` 就是在取消一个 Desktop 没见过的 id |
+| 已写出 `req` | 结算为 `REQUEST_CANCELLED` + 发 `cancel{client_cancelled}`（**尽力**） | 同步 handler 不可中断（§7.3），但要让 Desktop 别白做一次查询 |
+
+「有没有写出去」由内部事实 `frameSent` 记录，**不是协议字段**：`state === 'sent'`
+的语义是「已占着三层计数里的一个槽位」，`reserve()` 返回 `admitted` 的那一刻
+就已经是 `sent`——那时帧还没构造。两者混用会凭空发出 `cancel`。
+
+`sendEntry()` 的第一行是 `if (entry.state === "settled") return;`：这是
+「排队项被撤销后又被 `promote()` 取出」的唯一拦截点（`promote()` 只负责从
+队列里取，不判断还该不该发）。
+
+#### 9.5.3 最终核对的错误分类（rotating ≠ offline）
+
+| 状态 | 错误码 | `retryable` |
+|---|---|---|
+| 路由项不存在、连接已收敛 | `DEVICE_OFFLINE` | `true` |
+| 连接标记为 rotating（凭据已换） | `DEVICE_UNAUTHORIZED` | `false` |
+| `lookup` 返回**另一条** `connectionId`（被顶替） | `DEVICE_UNAUTHORIZED` | `false` |
+| 窗口内出现 `syncLag` | `GRANT_CONTEXT_INVALID` | `false` |
+| 窗口内 `grant_ctx` 不再是当前映射 | `GRANT_CONTEXT_INVALID` | `false` |
+
+**rotating 必须与 offline 分开**：`ConnectionRegistry.lookup()` 对 rotating 返回
+`null`（结构防线，生命周期 §12.2），所以「`null` ⇒ 离线」这条捷径会把「凭据已作废」
+报成「可重试的离线」。客户端会一直重试一个永远不会成功的连接。
+判据用转发层自己的 `ConnSync.rotating`：它在 `onConnectionRotating()` 里
+**同步**置起，早于 `markRotating` / `unbind`，也早于 socket 关闭。
+
+#### 9.5.4 重复 `install` 的 fail-closed 规则
+
+`installGrant()` 发现同一条 `grant_id` 已装过时会先 `revoke` 旧 ctx。**只有
+`not_installed` 才能继续安装**：
+
+| 撤销结论 | 是否继续安装 | 理由 |
+|---|---|---|
+| `applied` | ✅ | 旧 ctx 已被 Desktop 丢弃 |
+| `not_installed` | ✅ | 竞态下别人先撤了，旧 ctx 确实不在 |
+| `rejected`（`applied=false`） | ❌ 返回 `rejected` | Desktop 明确拒绝，`syncLag` 已置 |
+| `ack_timeout` | ❌ 返回 `ack_timeout` | 不知道撤销有没有生效 |
+| `offline` | ❌ 返回 `offline` | 帧根本没写出去 |
+
+继续安装的后果不是「多一条无用帧」：新 slot 的 ack 一到就把 `installed` 置成
+`true`，连接在 `syncLag=true` 下**重新开始路由**——而 `syncLag` 本来只允许由
+重新握手（新 `hello_ok` 快照）清除。那等于把一次明确的同步失败悄悄撤销掉。
+
+三种失败**不得合并**成同一个日志事件：`link_grant_apply_rejected`（对端说不行）／
+`link_grant_ack_timeout`（写出去了没回应）／`link_grant_sync_offline`（没写出去）。
+排障方向完全不同。
+
 
 ## 10. 断线检测与重连
 

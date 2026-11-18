@@ -297,6 +297,51 @@ MCP OAuth、`/mcp`、写工具、Redis 多实例。
 > **本阶段完成不代表已经支持 ChatGPT 连接。** 它证明的是内部远程请求传输与
 > 授权机制已经打通，且任何一条越权/迟到/撤销后的路径都收敛到明确的错误码。
 
+#### 2.0.4 Phase 1.2B.2.2-R1：派发、撤销与取消的竞态加固
+
+1.2B.2.2 的验收全部通过，但它测的是**稳定态**：撤销之后不再派发、取消之后
+不再发送。R1 补的是**窗口内**：检查通过了，而在写出去之前世界变了。
+
+四个问题、一个共同形状——「先检查、后 await、再写」：
+
+| # | 位置 | 缺陷 | 修法 |
+|---|---|---|---|
+| P0 | `dispatchToolCall` 最终核对 | 最终 `lookup` 的 await 在 `reserve()` **之前**，撤销的 `rejectByGrantCtx` 看不到这条请求 | `reserve` 提到 await 之前，`settled` 之后不再写 |
+| P1 | 同一处 | `lookup` 对 rotating 返回 `null`，被映射成可重试的 `DEVICE_OFFLINE` | 用 `ConnSync.rotating` 区分：rotating → `DEVICE_UNAUTHORIZED` |
+| P1 | AbortSignal | signal 已 aborted 时先结算、随后仍无条件 `sendEntry` | 进入前直接返回；`sendEntry` 首行判 `settled`；新增内部事实 `frameSent` |
+| P1 | 重复 `install` | 只挡 `ack_timeout`，`rejected` 之后继续安装 → ack 把路由「恢复」 | 只有 `applied` / `not_installed` 才继续；三失败各自独立返回与记日志 |
+
+**线性化边界**：`reserve()` 是「撤销能不能看见这条请求」的唯一判据。
+它必须早于任何并发敏感的 `await`。
+
+**验收结果**（实际执行）：
+
+| 验收项 | 结果 |
+|---|---|
+| 撤销落在最终核对期间（请求已登记、未写出） | ✅ `GRANT_REVOKED`；Desktop 零 req；计数归零 |
+| 同上，另一条 grant 的往返当投递屏障 | ✅ 帧数恰好 +1（被拦下的那条从未出现） |
+| 请求已在途后被撤销 | ✅ `GRANT_REVOKED`；迟到 res 被忽略；调用方拿不到撤销前的数据 |
+| 轮换落在同一窗口 | ✅ `DEVICE_UNAUTHORIZED`（`retryable=false`），**不是** `DEVICE_OFFLINE` |
+| 进入前已 abort | ✅ `REQUEST_CANCELLED`；`lookupByUser` / `lookup` 调用数均为 0（⇒ 未查库）；计数 0 |
+| 已登记、未写出时 abort | ✅ 不写 req、不发 cancel（`frameSent=false`）；计数归零 |
+| 已写出后 abort | ✅ `cancel(client_cancelled)` 照旧（best-effort，同步 handler 不可中断） |
+| 重复 install：旧 ctx 撤销被拒 | ✅ 返回 `rejected`；只有 1 条 `grant_update`；`syncLag=true`；另一条 grant 也停路由 |
+| 重复 install：撤销超时 | ✅ 返回 `ack_timeout`；不发第二条 install |
+| 拒绝之后再 install | ✅ `sync_lag`；迟到 ack 不能恢复路由 |
+| 真实进程（`dist/` + 真 PG + 真 ws） | ✅ 26/26；同一脚本在修复前的构建上第一个判别点即失败 |
+
+**测试基线**：Cloud 528 → **540**（+12，新增 `tests/link/dispatch-race.test.ts` 7 条）；
+Desktop 不变（本阶段未改 Desktop 代码）。**无新增迁移，无新增协议字段**
+（`frameSent` 是 Cloud 进程内状态）。
+
+**变异验证**（把生产代码退回修复前，用新测试跑）：6 条新用例失败，
+其中「轮换」那条的实际返回是 `DEVICE_OFFLINE / retryable=true`——正是待修的 bug。
+
+**遗留**：「reserve 之后、写出之前」这段窗口在 Cloud 侧已由 `settled` 判据关闭，
+但 `admitDispatch` 那两次查库仍在 `reserve` 之前。它不构成撤销窗口（撤销此时
+还看不到请求，但请求也还没占槽位、没写帧，最终核对会拦下它）；把它进一步收窄
+需要「先登记后查库」，代价是越权尝试会短暂占用槽位——留待后续阶段评估。
+
 ### 2.1 范围
 
 | # | 能力 |
