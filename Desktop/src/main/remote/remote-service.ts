@@ -5,6 +5,8 @@ import type { ToolServices } from '../application/mcp-tools/tool-services'
 import {
   REMOTE_HELLO_CAPABILITIES,
   REMOTE_PROTOCOL_VERSION,
+  REMOTE_ROTATION_CHECK_INTERVAL_MS,
+  REMOTE_ROTATION_LEAD_MS,
   REMOTE_WS_SUBPROTOCOL,
   remoteGrantUpdateSchema,
   remoteReqSchema,
@@ -29,6 +31,7 @@ import {
   readRemoteState,
   sameCloudOrigin,
   signHello,
+  signRotation,
   writeRemoteState,
   type DeviceStore,
   type HelloSigningInput,
@@ -55,6 +58,7 @@ import {
 } from './link-client'
 import {
   buildStatus,
+  canTransition,
   createAuditStatus,
   createLinkState,
   judgeServiceable,
@@ -226,7 +230,6 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
   let reconnectTimer: NodeJS.Timeout | null = null
   let heartbeatTimer: NodeJS.Timeout | null = null
   let healthTimer: NodeJS.Timeout | null = null
-  let reauthAttempts = 0
   let pendingPingSeq = 0
 
   /**
@@ -256,6 +259,238 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     cancelled: boolean
     timer: NodeJS.Timeout | null
   } | null = null
+
+  /** `device_token` 的到期时刻（epoch 毫秒，Cloud 签发时给的）。`null` = 老凭据未知。 */
+  let tokenExpiresAt: number | null = null
+
+  /**
+   * 正在进行的轮换任务（**单飞**）。
+   *
+   * 为什么必须单飞：两次并发轮换会用同一个旧 token 打两次，Cloud 只让一个
+   * 成功，另一个拿 401 —— 而 401 会被解释成「凭据已失效」，于是把一次本来
+   * 成功的轮换判成失败并进入 blocked。这个后果比「少轮换一次」严重得多。
+   */
+  let rotation: { userId: string; promise: Promise<void> } | null = null
+  /**
+   * 轮换处在哪一步。
+   *
+   * 这个区分是必需的：`rotation !== null` 只说明「有轮换任务在跑」，而 4010
+   * 在**两个不同的阶段**含义相反：
+   *
+   * | 阶段 | 4010 的含义 | 处置 |
+   * |---|---|---|
+   * | `requesting`（HTTP 在途） | 我们自己那次轮换的旧连接被 Cloud 关掉 | 预期内，什么都不做 |
+   * | `reconnecting`（已用新凭据连） | 又有人轮换了这台设备 | 必须 blocked，否则这条死连接既不重连也不报错 |
+   *
+   * 只看 `rotation !== null` 会把第二种当成第一种吞掉：socket 已死、状态停在
+   * connecting、没有任何定时器——连接永久假死，而日志里只有一行
+   * 「closed 4010 during rotation」。
+   */
+  let rotationPhase: 'requesting' | 'reconnecting' | null = null
+  /** 轮换到期检查的兜底定时器。 */
+  let rotationTimer: NodeJS.Timeout | null = null
+
+  // MARK: - 凭据轮换（协议 §3.5 / 生命周期 §11.6）
+
+  /**
+   * 现在是否该主动轮换。
+   *
+   * 判据只有一条：`tokenExpiresAt - 提前量`。刻意**不**用「本地记一个签发
+   * 时间再猜 TTL」——那会在 Cloud 改 TTL 或本地时钟漂移时静默失效。
+   *
+   * 三个「不该轮换」的例外都是硬要求：
+   * - `enabled=false`：用户关了远程访问，此时**零出站**（本模块的既有不变量）；
+   * - `needsReauth`：身份已经不对了，轮换只会把错误固化；
+   * - `tokenExpiresAt === null`：老凭据不知道到期时间。**不猜**——猜早会做
+   *   无谓的轮换，猜晚会让 token 静默过期。老凭据的出路是等 4010 或重新配对。
+   */
+  const rotationDue = (now = Date.now()): boolean => {
+    if (shuttingDown || needsReauth) return false
+    if (!localState.enabled) return false
+    if (!deviceId || !deviceToken || !privateKey) return false
+    if (tokenExpiresAt === null) return false
+    return now >= tokenExpiresAt - REMOTE_ROTATION_LEAD_MS
+  }
+
+  const clearRotationTimer = (): void => {
+    if (rotationTimer) clearInterval(rotationTimer)
+    rotationTimer = null
+  }
+
+  /**
+   * 在线期间的兜底检查。
+   *
+   * 为什么需要它：`enable()` 与握手成功这两个时点覆盖不了「笔记本一直开着
+   * 三天」和「合盖二十天后唤醒但没断线」两种情形。7 天的提前量下，
+   * 每小时一次已经远超需要，成本可以忽略。
+   */
+  const armRotationTimer = (): void => {
+    if (rotationTimer) return
+    rotationTimer = setInterval(() => {
+      if (rotationDue()) void rotateCredentials('scheduled')
+    }, REMOTE_ROTATION_CHECK_INTERVAL_MS)
+    rotationTimer.unref?.()
+  }
+
+  /**
+   * 单飞执行一次轮换。已在轮换中时返回同一个 promise。
+   *
+   * 并发两次轮换的后果不是「多此一举」：第二个请求用**同一个旧 token**，
+   * Cloud 只让一个成功，另一个必得 401 —— 而 401 会被解释成「凭据已失效」，
+   * 于是一次本来成功的轮换被判成失败并进入 blocked。所以这里必须合并。
+   */
+  const rotateCredentials = (trigger: string): Promise<void> => {
+    if (rotation) return rotation.promise
+    const userId = deps.currentUserId() ?? ''
+    const entry: { userId: string; promise: Promise<void> } = {
+      userId,
+      promise: Promise.resolve()
+    }
+    entry.promise = performRotation(trigger, userId).finally(() => {
+      // 只有自己还是当前任务时才清空：否则会把后来者的任务抹掉。
+      if (rotation === entry) {
+        rotation = null
+        rotationPhase = null
+      }
+    })
+    rotation = entry
+    return entry.promise
+  }
+
+  /**
+   * 轮换的实际步骤。顺序不可交换：
+   *
+   * ```
+   * 生成新密钥 → 用**旧**私钥签 → POST /rotate → 落盘 → 替换内存 → 重连
+   * ```
+   *
+   * 落盘必须早于「替换内存」与「重连」：Cloud 已经作废旧 token，如果新 token
+   * 没落地就重连，那个 token 就永久丢了（Cloud 不补发）。
+   */
+  const performRotation = async (trigger: string, userId: string): Promise<void> => {
+    if (!registrar || !deviceId || !deviceToken || !privateKey) return
+
+    // 捕获快照：后面的 await 期间这些字段都可能被 forget / 重新配对改掉。
+    const rotatingDeviceId = deviceId
+    const oldToken = deviceToken
+    const oldKey = privateKey
+
+    let nextKeys: { privateKey: import('node:crypto').KeyObject; publicKey: import('node:crypto').KeyObject }
+    try {
+      nextKeys = generateDeviceKeyPair()
+    } catch {
+      enterBlocked('cannot generate a new device key')
+      return
+    }
+
+    const newPublicKey = encodeRawPublicKey(nextKeys.publicKey)
+    const ts = Date.now()
+    let signature: string
+    try {
+      signature = signRotation(oldKey, { deviceId: rotatingDeviceId, newPublicKey, ts })
+    } catch {
+      // 签名失败说明旧私钥不可用——那也没法证明身份，只能重新配对。
+      enterBlocked('cannot sign the rotation request')
+      return
+    }
+
+    log(`[remote] rotating device credentials (${trigger})`)
+    rotationPhase = 'requesting'
+    const result = await registrar.rotate({
+      deviceId: rotatingDeviceId,
+      oldDeviceToken: oldToken,
+      newPublicKey,
+      ts,
+      signature
+    })
+
+    if (shuttingDown) return
+    // 轮换期间用户登出 / 切账户：**丢弃**结果，不落盘。
+    // 旧 token 已被作废，设备会走到「需要重新配对」——这正是 fail-closed 的
+    // 预期结果：宁可要求重配对，也不把 A 的凭据写进 B 的会话。
+    if (deps.currentUserId() !== userId) {
+      log('[remote] rotation discarded: account changed')
+      return
+    }
+    // 设备身份被换掉了（forget / 重新配对）：这次轮换的结果已无意义。
+    if (deviceId !== rotatingDeviceId) {
+      log('[remote] rotation discarded: device identity replaced')
+      return
+    }
+
+    if (!result.ok) {
+      // 网络失败 = **结果未知**。Cloud 可能已经提交了轮换，而新 token 只在
+      // 那条响应里。此时拿旧 token 重试是错的（第二次必然 401，且会把
+      // 「未知」变成「确定失败」）；只能 blocked + 重新配对。
+      if (result.reason === 'network') {
+        enterBlocked('credential rotation outcome unknown')
+        return
+      }
+      if (result.reason === 'unauthorized' || result.reason === 'not_found') {
+        enterBlocked('credential rotation rejected')
+        return
+      }
+      if (result.reason === 'device_state') {
+        // 用户暂停了设备或撤销了它：不是错误，是状态。
+        enterBlocked('device is suspended or revoked')
+        return
+      }
+      // rate_limited / invalid_public_key / invalid_response 都是**可恢复**的：
+      // 旧凭据仍然有效（Cloud 没写成），下一次检查会再试。
+      log(`[remote] rotation not applied: ${result.reason}`)
+      publish()
+      return
+    }
+
+    // 落盘：新私钥 + 新 token + 同一 boundUserId，并记下新的到期时间。
+    const saved = await store.save({
+      deviceId: rotatingDeviceId,
+      boundUserId: userId,
+      cloudOrigin: configuredOrigin,
+      deviceToken: result.deviceToken,
+      privateKey: nextKeys.privateKey,
+      registeredAt: Date.now(),
+      tokenExpiresAt: result.expiresAt
+    })
+
+    if (shuttingDown) return
+    if (!saved.ok) {
+      // Cloud 那边已经换了，本地没落住 → 新 token 永久丢失。
+      // 不能「继续用旧的」（它已失效），也不能重试（旧 token 已作废）。
+      log('[remote] failed to persist the rotated credential')
+      enterBlocked('rotated credential could not be stored')
+      return
+    }
+    // 落盘之后账户又变了：凭据是真实的（boundUserId 记的是 A），但当前用户
+    // 是 B。不把内存切过去，让身份门禁按 user_mismatch 处理。
+    if (deps.currentUserId() !== userId) {
+      log('[remote] rotated credential stored but the account changed')
+      return
+    }
+
+    // ---- 切换内存凭据 ----
+    deviceToken = result.deviceToken
+    privateKey = nextKeys.privateKey
+    tokenExpiresAt = result.expiresAt
+    // 新凭据是有效的：清掉「需要重新认证」与 4010 的意外计数。
+    needsReauth = false
+    log('[remote] device credentials rotated')
+
+    // 旧连接已被 Cloud 用 4010 关掉（或即将关掉）。主动收敛一次，
+    // 保证「重连」不会与旧 socket 的 close 回调打架。
+    abortAttempt()
+    transport?.close(1000, 'credentials rotated')
+    resetConnectionState()
+    if (canTransition(link.state, 'backoff')) transition(link, 'backoff')
+    publish()
+
+    // 用新凭据**重新握手**（不按退避：这是预期内的关闭，不是网络故障）。
+    //
+    // 进入 reconnecting 之后，再来的 4010 不再是「我们那次轮换的旧连接」，
+    // 而是「新凭据也已被别人换掉」——handleClose 会据此 blocked 而不是吞掉。
+    rotationPhase = 'reconnecting'
+    await connect()
+  }
 
   const handleRequest = createRequestHandler({
     db: deps.db,
@@ -484,17 +719,27 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
       return
     }
     if (kind === 'reauth') {
-      // 4010：换凭证重连**一次**，避免死循环。
-      reauthAttempts += 1
-      if (reauthAttempts > 1) {
-        transition(link, 'blocked', 'reauthentication required')
-        needsReauth = true
-        log('[remote] closed 4010 after reauth attempt; blocking')
+      // 4010 = 凭据已轮换。**两种来源必须分开处理**（1.2B.2.1）：
+      //
+      // | 来源 | 处置 |
+      // |---|---|
+      // | 我们自己正在轮换 | 预期内的旧连接关闭：轮换任务会在落盘后用新凭据重连，这里**什么都不做** |
+      // | 别处轮换了这台设备 | 我们的 token 已失效，重试必然 401：直接 blocked，**不重试** |
+      //
+      // 旧实现在这里做「换凭证重连一次」，但那是在没有轮换能力时的权宜：
+      // 实际上本地没有新凭证可换，重连一次还是同一个 token，只会多一轮 401。
+      if (rotationPhase === 'requesting') {
+        log('[remote] closed 4010 during rotation; waiting for the new credential')
+        // socket 已经死了，状态不能继续停在 `online`——那会让诊断页显示
+        // 「在线」而 socketOpen=false。推进到 backoff 表示「正在等一次重连」，
+        // 但不排重连定时器：轮换任务自己会在落盘后连。
+        if (canTransition(link.state, 'backoff')) transition(link, 'backoff')
         publish()
         return
       }
       needsReauth = true
-      log('[remote] closed 4010; reauth required')
+      transition(link, 'blocked', 'device credentials were rotated elsewhere')
+      log('[remote] closed 4010 outside a rotation; blocking')
       publish()
       return
     }
@@ -652,6 +897,13 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     reportStatus()
     log(`[remote] online: ${helloOk.grants.length} grant(s), epoch ${helloOk.grant_epoch}`)
     publish()
+
+    // 连接建立后立刻查一次轮换窗口。三条路径都靠它收敛：
+    // ① 启动时已逾期（enable 之前就过期，握手却仍然成功——token 可能还剩几天）；
+    // ② 一直在线跨过窗口（定时器也能兜，但这里更早）；
+    // ③ 轮换成功后的重连（新 token 不会立即再触发，因此不会自激）。
+    armRotationTimer()
+    if (rotationDue()) void rotateCredentials('online')
   }
 
   const handlePing = (frame: unknown): void => {
@@ -668,7 +920,6 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
       shouldResetBackoff({ connectedAtMono: link.connectedAtMono, lastPongAtMono: link.lastPongAtMono, nowMono: performance.now() })
     ) {
       link.reconnectAttempt = 0
-      reauthAttempts = 0
     }
     transport?.send(buildPongFrame(parsed.data.seq, cache.snapshot().inflight, Date.now()))
   }
@@ -1043,7 +1294,9 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
       cloudOrigin: configuredOrigin,
       deviceToken: result.deviceToken,
       privateKey: pending.privateKey,
-      registeredAt: Date.now()
+      registeredAt: Date.now(),
+      // Cloud 给的到期时间：主动轮换的唯一判据（协议 §3.4 的 expires_at）。
+      tokenExpiresAt: result.expiresAt
     })
     if (pendingRegistration !== pending) return
 
@@ -1062,6 +1315,7 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     deviceToken = result.deviceToken
     privateKey = pending.privateKey
     deviceOrigin = configuredOrigin
+    tokenExpiresAt = result.expiresAt
     needsReauth = false
     if (link.state === 'blocked') transition(link, 'idle')
     log('[remote] device credential acquired and stored')
@@ -1117,6 +1371,7 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
         deviceToken = loaded.identity.deviceToken
         privateKey = loaded.identity.privateKey
         deviceOrigin = loaded.identity.cloudOrigin
+        tokenExpiresAt = loaded.identity.tokenExpiresAt
         // Origin 绑定校验：不匹配就 blocked + 要求重新配对。
         if (!sameCloudOrigin(configuredOrigin, loaded.identity.cloudOrigin)) {
           needsReauth = true
@@ -1149,6 +1404,7 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
       abortAttempt()
       cancelRegistration('shutdown')
       clearTimers()
+      clearRotationTimer()
       resetConnectionState()
       transport?.close(1000, 'shutdown')
       transport = null
@@ -1185,7 +1441,14 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
       localState = { ...localState, enabled: true }
       writeRemoteState(paths, localState)
       publish()
-      await connect()
+      // 用户刚明确要求开启远程访问：此时出站是预期行为，可以补做逾期轮换。
+      // 放在 connect() **之前**——否则会先用一个即将过期（或已过期）的 token
+      // 去握手，白跑一次 4001 并让状态闪一下 blocked。
+      if (rotationDue()) {
+        await rotateCredentials('enable')
+      } else {
+        await connect()
+      }
       return service()
     },
 
@@ -1288,6 +1551,12 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     },
 
     async prepareForSignOut() {
+      // 轮换可能正卡在 HTTP 上。**等它落定**再让账户侧清凭据：
+      // 中途放手会让新 token（Cloud 已下发、只出现一次）永久丢失，
+      // 而这台设备下次启动就会带着已作废的旧 token 撞 401。
+      if (rotation) {
+        await rotation.promise.catch(() => undefined)
+      }
       // **必须在账户凭据清除之前调用**：那时 device_token 仍然有效。
       localState = { ...localState, enabled: false }
       writeRemoteState(paths, localState)
@@ -1354,6 +1623,12 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
       // 唤醒后 attempt 归零：睡眠不是故障，不该继承之前的退避档位。
       abortAttempt()
       link.reconnectAttempt = 0
+      // 睡眠期间可能整段跨过了轮换窗口（笔记本合盖两周是常态）。
+      // 先轮换再连：轮换成功会用新凭据自己重连，失败则走 blocked。
+      if (rotationDue()) {
+        await rotateCredentials('resume')
+        return
+      }
       await connect()
     }
   }

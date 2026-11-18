@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
-import { createPublicKey, type KeyObject } from 'node:crypto'
+import { createPublicKey, verify as cryptoVerify, type KeyObject } from 'node:crypto'
 import { decodeRawPublicKey, ed25519RawPublicKey, verifyHello } from '../../src/main/remote/device-identity'
 import {
   REMOTE_DEVICE_TOKEN_PATTERN,
@@ -118,6 +118,23 @@ function hashEquals(a: string, b: string): boolean {
 /** 缺省设备的 token：足够长，能通过 `REMOTE_DEVICE_TOKEN_PATTERN`。 */
 export const MOCK_DEVICE_TOKEN = 'bp_dev_mock_token_00000001'
 
+/**
+ * 收到的轮换请求（断言「请求结构正确」用）。
+ *
+ * 存的是**原样**的 authorization 与 body：测试要能证明 token 只在 header 里、
+ * body 里没有第二个副本——如果 Mock 先帮我们「整理」一遍，就什么也证明不了。
+ */
+export type MockRotateRecord = {
+  deviceId: string
+  authorization: string | null
+  contentType: string | null
+  body: Record<string, unknown>
+  /** 验签是否通过（Mock 用设备表里的当前公钥验）。 */
+  verified: boolean
+  /** 拒绝原因（通过则为 null）。 */
+  rejected: string | null
+}
+
 export type MockGatewayGrant = {
   grantCtx: string
   grantId: string
@@ -196,6 +213,21 @@ export type MockGateway = {
   claimAttempts: number
   /** 注册过的设备（测试断言用）。 */
   devices: Map<string, { deviceId: string; status: string; token: string | null }>
+  /**
+   * 收到的轮换请求（按序）。
+   *
+   * 为什么 Mock 也要做真验签：如果它只回 200，那么「Desktop 用旧私钥签了
+   * 什么」这件事完全没被验证——签名串写错、签错字段、encode 换行，测试全绿。
+   */
+  rotations: MockRotateRecord[]
+  /** 轮换端点的失败注入：设置后**下一次**请求返回该状态码（用后即清）。 */
+  failNextRotate(status: number, error: string): void;
+  /**
+   * 在「别处」轮换这台设备（换公钥 + 换 token，旧 token 立刻失效）。
+   *
+   * 用来构造「Desktop 手里的凭据已被别人换掉」这个前提，而不需要它自己发起轮换。
+   */
+  rotateDeviceElsewhere(input: { deviceId: string; publicKey: KeyObject; newToken: string }): void;
   /** 发出一个帧。 */
   send(frame: unknown): void
   /**
@@ -279,6 +311,11 @@ export async function startMockGateway(options: MockGatewayOptions = {}): Promis
 
   const tokenIndex = new Map<string, MockDevice>()
   for (const device of devices) tokenIndex.set(sha256(device.token), device)
+
+  /** 收到的轮换请求（含被拒的那些——拒绝原因本身就是要断言的对象）。 */
+  const rotations: MockRotateRecord[] = []
+  /** 下一次轮换的失败注入。只影响一次，避免测试之间互相污染。 */
+  let nextRotateFailure: { status: number; error: string } | null = null
 
   /** 注册中的设备（pending → active → token 已领取）。只存在于本进程。 */
   const registrations = new Map<
@@ -400,6 +437,107 @@ export async function startMockGateway(options: MockGatewayOptions = {}): Promis
       if (code !== device.confirmCode) return fail(400, 'invalid_confirm_code')
       device.status = 'active'
       return json(200, { device_id: device.deviceId, status: 'active' })
+    }
+
+    // ---- 轮换（协议 §3.5）：真验签、真换 token ----
+    const rotateMatch = /^\/mcp-devices\/([^/]+)\/rotate$/.exec(url.pathname)
+    if (rotateMatch) {
+      const deviceId = decodeURIComponent(rotateMatch[1])
+      const auth = typeof req.headers.authorization === 'string' ? req.headers.authorization : null
+      const record: MockRotateRecord = {
+        deviceId,
+        authorization: auth,
+        contentType: typeof req.headers['content-type'] === 'string' ? req.headers['content-type'] : null,
+        body: {},
+        verified: false,
+        rejected: null
+      }
+      rotations.push(record)
+
+      if (nextRotateFailure) {
+        const injected = nextRotateFailure
+        nextRotateFailure = null
+        record.rejected = `injected:${injected.error}`
+        return fail(injected.status, injected.error)
+      }
+
+      // 认证：只认 device_token，且必须是**这台**设备的。
+      const presented = auth?.startsWith('Bearer ') ? auth.slice(7).trim() : ''
+      if (!REMOTE_DEVICE_TOKEN_PATTERN.test(presented)) {
+        record.rejected = 'unauthorized'
+        return fail(401, 'device_unauthorized')
+      }
+      const device = tokenIndex.get(sha256(presented))
+      if (!device || device.deviceId !== deviceId) {
+        record.rejected = 'unauthorized'
+        return fail(401, 'device_unauthorized')
+      }
+      if (device.status !== 'active') {
+        record.rejected = 'device_state'
+        return fail(409, 'invalid_device_state')
+      }
+
+      let raw: unknown
+      try {
+        raw = JSON.parse(await readBody(req))
+      } catch {
+        record.rejected = 'invalid_request'
+        return fail(400, 'invalid_request')
+      }
+      record.body = (raw ?? {}) as Record<string, unknown>
+      const body = raw as { new_public_key?: unknown; ts?: unknown; sig?: unknown }
+      if (
+        typeof body?.new_public_key !== 'string' ||
+        !/^[A-Za-z0-9_-]{43}$/.test(body.new_public_key) ||
+        typeof body.ts !== 'number' ||
+        !Number.isInteger(body.ts) ||
+        typeof body.sig !== 'string'
+      ) {
+        record.rejected = 'invalid_request'
+        return fail(400, 'invalid_request')
+      }
+      // 时钟偏差：与 hello 同一条规则（±120s）。
+      if (Math.abs(Date.now() - body.ts) > 120_000) {
+        record.rejected = 'invalid_timestamp'
+        return fail(400, 'invalid_timestamp')
+      }
+
+      const currentKey = resolveDeviceKey(device, options.devicePublicKey)
+      const newKey = (() => {
+        try {
+          return decodeRawPublicKey(body.new_public_key as string)
+        } catch {
+          return null
+        }
+      })()
+      if (!currentKey || !newKey) {
+        record.rejected = 'invalid_public_key'
+        return fail(400, 'invalid_public_key')
+      }
+
+      // 规范串与 Cloud 侧逐字一致：`prefix\ndevice_id\nnew_public_key\nts`。
+      const payload = [
+        'brewphase.remote.rotate.v1',
+        deviceId,
+        body.new_public_key as string,
+        String(body.ts)
+      ].join('\n')
+      const sig = Buffer.from(body.sig as string, 'base64url')
+      const verified = sig.length === 64 && cryptoVerify(null, Buffer.from(payload, 'utf8'), currentKey, sig)
+      record.verified = verified
+      if (!verified) {
+        record.rejected = 'bad_signature'
+        return fail(401, 'device_unauthorized')
+      }
+
+      // 原子换：旧 token 立刻从索引里消失（等价于 Cloud 覆盖 token_hash）。
+      const newToken = `bp_dev_${randomBytes(24).toString('base64url')}`
+      tokenIndex.delete(sha256(device.token))
+      device.token = newToken
+      device.publicKey = body.new_public_key as string
+      tokenIndex.set(sha256(newToken), device)
+
+      return json(200, { device_token: newToken, expires_at: Date.now() + 30 * 24 * 3600_000 })
     }
 
     const claimMatch = /^\/mcp-devices\/([^/]+)\/credentials$/.exec(url.pathname)
@@ -634,6 +772,10 @@ export async function startMockGateway(options: MockGatewayOptions = {}): Promis
     url: `ws://127.0.0.1:${port}`,
     received,
     rawReceived,
+    rotations,
+    failNextRotate(status, error) {
+      nextRotateFailure = { status, error }
+    },
     /** 实时视图：注册表变化后立刻可读（测试断言「只领取一次」用）。 */
     get devices() {
       const view = new Map<string, { deviceId: string; status: string; token: string | null }>()
@@ -742,6 +884,20 @@ export async function startMockGateway(options: MockGatewayOptions = {}): Promis
         if (deviceId && device.deviceId !== deviceId) continue
         if (deviceId || device.deviceId === 'dev-1') device.publicKey = raw
       }
+    },
+    /**
+     * 在「别处」轮换这台设备（模拟另一台机器 / 网页端换了凭据）。
+     *
+     * 与端点里的轮换等价，但**不经过 HTTP**：用来构造「Desktop 手里的 token
+     * 已被别人换掉」这个前提到，而不需要它自己发起轮换。
+     */
+    rotateDeviceElsewhere({ deviceId, publicKey, newToken }) {
+      const device = devices.find((entry) => entry.deviceId === deviceId)
+      if (!device) return
+      if (device.token) tokenIndex.delete(sha256(device.token))
+      device.token = newToken
+      device.publicKey = rawPublicKeyOf(publicKey)
+      tokenIndex.set(sha256(newToken), device)
     },
     confirmDevice(deviceId, confirmCode) {
       const device = registrations.get(deviceId)

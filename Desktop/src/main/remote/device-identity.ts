@@ -64,6 +64,17 @@ export type DeviceIdentity = {
   privateKey: KeyObject
   publicKey: KeyObject
   registeredAt: number
+  /**
+   * `device_token` 的到期时刻（**epoch 毫秒，Cloud 给的**）。
+   *
+   * 为什么必须落盘：主动轮换的判据是「还剩多久」，而本地猜生命周期是错的
+   * （Cloud 的 TTL 可能变，且签发时刻与本地时钟无关）。没有这个值就只能
+   * 等 4010 —— 而 4010 是**轮换之后**才有的信号，救不了「token 自然过期」。
+   *
+   * `null` = 这个字段引入之前写入的老凭据。老凭据继续可用，只是无法主动
+   * 轮换（见 remote-service 的 `rotationDue`）。
+   */
+  tokenExpiresAt: number | null
 }
 
 const storedSchema = z.object({
@@ -72,7 +83,10 @@ const storedSchema = z.object({
   cloudOrigin: z.string().min(1).max(256),
   deviceToken: z.string().min(1).max(512),
   privateKeyPkcs8: z.string().min(1).max(512),
-  registeredAt: z.number().int()
+  registeredAt: z.number().int(),
+  // 可选 + 可空：老凭据没有这个字段，不能因为加了它就判成 unreadable
+  // （那会让所有已配对设备在升级后要求重新配对）。
+  tokenExpiresAt: z.number().int().nullable().optional()
 })
 type StoredDevice = z.infer<typeof storedSchema>
 
@@ -314,6 +328,63 @@ export function makeNonce(): string {
   return randomBytes(16).toString('base64url')
 }
 
+// MARK: - 轮换签名（协议 §3.5）
+
+/** 轮换签名原文的域分隔前缀（与 Cloud `ROTATE_SIGNING_PREFIX` 逐字相同）。 */
+export const ROTATE_SIGNING_PREFIX = 'brewphase.remote.rotate.v1'
+
+/**
+ * 轮换的规范串（协议 §3.5，**唯一实现**）。
+ *
+ * ```
+ * brewphase.remote.rotate.v1
+ * <device_id>
+ * <new_public_key>
+ * <ts>
+ * ```
+ *
+ * 四行，`\n` 分隔，顺序固定。三处不可动：
+ *
+ * 1. **首行是域分隔**。没有它，同一把私钥在别处签的消息（例如 hello）可能
+ *    与轮换消息在字节上同形，形成跨协议签名复用；
+ * 2. **`new_public_key` 必须在签名里**。否则只拿到 `device_token` 的人就能
+ *    把设备换成自己的公钥——那等于把设备身份交给一个小偷；
+ * 3. **`ts` 必须在签名里**。否则请求可被无限重放（虽然旧 token 会失效，
+ *    但重放窗口内的重复轮换会让设备不断掉线）。
+ *
+ * 字段值里出现换行会让「一行一个字段」的结构产生歧义（`\n` 既是分隔符又是
+ * 内容），所以生成前显式拒绝——与 hello 的 `assertNoSeparators` 同一条理由。
+ *
+ * 与 Cloud 的一致性由 `fixtures/remote-mcp/rotate-v1.json` 锁住：
+ * 两端各写一份实现，只有对同一份向量得出同一串才算兼容。
+ */
+export function rotateSigningPayload(input: {
+  deviceId: string
+  newPublicKey: string
+  ts: number
+}): Buffer {
+  const text = [
+    ROTATE_SIGNING_PREFIX,
+    assertNoSeparators('device_id', input.deviceId),
+    assertNoSeparators('new_public_key', input.newPublicKey),
+    String(input.ts)
+  ].join('\n')
+  return Buffer.from(text, 'utf8')
+}
+
+export type RotateSigningInput = Parameters<typeof rotateSigningPayload>[0]
+
+/**
+ * 用**旧私钥**签轮换请求。
+ *
+ * 强调「旧」：Cloud 用库里的旧公钥验证，通过之后才替换。如果这里误用新私钥，
+ * 签名必然失败——而失败信息只有 `device_unauthorized`，排障时最容易被误读成
+ * 「token 过期了」。
+ */
+export function signRotation(privateKey: KeyObject, input: RotateSigningInput): string {
+  return cryptoSign(null, rotateSigningPayload(input), privateKey).toString('base64url')
+}
+
 // MARK: - 持久化
 
 export type DeviceStorePaths = {
@@ -336,7 +407,19 @@ export function deviceStorePaths(baseDir: string): DeviceStorePaths {
 
 export type DeviceStore = {
   load(): Promise<DeviceLoad>
-  save(identity: Omit<DeviceIdentity, 'privateKey' | 'publicKey'> & { privateKey: KeyObject }): Promise<DeviceSave>
+  /**
+   * 落盘凭据。
+   *
+   * `tokenExpiresAt` 是**可选**的：它是后加的字段，而「未知到期时间」在语义上
+   * 就是 `null`（老凭据）。把它做成必填会逼所有调用点凭空写一个 `null`，
+   * 那和「忘了传」在代码里长得一模一样，反而更容易漏。
+   */
+  save(
+    identity: Omit<DeviceIdentity, 'privateKey' | 'publicKey' | 'tokenExpiresAt'> & {
+      privateKey: KeyObject
+      tokenExpiresAt?: number | null
+    }
+  ): Promise<DeviceSave>
   /** 删除设备凭据并**先把代际号 +1 落盘**，使旧的异步保存全部失效。 */
   forget(): Promise<{ ok: true } | { ok: false; reason: 'write-failed' }>
   /** 当前持久化代际号（测试与 diagnose 用）。 */
@@ -444,7 +527,8 @@ export function createDeviceStore(paths: DeviceStorePaths, box: RemoteSecretBox)
           deviceToken: stored.deviceToken,
           privateKey,
           publicKey,
-          registeredAt: stored.registeredAt
+          registeredAt: stored.registeredAt,
+          tokenExpiresAt: stored.tokenExpiresAt ?? null
         }
       }
     },
@@ -461,7 +545,8 @@ export function createDeviceStore(paths: DeviceStorePaths, box: RemoteSecretBox)
         cloudOrigin: input.cloudOrigin,
         deviceToken: input.deviceToken,
         privateKeyPkcs8: input.privateKey.export({ type: 'pkcs8', format: 'der' }).toString('base64'),
-        registeredAt: input.registeredAt
+        registeredAt: input.registeredAt,
+        tokenExpiresAt: input.tokenExpiresAt ?? null
       }
       const plain = JSON.stringify(stored)
 

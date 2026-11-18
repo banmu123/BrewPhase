@@ -163,6 +163,31 @@ export const REMOTE_CACHE_TTL_MS = 60_000
 /** 连接稳定多久后把退避 attempt 归零（协议 §10.1）。 */
 export const REMOTE_BACKOFF_RESET_MS = 60_000
 
+/**
+ * 主动轮换的提前量：在 token 到期前 **7 天**开始尝试。
+ *
+ * 取值依据（不是拍的）：
+ * - Cloud 的 `DEVICE_TOKEN_TTL_MS` 是 **30 天**。提前量必须是它的一个显著
+ *   比例，否则「提前」没有意义；
+ * - 7 天覆盖「用户一周没开电脑」这类空档。更短的提前量（例如 1 天）会让
+ *   「关笔记本一周」直接越过窗口，只能重新配对；
+ * - 也不能太大：提前 20 天意味着每次启动都可能在轮换，而轮换是一次
+ *   带签名的写操作，没必要这么频繁。
+ *
+ * 与 `DEVICE_TOKEN_TTL_MS` 的**关系**（而非数值）由 Cloud 测试锁住：
+ * `cloud/tests/mcp-devices/rotate.test.ts` 断言 TTL 存在且为 30 天。
+ */
+export const REMOTE_ROTATION_LEAD_MS = 7 * 24 * 60 * 60 * 1000
+
+/**
+ * 轮换检查的最小间隔（在线期间的兜底定时器）。
+ *
+ * 提前量是 7 天，每小时查一次已经绰绰有余；这个间隔的作用不是「及时」，
+ * 而是让「笔记本合盖 20 天后打开」这种情况在**下一次**检查时被发现，
+ * 而不是等到某个连接事件。
+ */
+export const REMOTE_ROTATION_CHECK_INTERVAL_MS = 60 * 60 * 1000
+
 // MARK: - 帧
 
 /**
@@ -485,6 +510,57 @@ export const remoteRegistrationTicketSchema = z.object({
   expiresAt: z.number().int()
 })
 export type RemoteRegistrationTicket = z.infer<typeof remoteRegistrationTicketSchema>
+
+// MARK: - 设备凭据轮换（HTTPS，协议 §3.5 / 生命周期 §11.6）
+
+/**
+ * 轮换请求体。
+ *
+ * `sig` 用**旧私钥**签，覆盖 `brewphase.remote.rotate.v1\n<device_id>\n<new_public_key>\n<ts>`。
+ * 三个字段缺一不可：不签 `new_public_key`，只拿到旧 token 的人就能把设备
+ * 换成自己的公钥；不签 `ts`，请求可以被无限重放。
+ */
+export const remoteDeviceRotateRequestSchema = z
+  .object({
+    new_public_key: z.string().regex(/^[A-Za-z0-9_-]{43}$/, 'new_public_key must be base64url of 32 bytes'),
+    ts: z.number().int(),
+    sig: z.string().min(1).max(512)
+  })
+  .strict()
+export type RemoteDeviceRotateRequest = z.infer<typeof remoteDeviceRotateRequestSchema>
+
+/** 轮换响应：新 `device_token` **只在这一次**出现。 */
+export const remoteDeviceRotateResponseSchema = z
+  .object({
+    device_token: z.string().regex(REMOTE_DEVICE_TOKEN_PATTERN),
+    expires_at: z.number().int()
+  })
+  .strict()
+export type RemoteDeviceRotateResponse = z.infer<typeof remoteDeviceRotateResponseSchema>
+
+/**
+ * 轮换失败原因（Client 侧归一化后的枚举；不是 Cloud 的错误码）。
+ *
+ * 分成四类是刻意的——它们的**处置完全不同**：
+ *
+ * | 原因 | 处置 |
+ * |---|---|
+ * | `network` | 结果未知（Cloud 可能已经换完）→ 只能 blocked，不能重试 |
+ * | `unauthorized` | 旧凭据已失效 → 重新配对 |
+ * | `device_state` | 设备被暂停/撤销 → 提示用户，不重连 |
+ * | `invalid_response` | 对端不是我们期望的协议 → 记录并 blocked |
+ */
+export const REMOTE_ROTATION_FAILURES = [
+  'network',
+  'unauthorized',
+  'device_state',
+  'not_found',
+  'invalid_public_key',
+  'rate_limited',
+  'account_changed',
+  'invalid_response'
+] as const
+export type RemoteRotationFailure = (typeof REMOTE_ROTATION_FAILURES)[number]
 
 /** 生效范围 = grant.scopes ∩ REMOTE_SCOPES ∩ 本地允许集。 */
 export function toolsForScopes(scopes: readonly RemoteScope[]): RemoteToolName[] {

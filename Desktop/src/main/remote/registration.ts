@@ -2,7 +2,9 @@ import {
   REMOTE_DEVICE_TOKEN_PATTERN,
   remoteDeviceCredentialsResponseSchema,
   remoteDeviceRegisterResponseSchema,
-  type RemoteRegistrationFailure
+  remoteDeviceRotateResponseSchema,
+  type RemoteRegistrationFailure,
+  type RemoteRotationFailure
 } from '../../shared/contracts/remote'
 
 /**
@@ -79,7 +81,31 @@ export type DeviceRegistrar = {
    * （协议 §3.4 的四条传输纪律）。
    */
   claim(input: { deviceId: string; claimSecret: string }): Promise<DeviceClaimResult>
+  /**
+   * 轮换凭据（协议 §3.5）。
+   *
+   * 与上面两个的**关键差别**：这里的认证是 `Bearer <旧 device_token>`，
+   * **不是**用户 access token。轮换要证明的是「我还持有这台设备的旧私钥 +
+   * 旧 token」，而不是「我还登录着」——所以这条路完全不碰 `accessToken()`,
+   * 也就不会因为用户 access token 过期而失败。
+   */
+  rotate(input: DeviceRotateInput): Promise<DeviceRotateResult>
 }
+
+export type DeviceRotateInput = {
+  deviceId: string
+  /** **旧** device_token（本次请求的 Bearer，请求成功后立即失效）。 */
+  oldDeviceToken: string
+  /** 裸 32 字节新公钥的 base64url（43 字符）。 */
+  newPublicKey: string
+  ts: number
+  /** 旧私钥对 `brewphase.remote.rotate.v1\n<id>\n<key>\n<ts>` 的签名。 */
+  signature: string
+}
+
+export type DeviceRotateResult =
+  | { ok: true; deviceToken: string; expiresAt: number }
+  | { ok: false; reason: RemoteRotationFailure }
 
 /**
  * 只声明用到的部分，便于测试注入假实现。
@@ -136,16 +162,24 @@ export function createHttpDeviceRegistrar(options: HttpDeviceRegistrarOptions): 
    *
    * 返回 `{ status, body }`，**不抛**任何带请求内容的错误：调用方只按
    * 状态码归类。解析失败得到 `body = null`，由 schema 判成 `invalid_response`。
+   *
+   * `bearer` 参数是 1.2B.2.1 加的：轮换用的是**设备** token，与注册/领取用的
+   * **用户** token 是两个凭据域。把它做成参数而不是分支，是为了让「这个请求
+   * 用哪个身份」在调用点就可见——混用两个域的代价是「用户登出后设备再也
+   * 轮换不了」，而那种 bug 只在用户登出时出现。
    */
-  const call = async (
+  const callWithBearer = async (
     path: string,
-    body: unknown
+    body: unknown,
+    bearer: { kind: 'user' } | { kind: 'device'; token: string },
   ): Promise<{ status: number; body: unknown }> => {
     if (!fetchImpl) throw new Error('fetch is not available')
 
-    // **每次请求前**取 token：不缓存、不传递 refresh token。
     let token: string
-    if (options.accessToken) {
+    if (bearer.kind === 'device') {
+      token = bearer.token
+    } else if (options.accessToken) {
+      // **每次请求前**取 token：不缓存、不传递 refresh token。
       try {
         token = await options.accessToken()
       } catch {
@@ -172,7 +206,7 @@ export function createHttpDeviceRegistrar(options: HttpDeviceRegistrarOptions): 
         headers,
         body: JSON.stringify(body),
         signal: controller.signal,
-        // 不跟随重定向：302 会把请求体（含 claim_secret）带到别的主机去。
+        // 不跟随重定向：302 会把请求体（含 claim_secret / 签名）带到别的主机去。
         redirect: 'manual'
       })
       let text = ''
@@ -186,6 +220,9 @@ export function createHttpDeviceRegistrar(options: HttpDeviceRegistrarOptions): 
       clearTimeout(timer)
     }
   }
+
+  /** 用户凭据域的调用（注册 / 领取）。 */
+  const call = (path: string, body: unknown) => callWithBearer(path, body, { kind: 'user' })
 
   return {
     async register(input) {
@@ -250,6 +287,51 @@ export function createHttpDeviceRegistrar(options: HttpDeviceRegistrarOptions): 
       // 「Cloud 发了奇怪的东西」在类型层也停住（Desktop 的握手只认这个前缀）。
       if (!REMOTE_DEVICE_TOKEN_PATTERN.test(parsed.data.device_token)) {
         return { ok: false, reason: 'invalid_response', retryable: false }
+      }
+      return { ok: true, deviceToken: parsed.data.device_token, expiresAt: parsed.data.expires_at }
+    },
+
+    /**
+     * 轮换（协议 §3.5）。
+     *
+     * 三条纪律与 register/claim 一致：AbortController 超时、`redirect: 'manual'`、
+     * 错误只按状态码归类且**不带任何请求内容**。
+     *
+     * 状态码映射刻意比 claim 更细：轮换失败时 Desktop 要决定「blocked 并重新
+     * 配对」还是「提示用户开开关」，把 401/409/404 混成一个 `rejected` 会让那个
+     * 决定失去依据。
+     */
+    async rotate(input) {
+      let res: { status: number; body: unknown }
+      try {
+        res = await callWithBearer(
+          `/mcp-devices/${encodeURIComponent(input.deviceId)}/rotate`,
+          {
+            new_public_key: input.newPublicKey,
+            ts: input.ts,
+            sig: input.signature
+          },
+          // **设备**凭据域：这里绝不能用用户 access token。
+          { kind: 'device', token: input.oldDeviceToken }
+        )
+      } catch {
+        // 网络失败：结果**未知**（Cloud 可能已经提交）。
+        // 这个区分是整条轮换链路最重要的一个：调用方必须据此进入 blocked，
+        // 而不是拿旧 token 再试一次。
+        return { ok: false, reason: 'network' }
+      }
+
+      if (res.status === 401 || res.status === 403) return { ok: false, reason: 'unauthorized' }
+      if (res.status === 404) return { ok: false, reason: 'not_found' }
+      if (res.status === 409) return { ok: false, reason: 'device_state' }
+      if (res.status === 429) return { ok: false, reason: 'rate_limited' }
+      if (res.status === 400) return { ok: false, reason: 'invalid_public_key' }
+      if (res.status !== 200) return { ok: false, reason: 'invalid_response' }
+
+      const parsed = remoteDeviceRotateResponseSchema.safeParse(res.body)
+      if (!parsed.success) return { ok: false, reason: 'invalid_response' }
+      if (!REMOTE_DEVICE_TOKEN_PATTERN.test(parsed.data.device_token)) {
+        return { ok: false, reason: 'invalid_response' }
       }
       return { ok: true, deviceToken: parsed.data.device_token, expiresAt: parsed.data.expires_at }
     }

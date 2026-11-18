@@ -263,6 +263,11 @@ describe('账户切换 / 登出会让进行中的注册失效', () => {
         calls += 1
         await gate
         return { ok: true as const, deviceToken: 'bp_dev_held_token_00000001', expiresAt: Date.now() + 86_400_000 }
+      },
+      // 这个假实现只服务于「claim 在途」的场景；rotate 走真实 HTTP 客户端
+      // 在 remote-rotation.test.ts 里测，这里给一个明确的未实现标记。
+      async rotate() {
+        return { ok: false as const, reason: 'invalid_response' as const }
       }
     })
     return {
