@@ -19,14 +19,15 @@ import {
   type RemoteSecretBox
 } from '../../src/main/remote/device-identity'
 import { computeRequestHash } from '../../src/main/remote/request-handler'
-import { startMockGateway, publicKeyOf, type MockGateway } from '../helpers/mock-gateway'
-import { REMOTE_CHANNELS } from '../../src/shared/contracts/remote'
+import { startMockGateway, publicKeyOf, MOCK_DEVICE_TOKEN, type MockGateway } from '../helpers/mock-gateway'
+import { testWebSocketFactory } from '../helpers/ws-client'
+import { REMOTE_CHANNELS, type RemoteGrant } from '../../src/shared/contracts/remote'
 
 /**
  * RemoteService 端到端（Phase 1.1B）。
  *
- * 用**真实 WSS**（Electron 主进程可用的原生 WebSocket，在 vitest 的 Node 环境里
- * 同样存在）连本地 Mock Gateway，验证：
+ * 用**真实 WSS**（`tests/helpers/ws-client.ts` 提供的最小客户端：真发
+ * `Authorization` 头、真掩码、真关闭握手）连本地 Mock Gateway，验证：
  * 握手 → hello_ok 安装 → req 准入 → executeTool → 审计 → res，
  * 以及 close code 分级、grant_update / ack、serviceable 上报。
  */
@@ -42,6 +43,17 @@ const ALL_TOOLS = [
   'list_canvases',
   'get_canvas'
 ]
+
+/** 一个标准的「ChatGPT 有 records:read」授权，多个用例共用。 */
+const GRANT_A = {
+  grantCtx: 'gc_a',
+  grantId: 'grt_a',
+  clientId: 'chatgpt',
+  clientName: 'ChatGPT',
+  scopes: ['records:read'] as RemoteGrant['scopes'],
+  boundUserId: USER,
+  epoch: 1
+}
 
 let dir: string
 let handle: DatabaseHandle
@@ -100,12 +112,30 @@ async function seedDevice(options: { cloudOrigin?: string; boundUserId?: string 
     deviceId: 'dev-1',
     boundUserId: options.boundUserId ?? USER,
     cloudOrigin: options.cloudOrigin ?? gatewayUrl,
-    deviceToken: 'bp_dev_test',
+    deviceToken: MOCK_DEVICE_TOKEN,
     privateKey,
     registeredAt: Date.now()
   })
   expect(saved.ok).toBe(true)
-  return { privateKey, publicKey: publicKeyOf(privateKey), paths }
+  const publicKey = publicKeyOf(privateKey)
+  // Mock 侧要拿到公钥才能验签（等价于 Cloud 注册时存下 public_key）。
+  gateway?.trustDevicePublicKey(publicKey)
+  return { privateKey, publicKey, paths }
+}
+
+/** 等 diagnose() 的某个字段满足条件（`lastCloseCode` 不在 status 里）。 */
+async function waitForDiagnosis(
+  target: RemoteService,
+  predicate: (diagnosis: ReturnType<RemoteService['diagnose']>) => boolean,
+  timeoutMs = 5_000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate(target.diagnose())) {
+    if (Date.now() > deadline) {
+      throw new Error(`timeout waiting for diagnosis; last=${JSON.stringify(target.diagnose())}`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
 }
 
 /** 打开开关（等价于用户已授权范围）。 */
@@ -126,6 +156,9 @@ function makeService(overrides: {
     baseDir: overrides.baseDir ?? dir,
     cloudOrigin: overrides.cloudOrigin ?? gatewayUrl,
     secretBox: memoryBox(),
+    // 测试环境没有 electron.net，而带 Authorization 头的连接必须有人真的把头发出去。
+    // 这个工厂是一个最小 WS 客户端（真发头、真掩码、真关闭握手）。
+    webSocketFactory: testWebSocketFactory,
     clientVersion: '0.1.4-test',
     onChanged: overrides.onChanged as never,
     log: () => undefined
@@ -161,7 +194,7 @@ describe('默认关闭：零出站连接', () => {
       deviceId: 'dev-1',
       boundUserId: USER,
       cloudOrigin: gatewayUrl,
-      deviceToken: 'bp_dev_test',
+      deviceToken: MOCK_DEVICE_TOKEN,
       privateKey,
       registeredAt: Date.now()
     })
@@ -730,5 +763,292 @@ describe('Cloud 不可达时的本地清理（ST-14）', () => {
     await service.stop()
     expect(service.status().linkState).toBe('idle')
     expect(service.diagnose().socketOpen).toBe(false)
+  })
+})
+
+describe('心跳看门狗（不能等第一条 ping）', () => {
+  it('握手成功但 Cloud 从不发 ping → 到 idle_timeout 主动关闭 4008', async () => {
+    // idle_timeout 设得很小；看门狗本身最快 1s 检查一次。
+    gateway = await startMockGateway({
+      allowedTools: ALL_TOOLS,
+      grantEpoch: 1,
+      heartbeatMs: 200,
+      idleTimeoutMs: 150
+    })
+    gatewayUrl = gateway.url
+    const { paths } = await seedDevice()
+    await enableSwitch(paths)
+    service = makeService()
+    await service.start()
+
+    await waitForStatus(service, (s) => s.linkState === 'online')
+    // 一次 ping 都不发（模拟 NAT 半开 / LB 掉表）。
+    // 注意 lastCloseCode / lastCloseReason 只在 diagnose() 里，status() 不含它们。
+    await waitForDiagnosis(service, (d) => d.lastCloseCode === 4008, 6_000)
+    expect(service.diagnose().lastCloseReason).toContain('heartbeat')
+  })
+
+  it('收到 ping 就会续命（不会误判超时）', async () => {
+    gateway = await startMockGateway({
+      allowedTools: ALL_TOOLS,
+      grantEpoch: 1,
+      heartbeatMs: 200,
+      idleTimeoutMs: 400
+    })
+    gatewayUrl = gateway.url
+    const { paths } = await seedDevice()
+    await enableSwitch(paths)
+    service = makeService()
+    await service.start()
+    await waitForStatus(service, (s) => s.linkState === 'online')
+
+    for (let i = 0; i < 5; i += 1) {
+      gateway.sendPing(i + 1)
+      await new Promise((resolve) => setTimeout(resolve, 300))
+    }
+    // 5 × 300ms > 400ms 的 idle_timeout，一直有 ping 就不该断。
+    expect(service.diagnose().lastCloseCode).toBeNull()
+    expect(service.status().linkState).toBe('online')
+  })
+})
+
+describe('draining', () => {
+  it('收到 drain 后拒绝新 req（DEVICE_BUSY），且不执行、不审计', async () => {
+    gateway = await startMockGateway({ allowedTools: ALL_TOOLS, grantEpoch: 1 })
+    gatewayUrl = gateway.url
+    const { paths } = await seedDevice()
+    await enableSwitch(paths)
+    service = makeService()
+    await service.start()
+    await waitForStatus(service, (s) => s.linkState === 'online')
+
+    let calls = 0
+    const original = services.records.searchForMcp
+    services.records.searchForMcp = ((input) => {
+      calls += 1
+      return original(input)
+    }) as typeof services.records.searchForMcp
+    try {
+      gateway.sendDrain(0)
+      await waitForStatus(service, (s) => s.linkState === 'draining')
+
+      const args = {}
+      gateway.sendReq({
+        id: 'req-drain',
+        tool: 'search_records',
+        args,
+        grantCtx: 'gc_a',
+        requestHash: computeRequestHash({ v: 1, tool: 'search_records', arguments: args })
+      })
+      const res = await gateway.waitForRes('req-drain')
+      expect(res.ok).toBe(false)
+      expect((res.error as { code: string }).code).toBe('DEVICE_BUSY')
+      expect(calls).toBe(0)
+    } finally {
+      services.records.searchForMcp = original
+    }
+  })
+})
+
+describe('连接尝试的代际隔离', () => {
+  it('快速 disable → enable 只保留一条连接，且状态收敛到 online', async () => {
+    gateway = await startMockGateway({ allowedTools: ALL_TOOLS, grantEpoch: 1 })
+    gatewayUrl = gateway.url
+    const { paths } = await seedDevice()
+    await enableSwitch(paths)
+    service = makeService()
+    await service.start()
+    await waitForStatus(service, (s) => s.linkState === 'online')
+
+    // 连开三次又关：每次都会让上一次的握手尝试失效。
+    await service.disable()
+    const p1 = service.enable()
+    await service.disable()
+    const p2 = service.enable()
+    await Promise.all([p1, p2])
+
+    await waitForStatus(service, (s) => s.linkState === 'online')
+    expect(service.diagnose().socketOpen).toBe(true)
+    // 只有最后一次尝试留下了连接；旧尝试既没发 hello，也没把新 socket 关掉。
+    const hellos = gateway.received.filter((frame) => frame.type === 'hello')
+    expect(hellos.length).toBe(gateway.connections)
+  })
+})
+
+describe('帧上限协商（Cloud 只能收紧）', () => {
+  it('超过 Cloud 下发的 max_frame_bytes → close 4009，且不进业务层', async () => {
+    gateway = await startMockGateway({
+      allowedTools: ALL_TOOLS,
+      grantEpoch: 1,
+      // 让 Cloud 声明一个很小的上限，验证它真的生效。
+      maxFrameBytes: 512
+    })
+    gatewayUrl = gateway.url
+    const { paths } = await seedDevice()
+    await enableSwitch(paths)
+    service = makeService()
+    await service.start()
+    await waitForStatus(service, (s) => s.linkState === 'online')
+
+    // 一条 1 KiB 的帧（远超 512）——用未知 type，确保「即使认识也不会执行」。
+    gateway.send({ v: 1, type: 'noise', blob: 'a'.repeat(1024) })
+    await waitForDiagnosis(service, (d) => d.lastCloseCode === 4009, 5_000)
+    expect(service.diagnose().lastCloseReason).toContain('frame too large')
+  })
+})
+
+describe('畸形帧：协议 §2.2 要求「必须回话」', () => {
+  it('req 带未知键 → PROTOCOL_VIOLATION，不执行、不写缓存、不改授权状态', async () => {
+    gateway = await startMockGateway({ allowedTools: ALL_TOOLS, grantEpoch: 1, grants: [GRANT_A] })
+    gatewayUrl = gateway.url
+    const { paths } = await seedDevice()
+    await enableSwitch(paths)
+    service = makeService()
+    await service.start()
+    await waitForStatus(service, (s) => s.linkState === 'online')
+
+    let calls = 0
+    const original = services.records.searchForMcp
+    services.records.searchForMcp = ((input) => {
+      calls += 1
+      return original(input)
+    }) as typeof services.records.searchForMcp
+    try {
+      // 未知键 `surprise`：闭合键集必须拒绝。
+      gateway.send({
+        v: 1,
+        type: 'req',
+        id: 'req-bad-key',
+        ts: Date.now(),
+        tool: 'search_records',
+        arguments: {},
+        request_hash: computeRequestHash({ v: 1, tool: 'search_records', arguments: {} }),
+        deadline_ms: Date.now() + 10_000,
+        grant_ctx: 'gc_a',
+        surprise: true
+      })
+
+      const res = await gateway.waitForRes('req-bad-key')
+      expect(res.ok).toBe(false)
+      expect((res.error as { code: string }).code).toBe('PROTOCOL_VIOLATION')
+      expect((res.error as { retryable: boolean }).retryable).toBe(false)
+      // 一个字节的业务代码都没跑，缓存也没被污染。
+      expect(calls).toBe(0)
+      expect(service.diagnose().cacheEntries).toBe(0)
+      // 授权状态原封不动，连接还活着。
+      expect(service.status().grants).toHaveLength(1)
+      expect(service.status().linkState).toBe('online')
+      // 这是一次「篡改载荷」形态的安全事件，要留一行审计（工具名可信时才记）。
+      const rows = handle.db.select().from(mcpOperationLog).all()
+      expect(rows).toHaveLength(1)
+      expect(rows[0].toolName).toBe('search_records')
+      expect(rows[0].success).toBe(false)
+      expect(rows[0].errorCode).toBe('PROTOCOL_VIOLATION')
+    } finally {
+      services.records.searchForMcp = original
+    }
+  })
+
+  it('非 JSON 帧但能从原文提取 id → 也回 PROTOCOL_VIOLATION（不静默丢弃）', async () => {
+    gateway = await startMockGateway({ allowedTools: ALL_TOOLS, grantEpoch: 1, grants: [GRANT_A] })
+    gatewayUrl = gateway.url
+    const { paths } = await seedDevice()
+    await enableSwitch(paths)
+    service = makeService()
+    await service.start()
+    await waitForStatus(service, (s) => s.linkState === 'online')
+
+    // 故意截断 JSON：id 可读，但整段不是合法 JSON。
+    gateway.sendText('{"v":1,"type":"req","id":"req-truncated","tool":"search_records","arguments":{"a":')
+    const res = await gateway.waitForRes('req-truncated')
+    expect(res.ok).toBe(false)
+    expect((res.error as { code: string }).code).toBe('PROTOCOL_VIOLATION')
+    // 回话而不是断连：Cloud 能立刻知道「帧坏了」，不用等到 deadline。
+    expect(service.status().linkState).toBe('online')
+    // 这条路径连 tool 都没解析出来（原文不可信），所以不写审计——
+    // 宁可少一行，也不用不可信的工具名污染审计表。
+    expect(handle.db.select().from(mcpOperationLog).all()).toHaveLength(0)
+  })
+
+  it('业务参数里恰好有 id 字段时，不会被当成投递 id（不误回话）', async () => {
+    gateway = await startMockGateway({ allowedTools: ALL_TOOLS, grantEpoch: 1, grants: [GRANT_A] })
+    gatewayUrl = gateway.url
+    const { paths } = await seedDevice()
+    await enableSwitch(paths)
+    service = makeService()
+    await service.start()
+    await waitForStatus(service, (s) => s.linkState === 'online')
+
+    // 这段文本的 type 不是 req（是 noise），且 id 在 arguments 之后。
+    // 两重判据都要求它「看起来不是 req」→ 不回话，按无法识别处理。
+    gateway.sendText('{"v":1,"type":"noise","arguments":{"id":"should-not-be-used"}}')
+    // 等一小会儿，确认没有 res 发出。
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    const res = gateway.received.filter((frame) => frame.type === 'res')
+    expect(res).toHaveLength(0)
+  })
+
+  it('grant_update 带未知键 → ack applied=false，且不触发 Cloud 的 ack 超时', async () => {
+    gateway = await startMockGateway({ allowedTools: ALL_TOOLS, grantEpoch: 1, grants: [GRANT_A] })
+    gatewayUrl = gateway.url
+    const { paths } = await seedDevice()
+    await enableSwitch(paths)
+    service = makeService()
+    await service.start()
+    await waitForStatus(service, (s) => s.linkState === 'online')
+    // 先制造一条缓存，用来验证「被拒绝的 revoke 不会误清别人的缓存」。
+    const cachedArgs = {}
+    gateway.sendReq({
+      id: 'req-cache',
+      tool: 'search_records',
+      args: cachedArgs,
+      grantCtx: 'gc_a',
+      requestHash: computeRequestHash({ v: 1, tool: 'search_records', arguments: cachedArgs })
+    })
+    await gateway.waitForRes('req-cache')
+    expect(service.diagnose().cacheEntries).toBe(1)
+
+    const before = service.status().grantEpoch
+
+    gateway.send({
+      v: 1,
+      type: 'grant_update',
+      ts: Date.now(),
+      grant_epoch: 9,
+      op: 'revoke',
+      grant_ctx: 'gc_a',
+      unexpected: 'boom'
+    })
+
+    const ack = await gateway.waitFor((frame) => frame.type === 'grant_update_ack')
+    expect(ack.applied).toBe(false)
+    expect(ack.reason).toBe('protocol_violation')
+    expect(ack.grant_epoch).toBe(9)
+
+    // 状态一点没变：epoch 不动、grant 还在。
+    expect(service.status().grantEpoch).toBe(before)
+    expect(service.status().grants).toHaveLength(1)
+    // 而且**这个 grant 的缓存不能被清**：它宣称是 revoke，但我们拒绝了。
+    // 若误清，下一次同 id 重投会重新执行一次（只读无害但属白做），
+    // 更重要的是这说明「拒绝」与「执行」被混在了一起。
+    expect(service.diagnose().cacheEntries).toBe(1)
+  })
+
+  it('hello_ok 形状非法 → close 4009（不是 4002）', async () => {
+    // 让 Mock 回一个缺字段的 hello_ok。
+    gateway = await startMockGateway({
+      allowedTools: ALL_TOOLS,
+      grantEpoch: 1,
+      malformedHelloOk: true
+    })
+    gatewayUrl = gateway.url
+    const { paths } = await seedDevice()
+    await enableSwitch(paths)
+    service = makeService()
+    await service.start()
+
+    await waitForDiagnosis(service, (d) => d.lastCloseCode === 4009, 5_000)
+    expect(service.diagnose().lastCloseReason).toContain('shape invalid')
+    expect(service.status().linkState).not.toBe('online')
   })
 })

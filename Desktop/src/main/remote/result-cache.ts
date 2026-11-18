@@ -57,6 +57,15 @@ export type ResultCache = {
   beginInflight(key: string, requestHash: string): boolean
   /** 落结果（成功或失败都落）。会替换 inflight 占位。 */
   put(key: string, result: CachePutValue): void
+  /**
+   * 丢弃单条（结果或占位）。
+   *
+   * 只有一种用法：执行完成时已过 deadline。那一刻结果**不发送**，
+   * 所以既不能 `put`（没有可回放的帧），也不能留着 inflight 占位——
+   * 留着会让同一个 `delivery_id` 在此后一直被当成「正在执行」而拒绝，
+   * 直到断线才恢复。占位必须和结果一起消失。
+   */
+  drop(key: string): void
   /** 撤销/更新某个 grant 时清掉它的全部条目；返回清除数。 */
   dropGrantContext(grantCtx: string): number
   /** 关闭开关、断线、用户切换：整体清空（含 inflight 占位）。 */
@@ -143,6 +152,10 @@ export function createResultCache(options?: {
         totalBytes += bytes
       }
       evict()
+    },
+
+    drop(key) {
+      remove(key)
     },
 
     dropGrantContext(grantCtx) {

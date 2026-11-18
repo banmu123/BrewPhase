@@ -38,7 +38,8 @@ export const remote = {
     user_mismatch: '当前账户与绑定用户不一致',
     db_unavailable: '本地数据库未就绪',
     services_unavailable: '本地服务未就绪',
-    shutting_down: '正在退出'
+    shutting_down: '正在退出',
+    blocked: '设备处于阻断状态（需重新配对或切换账户）'
   },
   lastActive: '最后活跃',
   never: '—',

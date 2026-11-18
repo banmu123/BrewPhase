@@ -98,10 +98,12 @@ describe('审计与日志不含参数/结果/凭据', () => {
       services,
       cache,
       isEnabled: () => true,
+      isDraining: () => false,
       boundUserId: () => 'user-1',
       deviceId: () => 'dev-1',
       grants: () => grantState,
       nowMono: () => performance.now(),
+      nowEpoch: () => Date.now(),
       isGrantRevoked: () => false,
       audit: (entry) => {
         writeRemoteAudit(handle.db, 'dev-1', entry)
@@ -153,10 +155,12 @@ describe('审计与日志不含参数/结果/凭据', () => {
       services,
       cache,
       isEnabled: () => true,
+      isDraining: () => false,
       boundUserId: () => 'user-1',
       deviceId: () => 'dev-1',
       grants: () => grantState,
       nowMono: () => performance.now(),
+      nowEpoch: () => Date.now(),
       isGrantRevoked: () => false,
       audit: () => undefined
     })
@@ -209,10 +213,12 @@ describe('审计与日志不含参数/结果/凭据', () => {
       services,
       cache,
       isEnabled: () => true,
+      isDraining: () => false,
       boundUserId: () => 'user-1',
       deviceId: () => 'dev-1',
       grants: () => grantState,
       nowMono: () => performance.now(),
+      nowEpoch: () => Date.now(),
       isGrantRevoked: () => false,
       audit: () => undefined
     })

@@ -1,8 +1,12 @@
 export { createRemoteService, type RemoteService, type RemoteServiceDeps } from './remote-service'
 export {
   createDeviceStore,
+  decodeRawPublicKey,
   deviceStorePaths,
+  ed25519PublicKeyFromRaw,
+  ed25519RawPublicKey,
   electronSecretBox,
+  encodeRawPublicKey,
   generateDeviceKeyPair,
   helloSigningPayload,
   makeNonce,
@@ -15,8 +19,17 @@ export {
   type DeviceLoad,
   type DeviceSave,
   type DeviceStore,
+  type HelloSigningInput,
   type RemoteSecretBox
 } from './device-identity'
+export {
+  createHttpDeviceRegistrar,
+  type DeviceClaimResult,
+  type DeviceRegisterInput,
+  type DeviceRegisterResult,
+  type DeviceRegistrar,
+  type FetchLike
+} from './registration'
 export {
   applyGrantUpdate,
   applyHelloOk,
@@ -58,7 +71,7 @@ export {
   buildResFrame,
   buildStatusFrame,
   createLinkTransport,
-  nativeWebSocketFactory,
+  netWebSocketFactory,
   parseHelloOk,
   type LinkTransport,
   type LinkTransportEvents,

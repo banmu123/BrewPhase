@@ -36,6 +36,13 @@ export type ServiceableInputs = {
   servicesReady: boolean
   /** 是否正在关闭。 */
   shuttingDown: boolean
+  /**
+   * 连接是否已进入 `blocked` 终态（被撤销 / 需重新配对 / 用户不匹配）。
+   *
+   * 这是 Phase 1.1B.1 补的：`blocked` 的设备**本地就不具备执行条件**，
+   * 不上报就等于对 Cloud 撒谎说「我还能干活」。
+   */
+  blocked?: boolean
 }
 
 export type ServiceableVerdict = {
@@ -53,6 +60,8 @@ export type ServiceableVerdict = {
 export function judgeServiceable(input: ServiceableInputs): ServiceableVerdict {
   if (input.shuttingDown) return { serviceable: false, reason: 'shutting_down' }
   if (!input.enabled) return { serviceable: false, reason: 'remote_disabled' }
+  // blocked 是终态：本地没有执行条件，必须如实上报（不能只说「在线」）。
+  if (input.blocked) return { serviceable: false, reason: 'blocked' }
 
   // 未配对：这是「还没准备好」，不是「用户不匹配」。
   if (input.boundUserId === null) return { serviceable: false, reason: 'user_mismatch' }

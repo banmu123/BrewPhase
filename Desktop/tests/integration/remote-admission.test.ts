@@ -12,7 +12,7 @@ import { PersonalDirectionService } from '../../src/main/application/personal-di
 import type { ToolServices } from '../../src/main/application/mcp-tools/tool-services'
 import { mcpOperationLog } from '../../src/main/database/schema'
 import { createRequestHandler, computeRequestHash, type RequestHandlerDeps } from '../../src/main/remote/request-handler'
-import { createResultCache } from '../../src/main/remote/result-cache'
+import { cacheKey, createResultCache } from '../../src/main/remote/result-cache'
 import { applyGrantUpdate, applyHelloOk, emptyGrantContext, resetGrantContext, type GrantContextState } from '../../src/main/remote/grant-context'
 import { writeRemoteAudit } from '../../src/main/remote/request-handler'
 import { noteAuditFailure, noteAuditSuccess, createAuditStatus } from '../../src/main/remote/link-state'
@@ -76,6 +76,11 @@ beforeEach(() => {
   currentBoundUserId = USER
   revoked = new Set()
   serviceCalls = 0
+  // 这些是模块级的可注入状态，必须逐用例复位；否则前一个用例把 draining
+  // 设成 true，后面所有用例都会走「draining 拒绝」分支。
+  draining = false
+  monoNow = () => performance.now()
+  epochNow = () => Date.now()
 
   // 一个标准的「ChatGPT 有 records:read」快照
   applyHelloOk(
@@ -106,16 +111,29 @@ function grant(overrides: Partial<RemoteGrant> = {}): RemoteGrant {
   }
 }
 
+/**
+ * 可注入的两个时钟。
+ *
+ * `monoNow` 是进程内计时（deadline 判断只看它）；`epochNow` 只用于把
+ * `deadline_ms` 换算成 monotonic 预算这一件事。分开之后，
+ * 「把系统时间往前跳 1 小时」这类测试不需要真的等，也不需要改系统时钟。
+ */
+let monoNow = () => performance.now()
+let epochNow = () => Date.now()
+let draining = false
+
 function deps(overrides: Partial<RequestHandlerDeps> = {}): RequestHandlerDeps {
   const base: RequestHandlerDeps = {
     db: handle.db,
     services,
     cache,
     isEnabled: () => enabled,
+    isDraining: () => draining,
     boundUserId: () => currentBoundUserId,
     deviceId: () => 'dev-1',
     grants: () => grantState,
-    nowMono: () => performance.now(),
+    nowMono: () => monoNow(),
+    nowEpoch: () => epochNow(),
     isGrantRevoked: (ctx) => revoked.has(ctx),
     audit: (entry) => {
       const ok = writeRemoteAudit(handle.db, 'dev-1', entry)
@@ -551,5 +569,153 @@ describe('关闭开关后的重投（ST-16）', () => {
     handler(req())
     // 缓存被清 → 重新执行
     expect(serviceCalls).toBe(2)
+  })
+})
+
+describe('request_hash：首次投递也要验（协议 §8.2）', () => {
+  it('第一次就带错误 hash → PROTOCOL_VIOLATION，不执行、不写缓存', () => {
+    const handler = createRequestHandler(deps())
+    const bad = req({ request_hash: `sha256:${'0'.repeat(64)}` })
+
+    const outcome = handler(bad)
+    expect(outcome.res.ok).toBe(false)
+    if (!outcome.res.ok) expect(outcome.res.error?.code).toBe('PROTOCOL_VIOLATION')
+    // 关键：一个字节的业务代码都没跑，缓存也没被污染。
+    expect(serviceCalls).toBe(0)
+    expect(cache.snapshot().entries).toBe(0)
+    // 这是一次安全事件，要留痕。
+    expect(auditRows().filter((row) => row.errorCode === 'PROTOCOL_VIOLATION')).toHaveLength(1)
+  })
+
+  it('hash 正确才执行', () => {
+    const handler = createRequestHandler(deps())
+    const outcome = handler(req())
+    expect(outcome.res.ok).toBe(true)
+    expect(serviceCalls).toBe(1)
+  })
+
+  it('hash 只覆盖 v/tool/arguments：换 tool 而不换 hash 会被拒', () => {
+    const handler = createRequestHandler(deps())
+    // 用 search_records 的 hash，但实际请求 get_record。
+    // 注意 `req()` 会按 overrides.tool 重算 hash，所以这里必须显式覆盖。
+    const forged = req({
+      tool: 'get_record',
+      arguments: { id: 'r1' },
+      request_hash: computeRequestHash({ v: 1, tool: 'search_records', arguments: { id: 'r1' } })
+    })
+    const outcome = handler(forged)
+    expect(outcome.res.ok).toBe(false)
+    if (!outcome.res.ok) expect(outcome.res.error?.code).toBe('PROTOCOL_VIOLATION')
+    expect(serviceCalls).toBe(0)
+  })
+})
+
+describe('deadline：epoch 只换算一次，之后只看 monotonic（ST-9）', () => {
+  it('整个过程只读一次 epoch 时钟', () => {
+    let epochCalls = 0
+    monoNow = () => 1_000
+    epochNow = () => {
+      epochCalls += 1
+      return 1_000_000
+    }
+
+    const outcome = createRequestHandler(deps())(req({ deadline_ms: 1_006_000 }))
+    expect(outcome.res.ok).toBe(true)
+    // 「不允许每次比较都重新调用 Date.now」的结构性证明：
+    // 第二次读就会让这个断言变成 2。
+    expect(epochCalls).toBe(1)
+  })
+
+  it('收到时就已过期 → REQUEST_TIMEOUT，零业务调用', () => {
+    monoNow = () => 1_000
+    epochNow = () => 1_000_000
+    const outcome = createRequestHandler(deps())(req({ deadline_ms: 999_999 }))
+    expect(outcome.res.ok).toBe(false)
+    if (!outcome.res.ok) expect(outcome.res.error?.code).toBe('REQUEST_TIMEOUT')
+    expect(serviceCalls).toBe(0)
+    expect(auditRows()).toHaveLength(0)
+  })
+
+  it('执行完成时已过 deadline → 不发 res、不落成功缓存、审计记超时', () => {
+    // 让「业务执行」把 monotonic 推过期限：这才是真实的长耗时工具。
+    const base = 10_000
+    let mono = base
+    monoNow = () => mono
+    epochNow = () => 1_000_000
+
+    const before = serviceCalls
+    const original = services.records.searchForMcp
+    services.records.searchForMcp = ((input) => {
+      const result = original(input)
+      // 业务真的跑了 9 秒：这才是「执行完成时已过 deadline」的真实成因。
+      mono = base + 9_000
+      return result
+    }) as typeof services.records.searchForMcp
+
+    const outcome = createRequestHandler(deps())(req({ deadline_ms: 1_000_000 + 1_000 }))
+    // 结果被丢弃：协议 §7.4 第三条（Cloud 早已超时，不能补发一个迟到的成功）。
+    expect(outcome.deliver).toBe(false)
+    expect(outcome.stage).toBe('expired')
+    expect(serviceCalls - before).toBe(1)
+    expect(cache.snapshot().entries).toBe(0)
+    const rows = auditRows()
+    expect(rows).toHaveLength(1)
+    expect(rows[0].success).toBe(false)
+    expect(rows[0].errorCode).toBe('REQUEST_TIMEOUT')
+  })
+
+  it('系统时间被改也影响不了已经确定的期限（monotonic 决定）', () => {
+    let mono = 1_000
+    let epoch = 1_000_000
+    monoNow = () => mono
+    epochNow = () => epoch
+
+    // 期限 = 收到时刻 + 5s（用 monotonic 表达是 6000）。
+    const deadline = epoch + 5_000
+    // 执行期间系统时间**往回**跳 1 小时：若实现用 Date.now() 比较，会以为还剩 1 小时。
+    epoch -= 3_600_000
+    mono = 5_000
+
+    const outcome = createRequestHandler(deps())(req({ deadline_ms: deadline }))
+    // 仍然在期限内：monotonic 只走了 4s。
+    expect(outcome.res.ok).toBe(true)
+    expect(outcome.deliver).toBe(true)
+  })
+})
+
+describe('draining（协议 §4.5 / §11）', () => {
+  it('draining 期间拒绝新请求，零业务调用、零审计', () => {
+    draining = true
+    const outcome = createRequestHandler(deps())(req())
+    expect(outcome.res.ok).toBe(false)
+    if (!outcome.res.ok) {
+      expect(outcome.res.error?.code).toBe('DEVICE_BUSY')
+      expect(outcome.res.error?.retryable).toBe(true)
+    }
+    expect(serviceCalls).toBe(0)
+    expect(auditRows()).toHaveLength(0)
+  })
+})
+
+describe('inflight 占位（v1：拒绝，不排队）', () => {
+  it('同 delivery_id 仍在执行 → PROTOCOL_VIOLATION，只执行一次', () => {
+    const handler = createRequestHandler(deps())
+    const first = req()
+    // 手工制造「执行中」状态（同步 handler 在真实时序里不可观测，
+    // 但占位表的存在必须可断言——它是「绝不重复执行」的结构保证）。
+    expect(cache.beginInflight(cacheKey('gc_a', 'req-1'), first.request_hash)).toBe(true)
+
+    const outcome = handler(first)
+    expect(outcome.res.ok).toBe(false)
+    if (!outcome.res.ok) expect(outcome.res.error?.code).toBe('PROTOCOL_VIOLATION')
+    expect(serviceCalls).toBe(0)
+  })
+
+  it('不同 delivery_id + 相同参数 → 各执行一次', () => {
+    const handler = createRequestHandler(deps())
+    handler(req({ id: 'req-1' }))
+    handler(req({ id: 'req-2' }))
+    expect(serviceCalls).toBe(2)
+    expect(cache.snapshot().entries).toBe(2)
   })
 })

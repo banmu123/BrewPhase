@@ -112,6 +112,49 @@ export const REMOTE_PROTOCOL_VERSION = 1
 export const REMOTE_MAX_FRAME_BYTES = 1024 * 1024
 export const DEFAULT_CLOUD_ORIGIN = 'https://cloud.brewphase.app'
 
+/**
+ * 设备 token 的形态：`bp_dev_` + base64url。
+ *
+ * 长度下限 16 是**形态校验**，不是安全门槛——真正的判据是 Cloud 侧
+ * `sha256(token)` 命中 `mcp_devices.token_hash`。这条正则的作用是便宜地挡掉
+ * 明显不是设备 token 的东西（用户 access token、`bp_mcp_*`、空串），
+ * 让「拿错凭据域」在握手第一步就失败。
+ */
+export const REMOTE_DEVICE_TOKEN_PATTERN = /^bp_dev_[A-Za-z0-9_-]{16,}$/
+
+/**
+ * WSS 子协议（协议 §4.1）。
+ *
+ * 它不是装饰：握手时协商失败会让 Cloud 直接 400，从而在**进入帧层之前**
+ * 就把「不是我们的客户端」挡掉。也正因为它出现在 HTTP 头上，
+ * **绝不能把 token 塞进子协议**——反向代理会记 `Sec-WebSocket-Protocol`。
+ */
+export const REMOTE_WS_SUBPROTOCOL = 'brewphase.remote.v1'
+
+/** `hello.capabilities` 的 v1 取值（协议 §4.2）。 */
+export const REMOTE_HELLO_CAPABILITIES = ['tools.call', 'cancel', 'drain'] as const
+export type RemoteHelloCapability = (typeof REMOTE_HELLO_CAPABILITIES)[number]
+
+/**
+ * 版本区间协商（协议 §1.1 的公式，唯一实现）。
+ *
+ * 返回共同支持的最高版本；无交集返回 `null`（调用方据此 close 4002）。
+ * 之所以做成纯函数而不是内联在握手流程里：Mock 与真实 Cloud 必须用**同一条公式**，
+ * 否则「本地测过了」不构成任何证据。
+ */
+export function negotiateProtocolVersion(
+  clientMin: number,
+  clientMax: number,
+  serverMin: number = REMOTE_PROTOCOL_VERSION,
+  serverMax: number = REMOTE_PROTOCOL_VERSION
+): number | null {
+  if (clientMin > clientMax) return null
+  if (serverMin > serverMax) return null
+  const lo = Math.max(clientMin, serverMin)
+  const hi = Math.min(clientMax, serverMax)
+  return lo > hi ? null : hi
+}
+
 /** 缓存上限（设计建议值，未压测；OQ-15）。 */
 export const REMOTE_CACHE_MAX_ENTRIES = 256
 export const REMOTE_CACHE_MAX_BYTES = 8 * 1024 * 1024
@@ -122,17 +165,45 @@ export const REMOTE_BACKOFF_RESET_MS = 60_000
 
 // MARK: - 帧
 
-/** `serviceable=false` 的原因；只进日志与状态，不进协议语义。 */
+/**
+ * `serviceable=false` 的原因；只进日志与状态，不进协议语义。
+ *
+ * `blocked` 是 Phase 1.1B.1 新增：设备处于 `blocked`（被撤销 / 用户不匹配 /
+ * 需要重新配对）时，本地确实不具备执行条件，必须如实上报。此前它被折成
+ * `user_mismatch`，对「设备被撤销」这种情形是错的描述。
+ * 新增枚举值属于兼容变更（协议 §1.1：接收方必须忽略未知值）。
+ */
 export const REMOTE_UNSERVICEABLE_REASONS = [
   'remote_disabled',
   'user_mismatch',
   'db_unavailable',
   'services_unavailable',
-  'shutting_down'
+  'shutting_down',
+  'blocked'
 ] as const
 export type RemoteUnserviceableReason = (typeof REMOTE_UNSERVICEABLE_REASONS)[number]
 
-/** `hello`（Desktop → Cloud）。闭合键集：未知键一律 PROTOCOL_VIOLATION。 */
+/**
+ * `hello`（Desktop → Cloud）。闭合键集：未知键一律 PROTOCOL_VIOLATION。
+ *
+ * ## 字段为什么是这 12 个（Phase 1.1B.1 定稿）
+ *
+ * 旧文档写的是 `min_version` / `max_version` / `app_version` / `platform` /
+ * `capabilities`，旧代码写的是 `client_version` / `serviceable`——两边各缺一半，
+ * 结果是**版本协商根本没法执行**（§4.3 第 8 步要读区间，而帧里没有区间），
+ * 而 `serviceable` 又是 1.1B 明确要求的。这里取并集，并各自只留一个名字：
+ *
+ * | 字段 | 为什么必须在 |
+ * |---|---|
+ * | `device_id` + `nonce` + `ts` + `sig` | 设备持钥证明 + 防重放（§4.3 第 5–7 步） |
+ * | `min_version` / `max_version` | §1.1 协商公式的输入；缺了只能硬编码 v=1 |
+ * | `app_version` | 排障与灰度；**不参与**任何授权判断 |
+ * | `platform` | 同 `app_version`，纯诊断 |
+ * | `capabilities` | 声明客户端支持哪些帧型；Cloud 据此决定能不能发 `cancel` |
+ * | `serviceable` | Desktop 独占的自我判定（§4.4.1），Cloud 只能当提示 |
+ *
+ * **`device_token` 不在其中**：它走 `Authorization` 头，重复传递只增加泄漏面。
+ */
 export const remoteHelloSchema = z
   .object({
     v: z.literal(1),
@@ -140,11 +211,18 @@ export const remoteHelloSchema = z
     ts: z.number().int(),
     device_id: z.string().min(1).max(128),
     nonce: z.string().min(16).max(128),
-    sig: z.string().min(1).max(512),
+    min_version: z.number().int().positive(),
+    max_version: z.number().int().positive(),
+    app_version: z.string().min(1).max(64),
+    platform: z.string().min(1).max(32),
+    capabilities: z.array(z.string().min(1).max(64)).max(16),
     serviceable: z.boolean(),
-    client_version: z.string().min(1).max(64)
+    sig: z.string().min(1).max(512)
   })
   .strict()
+  .refine((value) => value.min_version <= value.max_version, {
+    message: 'min_version must not exceed max_version'
+  })
 export type RemoteHello = z.infer<typeof remoteHelloSchema>
 
 /** `status`（Desktop → Cloud）。提示帧，不是授权帧。 */
@@ -339,6 +417,74 @@ export const REMOTE_CHANNELS = {
   diagnose: 'remote:diagnose',
   changed: 'remote:changed'
 } as const
+
+// MARK: - 设备注册（HTTPS，协议 §3）
+
+/**
+ * `POST /mcp-devices/register` 的请求体（协议 §3.2）。
+ *
+ * `public_key` 是**裸 32 字节**的 base64url（43 字符），不是 SPKI DER——
+ * DER 是 Desktop 本地格式，Cloud 只存裸公钥（与现有 `sync` 的设备表一致）。
+ */
+export const remoteDeviceRegisterRequestSchema = z
+  .object({
+    name: z.string().min(1).max(80),
+    platform: z.string().min(1).max(32),
+    public_key: z.string().regex(/^[A-Za-z0-9_-]{43}$/, 'public_key must be base64url of 32 bytes'),
+    app_version: z.string().min(1).max(64)
+  })
+  .strict()
+export type RemoteDeviceRegisterRequest = z.infer<typeof remoteDeviceRegisterRequestSchema>
+
+/** 注册响应：`claim_secret` **只在这里出现一次**，Desktop 只放内存。 */
+export const remoteDeviceRegisterResponseSchema = z
+  .object({
+    device_id: z.string().min(1).max(128),
+    confirm_code: z.string().regex(/^\d{6}$/),
+    claim_secret: z.string().min(16).max(128),
+    expires_in: z.number().int().positive()
+  })
+  .strict()
+export type RemoteDeviceRegisterResponse = z.infer<typeof remoteDeviceRegisterResponseSchema>
+
+/** `POST /mcp-devices/{id}/credentials` 的请求体：`claim_secret` **不入 URL**。 */
+export const remoteDeviceClaimRequestSchema = z
+  .object({ claim_secret: z.string().min(16).max(128) })
+  .strict()
+
+export const remoteDeviceCredentialsResponseSchema = z
+  .object({
+    device_token: z.string().regex(REMOTE_DEVICE_TOKEN_PATTERN),
+    expires_at: z.number().int()
+  })
+  .strict()
+export type RemoteDeviceCredentials = z.infer<typeof remoteDeviceCredentialsResponseSchema>
+
+/** 注册失败原因（Client 侧归一化后的枚举；不是 Cloud 的错误码）。 */
+export const REMOTE_REGISTRATION_FAILURES = [
+  'unauthorized',
+  'device_limit',
+  'device_exists',
+  'invalid_public_key',
+  /** 用户还没在 Web 端确认（可继续轮询）。 */
+  'pending',
+  /** `claim_secret` 不匹配 / 已领取 / 设备不在 pending。 */
+  'claim_rejected',
+  /** 等待用户在 Web 端确认期间超时。 */
+  'expired',
+  'cancelled',
+  'network',
+  'invalid_response'
+] as const
+export type RemoteRegistrationFailure = (typeof REMOTE_REGISTRATION_FAILURES)[number]
+
+/** `remote:register` 的返回：**只有** 待确认信息，没有 claim_secret。 */
+export const remoteRegistrationTicketSchema = z.object({
+  deviceId: z.string(),
+  confirmCode: z.string().regex(/^\d{6}$/),
+  expiresAt: z.number().int()
+})
+export type RemoteRegistrationTicket = z.infer<typeof remoteRegistrationTicketSchema>
 
 /** 生效范围 = grant.scopes ∩ REMOTE_SCOPES ∩ 本地允许集。 */
 export function toolsForScopes(scopes: readonly RemoteScope[]): RemoteToolName[] {

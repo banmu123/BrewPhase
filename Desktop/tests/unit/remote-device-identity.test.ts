@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { MOCK_DEVICE_TOKEN } from '../helpers/mock-gateway'
 import {
   createDeviceStore,
   deviceStorePaths,
@@ -87,7 +88,7 @@ function makeIdentity() {
     deviceId: 'dev-1',
     boundUserId: 'user-1',
     cloudOrigin: 'https://cloud.example.com',
-    deviceToken: 'bp_dev_test',
+    deviceToken: MOCK_DEVICE_TOKEN,
     privateKey,
     registeredAt: Date.now()
   }
@@ -104,12 +105,12 @@ describe('device.json 的读写与加密', () => {
     expect(loaded.status).toBe('ok')
     if (loaded.status !== 'ok') return
     expect(loaded.identity.deviceId).toBe('dev-1')
-    expect(loaded.identity.deviceToken).toBe('bp_dev_test')
+    expect(loaded.identity.deviceToken).toBe(MOCK_DEVICE_TOKEN)
     expect(loaded.identity.cloudOrigin).toBe('https://cloud.example.com')
     expect(loaded.identity.privateKey.asymmetricKeyType).toBe('ed25519')
 
     const raw = await import('node:fs').then((fs) => fs.readFileSync(paths.devicePath, 'utf8'))
-    expect(raw).not.toContain('bp_dev_test')
+    expect(raw).not.toContain(MOCK_DEVICE_TOKEN)
     expect(raw).not.toContain('dev-1')
     expect(raw).not.toContain('user-1')
     // 外层只有版本与代际号。

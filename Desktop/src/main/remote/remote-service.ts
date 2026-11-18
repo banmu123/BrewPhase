@@ -1,8 +1,11 @@
 import { app } from 'electron'
+import { hostname } from 'node:os'
 import type { Db } from '../database/client'
 import type { ToolServices } from '../application/mcp-tools/tool-services'
 import {
+  REMOTE_HELLO_CAPABILITIES,
   REMOTE_PROTOCOL_VERSION,
+  REMOTE_WS_SUBPROTOCOL,
   remoteGrantUpdateSchema,
   remoteReqSchema,
   remoteCancelSchema,
@@ -12,6 +15,7 @@ import {
   type RemoteErrorCode,
   type RemoteGrantUpdate,
   type RemoteLinkState,
+  type RemoteRegistrationTicket,
   type RemoteStatus,
   type RemoteUnserviceableReason
 } from '../../shared/contracts/remote'
@@ -19,6 +23,7 @@ import {
   createDeviceStore,
   deviceStorePaths,
   electronSecretBox,
+  encodeRawPublicKey,
   generateDeviceKeyPair,
   makeNonce,
   readRemoteState,
@@ -26,6 +31,7 @@ import {
   signHello,
   writeRemoteState,
   type DeviceStore,
+  type HelloSigningInput,
   type RemoteSecretBox
 } from './device-identity'
 import {
@@ -61,7 +67,8 @@ import {
 import { backoffDelayMs, shouldResetBackoff } from './reconnect'
 import { createResultCache, type ResultCache } from './result-cache'
 import { createRequestHandler, writeRemoteAudit } from './request-handler'
-import { effectiveScopes, effectiveTools } from './remote-policy'
+import { effectiveScopes, effectiveTools, isRemoteTool } from './remote-policy'
+import type { DeviceRegistrar } from './registration'
 
 /**
  * Remote Service 门面：把身份、连接、上下文、缓存、准入、审计串起来。
@@ -77,7 +84,26 @@ import { effectiveScopes, effectiveTools } from './remote-policy'
  *
  * `enabled=false` 时**零出站连接**：不解析凭据、不建 socket、不起定时器。
  * 开关只在用户明确开启后才落盘。
+ *
+ * ## 连接前只有一道门（Phase 1.1B.1）
+ *
+ * 旧实现把「用户是否匹配」写在 `start()` 的分支里，于是 `enable()` / `resume()` /
+ * 重连定时器都能绕过它——A 用户的设备身份会被 B 用户继续使用。现在所有入口
+ * （start / enable / resume / reconnect / reconcile / connect）都只走 `canConnect()`，
+ * 而 `connect()` 自己也再查一次。**没有第二条通往 socket 的路。**
  */
+
+/**
+ * 握手总时限（连接建立 → 收到 `hello_ok`）。
+ *
+ * 协议 §4.2 只规定「连上后 5s 内必须发 hello」；这里给整段握手 10s：
+ * 留出 TLS + 服务端验签 + nonce 落库的时间，同时保证「连上了但永远不回
+ * hello_ok」的半开连接不会一直占着 connecting 状态。
+ */
+const HANDSHAKE_DEADLINE_MS = 10_000
+
+/** 注册后轮询 `/credentials` 的间隔（协议 §3.4 建议 1s）。 */
+const REGISTRATION_POLL_MS = 1_000
 
 export type RemoteServiceDeps = {
   db: Db
@@ -94,6 +120,16 @@ export type RemoteServiceDeps = {
   secretBox?: RemoteSecretBox
   /** 客户端版本号（握手用）。 */
   clientVersion?: string
+  /** 注册时展示的设备名；默认取主机名。 */
+  deviceName?: string
+  /**
+   * 设备注册客户端。
+   *
+   * **生产环境默认没有**：真实 Cloud 的注册端点要求用户 Bearer，而 Remote
+   * 拿不到用户 token（凭据域分离）。Phase 1.2 才把它接到 AccountService 上。
+   * 在此之前 `register()` 会明确抛错，而不是伪造一个假成功。
+   */
+  registrar?: DeviceRegistrar
   /** 状态变化广播（IPC）。 */
   onChanged?(status: RemoteStatus): void
   /** 调试日志（不含参数/结果/凭据）。 */
@@ -111,8 +147,11 @@ export type RemoteService = {
   enable(): Promise<RemoteStatus>
   /** 用户关闭：立即拒绝新请求、清缓存、断连。 */
   disable(): Promise<RemoteStatus>
-  /** 设备注册（Mock 阶段只生成待确认信息，不落凭据）。 */
-  register(): Promise<{ deviceId: string; confirmCode: string; expiresAt: number }>
+  /**
+   * 设备注册。返回**只含** 待确认信息（`confirmCode`）；
+   * `claim_secret` 与私钥绝不出主进程。
+   */
+  register(): Promise<RemoteRegistrationTicket>
   /** 忘记设备：先 +代际号再删凭据，尽力通知 Cloud。 */
   forget(): Promise<RemoteStatus>
   /** 解绑（`boundUserId` 不匹配时的出口）。 */
@@ -132,6 +171,20 @@ export type RemoteService = {
   reconcile(): Promise<void>
 }
 
+type ConnectGate =
+  | { ok: true }
+  | {
+      ok: false
+      code:
+        | 'shutting_down'
+        | 'disabled'
+        | 'blocked'
+        | 'no_credentials'
+        | 'no_user'
+        | 'user_mismatch'
+        | 'origin_mismatch'
+    }
+
 export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
   const log = deps.log ?? (() => undefined)
   const paths = deviceStorePaths(deps.baseDir ?? app.getPath('userData'))
@@ -146,12 +199,15 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
   const revokedContexts = new Set<string>()
 
   let localState = readRemoteState(paths)
-  const cloudOrigin = deps.cloudOrigin ?? localState.cloudOrigin
+  /** 当前**配置**的 Cloud 源（进程启动时确定，不随载荷变化）。 */
+  const configuredOrigin = deps.cloudOrigin ?? localState.cloudOrigin
 
   let deviceId: string | null = null
   let boundUserId: string | null = null
   let deviceToken: string | null = null
   let privateKey: import('node:crypto').KeyObject | null = null
+  /** 凭据里记录的源。**必须**与 `configuredOrigin` 一致才允许发出去。 */
+  let deviceOrigin: string | null = null
   let needsReauth = false
   let started = false
   let shuttingDown = false
@@ -165,21 +221,61 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
   let reauthAttempts = 0
   let pendingPingSeq = 0
 
+  /**
+   * 连接尝试的代际号。
+   *
+   * 每次 `connect()` 自增；所有异步续作（握手超时、onOpen 发帧）都拿着自己那份
+   * 快照比对。旧尝试因此**永远不可能**给新 socket 发 hello，也不可能把新 socket
+   * 关掉——这是「disable 之后立刻 enable」这类操作能安全收敛的原因。
+   */
+  let connectGeneration = 0
+  /** 已签好、等待 onOpen 发出去的 hello。 */
+  let pendingHello: { attempt: number; frame: string; serviceable: boolean } | null = null
+  let handshakeTimer: NodeJS.Timeout | null = null
+
+  /**
+   * 注册中的临时状态（`claim_secret` **只在内存里**）。
+   *
+   * 结构体本身还是 `pendingRegistration` 的「身份」：异步续作用引用相等来
+   * 判断「这次轮询是否还属于当前那次注册」，比再引一个代数更不容易写错。
+   */
+  let pendingRegistration: {
+    deviceId: string
+    claimSecret: string
+    privateKey: import('node:crypto').KeyObject
+    userId: string
+    expiresAt: number
+    cancelled: boolean
+    timer: NodeJS.Timeout | null
+  } | null = null
+
   const handleRequest = createRequestHandler({
     db: deps.db,
     services: deps.services,
     cache,
     isEnabled: () => localState.enabled && !shuttingDown,
+    isDraining: () => link.state === 'draining',
     boundUserId: () => boundUserId,
     deviceId: () => deviceId,
     grants: () => grants,
     nowMono: () => performance.now(),
+    nowEpoch: () => Date.now(),
     isGrantRevoked: (ctx) => revokedContexts.has(ctx),
     audit: (entry) => {
-      if (!deviceId) return
+      if (!deviceId) {
+        noteAuditFailure(audit, Date.now())
+        log('[remote] audit skipped: no device id')
+        return
+      }
       const ok = writeRemoteAudit(deps.db, deviceId, entry)
-      if (ok) noteAuditSuccess(audit)
-      else noteAuditFailure(audit, Date.now())
+      if (ok) {
+        noteAuditSuccess(audit)
+        return
+      }
+      noteAuditFailure(audit, Date.now())
+      // 只报「失败了几次」。绝不打印异常对象：better-sqlite3 的报错里带
+      // SQL 片段与数据库绝对路径（安全运维 §6.5.4.1 的日志纪律）。
+      log(`[remote] audit write failed (consecutive ${audit.consecutiveFailures})`)
     }
   })
 
@@ -190,7 +286,8 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
       currentUserId: deps.currentUserId(),
       dbReady,
       servicesReady,
-      shuttingDown
+      shuttingDown,
+      blocked: link.state === 'blocked'
     })
 
   const publish = (): void => {
@@ -204,7 +301,7 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
       deviceId,
       boundUserId,
       needsReauth,
-      cloudOrigin: deviceId ? cloudOrigin : null,
+      cloudOrigin: deviceId ? configuredOrigin : null,
       verdict: verdict(),
       grants: [...grants.grants.values()].map((grant) => ({
         grantCtx: grant.grantCtx,
@@ -221,6 +318,43 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
       }
     })
 
+  // MARK: - 连接前安全门
+
+  /**
+   * **所有**出站连接的唯一入口判据。
+   *
+   * 顺序不是随意的：先判「根本不该连」（正在退出 / 用户关了开关 / 已被 blocked），
+   * 再判「身份是否齐备」，最后判「身份是否属于当前这个人」。
+   * 这样任何一种失败都不会走到建 socket 那一步。
+   */
+  /**
+   * 身份相关的判据（**不含**「开关是否打开」）。
+   *
+   * `enable()` 需要它：用户点「开启」的那一刻开关还是关的，但身份校验必须
+   * 先过。若先写 `enabled=true` 再在 `connect()` 里发现用户不匹配，两个并发的
+   * `enable()` 就可能把状态写成「开着 + blocked」——这是测试真实抓到的竞态。
+   */
+  const identityGate = (): ConnectGate => {
+    if (shuttingDown) return { ok: false, code: 'shutting_down' }
+    if (needsReauth) return { ok: false, code: 'blocked' }
+    if (!deviceId || !deviceToken || !privateKey || boundUserId === null) {
+      return { ok: false, code: 'no_credentials' }
+    }
+    const current = deps.currentUserId()
+    if (current === null) return { ok: false, code: 'no_user' }
+    if (boundUserId !== current) return { ok: false, code: 'user_mismatch' }
+    if (!deviceOrigin || !sameCloudOrigin(configuredOrigin, deviceOrigin)) {
+      return { ok: false, code: 'origin_mismatch' }
+    }
+    return { ok: true }
+  }
+
+  const canConnect = (): ConnectGate => {
+    if (shuttingDown) return { ok: false, code: 'shutting_down' }
+    if (!localState.enabled) return { ok: false, code: 'disabled' }
+    return identityGate()
+  }
+
   // MARK: - 连接
 
   const clearTimers = (): void => {
@@ -230,6 +364,21 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     reconnectTimer = null
     heartbeatTimer = null
     healthTimer = null
+  }
+
+  /**
+   * 让「正在进行的那次连接尝试」彻底失效。
+   *
+   * 必须与 `clearTimers()` 一起用：前者管连接后的定时器，后者管连接中的尝试。
+   * 只做一半的结果是「旧尝试的握手超时把新连接关掉」。
+   */
+  const abortAttempt = (): void => {
+    connectGeneration += 1
+    pendingHello = null
+    if (handshakeTimer) {
+      clearTimeout(handshakeTimer)
+      handshakeTimer = null
+    }
   }
 
   /** 断线清理清单（协议 §10.3，8 项）。逐项做，漏一项就是内存泄漏或误回放。 */
@@ -251,6 +400,37 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     // 8：保留 reconnectAttempt（由调用方决定是否归零）
   }
 
+  /**
+   * 进入 `blocked`：把本地**收紧到不可能出站**的状态。
+   *
+   * 用户不匹配、设备被撤销、源不匹配都走这里。四件事缺一不可：
+   * 落盘关开关、清缓存与上下文、杀掉在途尝试、关掉可能还开着的连接。
+   * 这样即使 300ms 后有人调用 `enable()`，`canConnect()` 也会立刻拒绝。
+   */
+  const enterBlocked = (reason: string): void => {
+    needsReauth = true
+    localState = { ...localState, enabled: false }
+    try {
+      writeRemoteState(paths, localState)
+    } catch {
+      // 落盘失败不阻止本地收紧：内存里的 enabled 已经是 false。
+      log('[remote] failed to persist disabled state')
+    }
+    cache.clear()
+    resetGrantContext(grants)
+    revokedContexts.clear()
+    abortAttempt()
+    clearTimers()
+    transport?.close(4009, 'account mismatch')
+    if (link.state === 'blocked') {
+      link.blockedReason = reason
+    } else {
+      transition(link, 'blocked', reason)
+    }
+    log(`[remote] blocked: ${reason}`)
+    publish()
+  }
+
   const reportStatus = (): void => {
     if (!transport?.isOpen()) return
     const current = verdict()
@@ -268,6 +448,8 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     log(`[remote] reconnect in ${delay}ms (attempt ${link.reconnectAttempt})`)
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null
+      // 定时器到点时状态可能已经变了（用户切换 / 关开关 / 已被撤销）：
+      // 所以这里不是「直接连」，而是再走一次 connect() 的门禁。
       void connect()
     }, delay)
     publish()
@@ -276,6 +458,8 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
   const handleClose = (code: number, reason: string): void => {
     link.lastCloseCode = code
     link.lastCloseReason = reason
+    // 连接已死：让本次尝试的所有定时器失效，避免它们影响下一次连接。
+    abortAttempt()
     resetConnectionState()
 
     const kind = transport?.classifyClose(code) ?? 'retry'
@@ -306,12 +490,82 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     scheduleReconnect()
   }
 
+  /**
+   * 从**无法解析**的原文里尽力捞出 `delivery_id`。
+   *
+   * 只在「这段字节看起来真的是一个 req」时才返回，避免把业务参数里恰好叫
+   * `id` 的字段当成投递 id 去回话：
+   *
+   * 1. 必须同时出现 `"type"` 与 `"req"`；
+   * 2. `id` 必须是**第一个**出现在 `arguments` / `tool` 之前的那一个
+   *    （我们自己的帧把 id 放在参数之前；Cloud 侧同构）。
+   *
+   * 猜错的代价是可控的：协议 §2.2 规定未知 `res.id` 一律忽略，
+   * 所以一个错 id 不会污染任何真实请求的状态。
+   */
+  const salvageDeliveryId = (raw: string): string | null => {
+    if (!/"type"\s*:\s*"req"/.test(raw)) return null
+    const cut = raw.search(/"arguments"\s*:|"tool"\s*:/)
+    const head = cut === -1 ? raw : raw.slice(0, cut)
+    const match = /"id"\s*:\s*"([^"\\]{1,128})"/.exec(head)
+    return match ? match[1] : null
+  }
+
+  /**
+   * 形状非法的 `req` 的审计。
+   *
+   * **只在工具名确实属于远程面时记**：`tool_name` 这一列有语义，塞一个
+   * `<malformed>` 之类的占位符会让「按工具统计」永远对不上账。工具名不可信时
+   * 只写日志——至少不会用一条伪造记录污染审计表。
+   *
+   * 为什么值得记：往一个合法工具调用里塞未知键，是「篡改 WSS 载荷」最现实的
+   * 形态（Cloud 的序列化 bug 或中间人）。这类事件如果只留一行 stderr，
+   * 事后完全无法回溯。
+   */
+  const auditMalformed = (toolName: unknown): void => {
+    if (typeof toolName !== 'string' || !isRemoteTool(toolName) || !deviceId) return
+    const ok = writeRemoteAudit(deps.db, deviceId, {
+      toolName,
+      success: false,
+      errorCode: 'PROTOCOL_VIOLATION'
+    })
+    if (ok) noteAuditSuccess(audit)
+    else noteAuditFailure(audit, Date.now())
+  }
+
+  /** 对畸形 req 的统一回话（协议 §2.2 要求「必须回 res.ok=false」）。 */
+  const sendProtocolViolation = (id: string): void => {
+    transport?.send(
+      buildResFrame({
+        id,
+        ok: false,
+        error: {
+          code: 'PROTOCOL_VIOLATION',
+          message: 'request frame does not match the protocol',
+          retryable: false
+        },
+        meta: { duration_ms: 0, cached: false }
+      })
+    )
+  }
+
   const handleFrame = (raw: string): void => {
     let json: unknown
     try {
       json = JSON.parse(raw)
     } catch {
-      log('[remote] dropped a non-JSON frame')
+      // 协议 §2.2：无法解析为 JSON，但能从原文提取出 id → 必须回 PROTOCOL_VIOLATION。
+      //
+      // 为什么要费这个劲：不回话的话 Cloud 只能等到 deadline 超时，而它对
+      // 「帧坏了」和「设备卡住了」得到的是同一个结果——排障信息彻底丢失。
+      const salvaged = salvageDeliveryId(raw)
+      if (salvaged) {
+        log('[remote] replied PROTOCOL_VIOLATION to an unparsable req')
+        sendProtocolViolation(salvaged)
+        return
+      }
+      log('[remote] closing on an unparsable frame (no id to reply to)')
+      dropConnection(4009, 'protocol violation')
       return
     }
     const type = json && typeof json === 'object' ? (json as { type?: unknown }).type : undefined
@@ -347,14 +601,36 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     const parsed = parseHelloOk(raw)
     if (!parsed.ok) {
       log(`[remote] hello_ok rejected: ${parsed.message}`)
-      transport?.close(4002, 'version unsupported')
+      // 两种失败要用不同的 close code——它们是两种完全不同的故障：
+      //
+      // - 4002 = 「版本不兼容」：双方都合法，部署侧要升级/回滚；
+      // - 4009 = 「帧格式非法」：对端在说我们的协议之外的话，通常意味着
+      //   序列化 bug 或中间人改包。
+      //
+      // 第一版一律报 4002，于是「Cloud 发了个畸形 hello_ok」会被记成版本问题，
+      // 排障方向从一开始就是错的。
+      if (parsed.message.startsWith('unsupported protocol version')) {
+        dropConnection(4002, 'version unsupported')
+      } else {
+        dropConnection(4009, 'hello_ok shape invalid')
+      }
       return
     }
     const helloOk = parsed.value
+    // 握手完成：这次尝试的握手超时不再有意义。
+    if (handshakeTimer) {
+      clearTimeout(handshakeTimer)
+      handshakeTimer = null
+    }
+    pendingHello = null
+
     // 原子安装：整体替换，不在快照里的旧 ctx 立即失效。
     const applied = applyHelloOk(grants, helloOk)
     for (const ctx of applied.revokedContexts) cache.dropGrantContext(ctx)
     revokedContexts.clear()
+
+    // Cloud 的帧上限只能**收紧**本机上限，不能放宽（内存保护是本机的）。
+    transport?.setMaxFrameBytes(helloOk.max_frame_bytes)
 
     link.connectedAtMono = performance.now()
     link.lastError = null
@@ -385,17 +661,34 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     transport?.send(buildPongFrame(parsed.data.seq, cache.snapshot().inflight, Date.now()))
   }
 
-  const handleReq = (raw: string, frame: unknown): void => {
+  const handleReq = (_raw: string, frame: unknown): void => {
     const parsed = remoteReqSchema.safeParse(frame)
     if (!parsed.success) {
-      // 无法确定 id 时不回 res（协议：畸形帧丢弃并记日志）。
-      log(`[remote] malformed req: ${parsed.error.issues[0]?.message ?? 'unknown'}`)
+      // 闭合键集校验失败（未知键 / 类型错 / 缺字段）。
+      //
+      // 协议 §2.2 对 req 的要求是「**必须回 `res.ok=false`**」——静默丢弃会让
+      // Cloud 一直等到 deadline，而它无法区分「设备没收到」与「设备拒收」。
+      // 这里能拿到 id 就回 PROTOCOL_VIOLATION；拿不到就按「无法回话」处理。
+      const detail = parsed.error.issues[0]?.message ?? 'unknown'
+      const id = frame && typeof frame === 'object' ? (frame as { id?: unknown }).id : undefined
+      if (typeof id === 'string' && id.length > 0 && id.length <= 128) {
+        log(`[remote] rejected a malformed req: ${detail}`)
+        // 不写缓存、不执行、不改授权状态：畸形帧没有「结果」可缓存。
+        auditMalformed((frame as { tool?: unknown }).tool)
+        sendProtocolViolation(id)
+        return
+      }
+      log(`[remote] closing on a malformed req without a usable id: ${detail}`)
+      dropConnection(4009, 'protocol violation')
       return
     }
-    if (raw.length > (link.lastCloseCode === null ? Infinity : Infinity)) {
-      /* 帧大小已由 link-client 把关 */
-    }
     const outcome = handleRequest(parsed.data)
+    // `deliver=false` 只有一个来源：执行完成时已过 deadline（协议 §7.4）。
+    // 此时**不发** res——Cloud 已经超时返回，补发一个迟到的成功只会自相矛盾。
+    if (!outcome.deliver) {
+      log('[remote] dropped a late res (deadline passed during execution)')
+      return
+    }
     transport?.send(
       buildResFrame(
         outcome.res.ok
@@ -413,8 +706,18 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
   const handleGrantUpdate = (frame: unknown): void => {
     const parsed = remoteGrantUpdateSchema.safeParse(frame)
     if (!parsed.success) {
-      log('[remote] malformed grant_update; state unchanged')
-      // 不知道 epoch 就无法 ack；按协议丢弃。
+      // 状态**一点不改**（applyGrantUpdate 根本没被调用），但要不要 ack？
+      //
+      // 必须 ack：协议 §6.5.2 规定 ack 超时 → Cloud fail-closed **暂停向该设备
+      // 路由全部 grant**。也就是说「丢弃畸形帧」的代价不是丢一帧，而是这台设备
+      // 整体停服 3 秒起。既然 epoch 还能读出来，就明确回 applied:false。
+      const epoch = frame && typeof frame === 'object' ? (frame as { grant_epoch?: unknown }).grant_epoch : undefined
+      if (typeof epoch === 'number' && Number.isInteger(epoch) && epoch >= 0) {
+        log('[remote] malformed grant_update; acked false, state unchanged')
+        transport?.send(buildGrantAck(epoch, false, 'protocol_violation', Date.now()))
+        return
+      }
+      log('[remote] malformed grant_update without a usable epoch; state unchanged')
       return
     }
     const update: RemoteGrantUpdate = parsed.data
@@ -451,91 +754,290 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     if (!parsed.success) return
     transition(link, 'draining')
     publish()
-    // drain 之后由 Cloud 断开；本地不再发新请求（本来也不发）。
     transport?.send(buildByeFrameSafe('drain_ack'))
     publish()
   }
 
   const buildByeFrameSafe = (_reason: string): string => JSON.stringify({ v: REMOTE_PROTOCOL_VERSION, type: 'bye', ts: Date.now() })
 
+  /**
+   * 心跳看门狗。
+   *
+   * **从 `hello_ok` 起算**，而不是「收到第一条 ping 才开始」。旧实现在
+   * `lastPongAtMono === null` 时直接 return，于是「握手成功但 Cloud 再也没有
+   * 发过任何 ping」这条最容易出现的半开连接（NAT 超时、LB 掉表）
+   * 永远不会被判死——连接在路由表里看着是 online，实际早就发不出去了。
+   */
   const startHeartbeat = (heartbeatMs: number, idleTimeoutMs: number): void => {
     if (heartbeatTimer) clearInterval(heartbeatTimer)
     if (healthTimer) clearInterval(healthTimer)
-    // 心跳由 Cloud 的 ping 驱动；本地只做一个「多久没 pong 就判死」的看门狗。
+    link.lastPongAtMono = performance.now()
     healthTimer = setInterval(() => {
-      if (link.lastPongAtMono === null) return
-      const staleMs = performance.now() - link.lastPongAtMono
+      const last = link.lastPongAtMono
+      if (last === null) return
+      const staleMs = performance.now() - last
       if (staleMs > idleTimeoutMs) {
-        log(`[remote] no pong in ${Math.round(staleMs)}ms; closing`)
+        log(`[remote] no ping for ${Math.round(staleMs)}ms; closing`)
         link.lastError = 'heartbeat timeout'
-        transport?.close(4008, 'heartbeat timeout')
+        dropConnection(4008, 'heartbeat timeout')
       }
     }, Math.max(1_000, Math.min(heartbeatMs, 5_000)))
-    // 未使用但保留：Cloud 可能要求本地主动发心跳（协议允许双向）。
-    void heartbeatMs
   }
 
-  const connect = async (): Promise<void> => {
-    if (shuttingDown || !localState.enabled) return
-    if (!deviceId || !deviceToken || !privateKey) {
-      needsReauth = true
-      transition(link, 'blocked', 'no device credentials')
+  /**
+   * 本地判定要断开时走这里。
+   *
+   * **不能只调 `transport.close()`**：传输层的主动关闭会把底层 socket 的
+   * `onclose` 丢掉（那是刻意的——我们自己的意志不该被当成「对端异常」）。
+   * 但代价是 `handleClose()` 不会执行：状态机停在 `online`、`lastCloseCode`
+   * 不更新、也不会有重连。心跳超时因此会留下一条「看着在线、实际已死」的连接
+   * ——正是这一层要防的那种状态。所以主动断开必须自己做完整套收敛。
+   */
+  const dropConnection = (code: number, reason: string): void => {
+    link.lastCloseCode = code
+    link.lastCloseReason = reason
+    transport?.close(code, reason)
+    abortAttempt()
+    resetConnectionState()
+    const kind = transport?.classifyClose(code) ?? 'retry'
+    if (kind === 'no-reconnect') {
+      transition(link, 'blocked', describeClose(code, reason))
       publish()
       return
     }
-    if (!sameCloudOrigin(cloudOrigin, localState.cloudOrigin)) {
-      // Origin 变了：绝不把旧后端的凭据发到新后端。
-      needsReauth = true
-      transition(link, 'blocked', 'cloud origin mismatch')
-      log('[remote] cloud origin mismatch; refusing to send credentials')
-      publish()
+    log(`[remote] locally closed ${code} (${reason}); will reconnect`)
+    scheduleReconnect()
+  }
+
+  /** 握手超时：只对「仍然是当前那次尝试」生效。 */
+  const armHandshakeDeadline = (attempt: number): void => {
+    if (handshakeTimer) clearTimeout(handshakeTimer)
+    handshakeTimer = setTimeout(() => {
+      handshakeTimer = null
+      if (attempt !== connectGeneration) return
+      log('[remote] handshake did not complete in time')
+      dropConnection(4001, 'handshake timeout')
+    }, HANDSHAKE_DEADLINE_MS)
+  }
+
+  const connect = async (): Promise<void> => {
+    // 没有 transport 说明 `start()` 还没跑（例如 IPC 在装配完成前就收到 enable）。
+    // 这种情况下什么都不做，而不是把状态推进到 connecting 再挂住。
+    if (!transport) {
+      log('[remote] connect requested before start(); ignoring')
+      return
+    }
+    // 门禁在**唯一的出口**上再查一次。调用方已经查过也没关系：
+    // 这次复查是「任何新调用路径都不可能绕过检查」的结构保证。
+    const gate = canConnect()
+    if (!gate.ok) {
+      applyGateFailure(gate.code)
       return
     }
 
     transition(link, 'connecting')
     publish()
 
-    const url = toWebSocketUrl(cloudOrigin)
-    const nonce = makeNonce()
+    // 门禁保证了下面这几个不为 null；用局部常量把这一点固化下来，
+    // 避免在异步间隙里再读可变状态。
+    const activeDeviceId = deviceId as string
+    const activeToken = deviceToken as string
+    const activeKey = privateKey as NonNullable<typeof privateKey>
+
     const ts = Date.now()
-    const current = verdict()
-    const sig = signHello(privateKey, {
+    const nonce = makeNonce()
+    const appVersion = deps.clientVersion ?? safeAppVersion()
+    const platform = process.platform
+    const serviceable = verdict().serviceable
+
+    const helloInput: HelloSigningInput = {
       v: REMOTE_PROTOCOL_VERSION,
       type: 'hello',
-      device_id: deviceId,
-      nonce,
-      ts
-    })
-
-    transport?.connect(url)
-    const socket = transport
-    if (!socket) return
-
-    // hello 必须在 onOpen 之后发；用一次性的等待把两者连起来。
-    const hello = buildHelloFrame({
-      deviceId,
-      nonce,
       ts,
-      sig,
-      serviceable: current.serviceable,
-      clientVersion: deps.clientVersion ?? app.getVersion()
+      device_id: activeDeviceId,
+      nonce,
+      min_version: REMOTE_PROTOCOL_VERSION,
+      max_version: REMOTE_PROTOCOL_VERSION,
+      app_version: appVersion,
+      platform,
+      capabilities: [...REMOTE_HELLO_CAPABILITIES],
+      serviceable
+    }
+
+    let sig: string
+    try {
+      sig = signHello(activeKey, helloInput)
+    } catch {
+      // 签名用不了说明私钥已经不可用：不要拿它去连，直接要求重新配对。
+      needsReauth = true
+      transition(link, 'blocked', 'device signing key is unusable')
+      log('[remote] hello signing failed; blocking')
+      publish()
+      return
+    }
+
+    const frame = buildHelloFrame({
+      ts,
+      deviceId: activeDeviceId,
+      nonce,
+      minVersion: REMOTE_PROTOCOL_VERSION,
+      maxVersion: REMOTE_PROTOCOL_VERSION,
+      appVersion,
+      platform,
+      capabilities: REMOTE_HELLO_CAPABILITIES,
+      serviceable,
+      sig
     })
-    // 简化：立即尝试发送；若 socket 尚未 open，nextTick 重试一次。
-    const trySendHello = (attempt = 0): void => {
-      if (socket.isOpen()) {
-        transition(link, 'handshaking')
-        socket.send(hello)
-        link.reportedServiceable = current.serviceable
+
+    const attempt = ++connectGeneration
+    pendingHello = { attempt, frame, serviceable }
+
+    try {
+      // **认证就在这里**：device_token 走 header，绝不进 URL、绝不进 hello。
+      transport?.connect(toWebSocketUrl(configuredOrigin), {
+        headers: { Authorization: `Bearer ${activeToken}` },
+        protocols: [REMOTE_WS_SUBPROTOCOL]
+      })
+    } catch {
+      pendingHello = null
+      link.lastError = 'failed to open socket'
+      log('[remote] could not create a websocket')
+      transition(link, 'backoff')
+      scheduleReconnect()
+    }
+  }
+
+  /** 门禁失败时的收敛动作。**任何一种都不建 socket。** */
+  const applyGateFailure = (code: Extract<ConnectGate, { ok: false }>['code']): void => {
+    switch (code) {
+      case 'shutting_down':
+        return
+      case 'disabled':
+        transition(link, 'idle')
+        publish()
+        return
+      case 'blocked':
+        if (link.state !== 'blocked') transition(link, 'blocked', 'reauthentication required')
+        publish()
+        return
+      case 'user_mismatch':
+        // 用户切换是安全事件：落盘关开关、清上下文、断开、零出站。
+        enterBlocked('signed-in user differs from the bound user')
+        return
+      case 'origin_mismatch':
+        needsReauth = true
+        transition(link, 'blocked', 'cloud origin mismatch')
+        log('[remote] cloud origin mismatch; refusing to send credentials')
+        publish()
+        return
+      case 'no_user':
+        transition(link, 'idle')
+        publish()
+        return
+      case 'no_credentials':
+        if (deviceId === null) {
+          // 还没配对：这是「没准备好」，不是「需要重新授权」。
+          link.lastError = 'device is not paired'
+          transition(link, 'idle')
+          publish()
+          return
+        }
+        needsReauth = true
+        transition(link, 'blocked', 'device credentials are unusable')
+        log('[remote] device credentials are missing or unreadable')
+        publish()
+        return
+    }
+  }
+
+  // MARK: - 注册
+
+  const cancelRegistration = (reason: string): void => {
+    const pending = pendingRegistration
+    if (!pending) return
+    pending.cancelled = true
+    if (pending.timer) clearTimeout(pending.timer)
+    pending.timer = null
+    // 显式抹掉内存里的 claim_secret（它是可换 token 的一次性秘密）。
+    pending.claimSecret = ''
+    pendingRegistration = null
+    log(`[remote] registration cancelled (${reason})`)
+  }
+
+  const scheduleClaimPoll = (): void => {
+    const pending = pendingRegistration
+    if (!pending || pending.cancelled) return
+    if (Date.now() >= pending.expiresAt) {
+      cancelRegistration('expired')
+      needsReauth = true
+      link.lastError = 'device registration expired'
+      if (link.state !== 'blocked') transition(link, 'blocked', 'device registration expired')
+      publish()
+      return
+    }
+    pending.timer = setTimeout(() => {
+      if (pendingRegistration === pending) void claimOnce()
+    }, REGISTRATION_POLL_MS)
+  }
+
+  const claimOnce = async (): Promise<void> => {
+    const pending = pendingRegistration
+    if (!pending || pending.cancelled) return
+    const registrar = deps.registrar
+    if (!registrar) return
+
+    // 注册期间用户换了账户：这次注册的绑定对象已经不存在了。
+    if (deps.currentUserId() !== pending.userId) {
+      cancelRegistration('account changed')
+      return
+    }
+
+    const result = await registrar.claim({ deviceId: pending.deviceId, claimSecret: pending.claimSecret })
+    // await 期间可能被 forget / 新注册 / 登出取代——引用相等是判据。
+    if (pendingRegistration !== pending || pending.cancelled) return
+
+    if (!result.ok) {
+      if (result.retryable) {
+        scheduleClaimPoll()
         return
       }
-      if (attempt < 50) {
-        setTimeout(() => trySendHello(attempt + 1), 20)
-      } else {
-        log('[remote] socket did not open in time')
-        socket.close(4001, 'open timeout')
-      }
+      cancelRegistration(result.reason)
+      needsReauth = true
+      link.lastError = `device registration failed: ${result.reason}`
+      if (link.state !== 'blocked') transition(link, 'blocked', `registration ${result.reason}`)
+      publish()
+      return
     }
-    trySendHello()
+
+    // 落盘（safeStorage 密文）。save 内部会比对代际号，forget 之后这里会失败。
+    const saved = await store.save({
+      deviceId: pending.deviceId,
+      boundUserId: pending.userId,
+      cloudOrigin: configuredOrigin,
+      deviceToken: result.deviceToken,
+      privateKey: pending.privateKey,
+      registeredAt: Date.now()
+    })
+    if (pendingRegistration !== pending) return
+
+    pendingRegistration = null
+    if (!saved.ok) {
+      needsReauth = true
+      link.lastError = `device credential save failed: ${saved.reason}`
+      if (link.state !== 'blocked') transition(link, 'blocked', 'device credential save failed')
+      log('[remote] failed to persist the new device credential')
+      publish()
+      return
+    }
+
+    deviceId = pending.deviceId
+    boundUserId = pending.userId
+    deviceToken = result.deviceToken
+    privateKey = pending.privateKey
+    deviceOrigin = configuredOrigin
+    needsReauth = false
+    if (link.state === 'blocked') transition(link, 'idle')
+    log('[remote] device credential acquired and stored')
     publish()
   }
 
@@ -552,12 +1054,29 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
         {
           onOpen: () => {
             log('[remote] socket open')
+            const pending = pendingHello
+            // 代际不符 = 这是上一次尝试的回调，绝不能给新 socket 发帧。
+            if (!pending || pending.attempt !== connectGeneration) return
+            transition(link, 'handshaking')
+            const sent = transport?.send(pending.frame) ?? false
+            if (!sent) {
+              log('[remote] failed to send hello')
+              transport?.close(4001, 'hello send failed')
+              return
+            }
+            link.reportedServiceable = pending.serviceable
+            armHandshakeDeadline(pending.attempt)
           },
           onFrame: handleFrame,
           onClose: handleClose,
           onError: (message) => {
             link.lastError = message
             log(`[remote] socket error: ${message}`)
+          },
+          onOversizedFrame: (bytes) => {
+            // 协议 §2.2：单帧超过上限 → close 4009。不解析、不回显内容。
+            log(`[remote] dropping an oversized frame (${bytes} bytes)`)
+            dropConnection(4009, 'frame too large')
           }
         },
         deps.webSocketFactory
@@ -570,8 +1089,9 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
         boundUserId = loaded.identity.boundUserId
         deviceToken = loaded.identity.deviceToken
         privateKey = loaded.identity.privateKey
+        deviceOrigin = loaded.identity.cloudOrigin
         // Origin 绑定校验：不匹配就 blocked + 要求重新配对。
-        if (!sameCloudOrigin(loaded.identity.cloudOrigin, localState.cloudOrigin)) {
+        if (!sameCloudOrigin(configuredOrigin, loaded.identity.cloudOrigin)) {
           needsReauth = true
           transition(link, 'blocked', 'cloud origin mismatch')
           log('[remote] saved device belongs to another cloud origin')
@@ -586,29 +1106,11 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
       }
 
       // 启动安全检查：不依赖 Renderer，不依赖用户打开设置页。
-      const current = verdict()
-      if (!localState.enabled) {
-        transition(link, 'idle')
-        publish()
-        return
-      }
-      if (needsReauth) {
-        transition(link, 'blocked', 'reauthentication required')
-        publish()
-        return
-      }
-      if (boundUserId !== null && boundUserId !== deps.currentUserId()) {
-        // 用户切换：**零出站连接**。
-        needsReauth = true
-        transition(link, 'blocked', 'user mismatch')
-        log('[remote] bound user differs from current account; not connecting')
-        publish()
-        return
-      }
-      if (!current.serviceable) {
-        // 开关开着但本地条件不足（例如没配对）：保持 idle，不建连。
-        transition(link, 'idle')
-        publish()
+      // 全部收敛到 canConnect()，避免「开关 off 时提前 return 跳过用户校验」
+      // 这类分支顺序造成的绕过。
+      const gate = canConnect()
+      if (!gate.ok) {
+        applyGateFailure(gate.code)
         return
       }
       await connect()
@@ -617,6 +1119,8 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     async stop() {
       if (shuttingDown) return
       shuttingDown = true
+      abortAttempt()
+      cancelRegistration('shutdown')
       clearTimers()
       resetConnectionState()
       transport?.close(1000, 'shutdown')
@@ -641,10 +1145,20 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     },
 
     async enable() {
+      // **先过身份门禁，再落盘**。
+      //
+      // 反过来的话（先写 enabled=true 再让 connect() 发现用户不匹配）会留下一个
+      // 窗口：并发的第二次 enable() 把 enabled 又写成 true，而 enterBlocked 已经
+      // 跑完，最终状态是「开着 + blocked」。测试抓到了这个序列。
+      const gate = identityGate()
+      if (!gate.ok) {
+        applyGateFailure(gate.code)
+        return service()
+      }
       localState = { ...localState, enabled: true }
       writeRemoteState(paths, localState)
       publish()
-      if (!shuttingDown) await connect()
+      await connect()
       return service()
     },
 
@@ -660,6 +1174,8 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
       cache.clear()
       resetGrantContext(grants)
       revokedContexts.clear()
+      abortAttempt()
+      cancelRegistration('disabled')
       clearTimers()
 
       if (transport?.isOpen()) {
@@ -679,10 +1195,41 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     },
 
     async register() {
-      // Mock 阶段：只生成待确认信息，**不落任何凭据**。
-      const pendingId = `dev_${makeNonce().slice(0, 12)}`
-      const confirmCode = String(Math.floor(100_000 + Math.random() * 900_000))
-      return { deviceId: pendingId, confirmCode, expiresAt: Date.now() + 300_000 }
+      if (shuttingDown) throw new Error('remote service is stopping')
+      const registrar = deps.registrar
+      if (!registrar) {
+        // 诚实失败：Phase 1.1B.1 还没有把注册接到真实 Cloud（缺用户 Bearer 的
+        // 合法来源）。伪造一个「已注册」比报错更糟——用户会以为配对完成了。
+        throw new Error('device registration is not wired to Cloud yet')
+      }
+      const userId = deps.currentUserId()
+      if (!userId) throw new Error('sign in before registering a device')
+
+      cancelRegistration('superseded')
+      // 新密钥只存在内存里，领取成功后才会连 device_token 一起加密落盘。
+      const { privateKey: newKey, publicKey } = generateDeviceKeyPair()
+
+      const result = await registrar.register({
+        name: deps.deviceName ?? hostname(),
+        platform: process.platform,
+        publicKey: encodeRawPublicKey(publicKey),
+        appVersion: deps.clientVersion ?? safeAppVersion()
+      })
+      if (!result.ok) throw new Error(`device registration failed: ${result.reason}`)
+
+      pendingRegistration = {
+        deviceId: result.deviceId,
+        claimSecret: result.claimSecret,
+        privateKey: newKey,
+        userId,
+        expiresAt: result.expiresAt,
+        cancelled: false,
+        timer: null
+      }
+      log('[remote] registration pending; waiting for the user to confirm')
+      publish()
+      scheduleClaimPoll()
+      return { deviceId: result.deviceId, confirmCode: result.confirmCode, expiresAt: result.expiresAt }
     },
 
     async forget() {
@@ -692,6 +1239,8 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
       cache.clear()
       resetGrantContext(grants)
       revokedContexts.clear()
+      abortAttempt()
+      cancelRegistration('forget')
       clearTimers()
       transport?.close(1000, 'forget')
       const result = await store.forget()
@@ -699,8 +1248,9 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
       boundUserId = null
       deviceToken = null
       privateKey = null
+      deviceOrigin = null
       needsReauth = false
-      transition(link, 'idle')
+      if (link.state !== 'idle') transition(link, 'idle')
       if (!result.ok) link.lastError = `forget failed: ${result.reason}`
       publish()
       return service()
@@ -716,7 +1266,9 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
       localState = { ...localState, enabled: false }
       writeRemoteState(paths, localState)
       // 1. 本地立即拒绝新请求（isEnabled 已为 false）
-      // 2. 停止重连
+      // 2. 停止重连与在途尝试
+      abortAttempt()
+      cancelRegistration('sign out')
       clearTimers()
       // 3. 尽力告知 Cloud 并断开
       if (transport?.isOpen()) {
@@ -733,32 +1285,29 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
 
     async reconcile() {
       if (shuttingDown) return
-      const current = verdict()
 
       // 已登录用户变了（或登出）：这是安全事件，必须断开并置 blocked。
       if (boundUserId !== null && deps.currentUserId() !== boundUserId) {
-        needsReauth = true
-        cache.clear()
-        resetGrantContext(grants)
-        revokedContexts.clear()
-        clearTimers()
-        if (transport?.isOpen()) {
-          transport.send(
-            buildStatusFrame({ serviceable: false, reason: 'user_mismatch', ts: Date.now() })
-          )
-        }
-        transport?.close(4009, 'user mismatch')
-        transition(link, 'blocked', 'signed-in user differs from the bound user')
-        log('[remote] account changed while connected; blocked and disconnected')
-        publish()
+        enterBlocked('signed-in user differs from the bound user')
         return
       }
 
       // 能力变化（例如开关刚被别处关掉）：上报即可，不必断。
       if (link.state === 'online') reportStatus()
 
+      const gate = canConnect()
+      if (!gate.ok) {
+        // 从「已连上」变成「开关被关掉」时要收敛到 idle，否则会留着一个
+        // 谁也不会去关的 socket。但 **blocked 不能碰**：它是需要用户处理的
+        // 终态，把它降级成 idle 会让界面看起来「没事了」，而 needsReauth 还是 true。
+        const live = link.state === 'online' || link.state === 'draining' || link.state === 'connecting' || link.state === 'handshaking'
+        if (gate.code === 'disabled' && live) applyGateFailure(gate.code)
+        publish()
+        return
+      }
+
       // 从「不可服务」恢复到「可服务」且尚未连接时，补一次连接。
-      if (current.serviceable && (link.state === 'idle' || link.state === 'backoff')) {
+      if (link.state === 'idle' || link.state === 'backoff') {
         await connect()
         return
       }
@@ -767,6 +1316,7 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
 
     suspend() {
       // 睡眠：不信任旧 socket。清理上下文，唤醒后重新握手。
+      abortAttempt()
       clearTimers()
       resetConnectionState()
       transport?.close(1000, 'suspend')
@@ -775,14 +1325,23 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     },
 
     async resume() {
-      if (shuttingDown || !localState.enabled) return
       // 唤醒后 attempt 归零：睡眠不是故障，不该继承之前的退避档位。
+      abortAttempt()
       link.reconnectAttempt = 0
       await connect()
     }
   }
 
   return serviceApi
+}
+
+function safeAppVersion(): string {
+  try {
+    const version = app?.getVersion?.()
+    return typeof version === 'string' && version ? version : '0.0.0'
+  } catch {
+    return '0.0.0'
+  }
 }
 
 function toWebSocketUrl(origin: string): string {

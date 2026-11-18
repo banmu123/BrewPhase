@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import type { Db } from '../database/client'
 import { executeTool } from '../application/mcp-tools/tool-executor'
 import type { ToolServices } from '../application/mcp-tools/tool-services'
-import { writeAudit } from '../mcp-bridge/audit-log'
+import { writeAuditResult } from '../mcp-bridge/audit-log'
 import type { RemoteErrorCode, RemoteReq, RemoteScope } from '../../shared/contracts/remote'
 import { effectiveScopes, effectiveTools, isRetryableRemoteError, scopeForTool, toRemoteErrorCode } from './remote-policy'
 import type { GrantContextState } from './grant-context'
@@ -16,27 +16,28 @@ import { cacheKey } from './result-cache'
  * ## 顺序不可调换（协议 §6.2 / §8.5）
  *
  * ```
- *  1. 本地远程开关
- *  2. 帧大小 / JSON 合法（由 link-client 已把关，这里再断言）
- *  3. deadline（monotonic 预算）
+ *  1. 本地远程开关 / draining
+ *  2. 帧大小 / JSON 合法（由 link-client 已把关）
+ *  3. deadline（epoch 一次换算成 monotonic）
  *  4. grant_ctx 已知 / active / epoch 当前
  *  5. bound_user_id == boundUserId
- *  6. tool ∈ effectiveTools(grant)
- *  7. required_scope ∈ effectiveScopes(grant)      ← 缓存之前
- *  8. request_hash 与 delivery_id 的一致性
- *  9. 缓存查询（键 = grant_ctx + delivery_id）
- * 10. executeTool
- * 11. 审计（**单出口**）
- * 12. res
+ *  6. tool ∈ REMOTE_TOOLS
+ *  7. required_scope ∈ effectiveScopes(grant)
+ *  8. tool ∈ allowed_tools ∩ toolsForScopes
+ *  9. request_hash 与当前帧内容一致      ← **首次请求也要验**
+ * 10. 缓存查询（键 = grant_ctx + delivery_id）
+ * 11. executeTool
+ * 12. 审计（**单出口**）
+ * 13. res
  * ```
  *
- * **缓存必须在 5–8 之后**：先查缓存会让「已关开关 / scope 收紧 / 设备撤销 /
- * grant 撤销」全部失效，AI 仍能拿到旧数据。这是最隐蔽的越权路径。
+ * **缓存必须在 6–9 之后**：先查缓存会让「已关开关 / scope 收紧 / 设备撤销 /
+ * grant 撤销 / 请求内容被换掉」全部失效，AI 仍能拿到旧数据。这是最隐蔽的越权路径。
  *
  * ## 审计口径（安全运维 §6.5.4.1）
  *
- * 一次 `req` 至多写**一行**。哪些阶段记、哪些不记，见 `auditDecision`。
- * 分支里**不得**再调 `writeAudit`——重复记账会让「一次越权尝试」看起来像两次。
+ * 一次 `req` 至多写**一行**。哪些阶段记、哪些不记，见 `reject()` 的调用点。
+ * 分支里**不得**再调审计——重复记账会让「一次越权尝试」看起来像两次。
  */
 
 const FALLBACK_DEADLINE_MS = 15_000
@@ -47,6 +48,14 @@ export type RequestHandlerDeps = {
   cache: ResultCache
   /** 读当前开关（每次请求都读，开关可能刚被关掉）。 */
   isEnabled(): boolean
+  /**
+   * 连接是否处于 `draining`。
+   *
+   * draining 期间仍可能收到 Cloud 已经排队的 `req`；本地必须拒绝而不是执行——
+   * 进程马上要断，执行完的 `res` 多半发不出去，等于白做一次读取并留下一条
+   * 「成功」审计。用 `DEVICE_BUSY`（可重试）：Cloud 在重连后重投即可。
+   */
+  isDraining(): boolean
   /** 本机绑定的 Cloud 用户。 */
   boundUserId(): string | null
   /** 设备 id，用于审计的 `client_id`。 */
@@ -61,14 +70,16 @@ export type RequestHandlerDeps = {
     entityType?: string | null
     entityId?: string | null
   }): void
-  /** monotonic 时钟（测试可注入）。 */
+  /** monotonic 时钟（进程内计时、deadline 判断；测试可注入）。 */
   nowMono(): number
+  /** Unix epoch 时钟（**只**用于把 `deadline_ms` 换算成 monotonic 预算）。 */
+  nowEpoch(): number
   /** 该 grant 是否已被撤销（撤销后即便上下文还在也不服务）。 */
   isGrantRevoked(grantCtx: string): boolean
 }
 
 export type HandlerOutcome = {
-  /** 要发回 Cloud 的 `res` 帧内容。 */
+  /** 要发回 Cloud 的 `res` 帧内容（`deliver=false` 时仅用于测试与审计）。 */
   res: {
     id: string
     ok: boolean
@@ -76,8 +87,15 @@ export type HandlerOutcome = {
     error?: { code: RemoteErrorCode; message: string; retryable: boolean }
     meta: { duration_ms: number; cached: boolean }
   }
+  /**
+   * `false` → **不要发送**这条 `res`。
+   *
+   * 唯一原因是执行完成时已过 deadline（协议 §7.4 第三条）：Cloud 早已返回超时，
+   * 再补发一个「迟到的成功」会与它已经告诉 AI 的结果矛盾。宁可丢结果。
+   */
+  deliver: boolean
   /** 便于测试断言：这次请求走到哪一步。 */
-  stage: 'rejected' | 'cached' | 'executed'
+  stage: 'rejected' | 'cached' | 'executed' | 'expired'
   /** 是否写入了审计（测试断言用）。 */
   audited: boolean
 }
@@ -115,6 +133,7 @@ export function createRequestHandler(deps: RequestHandlerDeps) {
           error: { code, message, retryable: isRetryableRemoteError(code) },
           meta: { duration_ms: Math.round(deps.nowMono() - startedMono), cached: false }
         },
+        deliver: true,
         stage: 'rejected',
         audited: audit !== null
       }
@@ -124,14 +143,20 @@ export function createRequestHandler(deps: RequestHandlerDeps) {
     if (!deps.isEnabled()) {
       return reject('REMOTE_DISABLED', 'remote access is disabled on this device', null)
     }
+    // ---- 1b. draining ----
+    if (deps.isDraining()) {
+      return reject('DEVICE_BUSY', 'device is draining; retry after reconnect', null)
+    }
 
-    // ---- 3. deadline（用 monotonic 预算，不信任本机墙上时钟的跨度） ----
-    // `deadline_ms` 是绝对 epoch。换算成「还剩多少毫秒」再与本机 monotonic 比较，
-    // 这样用户手动改系统时间不会延长或缩短有效期（ST-9）。
-    const remaining = req.deadline_ms - Date.now()
+    // ---- 3. deadline：epoch 只用来算一次剩余预算 ----
+    //
+    // `deadline_ms` 是跨进程协议字段（epoch）。换算一次之后**只**用 monotonic：
+    // 用户手动改系统时间，既不能延长也不能缩短这条已经确定的期限（ST-9）。
+    const remaining = req.deadline_ms - deps.nowEpoch()
     if (remaining <= 0) {
       return reject('REQUEST_TIMEOUT', 'request deadline has passed', null)
     }
+    const expiresAtMono = startedMono + remaining
 
     // ---- 4. grant 上下文 ----
     const state = deps.grants()
@@ -164,7 +189,7 @@ export function createRequestHandler(deps: RequestHandlerDeps) {
       })
     }
 
-    // ---- 6/7. 工具面与 scope（**在缓存之前**） ----
+    // ---- 6/7/8. 工具面与 scope（**在缓存之前**） ----
     //
     // 三层的顺序决定错误码的精确度。如果先判 `effectiveTools`（它本身已按
     // scope 过滤过），那么「用户授了这个 Client 但没授这个 scope」会被报成
@@ -195,13 +220,37 @@ export function createRequestHandler(deps: RequestHandlerDeps) {
       })
     }
 
-    // ---- 8. request_hash 一致性 + 缓存 ----
+    // ---- 9. request_hash：**每次都要验，首次也是** ----
+    //
+    // 旧实现只在「缓存已有结果」时才比较，于是第一次投递带什么 hash 都照执行。
+    // 那样 `request_hash` 就退化成「缓存键的一部分」，而不是协议 §8.2 所说的
+    // 「内容指纹」——Cloud 侧一旦有 bug（复用 id 换内容），本地会照单执行。
+    const expectedHash = computeRequestHash({ v: req.v, tool: req.tool, arguments: req.arguments })
+    if (expectedHash !== req.request_hash) {
+      return reject('PROTOCOL_VIOLATION', 'request_hash does not match the request content', {
+        toolName: req.tool,
+        errorCode: 'PROTOCOL_VIOLATION'
+      })
+    }
+
+    // ---- 10. 缓存 ----
     const key = cacheKey(req.grant_ctx, req.id)
     const cached = deps.cache.get(key)
 
     if (cached && cached.state === 'inflight') {
-      // 同 id 仍在执行：不排队、不并发执行。按协议拒绝（只读场景不选「跳过」，
-      // 因为跳过会让调用方白等到超时且没有明确原因）。
+      /**
+       * 同 id 仍在执行。
+       *
+       * 协议 §8.3 第 1 条原本写「挂起并共用首次结果」，v1 **改成直接拒绝**，
+       * 理由是那条路径在 v1 里结构性不可达：27 个 handler 全同步，
+       * `handle()` 从 `beginInflight` 到 `put` 之间没有 `await`，单线程下
+       * 第二次投递只可能在该函数**返回之后**到达——那时占位已被结果替换。
+       *
+       * 为一个不可达的路径实现 waiter，意味着写一段**永远测不到真实时序**的
+       * 异步协调代码（取消、关开关、断线都要保证不泄漏结果）。那比一条明确的
+       * 错误更危险。所以 v1 选择「拒绝」，并把占位保留下来作为
+       * 「绝不重复执行」的结构性保证；异步工具落地时（v2）再实现 waiter。
+       */
       return reject('PROTOCOL_VIOLATION', 'this delivery_id is already in flight', {
         toolName: req.tool,
         errorCode: 'PROTOCOL_VIOLATION'
@@ -236,12 +285,13 @@ export function createRequestHandler(deps: RequestHandlerDeps) {
               },
               meta: { duration_ms: cached.durationMs, cached: true }
             },
+        deliver: true,
         stage: 'cached',
         audited: true
       }
     }
 
-    // ---- 9/10. 占位 + 执行 ----
+    // ---- 11. 占位 + 执行 ----
     if (!deps.cache.beginInflight(key, req.request_hash)) {
       return reject('PROTOCOL_VIOLATION', 'this delivery_id is already in flight', {
         toolName: req.tool,
@@ -256,6 +306,26 @@ export function createRequestHandler(deps: RequestHandlerDeps) {
     })
     const durationMs = Math.round(deps.nowMono() - startedMono)
 
+    // ---- 11b. 执行完成时是否已过 deadline ----
+    // 过了就丢弃结果、不写缓存、不发 res，只记一条超时审计（协议 §7.4）。
+    if (deps.nowMono() >= expiresAtMono) {
+      // 结果丢弃，**占位也要一起丢掉**：留着会让同一个 delivery_id 此后一直被
+      // 当成「正在执行」而拒绝，直到断线才恢复（一个永不到来的 res 留下的坑）。
+      deps.cache.drop(key)
+      safeAudit({ toolName: req.tool, success: false, errorCode: 'REQUEST_TIMEOUT' })
+      return {
+        res: {
+          id: req.id,
+          ok: false,
+          error: { code: 'REQUEST_TIMEOUT', message: 'request deadline passed during execution', retryable: true },
+          meta: { duration_ms: durationMs, cached: false }
+        },
+        deliver: false,
+        stage: 'expired',
+        audited: true
+      }
+    }
+
     if (!outcome.ok) {
       const code = toRemoteErrorCode(outcome.code, outcome.stage)
       const message = remoteMessageFor(outcome.stage, code, outcome.message)
@@ -266,10 +336,11 @@ export function createRequestHandler(deps: RequestHandlerDeps) {
         completedAtMono: deps.nowMono(),
         durationMs
       })
-      // ---- 11. 审计（单出口） ----
+      // ---- 12. 审计（单出口） ----
       safeAudit({ toolName: req.tool, success: false, errorCode: code })
       return {
         res: { id: req.id, ok: false, error: { code, message, retryable: isRetryableRemoteError(code) }, meta: { duration_ms: durationMs, cached: false } },
+        deliver: true,
         stage: 'executed',
         audited: true
       }
@@ -296,6 +367,7 @@ export function createRequestHandler(deps: RequestHandlerDeps) {
         data: outcome.data,
         meta: { duration_ms: durationMs, cached: false }
       },
+      deliver: true,
       stage: 'executed',
       audited: true
     }
@@ -324,8 +396,13 @@ function remoteMessageFor(
 /**
  * 审计落库（`client_id = "remote:" + device_id`）。
  *
- * `writeAudit` 自己吞掉异常（审计失败不能把已完成的业务报成失败），
- * 所以这里只需要把结果告诉调用方以维护计数器。
+ * 走 `writeAuditResult` 而不是 `writeAudit`：后者会吞掉异常，于是调用方
+ * 永远得到「成功」，`consecutiveFailures` 也就永远不会涨——设置页那个
+ * 「最近 N 次远程访问未能写入审计」的告警会永远是 0。
+ *
+ * **不记录异常对象**：better-sqlite3 的报错里带 SQL 片段与数据库绝对路径，
+ * 而这里拿到的是一条已经不该失败的业务路径。调用方只拿到 `false`，
+ * 具体原因不进任何日志。
  */
 export function writeRemoteAudit(
   db: Db,
@@ -339,7 +416,7 @@ export function writeRemoteAudit(
   }
 ): boolean {
   try {
-    writeAudit(db, {
+    return writeAuditResult(db, {
       clientId: `remote:${deviceId}`,
       toolName: entry.toolName,
       success: entry.success,
@@ -349,7 +426,6 @@ export function writeRemoteAudit(
       // 远程没有持久幂等键。
       idempotencyKey: null
     })
-    return true
   } catch {
     return false
   }

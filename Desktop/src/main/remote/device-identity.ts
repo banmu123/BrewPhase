@@ -175,26 +175,83 @@ export function generateDeviceKeyPair(): { privateKey: KeyObject; publicKey: Key
 }
 
 /**
- * 握手签名的规范串。
+ * 握手签名的规范串（协议 §4.2，**唯一实现**）。
  *
- * **必须覆盖全部握手字段**：`v` / `type` / `device_id` / `nonce` / `ts`。
- * 只签 nonce 会让攻击者替换 `device_id` 或回拨 `ts`。
+ * ## 为什么不是「只签 device_id + nonce + ts」的旧写法
+ *
+ * 旧文档写的是三元组，旧代码签的是另一套 5 行串——两边都自称权威，实际互不兼容。
+ * 真正的问题是：**只签三个字段会放过版本降级与能力伪造**。若 `min_version` /
+ * `max_version` / `capabilities` 不在签名内，一条被篡改的帧可以让 Cloud 以为
+ * 这台设备只支持更老的版本，从而关掉它本可以用的保护。
+ *
+ * 所以 v1 的规则是：**除 `sig` 之外，`hello` 的每个字段都进签名**，
+ * 顺序固定为下面的声明顺序，`capabilities` 排序后逗号连接。
+ *
+ * ```
+ * brewphase.remote.hello.v1
+ * v=1
+ * type=hello
+ * ts=1763400000123
+ * device_id=0b7c…
+ * nonce=…
+ * min_version=1
+ * max_version=1
+ * app_version=0.1.5
+ * platform=darwin
+ * capabilities=cancel,drain,tools.call
+ * serviceable=true
+ * ```
+ *
+ * 首行是**域分隔**：没有它，同一把私钥在别处（例如 §3.5 的 rotate）签的消息
+ * 可能与本协议的消息在字节上同形，形成跨协议签名复用。
+ *
+ * 字段集合在 v1 内冻结；新增字段属于兼容变更，但**必须**同时定义新的规范串
+ * 前缀（`brewphase.remote.hello.v2`），否则新旧实现的签名会静默错配。
  */
 export function helloSigningPayload(input: {
   v: number
   type: string
+  ts: number
   device_id: string
   nonce: string
-  ts: number
+  min_version: number
+  max_version: number
+  app_version: string
+  platform: string
+  capabilities: readonly string[]
+  serviceable: boolean
 }): Buffer {
-  return Buffer.from(
-    [input.type, `v=${input.v}`, `type=${input.type}`, `device_id=${input.device_id}`, `nonce=${input.nonce}`, `ts=${input.ts}`].join('\n'),
-    'utf8'
-  )
+  const text = [
+    'brewphase.remote.hello.v1',
+    `v=${input.v}`,
+    `type=${input.type}`,
+    `ts=${input.ts}`,
+    `device_id=${assertNoSeparators('device_id', input.device_id)}`,
+    `nonce=${assertNoSeparators('nonce', input.nonce)}`,
+    `min_version=${input.min_version}`,
+    `max_version=${input.max_version}`,
+    `app_version=${assertNoSeparators('app_version', input.app_version)}`,
+    `platform=${assertNoSeparators('platform', input.platform)}`,
+    `capabilities=${[...input.capabilities].sort().map((c) => assertNoSeparators('capabilities', c)).join(',')}`,
+    `serviceable=${input.serviceable ? 'true' : 'false'}`
+  ].join('\n')
+  return Buffer.from(text, 'utf8')
 }
 
-export function signHello(privateKey: KeyObject, input: Parameters<typeof helloSigningPayload>[0]): string {
-  return cryptoSign(null, helloSigningPayload(input), privateKey).toString('base64')
+/**
+ * 规范串是「换行 + 等号」分隔的，所以字段值里出现换行会让两个不同的
+ * 字段组合产生同一段字节（canonical ambiguity）。签名前必须显式拒绝。
+ */
+function assertNoSeparators(field: string, value: string): string {
+  if (/[\n\r]/.test(value)) throw new Error(`${field} must not contain line breaks`)
+  return value
+}
+
+export type HelloSigningInput = Parameters<typeof helloSigningPayload>[0]
+
+export function signHello(privateKey: KeyObject, input: HelloSigningInput): string {
+  // base64url：与协议文档一致，且不含 `+` `/` `=`，放进 JSON 与头里都不用转义。
+  return cryptoSign(null, helloSigningPayload(input), privateKey).toString('base64url')
 }
 
 /**
@@ -202,14 +259,54 @@ export function signHello(privateKey: KeyObject, input: Parameters<typeof helloS
  *
  * **只认 `=== true`**：Spike 实测错误长度的签名不会抛错，而是返回 `false`。
  */
-export function verifyHello(publicKey: KeyObject, input: Parameters<typeof helloSigningPayload>[0], sigBase64: string): boolean {
+export function verifyHello(publicKey: KeyObject, input: HelloSigningInput, sigBase64Url: string): boolean {
   try {
-    const sig = Buffer.from(sigBase64, 'base64')
+    // 同时接受 base64url 与 base64：Cloud 侧实现可能用标准 base64 解码。
+    const sig = Buffer.from(sigBase64Url, 'base64url')
     if (sig.length !== 64) return false
     return cryptoVerify(null, helloSigningPayload(input), publicKey, sig) === true
   } catch {
     return false
   }
+}
+
+/** Ed25519 SPKI DER 的固定前缀（12 字节），其后是裸 32 字节公钥。 */
+const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex')
+
+/**
+ * 取裸 32 字节公钥（协议 §3.2 的 `public_key` 字段）。
+ *
+ * Cloud 只存裸公钥（与现有 `sync` 设备表一致），而本机内存里是 SPKI DER，
+ * 所以注册时必须做这一步显式转换——**不能直接发 DER**，否则 Cloud 会按
+ * 「32 字节」校验失败，而错误文案只会说 `invalid_public_key`。
+ */
+export function ed25519RawPublicKey(publicKey: KeyObject): Buffer {
+  const spki = publicKey.export({ type: 'spki', format: 'der' })
+  if (spki.length !== ED25519_SPKI_BYTES) {
+    throw new Error(`ed25519 public key must be ${ED25519_SPKI_BYTES} bytes, got ${spki.length}`)
+  }
+  if (!spki.subarray(0, ED25519_SPKI_PREFIX.length).equals(ED25519_SPKI_PREFIX)) {
+    throw new Error('public key is not an ed25519 SPKI key')
+  }
+  const raw = spki.subarray(ED25519_SPKI_PREFIX.length)
+  if (raw.length !== 32) throw new Error(`ed25519 raw public key must be 32 bytes, got ${raw.length}`)
+  return raw
+}
+
+/** 裸 32 字节 → SPKI DER 的 KeyObject（Mock 与将来 Cloud 侧的自检用）。 */
+export function ed25519PublicKeyFromRaw(raw: Buffer): KeyObject {
+  if (raw.length !== 32) throw new Error(`ed25519 raw public key must be 32 bytes, got ${raw.length}`)
+  // 拼回 SPKI 后再走同一个长度/类型断言，避免绕过上面那条不变量。
+  return assertEd25519Public(Buffer.concat([ED25519_SPKI_PREFIX, raw]))
+}
+
+/** 裸公钥的 base64url 文本（43 字符）。 */
+export function encodeRawPublicKey(publicKey: KeyObject): string {
+  return ed25519RawPublicKey(publicKey).toString('base64url')
+}
+
+export function decodeRawPublicKey(text: string): KeyObject {
+  return ed25519PublicKeyFromRaw(Buffer.from(text, 'base64url'))
 }
 
 /** 随机 nonce（base64url，16 字节 = 22 字符）。 */

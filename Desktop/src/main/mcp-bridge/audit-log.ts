@@ -21,21 +21,38 @@ export type AuditEntry = {
   idempotencyKey?: string | null
 }
 
+/**
+ * 审计写入的**底层**实现：失败就抛，成功才返回 `true`。
+ *
+ * 为什么要拆出来：`writeAudit` 为了「审计失败不能把已完成的业务报成失败」
+ * 而吞掉异常，于是调用方拿不到任何成败信息。Remote 侧需要靠这个布尔值维护
+ * 「连续失败几次」的告警，如果继续复用吞异常的版本，**失败永远会被记成成功**，
+ * 设置页那个告警就成了摆设。
+ *
+ * 判据不只是「没抛错」：还要求 `changes === 1`。一条被 `INSERT OR IGNORE`
+ * 之类语义静默丢弃的写入，在「没抛错」的判据下会被当成成功。
+ */
+export function writeAuditResult(db: Db, entry: AuditEntry): boolean {
+  const result = db
+    .insert(mcpOperationLog)
+    .values({
+      id: randomUUID(),
+      clientId: entry.clientId,
+      toolName: entry.toolName,
+      entityType: entry.entityType ?? null,
+      entityId: entry.entityId ?? null,
+      success: entry.success,
+      errorCode: entry.errorCode ?? null,
+      idempotencyKey: entry.idempotencyKey ?? null,
+      createdAt: Date.now()
+    })
+    .run()
+  return result.changes === 1
+}
+
 export function writeAudit(db: Db, entry: AuditEntry): void {
   try {
-    db.insert(mcpOperationLog)
-      .values({
-        id: randomUUID(),
-        clientId: entry.clientId,
-        toolName: entry.toolName,
-        entityType: entry.entityType ?? null,
-        entityId: entry.entityId ?? null,
-        success: entry.success,
-        errorCode: entry.errorCode ?? null,
-        idempotencyKey: entry.idempotencyKey ?? null,
-        createdAt: Date.now()
-      })
-      .run()
+    writeAuditResult(db, entry)
   } catch (error) {
     // 审计写失败不能把一次已经完成的业务写入报成失败。
     console.error('[mcp] audit write failed', error)

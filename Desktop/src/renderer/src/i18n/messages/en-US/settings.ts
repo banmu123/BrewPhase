@@ -38,7 +38,8 @@ export const remote = {
     user_mismatch: 'signed-in account differs from the bound user',
     db_unavailable: 'local database is not ready',
     services_unavailable: 'local services are not ready',
-    shutting_down: 'shutting down'
+    shutting_down: 'shutting down',
+    blocked: 'needs attention (blocked)'
   },
   lastActive: 'Last active',
   never: '—',
