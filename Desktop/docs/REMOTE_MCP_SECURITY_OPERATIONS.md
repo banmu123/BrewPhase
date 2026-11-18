@@ -225,6 +225,55 @@ token 永久丢失（Cloud 不补发），下次启动带着已作废的旧 toke
 下重新开始路由，而 `syncLag` 只允许由重新握手清除。那等于让一次明确的同步失败
 自行失效。
 
+### 4.1.6 `syncLag` 是连接级刹车（Phase 1.2B.2.2-R2）
+
+R1 收口了「派发与撤销」，R2 收口「**已经排队的其他 grant**」。这是同一条
+fail-closed 链上最容易漏的一环：撤销只按 `grant_ctx` 找请求，而队列里的那条
+可能属于**另一条完全正常的 grant**。
+
+#### 4.1.6.1 为什么「按 grant 撤销」拦不住它
+
+```
+连接上：Grant A（同步失败）、Grant B（健康）
+队列里：B 的一条请求（req 未写出）
+
+markSyncLag(A 的失败)
+  → rejectByGrantCtx(A 的 ctx)   ← 命中 0 条（队列里那条是 B 的）
+  → 下一次任何 res 触发 pump → promote → sendEntry(B 的队列项)
+  → 一个「整台设备停路由」的状态，把 B 的请求写进了 Desktop
+```
+
+**这就是本阶段的核心缺陷**：`syncLag=true` 只是一个布尔，而队列的生命周期
+在它之外。修复后 `syncLag` 成为**真正的连接级发送闸门**，三个位置同时成立：
+
+| 位置 | 保证 |
+|---|---|
+| `markSyncLag()` | 置位那一刻**立刻**结算本连接全部排队项（`GRANT_CONTEXT_INVALID`，不可重试） |
+| `pump()` / `promote()` | 被拒绝的排队项已从队列摘除，不可能再被取出 |
+| `sendEntry()` / `sendGate()` | 即使有人绕过前两条（例如登记发生在清理之后），写帧前仍会查一次连接状态 |
+
+#### 4.1.6.2 安全不变量
+
+1. `syncLag` **只有一个赋值点**（`markSyncLag`），且只从 `false` 变 `true`。
+2. `syncLag=true` 之后，该连接上**不可能**再写出任何 `req`。
+3. 排队项的结算是**立即**的：不依赖任何在途请求完成，也不依赖下一次扫描。
+4. 已写出的请求不被改写：撤销的 grant 走 `GRANT_REVOKED`，其余按原生命周期。
+5. 旧 `connectionId` 的失败**不得**影响新连接：`markSyncLag` 在连接已收敛时
+   直接返回（此时那条连接的请求已由 `onConnectionLost` 结算）。
+6. 恢复只有「重新握手 + 新快照」一条路；迟到 ack / 重复 install / 普通请求
+   完成都不能解除。
+7. 三类失败各自留独立事件（`link_grant_apply_rejected` / `link_grant_ack_timeout` /
+   `link_grant_sync_offline`），另加一条 `link_grant_sync_lag_set` 汇总
+   `{cause, droppedQueued}`。**不得合并**——「设备到底有没有收到那次变更」
+   是排障时第一个要回答的问题。
+
+#### 4.1.6.3 为什么 `offline` 也要置 `syncLag`
+
+帧没写出去，看起来「什么都没发生」。但 Cloud 无法区分「对端没收到」与
+「对端收到但回不来」——这两种情况在 Desktop 侧的授权表状态完全不同。
+fail-closed 的代价是这台设备在重连前不可用；不做的话，队列里的请求会继续
+往一条已经不可写的连接上撞，每一次都白等一个超时。
+
 ### 4.2 与 Phase 1.0 的差异（修正点）
 
 | Phase 1.0 | Phase 1.0.1 | 原因 |
@@ -349,6 +398,14 @@ Remote MCP 不需要在 SQL 层加 `where user_id = ?`——因为 Desktop 的 S
 三者都收敛到 `syncLag=true`（同样是 fail-closed），但把它们记成同一条日志会让
 「这台设备到底有没有收到撤销」这个问题永远没有答案。重复 install 被前两种
 挡下时另有 `link_grant_reinstall_aborted`，带 `reason` 字段。
+
+R2 追加三条事件，用来回答「这次 syncLag 有没有真的停住队列」：
+
+| 事件 | 含义 |
+|---|---|
+| `link_grant_sync_lag_set`（warn） | `{connectionId, deviceId(前 8 位), cause, droppedQueued}`；`droppedQueued>0` 说明闸门确实拦下了在途队列 |
+| `link_grant_sync_lag_already_set`（debug） | 第二次失败，原因不被覆盖 |
+| `link_grant_sync_lag_on_detached_connection`（debug） | 连接已收敛后才到的失败，**不**影响新连接 |
 
 验证：`cloud/tests/link/link-server.test.ts` 的「HTTP 访问日志不包含 token」用例
 同时做正反断言——既断言日志里没有 `bp_dev_`，也断言 `link_established`

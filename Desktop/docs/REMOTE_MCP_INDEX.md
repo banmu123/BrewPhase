@@ -238,3 +238,28 @@ OAuth 侧的授权落库。
 **Test 基线**：Cloud 530 → **540**；Desktop 1265（未改动）。
 真实构建产物联调 **26/26**；同一脚本在修复前的构建上第一个判别点即失败
 （拿到 `DEVICE_OFFLINE/retryable=true` 而不是 `GRANT_REVOKED`）。
+
+## 14. Phase 1.2B.2.2-R2：`syncLag` 的连接级 fail-closed（已实现）
+
+R1 收口了「派发与撤销」；R2 收口「`syncLag` 置位之后，**队列里其他 grant** 的
+请求还能不能出去」。范围与验收见 `REMOTE_MCP_PHASES_ROADMAP.md` §2.0.5。
+
+| 项 | 落地 | 权威 |
+|---|---|---|
+| 缺陷 | `syncLag` 只是入口/最终核对里的判断；队列项不重新经过它，`pump()` 仍会把别的 grant 的排队项写出去 | 运行时 §9.6.1 |
+| 统一入口 | `markSyncLag(conn, cause)`：`syncLag` **唯一**赋值点，只 false→true，记原因，立刻清队列 | 运行时 §9.6.4 |
+| 队列收敛 | `RequestRegistry.rejectQueuedByConnection`：只拒 `queued`，不动已写出的，不归还计数 | 运行时 §9.6.3 |
+| 发送闸门 | `sendEntry` → `sendGate`：已结算 / 连接在 / 未 rotating / 未 `syncLag` / ctx 仍是当前映射；**不查库** | 运行时 §9.6.2 |
+| 泵 | `pump()` 循环 + `pumping` 重入标志（被拒项释放槽位，需再取一批） | 运行时 §9.6.2 |
+| 三种原因 | `apply_rejected` / `ack_timeout` / `offline` 各自日志 + `inspect().syncLagCause` | 安全运维 §4.1.6 |
+| 恢复 | 只有新握手 + 新 `hello_ok` 快照；迟到 ack / install / res 都不行 | 运行时 §9.6.5 |
+| `offline` 也置位 | 帧没写出去 ≠ 对端状态已知（fail-closed） | 安全运维 §4.1.6.3 |
+
+**迁移**：**无**。**新增契约**：无新增错误码 / close code / 帧字段（`syncLagCause`
+只出现在 `inspect()` 这个诊断接口里）。
+
+**新增测试**：`cloud/tests/link/sync-lag.test.ts`（9 条，真实 PostgreSQL +
+真实 Forwarder + 可控传输）；`grant-sync.test.ts` +4；`request-registry.test.ts` +4。
+
+**Test 基线**：Cloud 540 → **557**；Desktop 1265（未改动）。
+真实构建产物联调 **25/25**；同一脚本在修复前的构建上 **19/25**，且多写出一条 `req`。

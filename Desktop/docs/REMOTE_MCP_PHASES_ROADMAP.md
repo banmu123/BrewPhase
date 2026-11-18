@@ -342,6 +342,72 @@ Desktop 不变（本阶段未改 Desktop 代码）。**无新增迁移，无新�
 还看不到请求，但请求也还没占槽位、没写帧，最终核对会拦下它）；把它进一步收窄
 需要「先登记后查库」，代价是越权尝试会短暂占用槽位——留待后续阶段评估。
 
+#### 2.0.5 Phase 1.2B.2.2-R2：`syncLag` 的连接级 fail-closed 收口
+
+R1 修的是「派发与撤销」；R2 修的是「`syncLag` 置位之后，**队列里的其他 grant**
+还能不能出去」。答案是：修复前能。
+
+**根因**（不是推测，先复现再改）：
+
+```
+连接上 Grant A（同步失败）与 Grant B（健康）
+B：req1 → sent，req2 → sent，req3 → queued
+
+A 的 grant_update → applied=false → syncLag = true
+  rejectByGrantCtx(A 的 ctx) 命中 0 条        ← 队列里那条是 B 的
+req1 的 res → settle → pump → promote(req3) → sendEntry   ← 无闸门
+  ⇒ B 的 req3 被写进一条「授权状态不可信」的连接
+```
+
+`syncLag` 原来只是 `dispatchToolCall` 入口 / 最终核对里的一个判断，而队列项
+**不重新经过**那些判断。
+
+**修法**（三处同时成立，§9.6）：
+
+| 位置 | 变化 |
+|---|---|
+| `markSyncLag(conn, cause)` | `syncLag` 的唯一赋值点：置位 + 记原因 + **立刻**结算本连接全部排队项 + 泵一次 |
+| `RequestRegistry.rejectQueuedByConnection` | 新方法：只拒绝 `queued`，已写出的不动，不归还任何计数（它们从未占过） |
+| `sendEntry()` / `sendGate()` | 写帧前的最后一道：已结算 / 连接在 / 未 rotating / 未 `syncLag` / ctx 仍是当前映射（**不查库**） |
+| `pump()` | 改为「promote → 逐条过闸门 → 再 promote」的循环，重入用 `pumping` 标志压平 |
+
+四条失败路径（`applied=false` / ack 超时 / 帧未写出 / 重复 install 的撤销失败）
+全部收敛到 `markSyncLag`；`offline` 也置 `syncLag`（帧没写出去 ≠ 对端状态已知）。
+三种原因各自保留日志与 `inspect().syncLagCause`。
+
+**验收结果**（实际执行）：
+
+| 验收项 | 结果 |
+|---|---|
+| `applied=false` 后其他 grant 的排队项 | ✅ 那一刻即 `GRANT_CONTEXT_INVALID`，不等任何 res |
+| 同上，完成在途请求触发的 pump | ✅ 零新 `req`；已写出的两条仍能正常 `res` |
+| ack 超时（推到真实 ack deadline，排队预算 60s） | ✅ 排队项立即收敛；`syncLagCause=ack_timeout` |
+| 帧写不出去（只让 `grant_update` 失败） | ✅ 返回 `offline`，事件 `link_grant_sync_offline`，**不**报 `ack_timeout` |
+| 连接已收敛后的迟到失败 | ✅ 不影响新连接（新 `connectionId` 上 `syncLag=false`） |
+| 连接 A 的 `syncLag` 对连接 B | ✅ B 的排队项照常 promote 并写出 |
+| 同一队列项二次结算 | ✅ 第二次返回 false，计数不变 |
+| 恢复 | ✅ 迟到 ack / install / 派发全部仍 blocked；重连后恢复 |
+| 真实进程（`dist/` + 真 PG + 真 ws） | ✅ 25/25；同一脚本在修复前的构建上 **19/25**，且多写出一条 `req` |
+
+**测试基线**：Cloud 540 → **557**（+17）；Desktop 1265 不变（未改 Desktop 代码）。
+新增 `tests/link/sync-lag.test.ts`（9 条，forwarder 级 + 可控传输）与
+`grant-sync.test.ts` +4、`request-registry.test.ts` +4。
+**无新增迁移、无新增协议字段、无新增错误码**（`syncLagCause` 只在 `inspect()` 里）。
+
+**变异验证**（5 个变异，4 个被抓）：
+
+| 变异 | 结果 |
+|---|---|
+| `sendGate` 去掉 `syncLag` 判断 | 1 条失败（专门的「闸门兜底」用例） |
+| `markSyncLag` 不清队列 | 5 条失败 |
+| `rejectQueuedByConnection` 连已写出的也拒 | 7 条失败 |
+| `syncLag` 原因可被二次失败覆盖 | 1 条失败 |
+| `sendGate` 的 `!conn` 分支改错错误码 | **未抓到**——该分支在当前流程下不可达（`onConnectionLost` 总是先结算该连接的全部请求），属纯防御 |
+
+**遗留**：`sendGate` 的 `!conn` 分支与 `markSyncLag` 的「连接已收敛」分支都是
+不可观测的防御路径，如实记录；`syncLag` 仍不阻止 `revokeGrant` 的后续帧
+（撤销本身必须能发出去），这是设计选择而非缺陷。
+
 ### 2.1 范围
 
 | # | 能力 |

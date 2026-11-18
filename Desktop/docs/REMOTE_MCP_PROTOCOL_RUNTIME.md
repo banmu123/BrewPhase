@@ -743,6 +743,82 @@ Desktop 的 `error.code` 原样透传给 ChatGPT，不做二次映射。因此�
 `link_grant_ack_timeout`（写出去了没回应）／`link_grant_sync_offline`（没写出去）。
 排障方向完全不同。
 
+### 9.6 `syncLag` 是连接级的发送闸门（Phase 1.2B.2.2-R2）
+
+`syncLag` 的语义只有一句：**这条连接从此不可路由，直到新的 `hello_ok` 快照。**
+难点不在「置位」，而在「置位之后还能不能有帧溜出去」。
+
+#### 9.6.1 问题：队列不重新经过入口检查
+
+派发的入口检查（§9.4 十条判据 + §9.5.1 的最终核对）只覆盖**那一刻正在派发**的
+请求。而队列里的请求早就跑完了那些检查，只等一个槽位：
+
+```
+req1 → sent   ┐
+req2 → sent   ├─ 同一连接、**另一条 grant**（B）
+req3 → queued ┘
+
+Grant A 的 grant_update → applied=false
+  ↓ syncLag = true
+req1 的 res 到达 → handleRes → settle → pump → promote(req3) → sendEntry
+  ⇓
+req3 带着「授权状态不可信」一路上被写进 Desktop
+```
+
+按 grant 拒绝（`rejectByGrantCtx`）拦不住它：那条请求属于 **B**，而失败的是 **A**。
+按连接全拒（`rejectByConnection`）能拦住，但它会把**已经写出**的 B 请求也一并
+改写成 `DEVICE_UNAUTHORIZED`——那是协议之外的行为扩张。
+
+#### 9.6.2 三层职责
+
+| 层 | 职责 | 不负责 |
+|---|---|---|
+| `markSyncLag(conn, cause)` | `syncLag` 唯一入口：置位、记原因、**立刻**结算本连接所有排队项、泵一次 | 不碰已写出的请求 |
+| `pump()` | 每轮 `promote()` 之后逐条交给闸门；闸门拒绝会释放槽位，所以循环取下一批 | 不判断能不能发 |
+| `sendEntry()` / `sendGate()` | 真正写帧前的最后一道：已结算 / 连接在 / 未 rotating / 未 `syncLag` / ctx 仍是当前映射 | 不查数据库 |
+
+**为什么 `pump` 要循环**：「被闸门拒绝」会释放一个本来占着的槽位，单次
+`promote()` 无法把那个槽位用起来。循环的重入用 `pumping` 标志压平（结算路径
+自己也会调 `pump`），否则递归深度会等于队列长度。
+
+**为什么闸门不查库**：那会把一个纯内存判断变成一次可能失败的 IO，并把
+「检查→写出」的窗口换成另一个形状。授权事实由派发时的准入给出；闸门只复核
+内存里的三样东西，与 §9.5.1 的最终核对同源。
+
+#### 9.6.3 四种请求状态的处理（不许一刀切）
+
+| 请求状态 | `syncLag` 生效后 | 错误码 |
+|---|---|---|
+| `queued`，`req` 未写出 | **立刻**结算，不等槽位、不等下次 pump | `GRANT_CONTEXT_INVALID`（不可重试） |
+| 已写出，属于**已撤销**的 grant | `rejectByGrantCtx` 先手结算，保留原语义 | `GRANT_REVOKED` |
+| 已写出，属于**其他仍有效** grant | **不动**：`res` / 超时 / 断线各按原生命周期收敛 | 原样 |
+| 后续新派发 | 入口即拒 | `GRANT_CONTEXT_INVALID` |
+
+第三行是刻意的：那些帧已经在 Desktop 手里执行，「停止路由」只能管还没出去的
+东西。把它们改写成失败，等于让 Cloud 单方面否认一个已经发生的读取——那既
+不准，也没有协议依据。
+
+#### 9.6.4 统一入口，三种原因各自留痕
+
+四条失败路径（`applied=false` / ack 超时 / 帧未写出 / 重复 `install` 的撤销失败）
+全部走 `markSyncLag`。它是 `syncLag` **唯一**的赋值点（`grep 'syncLag ='` 只有一处），
+并且：
+
+- 只从 `false` 变 `true`——第二次失败不覆盖第一次的 `syncLagCause`；
+- 连接已经收敛（`conns` 里没有它）时**什么都不做**：旧 `connectionId` 的失败
+  不得影响新连接；
+- 三种原因仍各自留下自己的日志事件（见 §9.5.4 末段），并写入
+  `inspect().syncLagCause`（`apply_rejected` / `ack_timeout` / `offline`）。
+
+#### 9.6.5 恢复只有一条路
+
+`syncLag` 没有「清除」路径。唯一的恢复是：旧连接收敛 → Desktop 重新握手 →
+新的 `connectionId` 上安装新的 `hello_ok.grants` 快照，此时 `ConnSync` 是**新建**
+对象（`syncLag=false, syncLagCause=null`）。
+
+迟到 ack、重复 `install`、普通请求完成、其他 grant 的更新，**都不能**让一条
+已经 `syncLag` 的连接重新路由。
+
 
 ## 10. 断线检测与重连
 
