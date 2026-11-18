@@ -537,8 +537,8 @@ Desktop: 收到 4003 → 删 device.json → blocked → 不重连 → 界面「
 | `GET` | `/mcp/oauth/authorize` | 授权入口：校验 + 建 `mcp_auth_requests` + 签发浏览器 Cookie | **与根 `/oauth/authorize` 物理分离** |
 | `GET` | `/mcp/oauth/login` | 登录选择页（HTML）；带 `provider` 时直接 302 到 Provider | **1.3.0-R1 新增**；需要浏览器 Cookie 绑定 |
 | `GET` | `/mcp/oauth/callback/:provider` | **MCP 专用** Provider 回调 | **不得复用** `/oauth/callback/:provider`（后者会签发 Desktop 登录码并重定向 127.0.0.1） |
-| `GET` | `/mcp/consent?rid=` | 渲染同意页（HTML）：`client_name` / 回调域名 / 逐项 scope | 需 Cookie 绑定 + 行内 `user_id` |
-| `POST` | `/mcp/consent` | 批准 / 拒绝 → upsert grant + 写 code → 302 回 `redirect_uri` | 需 Cookie 绑定 + CSRF |
+| `GET` | `/mcp/oauth/consent?rid=` | 渲染同意页（HTML）：`client_name` / 回调域名 / 逐项 scope | 需 Cookie 绑定 + 行内 `user_id` |
+| `POST` | `/mcp/oauth/consent` | 批准 / 拒绝 → upsert grant + 写 code → 302 回 `redirect_uri` | 需 Cookie 绑定 + CSRF |
 | `POST` | `/mcp/oauth/token` | `grant_type=authorization_code\|refresh_token` | **必须支持 `grant_type`**（与现有 `/oauth/token` 的差异） |
 | `POST` | `/mcp/oauth/register` | DCR（RFC 7591） | **已弃用，默认关闭**；`MCP_DCR_ENABLED=false` 时元数据不暴露 `registration_endpoint` |
 | `POST` | `/mcp/oauth/revoke` | RFC 7009 | 撤销该 refresh token 所属 family；**不**撤 grant |
@@ -568,14 +568,14 @@ Desktop: 收到 4003 → 删 device.json → blocked → 不重连 → 界面「
 | 属性 | 值 |
 |---|---|
 | 载体 | `hono/cookie` 的 `setSignedCookie`（HMAC-SHA256），篡改后读回 `false`（已实测） |
-| 属性 | `HttpOnly`；`Secure`（生产）；`SameSite=Lax`；`Path=/mcp`；无 `Domain`；`Max-Age=1800`（不滑动） |
+| 属性 | `HttpOnly`；`Secure`（生产）；`SameSite=Lax`；`Path=/mcp/oauth`；无 `Domain`；`Max-Age=1800`（不滑动） |
 | 内容 | `{sid, iat, exp}`——**不含** `user_id`、**不含**任何 token |
 | 密钥 | `MCP_BROWSER_SESSION_KEY`（独立于 `JWT_SIGNING_KEY`；未配置则 `/mcp/*` 不注册） |
 | 绑定 | `mcp_auth_requests.browser_binding_hash = sha256("mcp-browser"‖sid)`；TOFU |
 | 清理 | consent 提交后 `Max-Age=0`；行同时 `DELETE` |
 
 **它不能被用于任何其它目的**：`/auth/*` 不读它、`/mcp` 的 Bearer 校验不看它、
-它不参与 `sid` 的解析。`Path=/mcp` 是结构保证，不是约定。
+它不参与 `sid` 的解析。`Path=/mcp/oauth` 是结构保证，不是约定。
 
 ### 15.1 OAuth 相关的三层要求必须分开（Phase 1.0.1，1.3.0 修订）
 

@@ -537,7 +537,10 @@ cloud/tests/{mcp-devices,link}/*.test.ts
 | 子阶段 | 主题 | 产出 |
 |---|---|---|
 | **1.3.0** | 规范对齐与设计冻结 | 本文件 + `REMOTE_MCP_PHASE_1_3_DESIGN.md`；**零代码** |
-| **1.3.1** | MCP OAuth 基础设施 | 迁移 `0003`、`mcp_sessions`、authorize/token/register、PRM/AS 元数据、consent 页、与 Desktop 登录隔离 |
+| **1.3.0-R1** | 浏览器授权闭环 + Session 两层模型 + 最小权限 | 只改文档 |
+| **1.3.1-A** | **数据层**：迁移 `0003` 五张表 + Drizzle schema + 约束测试 | ✅ **已完成**（见 §3.6） |
+| **1.3.1-B** | Refresh Token 核心服务（签发 / 轮换 / 重放 / 90 天上限） | 待开工 |
+| **1.3.1-C** | authorize / login / callback / consent / token / discovery / CIMD | 待开工 |
 | **1.3.2** | Streamable HTTP 与工具服务 | `POST /mcp`（dual-era）、Bearer + audience + grant 回查、8 个只读工具、错误面、日志纪律 |
 | **1.3.3** | 真实客户端联调 | Inspector、ChatGPT、Grok、refresh 行为、撤销/离线/异常恢复、回填 `NOT VERIFIED` |
 
@@ -547,24 +550,24 @@ cloud/tests/{mcp-devices,link}/*.test.ts
 |---|---|---|
 | C1 | `POST /mcp`：`createMcpHandler(...).fetch`（SDK 已内部封装 transport，**不再手接** `WebStandardStreamableHTTPServerTransport`） | 1.3.2 |
 | C2 | 工具面：8 个只读工具，schema 与 Desktop `TOOL_DEFINITIONS` 一致（一致性测试） | 1.3.2 |
-| C3 | MCP OAuth AS：`/mcp/oauth/authorize`、**`/mcp/oauth/login`**、**`/mcp/oauth/callback/:provider`**（MCP 专用，非复用 Desktop 的）、**`GET/POST /mcp/consent`**、`/mcp/oauth/token`（`authorization_code` + `refresh_token`）、`/mcp/oauth/register`（DCR，**默认关闭**）、`/mcp/oauth/revoke` | 1.3.1 |
+| C3 | MCP OAuth AS：`/mcp/oauth/authorize`、**`/mcp/oauth/login`**、**`/mcp/oauth/callback/:provider`**（MCP 专用，非复用 Desktop 的）、**`GET/POST /mcp/oauth/consent`**、`/mcp/oauth/token`（`authorization_code` + `refresh_token`）、`/mcp/oauth/register`（DCR，**默认关闭**）、`/mcp/oauth/revoke` | 1.3.1 |
 | C4 | 元数据：`/.well-known/oauth-protected-resource`（含 path-inserted 变体）、`/.well-known/oauth-authorization-server` | 1.3.1 |
-| C5 | 表：`mcp_oauth_clients`、`mcp_sessions`、`mcp_auth_codes`（**`mcp_grants` 已在 1.2 建**，本阶段只写入 grant，不重建） | 1.3.1 |
+| C5 | 表：`mcp_oauth_clients`、`mcp_auth_requests`、`mcp_auth_codes`、`mcp_sessions`、`mcp_refresh_tokens` 五张（**`mcp_grants` 已在 1.2 建**，本阶段只写入 grant，不重建）——**1.3.1-A 已落地为 0003** | 1.3.1-A ✅ |
 | C6 | Scope 校验：Cloud 侧**逐 grant**（每次 `/mcp` 回查 `mcp_grants`）+ Desktop 侧**逐请求**（按 `grant_ctx`） | 1.3.2 |
 | C7 | challenge：**401** = `Bearer resource_metadata="…"`（**不带 `scope`**）；**403** = `Bearer error="insufficient_scope", scope="<缺的那一个>", resource_metadata="…"` | 1.3.2 |
 | C8 | 日志纪律：只 tool/status/duration/error_code/delivery_id/**`jti` 前 8 位**/`grant_id`（安全 §3.2.1、协议 §13.3） | 1.3.2 |
 | C9 | **MCP 专用 JWT**：`signMcpAccessToken` / `verifyMcpAccessToken`，`aud = MCP_RESOURCE`（= `<baseUrl>/mcp`，≠ `brewphase-desktop`）；**不改**现有 `signAccessToken` | 1.3.1 |
 | C10 | **会话归属**：**独立 `mcp_sessions`（身份）+ `mcp_refresh_tokens`（每代凭据）两层**（OQ-3 已定，见设计 §9）；`sid` 跨刷新不变；`absolute_expires_at` 不可变；**不改** `auth_sessions` | 1.3.1 |
 | C11 | **真实客户端验收**（见 §3.4 门禁表）——只有 1.3.3 能做 | 1.3.3 |
-| C12 | **浏览器授权会话**：签名 Cookie `bp_mcp_bs`（`HttpOnly` / `Secure` / `SameSite=Lax` / `Path=/mcp` / 30 min / 不滑动）、TOFU 绑定、CSRF | 1.3.1 |
+| C12 | **浏览器授权会话**：签名 Cookie `bp_mcp_bs`（`HttpOnly` / `Secure` / `SameSite=Lax` / `Path=/mcp/oauth` / 30 min / 不滑动）、TOFU 绑定、CSRF | 1.3.1 |
 | C13 | **最小权限 scope**：401 省略 `scope`；`tools/list` 不需业务 scope；`tools/call` 缺 scope 才 403 且只报缺的那个；consent 页可逐项取消；step-up 扩权 | 1.3.1（consent 收窄）+ 1.3.2（403/step-up） |
 
 ### 3.2 关键差异（与现有登录 OAuth）
 
 | 项 | 现有 `/oauth/*` | 新增 MCP AS |
 |---|---|---|
-| 路径组 | `/oauth/*` | **`/mcp/oauth/*`**（元数据仍在根 `/.well-known/*`，RFC 要求）；consent 在 `/mcp/consent` |
-| 浏览器会话 | **无**（Desktop 是应用内开系统浏览器 + 本机回环回调） | **签名 Cookie `bp_mcp_bs`**（仅 `/mcp` 路径，30 min） |
+| 路径组 | `/oauth/*` | **`/mcp/oauth/*`**（元数据仍在根 `/.well-known/*`，RFC 要求）；consent 在 `/mcp/oauth/consent` |
+| 浏览器会话 | **无**（Desktop 是应用内开系统浏览器 + 本机回环回调） | **签名 Cookie `bp_mcp_bs`**（仅 `/mcp/oauth` 路径，30 min） |
 | 授权请求表 | `oauth_transactions` | **`mcp_auth_requests`**（新建，两者不共用） |
 | 授权码表 | `oauth_codes` | **`mcp_auth_codes`**（新建，含 `grant_id` / `scope` / `resource`） |
 | 会话表 | `auth_sessions` | **`mcp_sessions` + `mcp_refresh_tokens`** |
@@ -583,7 +586,7 @@ Desktop 登录的安全边界，放宽它等于允许任意站点做 redirect �
 （设计 §1.5）：Cloud **没有任何 Cookie**、`/auth/*` **全是 Bearer**、
 `handleProviderCallback()` 会签发 `oauth_codes` 并重定向到 **127.0.0.1**。
 因此 MCP 必须有自己的浏览器授权流程：`mcp_auth_requests` + MCP 专用
-Provider 回调 + `/mcp/consent`。可复用的只有 Provider 适配器
+Provider 回调 + `/mcp/oauth/consent`。可复用的只有 Provider 适配器
 （参数化的 `cloudRedirectUri`）与 `findOrCreateUserWithIdentity()`。
 
 **协议版本策略**（1.3.0 新增，实现必须遵守）：`POST /mcp` 同时服务
@@ -635,7 +638,7 @@ modern（2026-07-28）与 legacy（2025-06-18/25），用
 3. 授权页正确列出 4 个 scope 与对应数据范围的可读描述，**且允许逐项取消**
    （只有 `records:read` 也能完成授权；随后调 `list_beans` 得到 403 而非空结果）。
 3b. **一个从未访问过 BrewPhase 的新用户**能走完全程：授权入口 → 登录页 →
-   Google/GitHub → 回到 `/mcp/consent` → 看到 4 项权限与回调域名 → 批准 →
+   Google/GitHub → 回到 `/mcp/oauth/consent` → 看到 4 项权限与回调域名 → 批准 →
    `redirect_uri?code=…&state=…&iss=…`。全程无「请先在网页端登录」这类前置。
 4. 现有 Desktop 登录流程**完全不受影响**：`/oauth/authorize` 传非 127.0.0.1
    的 `redirect_uri` 仍返回 400；登录 token 仍只能用于 `/auth/*`；
@@ -669,6 +672,23 @@ modern（2026-07-28）与 legacy（2025-06-18/25），用
 
 **不得把 Mock 结果当成 G1–G5 的证据。** 若无法进行真实联调，本阶段只能标记为
 `NOT VERIFIED`，并按 1.0.1 的 OQ-B/OQ-C 保留开放状态。
+
+### 3.6 1.3.1-A 已交付（数据层）
+
+| 项 | 落点 |
+|---|---|
+| 迁移 | `cloud/src/db/migrations/0003_mcp_oauth.sql`（`_journal` idx 3 + `0003_snapshot.json`） |
+| Schema | `cloud/src/db/schema.ts`：`mcpOauthClients` / `mcpAuthRequests` / `mcpAuthCodes` / `mcpSessions` / `mcpRefreshTokens` |
+| 约束测试 | `cloud/tests/mcp-oauth/{schema,refresh-tokens,relations,compat}.test.ts`（**42 条**） |
+| 关键约束 | `UNIQUE(session_id) WHERE consumed_at IS NULL`（部分唯一索引）；6 条 CASCADE 外键；`client_id` 零外键 |
+| 兼容性 | 既有 8 张表的列 / 约束 / 索引与「只应用 0000–0002」逐字相同 |
+
+**同阶段修正文档**：浏览器 Cookie 的 `Path` 从 `/mcp` 收窄到 `/mcp/oauth`，
+consent 页随之从 `/mcp/consent` 挪到 `/mcp/oauth/consent`（理由见设计 §5.3.1）——
+否则 `bp_mcp_bs` 会被发送到真正的数据端点 `POST /mcp`。
+
+**1.3.1-B 的入口条件**：`mcp_refresh_tokens` 的部分唯一索引必须先在库里（本阶段
+已建并有 3 条回归测试盯着），否则轮换服务的「当前这代」判据在并发下不成立。
 
 ### 3.5 风险
 

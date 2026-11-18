@@ -282,7 +282,7 @@ MCP 授权需要在浏览器里登录并同意，因此 Cloud 首次引入 Cooki
 | # | 不变量 | 落地 |
 |---|---|---|
 | 1 | 它不是登录态 | `/auth/*` 不读它；`/mcp` 认证只认 `Authorization: Bearer` |
-| 2 | 不能跨路径 | `Path=/mcp`；`/oauth/*` 与 `/auth/*` 的请求里不出现 |
+| 2 | 不能跨路径 | `Path=/mcp/oauth`；`/oauth/*`、`/auth/*` 与 `/mcp` 本体的请求里都不出现 |
 | 3 | 不能跨站 | `SameSite=Lax`（登录是顶层 GET 跳转，需要 Lax；同时挡住跨站 POST） |
 | 4 | 不能被 JS 读 | `HttpOnly` |
 | 5 | 不能长期驻留 | `Max-Age=1800`，**不滑动**；consent 提交后立即 `Max-Age=0` |

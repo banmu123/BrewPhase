@@ -323,7 +323,7 @@ R1 收口了「派发与撤销」；R2 收口「`syncLag` 置位之后，**队�
 |---|---|
 | `REMOTE_MCP_PHASE_1_3_DESIGN.md` | **新增**（唯一基线，16 节） |
 | `REMOTE_MCP_PHASES_ROADMAP.md` | §3.0 拆分；§3.1 端点组与 dual-era；§3.2 路由组与版本策略；§3.3/3.4 测试与门禁（G2/G2'）；§3.5 风险；§2.1 前的 1.3 交叉引用；Phase 1.5 的 SSE 条目改为 `subscriptions/listen` |
-| `REMOTE_MCP_PROTOCOL_LIFECYCLE.md` | §15 端点表（`/mcp/oauth/*` 分离、`/mcp/consent`、GET/DELETE 405）；§15.1 三层要求（dual-era） |
+| `REMOTE_MCP_PROTOCOL_LIFECYCLE.md` | §15 端点表（`/mcp/oauth/*` 分离、`/mcp/oauth/consent`、GET/DELETE 405）；§15.1 三层要求（dual-era） |
 | `REMOTE_MCP_PROTOCOL_RUNTIME.md` | §9.2.1 新增：传输层 JSON-RPC 码（`-32020`/`-32022`/`-32601`/`-32000`）不属 19 个业务码 |
 | `REMOTE_MCP_SECURITY.md` | §3.2 末：OQ-3 定稿与三条代码级理由 |
 | `REMOTE_MCP_SECURITY_OPERATIONS.md` | §4.1 撤销矩阵（grant 撤销同事务撤 `mcp_sessions`）；§9 OQ-3/OQ-7 行 |
@@ -350,7 +350,7 @@ R1 收口了「派发与撤销」；R2 收口「`syncLag` 置位之后，**队�
 
 | 主题 | 结论 | 权威 |
 |---|---|---|
-| 浏览器登录 + Consent | 新建 `mcp_auth_requests` + 签名 Cookie `bp_mcp_bs` + **MCP 专用** Provider 回调 + `GET/POST /mcp/consent`；**不复用** Desktop 登录链路 | 设计 §5 |
+| 浏览器登录 + Consent | 新建 `mcp_auth_requests` + 签名 Cookie `bp_mcp_bs` + **MCP 专用** Provider 回调 + `GET/POST /mcp/oauth/consent`；**不复用** Desktop 登录链路 | 设计 §5 |
 | Session / Refresh | `mcp_sessions`（身份，`sid` 稳定、`absolute_expires_at` 不可变）→ 1:N → `mcp_refresh_tokens`（每代凭据） | 设计 §9 |
 | 最小权限 | 401 **省略** `scope`；`tools/list` 不需业务 scope；`tools/call` 缺 scope 才 403 且**只报缺的那个**；consent 页可逐项取消；step-up 扩权 | 设计 §5.8 |
 
@@ -390,3 +390,70 @@ v1 的选择是：**明确失败，要求重新授权**（设计 §9.10.1）。
 | N11 | 注册回调是否允许非 `localhost` 的 https `redirect_uri` | 若只允许 localhost，第三方 MCP 的 OAuth 模式结构上不成立 |
 
 叠加 §15 已有的 N1–N8（尤其 **N5：是否发送 `resource`**）。
+
+## 17. Phase 1.3.1-A：OAuth 数据层（已交付，migration 0003）
+
+Phase 1.3 的第一个**有代码**子阶段。范围严格限定为「五张表 + 迁移 + 约束测试」：
+没有 OAuth 路由、没有 Token 签发、没有 Cookie、没有 `/mcp`、没有 MCP SDK。
+
+### 17.1 交付物
+
+| 项 | 落点 |
+|---|---|
+| 迁移 | `cloud/src/db/migrations/0003_mcp_oauth.sql`（+ `meta/_journal.json` idx 3 + `meta/0003_snapshot.json`） |
+| Drizzle Schema | `cloud/src/db/schema.ts`：`mcpOauthClients` / `mcpAuthRequests` / `mcpAuthCodes` / `mcpSessions` / `mcpRefreshTokens` |
+| 测试助手 | `cloud/tests/helpers/oauth-db.ts` |
+| 约束测试 | `cloud/tests/mcp-oauth/{schema,refresh-tokens,relations,compat}.test.ts` = **42 条** |
+| 文档 | 设计 §5.3.1 / §10.5 / §10.8；路线图 §3.0 / §3.6；本册本节 |
+
+### 17.2 三条结构性决定
+
+| # | 决定 | 为什么 |
+|---|---|---|
+| 1 | `UNIQUE(session_id) WHERE consumed_at IS NULL` | 「每个会话最多一条有效 refresh token」是**集合**不变量；应用层 `FOR UPDATE` 只保护单行，保护不了「只该有一条」 |
+| 2 | `mcp_auth_requests` / `mcp_auth_codes` / `mcp_sessions` 的 `client_id` **零外键** | 与 `mcp_grants.client_id` 对齐；`mcp_oauth_clients` 是注册缓存不是归属主体；`CASCADE` 会连带删掉授权历史，`RESTRICT` 会让客户端下线无解 |
+| 3 | `redirect_uris` 用 `cardinality` 而非 `array_length` | `array_length('{}',1)` 返回 `NULL`，CHECK 遇 `NULL` 视为通过 —— 空数组会被静默放行 |
+
+### 17.3 数据层守卫（`mcp_sessions` 与 `mcp_refresh_tokens`）
+
+```
+mcp_sessions（身份）
+  id = JWT sid          ← 授权时生成一次，跨刷新不变
+  created_at            ← 不可变，90 天起点
+  absolute_expires_at   ← 不可变，CHECK 强制 > created_at
+        │ 1:N
+        ▼
+mcp_refresh_tokens（每代凭据）
+  UNIQUE(token_hash)  UNIQUE(session_id, generation)
+  UNIQUE(session_id) WHERE consumed_at IS NULL   ← 核心约束
+  CHECK generation >= 1 / expires_at > created_at
+  replaced_by 无外键（历史链允许独立清理）
+```
+
+`mcp_sessions` 上**没有** `refresh_token_hash` / `token_family` / `expires_at` /
+`replaced_by`，并有测试断言它们不会回来——那四列回到同一张表就等于
+「轮换 = 改 Session」，90 天绝对期限会重新变成可续命。
+
+### 17.4 同阶段修正：浏览器 Cookie 的路径边界
+
+`bp_mcp_bs` 的 `Path` 从 `/mcp` 收窄到 **`/mcp/oauth`**，consent 页从
+`/mcp/consent` 挪到 **`/mcp/oauth/consent`**。原因：Cookie 的 Path 是前缀匹配，
+`Path=/mcp` 会让授权 Cookie 出现在每一次 `POST /mcp`（真正的数据端点）上。
+两处必须同时改，否则浏览器不带 Cookie、绑定校验必然失败。详见设计 §5.3.1。
+
+### 17.5 实测与门禁（本次执行）
+
+| 项 | 结果 |
+|---|---|
+| Cloud `typecheck` / `lint` / `build` | 通过 |
+| Cloud `pnpm test` | **599 passed / 38 files**（R2 基线 557，**+42**） |
+| Desktop `typecheck` / `test` | 通过；**1265 passed / 89 files**（未改 Desktop 代码） |
+| 迁移兼容性 | 既有 8 张表的列 / 约束 / 索引与「只应用 0000–0002」**逐字相同** |
+| 变异验证 | 5 个变异全部被抓（部分唯一索引 / 级联删除 / cardinality / 公共客户端 CHECK / 绝对期限 CHECK） |
+| 新增迁移 | **1 个**（`0003`），不改 0000–0002 |
+| 新增协议字段/错误码 | **无** |
+
+### 17.6 未做（属 1.3.1-B / 1.3.1-C）
+
+Refresh Token 签发与轮换、Session 服务、`signMcpAccessToken`、`MCP_BROWSER_SESSION_KEY`、
+Cookie、consent HTML、CIMD 抓取器、DCR、`/mcp` 路由、MCP SDK 引入。

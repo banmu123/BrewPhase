@@ -305,11 +305,11 @@ SSE 而解析失败；若只说「返回 SSE」，modern 客户端会等不到�
 | 1 | ChatGPT | `POST /mcp` 无 token → 收 `401` + `WWW-Authenticate: …, resource_metadata="…"` | 1.3.2 |
 | 2 | ChatGPT | 读 PRM → 读 AS 元数据 → 选定注册方式（预注册 / CIMD / DCR） | 1.3.1 |
 | 3 | ChatGPT | 在用户浏览器打开 `GET /mcp/oauth/authorize?…&code_challenge=…&resource=…` | `[新]` |
-| 4 | Cloud | 校验 client / `redirect_uri`（精确）/ PKCE / `resource` → 建 **授权请求行** → `Set-Cookie: bp_mcp_bs`（签名，仅 `/mcp` 路径） | `[新]` `mcp_auth_requests` |
+| 4 | Cloud | 校验 client / `redirect_uri`（精确）/ PKCE / `resource` → 建 **授权请求行** → `Set-Cookie: bp_mcp_bs`（签名，仅 `/mcp/oauth` 路径） | `[新]` `mcp_auth_requests` |
 | 5 | Cloud | `302 → /mcp/oauth/login?rid=…`：页面只有两个按钮（Google / GitHub） | `[新]` 登录页 |
 | 6 | 用户 | 点 Google → `302 → accounts.google.com`，`redirect_uri = https://<host>/mcp/oauth/callback/google`，`state = PR`，`nonce = N` | `[新]` 回调路由 |
 | 7 | Google | 用户首次登录 Google（可能要过 Google 自己的同意页）→ 回到 `callback?code=…&state=PR` | — |
-| 8 | Cloud | 校验 `PR` → 换身份 → **`findOrCreateUserWithIdentity()` 当场创建 BrewPhase 用户**（这就是「从未访问过」的路径）→ 把 `user_id` 写进授权请求行 → `302 → /mcp/consent?rid=…` | `[新]` + 复用 |
+| 8 | Cloud | 校验 `PR` → 换身份 → **`findOrCreateUserWithIdentity()` 当场创建 BrewPhase 用户**（这就是「从未访问过」的路径）→ 把 `user_id` 写进授权请求行 → `302 → /mcp/oauth/consent?rid=…` | `[新]` + 复用 |
 | 9 | 用户 | 页面上看到：**哪个客户端**（`client_name`）、**回到哪个域名**（`redirect_uri` 的 host，规范强制展示）、**四个 scope 各自能读什么**、每项一个复选框（默认全选，可取消）→ 点「允许」 | `[新]` consent 页 |
 | 10 | Cloud | 事务内：upsert `mcp_grants`（scope / epoch）→ 插入 `mcp_auth_codes`（`grant_id` + `scope` + `resource` + `redirect_uri`）→ 删授权请求行 → **清 Cookie** → `302 → redirect_uri?code=…&state=…&iss=…` | `[新]` |
 | 11 | ChatGPT | `POST /mcp/oauth/token`（code + verifier + redirect_uri + resource）→ 拿到 access + refresh | 1.3.1 |
@@ -323,57 +323,52 @@ SSE 而解析失败；若只说「返回 SSE」，modern 客户端会等不到�
 ### 5.1 完整时序（含两条分支）
 
 ```
-ChatGPT 浏览器              Cloud                          Google/GitHub        用户
-    │                        │                                  │                │
- 1  │ GET /mcp/oauth/authorize?response_type=code              │                │
-    │   &client_id=…&redirect_uri=…&scope=…&state=…            │                │
-    │   &code_challenge=…&code_challenge_method=S256           │                │
-    │   &resource=https://<host>/mcp                           │                │
-    │───────────────────────▶│                                  │                │
-    │                        │ ① 校验 client / redirect_uri（精确）              │
-    │                        │ ② 校验 PKCE 是 S256 且 43 字符                   │
-    │                        │ ③ 校验 resource == MCP_RESOURCE                  │
-    │                        │ ④ INSERT mcp_auth_requests                       │
-    │                        │    (state, client_id, redirect_uri, scope[],     │
-    │                        │     resource, code_challenge, csrf_hash,         │
-    │                        │     browser_binding_hash, expires_at=+10min)     │
-    │  Set-Cookie: bp_mcp_bs │ ⑤ 无 Cookie → 签发（sid，30min）                  │
-    │◀───────────────────────│                                  │                │
- 2  │ 302 /mcp/oauth/login?rid=…                              │                │
-    │◀───────────────────────│                                  │                │
- 3  │ GET /mcp/oauth/login?rid=…&provider=google               │                │
-    │───────────────────────▶│                                  │                │
-    │                        │ ⑥ 绑定 browser_binding（首次）                    │
-    │                        │ ⑦ 生成 PR（32B）+ nonce → 存哈希                 │
-    │ 302 accounts.google.com│    redirect_uri=/mcp/oauth/callback/google       │
-    │◀───────────────────────│                                  │                │
- 4  │─────────────────────────────────────────────────────────▶│ 登录/同意      │
- 5  │◀─────────────────────────────────────────────────────────│ code, state=PR │
- 6  │ GET /mcp/oauth/callback/google?code=…&state=PR           │                │
-    │───────────────────────▶│                                  │                │
-    │                        │ ⑧ hash(PR) 查行（未过期、未消费、provider 匹配）  │
-    │                        │ ⑨ 校验 nonce 哈希                                │
-    │                        │ ⑩ 用**同一个** adapter 换身份（cloudRedirectUri  │
-    │                        │    = /mcp/oauth/callback/google）                │
-    │                        │ ⑪ findOrCreateUserWithIdentity（新用户在此创建）  │
-    │                        │ ⑫ UPDATE 行 SET user_id, provider_* 已消费       │
-    │ 302 /mcp/consent?rid=… │                                  │                │
-    │◀───────────────────────│                                  │                │
- 7  │ GET /mcp/consent?rid=…                                   │                │
-    │───────────────────────▶│ ⑬ 校验 Cookie 绑定 + 行未过期 + user_id 已就位    │
-    │ 200 text/html          │ ⑭ 渲染：client_name / redirect host / 4 个 scope │
-    │◀───────────────────────│    复选框 + 隐藏 csrf + rid                       │
- 8  │ POST /mcp/consent (rid, csrf, decision=allow, scope[])   │                │
-    │───────────────────────▶│ ⑮ 校验 Cookie 绑定 + csrf 哈希 + 行未消费         │
-    │                        │ ⑯ BEGIN                                          │
-    │                        │    upsert mcp_grants（scope, epoch+1 if changed）│
-    │                        │    INSERT mcp_auth_codes（code 只存哈希, 60s）    │
-    │                        │    DELETE mcp_auth_requests 行（一次性）          │
-    │                        │   COMMIT                                         │
-    │ Set-Cookie: bp_mcp_bs=  │ ⑰ 清 Cookie（Max-Age=0）                         │
-    │ 302 redirect_uri?code=…&state=…&iss=…                    │                │
-    │◀───────────────────────│                                  │                │
- 9  │ （浏览器把 code 交给客户端，客户端 POST /mcp/oauth/token）│                │
+│ ChatGPT 浏览器                      │Cloud                                     │Google / GitHub           │用户      │
+│ ────────────────────────────────▶│                                          │                          │        │
+│ 1 GET /mcp/oauth/authorize       │① 校验 client / redirect_uri（精确）            │                          │        │
+│   response_type=code             │② 校验 PKCE=S256、resource 逐字符               │                          │        │
+│   client_id / scope / state      │③ INSERT mcp_auth_requests（10 min）        │                          │        │
+│   code_challenge / resource      │④ Set-Cookie: bp_mcp_bs                   │                          │        │
+│                                  │   Path=/mcp/oauth; 30 min 不滑动            │                          │        │
+│                                  │⑤ 302 → /mcp/oauth/login?rid=…            │                          │        │
+│◀──────────────────────────────── │                                          │                          │        │
+│ 2 302 /mcp/oauth/login?rid=…     │                                          │                          │        │
+│ ────────────────────────────────▶│                                          │                          │        │
+│ 3 GET /mcp/oauth/login           │⑥ TOFU 绑定 browser_binding_hash            │                          │        │
+│   ?rid=…&provider=google         │⑦ 生成 PR（32B）+ nonce → 存哈希                 │                          │        │
+│                                  │ ────────────────────────────────────────▶│                          │        │
+│                                  │302 accounts.google.com                   │redirect_uri 指向           │        │
+│                                  │state=PR / nonce=N                        │/mcp/oauth/callback/:p    │        │
+│ ───────────────────────────────────────────────────────────────────────────▶│                          │        │
+│ 4                                │（浏览器跟随跳转，Cloud 不在链路上）                     │登录 / 同意                   │用户      │
+│◀─────────────────────────────────────────────────────────────────────────── │                          │        │
+│ 5                                │code + state=PR                           │                          │        │
+│ 6 GET /mcp/oauth/callback/…      │⑧ hash(PR) 查行 + nonce 校验                  │                          │        │
+│   code=…&state=PR                │⑨ 同一个 adapter 换身份                         │                          │        │
+│                                  │⑩ findOrCreateUserWithIdentity            │                          │        │
+│                                  │    （新用户在这一步创建）                           │                          │        │
+│                                  │⑪ UPDATE 行 SET user_id / consumed_at      │                          │        │
+│◀──────────────────────────────── │                                          │                          │        │
+│ 7 302 /mcp/oauth/consent         │（Location: /mcp/oauth/consent?rid=…）      │                          │        │
+│   ?rid=…                         │                                          │                          │        │
+│ ────────────────────────────────▶│                                          │                          │        │
+│ 8 GET /mcp/oauth/consent         │⑫ 校验 Cookie 绑定 + user_id 已就位              │                          │        │
+│   ?rid=…                         │                                          │                          │        │
+│◀──────────────────────────────── │                                          │                          │        │
+│ 9 200 text/html                  │⑬ 渲染 client_name / 回调域名                   │                          │        │
+│                                  │    / 4 项 scope 复选框 / csrf / rid          │                          │        │
+│ ────────────────────────────────▶│                                          │                          │        │
+│10 POST /mcp/oauth/consent        │⑭ 校验 Cookie 绑定 + csrf_hash                │                          │        │
+│   rid/csrf/decision/scope[]      │⑮ BEGIN                                   │                          │        │
+│                                  │   upsert mcp_grants（scope, epoch+1）      │                          │        │
+│                                  │   INSERT mcp_auth_codes（哈希, 60s）         │                          │        │
+│                                  │   DELETE mcp_auth_requests 行             │                          │        │
+│                                  │   COMMIT                                 │                          │        │
+│◀──────────────────────────────── │                                          │                          │        │
+│11 302 redirect_uri               │⑯ Set-Cookie: bp_mcp_bs=（Max-Age=0）       │                          │        │
+│   ?code=…&state=…&iss=…          │                                          │                          │        │
+
+12  浏览器把 code 交给客户端 → 客户端 POST /mcp/oauth/token
 ```
 
 ### 5.2 路由表（全部在 `/mcp` 前缀下，与 `/oauth/*` 物理分离）
@@ -383,8 +378,8 @@ ChatGPT 浏览器              Cloud                          Google/GitHub     
 | `GET` | `/mcp/oauth/authorize` | 校验 + 建授权请求 + 签发浏览器 Cookie + 分流 | 无（公开） |
 | `GET` | `/mcp/oauth/login` | 登录选择页（HTML）；带 `provider` 时直接 302 到 Provider | 浏览器 Cookie（绑定） |
 | `GET` | `/mcp/oauth/callback/:provider` | MCP 专用 Provider 回调：换身份 → 建/取用户 → 写 `user_id` | Provider `state` |
-| `GET` | `/mcp/consent` | 渲染同意页（HTML） | 浏览器 Cookie（绑定）+ 行内 `user_id` |
-| `POST` | `/mcp/consent` | 批准 / 拒绝 → 写 grant + code → 302 回 `redirect_uri` | 浏览器 Cookie + CSRF |
+| `GET` | `/mcp/oauth/consent` | 渲染同意页（HTML） | 浏览器 Cookie（绑定）+ 行内 `user_id` |
+| `POST` | `/mcp/oauth/consent` | 批准 / 拒绝 → 写 grant + code → 302 回 `redirect_uri` | 浏览器 Cookie + CSRF |
 | `POST` | `/mcp/oauth/token` | `authorization_code` / `refresh_token` | 无（PKCE / refresh 本身就是凭据） |
 | `POST` | `/mcp/oauth/revoke` | RFC 7009；只撤 refresh 所属 **session**，不撤 grant | 无（token 即凭据） |
 | `GET` | `.well-known/oauth-protected-resource` | PRM | 无 |
@@ -399,7 +394,7 @@ ChatGPT 浏览器              Cloud                          Google/GitHub     
 | 授权码表 | `oauth_codes` | `mcp_auth_codes` |
 | `redirect_uri` | 只能 `127.0.0.1` | 注册表精确匹配（https / localhost） |
 | 回调路由 | `/oauth/callback/:provider` | `/mcp/oauth/callback/:provider` |
-| 浏览器状态 | **无** | 签名 Cookie（仅 `/mcp`） |
+| 浏览器状态 | **无** | 签名 Cookie（仅 `/mcp/oauth`） |
 | 用户同意 | 无 | 必须 |
 
 **两条路由组不共用任何一张表**。共用的只有 Provider 适配器与用户映射函数
@@ -419,22 +414,43 @@ ChatGPT 浏览器              Cloud                          Google/GitHub     
 | 载体 | `bp_mcp_bs`，`hono/cookie` 的 `setSignedCookie` | **已实测**：Hono 4.10 的签名 Cookie 可写入、可读回、**篡改后读回 `false`**（见下） |
 | 内容 | `{"sid":"<32B base64url>","iat":<epoch>,"exp":<epoch>}` | 只有随机 `sid`；**不放 user_id**（见 §5.4 多标签页） |
 | 算法 | Hono 内置 `sign`（HMAC-SHA256 + base64url） | 不自己发明 |
-| 密钥 | `MCP_BROWSER_SESSION_KEY`（新 env；≥32 字节）。未配置时**拒绝启动** `/mcp` 路由（不是静默降级） | 与 `JWT_SIGNING_KEY` 分开：一个泄露不应波及另一个 |
+| 密钥 | `MCP_BROWSER_SESSION_KEY`（新 env；≥32 字节）。未配置时**拒绝启动** `/mcp/*` 路由（不是静默降级） | 与 `JWT_SIGNING_KEY` 分开：一个泄露不应波及另一个 |
 | `HttpOnly` | **是** | JS 不可读 |
 | `Secure` | **是**（`NODE_ENV=production`）；开发环境允许 `false` 并记一条 warn | `http://localhost` 下 `Secure` Cookie 会被丢弃 |
 | `SameSite` | **`Lax`** | 登录是顶层 GET 跳转（需要 `Lax` 而非 `Strict`）；`Lax` 同时挡住跨站 POST（CSRF 第一道） |
-| `Path` | **`/mcp`** | 不出现在 `/auth/*`、`/oauth/*` 的任何请求里 |
+| `Path` | **`/mcp/oauth`** | 不出现在 `/auth/*`、`/oauth/*`，也**不出现在 `/mcp` 本体**（见 §5.3.1） |
 | `Domain` | **不设置**（host-only） | 不跨子域 |
 | `Max-Age` | **1800 秒（30 分钟）**，**绝对不滑动** | 每次读不续期：一个 `iat` 到 `exp` 的硬窗口 |
 | 清理 | consent 成功/拒绝后 `Max-Age=0`；过期自然失效 | 一次性 |
 
-**实测证据（2026-11-18，Hono 4.10.3）**：
+**实测证据（2026-11-18，Hono 4.10.3，`path: '/mcp/oauth'`）**：
 
 ```
-SET:      bp_mcp=tx123.<sig>; Max-Age=600; Path=/mcp; HttpOnly; Secure; SameSite=Lax
-GET:      200 tx123
+SET: 200 bp_mcp_bs=tx123.<sig>; Max-Age=600; Path=/mcp/oauth; HttpOnly; Secure; SameSite=Lax
+GET: 200 tx123
 TAMPERED: 200 none        ← 篡改签名后 getSignedCookie 返回 false
 ```
+
+### 5.3.1 为什么 Cookie 的 `Path` 是 `/mcp/oauth` 而不是 `/mcp`
+
+Phase 1.3.0-R1 写的是 `Path=/mcp`，1.3.1-A 修正为 `Path=/mcp/oauth`。
+
+**Cookie 的 Path 是前缀匹配（按路径段边界）**，所以 `Path=/mcp` 会让这个 Cookie
+出现在**每一次** `POST /mcp` 的 JSON-RPC 请求里。那些请求由第三方客户端发出、
+由 Cloud 转发给 Desktop，Cookie 在里面没有任何用途——却把「浏览器授权状态」
+带进了数据端点。收窄到 `/mcp/oauth` 之后：
+
+| 路径 | 收到 `bp_mcp_bs`？ |
+|---|---|
+| `/mcp/oauth/authorize` · `/login` · `/callback/:provider` · `/consent` · `/token` · `/revoke` | **是** |
+| `/mcp`（JSON-RPC 数据端点） | **否**（一个字节都收不到） |
+| `/auth/*` · `/oauth/*` | 否 |
+
+**代价只有一个**：consent 页必须跟着挪到 `/mcp/oauth/consent`。如果它留在
+`/mcp/consent`，浏览器不会带上 Cookie，绑定校验必然失败——所以这两处修改
+是同一个决定的两面，**不能只改一处**。
+
+前缀匹配是按**路径段**而非字符串：`Path=/mcp/oauth` 不会匹配 `/mcp/oauthx`。
 
 ### 5.4 绑定：浏览器 ↔ 授权请求
 
@@ -444,7 +460,7 @@ TAMPERED: 200 none        ← 篡改签名后 getSignedCookie 返回 false
 |---|---|---|
 | L1 | `mcp_auth_requests.browser_binding_hash = sha256("mcp-browser" ‖ sid)` | 别人的浏览器拿到 `rid` 也打不开同意页 |
 | L2 | `mcp_auth_requests.user_id`（由 provider 回调写入）必须非空 | 没登录就走不到同意页 |
-| L3 | `mcp_auth_requests.csrf_hash = sha256(csrf)`，`csrf` 只在渲染的 HTML 里 | 跨站伪造 `POST /mcp/consent` |
+| L3 | `mcp_auth_requests.csrf_hash = sha256(csrf)`，`csrf` 只在渲染的 HTML 里 | 跨站伪造 `POST /mcp/oauth/consent` |
 
 **绑定的建立时机（TOFU，首次使用即绑定）**：
 
@@ -532,7 +548,7 @@ TOFU 的代价是「同一个 `rid` 第一次被谁打开就归谁」——而 `
 | 会话表 | `auth_sessions` | `mcp_sessions` + `mcp_refresh_tokens` |
 | 客户端 | 只有第一方 Desktop | 第三方（ChatGPT 等） |
 | 用户同意 | 无 | **必须有** consent 页 |
-| 浏览器状态 | 无 | 签名 Cookie（仅 `/mcp`） |
+| 浏览器状态 | 无 | 签名 Cookie（仅 `/mcp/oauth`） |
 
 **四条不可动的隔离要求**：
 
@@ -542,7 +558,7 @@ TOFU 的代价是「同一个 `rid` 第一次被谁打开就归谁」——而 `
    `verifyMcpAccessToken` 只接受 `aud === MCP_RESOURCE`。
 3. **不得让 MCP token 通过 `/auth/*`**：`verifyAccessToken` 只接受
    `aud === "brewphase-desktop"`。
-4. **不得让 MCP Cookie 影响任何非 `/mcp` 路径**：`Path=/mcp` 是结构保证，
+4. **不得让 MCP Cookie 影响任何非 `/mcp/oauth` 路径**：`Path=/mcp/oauth` 是结构保证，
    不是约定。
 
 ### 5.8 Scope 集合与最小权限（Phase 1.3.0-R1 修订）
@@ -1174,14 +1190,16 @@ Desktop 登出撤 MCP）即违反决策。
 |---|---|---|---|
 | `sid`（`mcp_sessions.id`） | OAuth 会话标识 | 90 天上限 | JWT claim |
 | ~~`Mcp-Session-Id`~~ | 协议层会话（**2026-07-28 已移除**） | — | **不实现、不生成** |
-| `bp_mcp_bs` Cookie | 浏览器授权流程绑定 | 30 分钟 | 仅 `/mcp` 路径 |
+| `bp_mcp_bs` Cookie | 浏览器授权流程绑定 | 30 分钟 | 仅 `/mcp/oauth` 路径 |
 
 三者互不替代。任何文档把 `sid` 说成「MCP 会话 id」都必须改成
 「OAuth 会话 id」。
 
-## 10. 数据表设计草案（1.3.1 实施，本阶段不迁移）
+## 10. 数据表设计（1.3.1-A 已落地为 migration 0003）
 
-> 全部为**草案**。1.3.1 落地时必须校验：不改现有 6 张表、不新增列到
+> **1.3.1-A 已实现**：`cloud/src/db/migrations/0003_mcp_oauth.sql` +
+> `cloud/src/db/schema.ts`。落地时的三处收紧见 §10.8（都不改变本节的语义）。
+> 1.3.1 落地时必须校验：不改现有 6 张表、不新增列到
 > `auth_sessions`、迁移幂等。**五张新表**（1.3.0 是四张，1.3.0-R1 拆出了
 > `mcp_refresh_tokens`，并新增了 `mcp_auth_requests`）。
 
@@ -1304,6 +1322,18 @@ Desktop 登出撤 MCP）即违反决策。
 **「当前这代」的判据**：`consumed_at IS NULL`。**不用** `ORDER BY created_at
 DESC LIMIT 1`——并发下两条未消费行会让「当前」变成不确定的。
 
+而且这条判据**必须由数据库强制**：
+
+```sql
+CREATE UNIQUE INDEX "mcp_refresh_tokens_session_active_uq"
+    ON "mcp_refresh_tokens" ("session_id")
+    WHERE "consumed_at" IS NULL;
+```
+
+没有它，两个并发刷新可以各自读到「当前这代」并各自签出新 token——同一会话
+同时存在两个有效 refresh token，重放检测随即失去意义。应用层的
+`SELECT … FOR UPDATE` 只保护**同一条**行，保护不了「只该有一条」这个集合约束。
+
 ### 10.6 复用而非新建
 
 | 需求 | 用现有的 | 不改 |
@@ -1314,7 +1344,7 @@ DESC LIMIT 1`——并发下两条未消费行会让「当前」变成不确定�
 | Desktop 登录态 | `auth_sessions` | **零改动** |
 | Desktop 登录事务 / 授权码 | `oauth_transactions` / `oauth_codes` | **零改动、不复用** |
 
-### 10.7 表清单（1.3.1 迁移 `0003` 的全部内容）
+### 10.7 表清单（迁移 `0003` 的全部内容，1.3.1-A 已落地）
 
 | # | 表 | 状态 |
 |---|---|---|
@@ -1326,11 +1356,64 @@ DESC LIMIT 1`——并发下两条未消费行会让「当前」变成不确定�
 
 **没有第 6 张。** 浏览器会话是 Cookie，不建表（§5.3）。
 
+### 10.8 1.3.1-A 落地时的三处收紧
+
+三处都是**在同一方向上收紧**，没有放宽任何一条设计语义。
+
+| # | 设计稿写法 | 落地写法 | 为什么 |
+|---|---|---|---|
+| 1 | `CHECK array_length(redirect_uris,1) BETWEEN 1 AND 5` | `CHECK cardinality(redirect_uris) BETWEEN 1 AND 5` | `array_length` 对**空数组**返回 `NULL`，而 CHECK 遇 `NULL` 视为通过 —— 空 `redirect_uris` 会被静默放行，客户端永远匹配不上任何回调 |
+| 2 | 「`consumed_at IS NULL` 是当前这代」 | 追加部分唯一索引 `UNIQUE(session_id) WHERE consumed_at IS NULL` | 见 §10.5：这是**集合**级不变量，行锁保护不了 |
+| 3 | 未提 `client_id` 外键 | **`mcp_auth_requests` / `mcp_auth_codes` / `mcp_sessions` 的 `client_id` 一律不建外键** | 见下 |
+
+**为什么 `client_id` 不建外键**（这是本阶段唯一一个需要论证的「不做」）：
+
+1. `mcp_grants.client_id` 本来就没有外键，而它才是**授权的权威记录**。
+   只在新表上建外键会造出「grant 不受约束、session 受约束」的不一致。
+2. `mcp_oauth_clients` 是**注册缓存**不是归属主体：CIMD 元数据会重新抓取、
+   预注册项可以下线、DCR 项可以清理，而已经发生的授权不该因此消失。
+3. 两个现成选项都更糟：`ON DELETE CASCADE` 会在删除 client 时连带删掉
+   授权码与会话（正是「为了方便扩大级联」）；`ON DELETE RESTRICT` 会让
+   客户端下线必须先手工按顺序清理，且对历史 grant 无解。
+
+真正需要的完整性是「session 的 `client_id` 与它的 grant 一致」——那是一条
+**跨列**不变量，要复合外键指向 `mcp_grants(user_id, client_id, resource)`，
+代价远大于收益，由应用层在同一次写入里保证。
+
+**外键清单（0003 实际建了 6 条）**：
+
+| 子表.列 | 父表 | ON DELETE |
+|---|---|---|
+| `mcp_auth_requests.user_id` | `users(id)` | CASCADE |
+| `mcp_auth_codes.user_id` | `users(id)` | CASCADE |
+| `mcp_auth_codes.grant_id` | `mcp_grants(id)` | CASCADE |
+| `mcp_sessions.user_id` | `users(id)` | CASCADE |
+| `mcp_sessions.grant_id` | `mcp_grants(id)` | CASCADE |
+| `mcp_refresh_tokens.session_id` | `mcp_sessions(id)` | CASCADE |
+
+**`mcp_refresh_tokens.replaced_by` 无外键**：轮换链允许独立清理（与
+`auth_sessions.replaced_by` 同理）；加外键会让「删除某一代」变成连锁操作。
+
+**撤销 ≠ 删除**（本阶段最容易含糊的一点）：
+
+| 动作 | SQL | 影响 |
+|---|---|---|
+| 撤销 grant | `UPDATE mcp_grants SET revoked_at = now()` | **不动** sessions（应用层另发 `UPDATE mcp_sessions SET revoked_at`） |
+| 删除 grant | `DELETE FROM mcp_grants` | 级联删 sessions 与 auth_codes |
+| 轮换 refresh | `UPDATE mcp_refresh_tokens SET consumed_at` | 旧行**保留**，不删 |
+| 删除 session | `DELETE FROM mcp_sessions` | 级联删该 session 的全部 refresh 代 |
+
+---
+
 ## 11. Phase 1.3 拆分
 
 ### 11.1 Phase 1.3.1 — MCP OAuth 基础设施（1.3.0-R1 重排）
 
 顺序即依赖，不可并行。
+
+> **1.3.1-A 已交付第 1 条**（迁移 `0003` 五张表 + Drizzle schema + 42 条约束测试，
+> 见路线图 §3.6 / 索引 §17）。第 2 条起属 1.3.1-B（2–3、9 的 refresh 分支）
+> 与 1.3.1-C（4–8、10–15）。
 
 | # | 范围 | 验收 |
 |---|---|---|
@@ -1341,7 +1424,7 @@ DESC LIMIT 1`——并发下两条未消费行会让「当前」变成不确定�
 | 5 | `MCP_BROWSER_SESSION_KEY` + 签名 Cookie 工具 | 未配置密钥时 `/mcp/*` 拒绝启动；篡改 Cookie 读回 `false`（§5.3 实测） |
 | 6 | `/mcp/oauth/authorize`：校验 + 建 `mcp_auth_requests` + 签发 Cookie | `redirect_uri` 精确匹配；PKCE 强制 S256；`resource` 逐字符 |
 | 7 | `/mcp/oauth/login` + `/mcp/oauth/callback/:provider` | **MCP 专用回调**；TOFU 绑定；`findOrCreateUserWithIdentity` 建新用户；`provider_consumed_at` 一次性 |
-| 8 | `GET/POST /mcp/consent`（HTML，无前端框架） | 4 个 scope 逐项 + 可取消；显示 `client_name` 与 `redirect_uri` host；CSRF；拒绝走 `access_denied` |
+| 8 | `GET/POST /mcp/oauth/consent`（HTML，无前端框架） | 4 个 scope 逐项 + 可取消；显示 `client_name` 与 `redirect_uri` host；CSRF；拒绝走 `access_denied` |
 | 9 | `/mcp/oauth/token` 两分支 | code 一次性 + 60s；refresh 轮换；§9.10 矩阵 |
 | 10 | `/mcp/oauth/revoke` | 只撤 session，不撤 grant（§9.11 第 1 行） |
 | 11 | CIMD 严格抓取器 | SSRF 用例全绿（私网/回环/重定向/超大/超时/非 JSON） |
@@ -1438,7 +1521,7 @@ DESC LIMIT 1`——并发下两条未消费行会让「当前」变成不确定�
 | # | 1.3.0 的说法 | 实际 | 处理 |
 |---|---|---|---|
 | R1 | §5.1 时序：「用户登录（复用 `/auth/*`）」 | **Cloud 没有任何 Cookie，`/auth/*` 全是 Bearer**（§1.5 B1/B3） | 新建浏览器授权流程：签名 Cookie + `mcp_auth_requests` + MCP 专用 Provider 回调 + consent 页 |
-| R2 | §15 端点表：无 `/mcp/oauth/login`、`/mcp/consent` | 没有它们，登录与同意两步无处安放 | 补 4 条路由（§5.2） |
+| R2 | §15 端点表：无 `/mcp/oauth/login`、`/mcp/oauth/consent` | 没有它们，登录与同意两步无处安放 | 补 4 条路由（§5.2） |
 | R3 | §9：`mcp_sessions` 存 `refresh_token_hash`，每次 refresh 新建 session | ① `created_at` 重置 → 90 天无限续命；② `sid` 变化 → 正常刷新打挂未过期的 Access Token | 拆成 `mcp_sessions`（身份，不可变）+ `mcp_refresh_tokens`（每代凭据） |
 | R4 | §9.5：「轮换失败不延长 expires_at；绝对上限锚 created_at」——但写法仍靠 session 行重建 | 逻辑上不可能成立（行被重建就没有「锚」） | `absolute_expires_at` 变成**不可变列**，并有 A8 的 grep 断言 |
 | R5 | §10：四张新表 | 缺授权请求表与 refresh 代表 | **五张**（§10.7） |
@@ -1483,8 +1566,8 @@ DESC LIMIT 1`——并发下两条未消费行会让「当前」变成不确定�
 ### 15.1 顺序（不可并行，每步有独立验收才能进下一步）
 
 ```
-1. 迁移 0003（五张表）+ schema + 幂等测试 + information_schema 快照比对
-      ↓
+1. ✅ 迁移 0003（五张表）+ schema + 幂等测试 + information_schema 快照比对
+      ↓  ← 1.3.1-A 已交付；部分唯一索引就位后，「当前这代」才有确定答案
 2. mcp_refresh_tokens 服务（签发 / 轮换 / 消费 / 重放）+ 纯单测
       ↓  ← 90 天模型在这里定死（A1–A8），后面才可能"不续命"
 3. mcp_sessions 服务（create / revoke / 过期判定 / issued_scope）
@@ -1497,7 +1580,7 @@ DESC LIMIT 1`——并发下两条未消费行会让「当前」变成不确定�
       ↓
 7. /mcp/oauth/login + /mcp/oauth/callback/:provider（复用 adapter + 建用户）
       ↓
-8. GET/POST /mcp/consent（HTML + CSRF + scope 收窄）
+8. GET/POST /mcp/oauth/consent（HTML + CSRF + scope 收窄）
       ↓  ← 到这里"新用户第一次接入"才第一次可端到端跑（C4）
 9. /mcp/oauth/token（authorization_code → 建 session + 第一代 refresh）
       ↓
@@ -1565,7 +1648,7 @@ cd Desktop && pnpm typecheck && pnpm test   # 确认零连带影响
 | session（安全文档里） | **`mcp_sessions`（OAuth 会话）** | 指长期授权身份；**不是** refresh 容器 |
 | refresh 容器 | **`mcp_refresh_tokens`（每代）** | 一代一个 hash；轮换只动这一层 |
 | session 的 `scope` | **`issued_scope`** | 用户实际授予的；与 token 的 `scope` 求交集后才生效 |
-| 「用户登录」 | **浏览器授权会话（`bp_mcp_bs` Cookie）** | 30 分钟、仅 `/mcp` 路径、不是登录态 |
+| 「用户登录」 | **浏览器授权会话（`bp_mcp_bs` Cookie）** | 30 分钟、仅 `/mcp/oauth` 路径、不是登录态 |
 | HTTP+SSE 传输 | **已弃用的旧传输** | 2024-11-05；不实现 |
 | `initialize` | **legacy 时代握手** | modern 时代不存在 |
 | SSE 长连接 | **`subscriptions/listen`** | 2026-07-28 的通知流机制；本阶段不做 |
