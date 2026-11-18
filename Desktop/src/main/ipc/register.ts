@@ -43,6 +43,7 @@ import { importImageFromDialog } from '../media/store'
 import { resolveRecordMetadata } from '../metadata'
 import type { SyncService } from '../sync/sync-service'
 import type { AccountService } from '../account/account-service'
+import type { RemoteService } from '../remote/remote-service'
 import type { BrowserManager } from '../browser/browser-manager'
 import type { BookmarkService } from '../browser/bookmark-service'
 import type { RoundtableService } from '../roundtable/roundtable-service'
@@ -94,6 +95,8 @@ export function registerIpc(params: {
   sync: SyncService
   /** Cloud Account：登录 / 恢复 / 退出的唯一入口（无凭据快照）。 */
   account: AccountService
+  /** Remote MCP：远程访问状态与启停（**不含任何凭据**）。 */
+  remote: RemoteService
   /** Application Service：Renderer 与 MCP 共用（记录写路径）。 */
   services: {
     records: RecordService
@@ -138,6 +141,7 @@ export function registerIpc(params: {
     devServerUrl,
     sync,
     account,
+    remote,
     services,
     bridgeStatus,
     aiChat,
@@ -365,6 +369,19 @@ export function registerIpc(params: {
   handle(IPC.mcpClientCreate, (input) => services.clients.create(input as never))
   handle(IPC.mcpClientRevoke, (input) => services.clients.revoke((input as { id: string }).id))
   handle(IPC.mcpBridgeStatus, () => bridgeStatus())
+
+  // MARK: - Remote MCP（Phase 1.1B）
+  //
+  // 七个意图，没有 `remote:call`。返回值全部是 `RemoteStatus` / `RemoteDiagnosis`，
+  // 里面没有 device_token、私钥、claim_secret，也没有参数与结果——
+  // 那些东西连 Renderer 的类型都不该知道。
+  handle(IPC.remoteStatus, () => remote.status())
+  handle(IPC.remoteEnable, () => remote.enable())
+  handle(IPC.remoteDisable, () => remote.disable())
+  handle(IPC.remoteRegister, () => remote.register())
+  handle(IPC.remoteForget, () => remote.forget())
+  handle(IPC.remoteUnbind, () => remote.unbind())
+  handle(IPC.remoteDiagnose, () => remote.diagnose())
 
   // MARK: - AI Agent 自动配置
   //

@@ -96,6 +96,17 @@ export const IPC = {
   mcpClientRevoke: 'mcp:client:revoke',
   mcpBridgeStatus: 'mcp:bridge:status',
 
+  // ---- Remote MCP（Phase 1.1B）----
+  // 刻意**没有** `remote:call`：远程调用只能由 Cloud 发起，本地不开
+  // 「手动触发一次远程工具」的入口——那会绕过所有 UI 确认。
+  remoteStatus: 'remote:status',
+  remoteEnable: 'remote:enable',
+  remoteDisable: 'remote:disable',
+  remoteRegister: 'remote:register',
+  remoteForget: 'remote:forget',
+  remoteUnbind: 'remote:unbind',
+  remoteDiagnose: 'remote:diagnose',
+
   canvasesList: 'canvas:list',
   canvasCreate: 'canvas:create',
   canvasDelete: 'canvas:delete',
@@ -589,7 +600,19 @@ export const ipcRequestSchemas = {
   [IPC.accountLogin]: z.object({ provider: accountProviderSchema }),
   [IPC.accountCancelLogin]: z.void(),
   [IPC.accountRefresh]: z.void(),
-  [IPC.accountSignOut]: z.void()
+  [IPC.accountSignOut]: z.void(),
+
+  // ---- Remote MCP（Phase 1.1B）----
+  // 全部无入参：开启时的「授权范围确认」在 Renderer 完成，
+  // 主进程不做「接受一组 scope」的设计——远程 scope 是常量，
+  // 允许 Renderer 传 scope 等于让它自己扩大授权面。
+  [IPC.remoteStatus]: z.void(),
+  [IPC.remoteEnable]: z.void(),
+  [IPC.remoteDisable]: z.void(),
+  [IPC.remoteRegister]: z.void(),
+  [IPC.remoteForget]: z.void(),
+  [IPC.remoteUnbind]: z.void(),
+  [IPC.remoteDiagnose]: z.void()
 } as const
 
 export type IpcChannel = keyof typeof ipcRequestSchemas

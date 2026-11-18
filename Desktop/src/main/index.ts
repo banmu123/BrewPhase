@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { app, BrowserWindow, net, protocol, safeStorage, screen, session, shell } from 'electron'
+import { app, BrowserWindow, net, powerMonitor, protocol, safeStorage, screen, session, shell } from 'electron'
 import { installApplicationMenu } from './app-menu'
 import { openDatabase, type DatabaseHandle } from './database/client'
 import { registerIpc } from './ipc/register'
@@ -45,6 +45,8 @@ import { ChromeService } from './integrations/chrome/chrome-service'
 import { resolveDataLocation, setActiveDataDir } from './data-location'
 import { DataLocationService } from './data-location-service'
 import { BridgeServer } from './mcp-bridge/bridge-server'
+import { createRemoteService, type RemoteService } from './remote/remote-service'
+import { REMOTE_CHANNELS } from '../shared/contracts/remote'
 import { BRIDGE_PROTOCOL_VERSION, bridgePaths, platformSupportsBridge } from './mcp-bridge/bridge-contract'
 import type { McpBridgeStatus } from '../shared/contracts/mcp'
 import { UPDATE_CHANGED_CHANNEL } from '../shared/contracts/update'
@@ -103,6 +105,8 @@ let mainWindowRef: BrowserWindow | null = null
 let aiChatService: AIChatService | null = null
 /** Cloud Account：退出时要关掉可能还开着的本机回调端口。 */
 let accountService: AccountService | null = null
+/** Remote MCP：退出前要停连接、关定时器（不阻塞 quit）。 */
+let remoteService: RemoteService | null = null
 let quitting = false
 const devServerUrl = process.env.ELECTRON_RENDERER_URL ?? null
 
@@ -552,21 +556,56 @@ function bootstrap(): void {
       await shell.openExternal(url)
     },
     startCallback: (params) => startOAuthCallbackServer(params),
+    // Remote 必须在账户凭据被清除**之前**收尾。这里读的是模块作用域变量：
+    // RemoteService 在 `account.restore()` 之后才创建，闭包按调用时取值，
+    // 所以不必打乱启动顺序，也不必让账户层认识 Remote。
+    beforeSignOut: async () => {
+      await remoteService?.prepareForSignOut()
+    },
     broadcast: (snapshot) => {
       for (const window of BrowserWindow.getAllWindows()) {
         if (window.isDestroyed()) continue
         window.webContents.send(ACCOUNT_CHANGED_CHANNEL, snapshot)
       }
+      // 账户变了就要重新判定远程可用性：否则连线会带着旧绑定继续存在。
+      // 不 await：广播是同步路径，远程的收尾走自己的异步流程。
+      void remoteService?.reconcile()
     }
   })
   accountService = account
   account.restore()
+
+  // Remote MCP（Phase 1.1B）：**在主进程内**，与数据库同属一个进程。
+  //
+  // 顺序是契约的一部分：账户状态已经恢复（上一行），RemoteService 才能判断
+  // 「本机绑定的用户 == 当前登录用户」。启动检查在 `start()` 内部完成，
+  // 不依赖 Renderer，也不依赖用户打开设置页——默认关闭时零出站连接。
+  remoteService = createRemoteService({
+    db: db.db,
+    services: { records, coffee, canvas, workContexts, personalDirection },
+    currentUserId: () => account.snapshot().user?.id ?? null,
+    clientVersion: app.getVersion(),
+    onChanged: (status) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (window.isDestroyed()) continue
+        window.webContents.send(REMOTE_CHANNELS.changed, status)
+      }
+    },
+    log: (line) => console.warn(line)
+  })
+  // 不 await：Cloud 不可达不应拖慢启动；start() 内部的失败只影响远程状态。
+  void remoteService.start()
+
+  // 睡眠/唤醒：不信任旧 socket，唤醒后重新握手（回调用的是模块作用域变量）。
+  powerMonitor.on('suspend', () => remoteService?.suspend())
+  powerMonitor.on('resume', () => void remoteService?.resume())
 
   registerIpc({
     db,
     devServerUrl,
     sync: syncService,
     account,
+    remote: remoteService,
     services: { records, clients, workContexts, personalDirection },
     aiChat: aiChatService,
     roundtableAI: participantService,
@@ -668,16 +707,27 @@ app.on('before-quit', (event) => {
     console.error('[roundtable-layout] flush on quit failed', error)
   }
   roundtableLayoutManagerRef?.dispose()
-  // Bridge 与 Chrome 本地 IPC 的关闭都是异步的（关 socket、删 info / pipe 文件）：
-  // 先拦住这一次 quit，清理完再真正退出；第二次进入时 `quitting` 已置位，只关库。
-  if ((bridgeServer || chromeService) && !quitting) {
+  // Bridge / Chrome / Remote 的关闭都是异步的（关 socket、删 info / pipe 文件、
+  // 等审计落库）：先拦住这一次 quit，清理完再真正退出；第二次进入时
+  // `quitting` 已置位，只关库。
+  //
+  // **RemoteService 必须在 db.close() 之前停**：它的审计写要用连接，
+  // 连接没了再写只会得到一串「audit write failed」。
+  if ((bridgeServer || chromeService || remoteService) && !quitting) {
     quitting = true
     const server = bridgeServer
     const chrome = chromeService
+    const remote = remoteService
     bridgeServer = null
     chromeService = null
+    remoteService = null
     event.preventDefault()
-    void Promise.all([server?.stop(), chrome?.stop()]).finally(() => app.quit())
+    // 总超时兜底：任何一个 stop() 卡住都不能让应用永远退不出去。
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 3_000))
+    void Promise.race([
+      Promise.allSettled([server?.stop(), chrome?.stop(), remote?.stop()]).then(() => undefined),
+      timeout
+    ]).finally(() => app.quit())
     return
   }
   db?.close()

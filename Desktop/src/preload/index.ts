@@ -16,6 +16,7 @@ import {
 import { ROUNDTABLE_AI_TASK_CHANGED_CHANNEL } from '../shared/contracts/roundtable-ai'
 import { ACCOUNT_CHANGED_CHANNEL } from '../shared/contracts/account'
 import { UPDATE_CHANGED_CHANNEL, type UpdateCheckResult } from '../shared/contracts/update'
+import { REMOTE_CHANNELS, type RemoteStatus } from '../shared/contracts/remote'
 import type { RendererApi } from '../shared/contracts'
 
 /**
@@ -265,6 +266,30 @@ const api: RendererApi = {
     createClient: (input) => invoke(IPC.mcpClientCreate, input),
     revokeClient: (id) => invoke(IPC.mcpClientRevoke, { id }),
     bridgeStatus: () => invoke(IPC.mcpBridgeStatus)
+  },
+  /**
+   * 远程访问（Remote MCP）。
+   *
+   * 七个通道，**全部无入参**，返回 `RemoteStatus` / `RemoteDiagnosis`。
+   * 这里刻意没有 `call`：远程调用只能由 Cloud 发起，本地不开手动触发入口。
+   * 返回值里没有 device_token、私钥、claim_secret，也没有参数与结果——
+   * 这些连 Renderer 的类型都不该知道。
+   */
+  remote: {
+    status: () => invoke(IPC.remoteStatus),
+    enable: () => invoke(IPC.remoteEnable),
+    disable: () => invoke(IPC.remoteDisable),
+    register: () => invoke(IPC.remoteRegister),
+    forget: () => invoke(IPC.remoteForget),
+    unbind: () => invoke(IPC.remoteUnbind),
+    diagnose: () => invoke(IPC.remoteDiagnose),
+    onChanged: (handler: (status: RemoteStatus) => void) => {
+      const listener = (_event: unknown, status: RemoteStatus): void => handler(status)
+      ipcRenderer.on(REMOTE_CHANNELS.changed, listener)
+      return () => {
+        ipcRenderer.removeListener(REMOTE_CHANNELS.changed, listener)
+      }
+    }
   },
   /**
    * 内置浏览器。网页由主进程的 WebContentsView 绘制，这里只有「壳」的操作：

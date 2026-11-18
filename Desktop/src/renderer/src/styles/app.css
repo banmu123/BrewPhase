@@ -2288,6 +2288,163 @@ textarea {
   margin-bottom: 10px;
 }
 
+/* ---- 远程访问（Remote MCP）----
+   只用现有主题变量，组件不判明暗（配色唯一来源是 :root / [data-theme='dark']）。 */
+.settings-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+}
+
+.settings-row__text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settings-row__label {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.settings-row__hint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+.settings-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* 告警条：tone 只改左侧描边与标题颜色，不换底色，避免在深浅两套主题里失真 */
+.settings-callout {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+}
+
+.settings-callout[data-tone='warning'] {
+  border-left-color: var(--warn, #b8860b);
+}
+
+.settings-callout[data-tone='danger'] {
+  border-left-color: var(--danger, #a33);
+}
+
+.settings-callout__title {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.settings-callout__body {
+  margin: 0 0 6px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--ink-soft);
+}
+
+.settings-scope-list {
+  margin: 6px 0 8px;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.9;
+  color: var(--ink-soft);
+}
+
+.settings-scope-list code {
+  margin-right: 6px;
+  font-size: 11px;
+}
+
+.settings-facts {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+  font-size: 12px;
+}
+
+.settings-facts > div {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.settings-facts dt {
+  color: var(--ink-soft);
+}
+
+.settings-facts dd {
+  margin: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.settings-block {
+  margin: 14px 0;
+}
+
+.settings-block__title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.settings-grant-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-grant-list > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.settings-grant-list__client {
+  color: var(--ink);
+}
+
+.settings-grant-list__scopes {
+  overflow-wrap: anywhere;
+}
+
+.settings-grant-list__epoch {
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--ink-soft);
+}
+
+.settings-error {
+  margin: 8px 0;
+  font-size: 12px;
+  color: var(--danger, #a33);
+}
+
 /* 窗口最小宽度是 980（window.ts 的 minWidth）；内容区低于此值就走顶部 Tabs。 */
 @media (max-width: 1000px) {
   .settings-shell {

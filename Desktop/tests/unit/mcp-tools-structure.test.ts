@@ -123,11 +123,45 @@ describe('工具清单不被改动', () => {
   })
 })
 
-describe('没有为 Remote MCP 引入独立 Agent 入口', () => {
-  it('不存在 remote-agent / remote-device 之类的进程入口', () => {
+describe('Remote 不引入独立进程（Phase 1.1A 起的不变量，1.1B 细化）', () => {
+  /**
+   * 1.1A 时这条断言写的是「`src/main/remote/` 不存在」——那只是
+   * 「没有独立 Agent」的**代理指标**。1.1B 合法地创建了这个目录，
+   * 但它是主进程内的模块，不是独立进程。
+   *
+   * 所以这里改为直接断言**真正的不变量**：Remote 不得成为第二个进程入口。
+   * 判据是三条可机械检查的事实，而不是目录是否存在。
+   */
+  it('src/main 顶层没有 remote 进程入口文件', () => {
     const mainFiles = readdirSync(join(ROOT, 'src/main')).filter((name) => /\.ts$/.test(name))
-    expect(mainFiles.filter((name) => /remote[-.]?(agent|device)/i.test(name))).toEqual([])
-    expect(existsSync(join(ROOT, 'src/main/remote'))).toBe(false)
+    expect(mainFiles.filter((name) => /remote[-.]?(agent|device|daemon)/i.test(name))).toEqual([])
     expect(existsSync(join(ROOT, 'src/main/remote-agent.ts'))).toBe(false)
+    expect(existsSync(join(ROOT, 'src/main/remote-device.ts'))).toBe(false)
+  })
+
+  it('package.json 没有把 Remote 注册成可执行入口', () => {
+    const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as {
+      bin?: Record<string, string>
+      scripts?: Record<string, string>
+    }
+    // 不允许 `bin` 里出现 remote 相关命令
+    expect(Object.keys(pkg.bin ?? {}).filter((name) => /remote/i.test(name))).toEqual([])
+    // 也不允许出现「单独启动一个 Remote 进程」的脚本
+    const scripts = Object.values(pkg.scripts ?? {})
+    expect(scripts.filter((script) => /remote/i.test(script))).toEqual([])
+  })
+
+  it('src/main/remote 不自建 Electron 应用/进程生命周期', () => {
+    const dir = join(ROOT, 'src/main/remote')
+    const sources = readdirSync(dir)
+      .filter((name) => name.endsWith('.ts'))
+      .map((name) => ({ name, source: stripComments(readFileSync(join(dir, name), 'utf8')) }))
+
+    for (const { name, source } of sources) {
+      // 不得自行 whenReady / 自建窗口 / 自行退出进程——生命周期由 index.ts 拥有
+      expect(source, `${name} 不得自行启动 Electron 生命周期`).not.toMatch(/app\.whenReady\(/)
+      expect(source, `${name} 不得自建窗口`).not.toMatch(/new BrowserWindow\(/)
+      expect(source, `${name} 不得自行退出进程`).not.toMatch(/app\.(quit|exit)\(|process\.exit\(/)
+    }
   })
 })

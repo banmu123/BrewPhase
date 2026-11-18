@@ -1,3 +1,74 @@
+/**
+ * Remote access (Remote MCP). Deliberately conservative wording: we do not
+ * promise "cannot be compromised"; we only state what is actually true —
+ * local final veto, and best-effort auditing.
+ */
+export const remote = {
+  title: 'Remote access',
+  lead: 'Let a cloud AI (such as ChatGPT) read records, beans and canvases on this computer through BrewPhase Cloud. Off by default; when off, no connection is ever opened.',
+  toggle: 'Allow remote access',
+  toggleOnHint: 'On. The cloud AI can call 8 read-only tools.',
+  toggleOffHint: 'Off. No outbound connection is made.',
+  enable: 'Enable…',
+  disable: 'Turn off',
+  confirmTitle: 'Confirm the scope before enabling',
+  confirmBody: 'Once enabled, the AI clients you authorised on the cloud can read:',
+  confirmReadonly: 'Read only. Remote access provides no writing, deletion, command execution or file reading, and never copies your data to the cloud.',
+  confirm: 'Enable',
+  cancel: 'Cancel',
+  state: 'Connection',
+  states: {
+    idle: 'Not connected',
+    connecting: 'Connecting',
+    handshaking: 'Handshaking',
+    online: 'Connected',
+    draining: 'Draining',
+    backoff: 'Waiting to reconnect',
+    blocked: 'Blocked (needs attention)'
+  },
+  device: 'Device',
+  notPaired: 'Not paired',
+  boundUser: 'Bound user',
+  noUser: 'Not bound',
+  serviceable: 'Serviceable',
+  yes: 'Yes',
+  no: 'No',
+  reasons: {
+    remote_disabled: 'switch is off',
+    user_mismatch: 'signed-in account differs from the bound user',
+    db_unavailable: 'local database is not ready',
+    services_unavailable: 'local services are not ready',
+    shutting_down: 'shutting down'
+  },
+  lastActive: 'Last active',
+  never: '—',
+  blockedTitle: 'Remote access is blocked',
+  unbind: 'Unbind and pair again',
+  grants: 'Authorised clients',
+  noGrants: 'No AI client is authorised right now.',
+  noScopes: 'no scopes',
+  auditWarning: 'The last {count} remote calls could not be written to the audit log',
+  auditWarningBody: 'The calls themselves still returned normally.',
+  auditLastFailure: 'Last failure:',
+  auditHonesty: 'The counter only covers this run and resets on restart; records that failed to write are not backfilled.',
+  register: 'Pair a new device',
+  diagnose: 'Diagnostics',
+  forget: 'Forget this device',
+  pendingTitle: 'Pending device (mock)',
+  pendingBody: 'Confirmation code:',
+  pendingMockNote: 'This is the mock gateway, not the real cloud; the code only exercises the flow.',
+  socket: 'Socket',
+  inflight: 'In flight',
+  cache: 'Result cache',
+  lastClose: 'Last close',
+  scopeLabels: {
+    records: 'records and notes',
+    tags: 'tags',
+    coffee: 'beans, brews and tastings',
+    canvas: 'canvases and notes'
+  }
+}
+
 /** Settings shell: secondary navigation and the General page. */
 export const settings = {
   title: 'Settings',
@@ -257,5 +328,6 @@ export const settings = {
       'browser-open-failed': 'The system browser could not be opened. Check your default browser.',
       unknown: 'Sign-in did not complete. Please try again.'
     }
-  }
+  },
+  remote
 }

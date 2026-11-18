@@ -1,3 +1,74 @@
+
+/**
+ * 远程访问（Remote MCP）。措辞刻意保守：不承诺「绝不会被攻破」，
+ * 只说明「本地最终否决」与「审计是 best-effort」这两件确实成立的事。
+ */
+export const remote = {
+  title: '远程访问',
+  lead: '让云端 AI（如 ChatGPT）通过 BrewPhase Cloud 读这台电脑上的记录、豆子与画布。默认关闭；关闭时不建立任何连接。',
+  toggle: '允许远程访问',
+  toggleOnHint: '已开启。云端 AI 只能调用 8 个只读工具。',
+  toggleOffHint: '关闭中。不建立任何出站连接。',
+  enable: '开启…',
+  disable: '关闭',
+  confirmTitle: '开启前确认授权范围',
+  confirmBody: '开启后，你在 Cloud 上授权过的 AI 客户端可以读取以下范围的数据：',
+  confirmReadonly: '只能读。远程不提供任何写入、删除、执行命令或读取文件的能力，也不会把数据复制到云端。',
+  confirm: '确认开启',
+  cancel: '取消',
+  state: '连接状态',
+  states: {
+    idle: '未连接',
+    connecting: '连接中',
+    handshaking: '握手中',
+    online: '已连接',
+    draining: '正在排空',
+    backoff: '等待重连',
+    blocked: '已阻断（需处理）'
+  },
+  device: '设备',
+  notPaired: '尚未配对',
+  boundUser: '绑定用户',
+  noUser: '未绑定',
+  serviceable: '可服务',
+  yes: '是',
+  no: '否',
+  reasons: {
+    remote_disabled: '开关已关闭',
+    user_mismatch: '当前账户与绑定用户不一致',
+    db_unavailable: '本地数据库未就绪',
+    services_unavailable: '本地服务未就绪',
+    shutting_down: '正在退出'
+  },
+  lastActive: '最后活跃',
+  never: '—',
+  blockedTitle: '远程访问已被阻断',
+  unbind: '解除绑定并重新配对',
+  grants: '已授权的客户端',
+  noGrants: '当前没有 AI 客户端获得授权。',
+  noScopes: '无可用范围',
+  auditWarning: '最近 {count} 次远程访问未能写入审计记录',
+  auditWarningBody: '业务调用本身仍然正常返回。',
+  auditLastFailure: '最近一次失败：',
+  auditHonesty: '计数只在本次运行内有效，重启会归零；此前未写成的记录不会被补写。',
+  register: '配对新设备',
+  diagnose: '诊断信息',
+  forget: '忘记此设备',
+  pendingTitle: '待确认设备（Mock）',
+  pendingBody: '确认码：',
+  pendingMockNote: '当前为 Mock 网关，尚未连接真实 Cloud；确认码仅用于流程验证。',
+  socket: 'Socket',
+  inflight: '在途请求',
+  cache: '结果缓存',
+  lastClose: '最近关闭',
+  scopeLabels: {
+    records: '记录与笔记',
+    tags: '标签',
+    coffee: '豆子、冲煮与品鉴',
+    canvas: '画布与便签'
+  }
+}
+
 /** 设置 / Settings：页面骨架、二级导航、常规页。 */
 export const settings = {
   title: '设置',
@@ -252,5 +323,6 @@ export const settings = {
       'browser-open-failed': '无法打开系统浏览器，请检查默认浏览器设置。',
       unknown: '登录未能完成，请重试。'
     }
-  }
+  },
+  remote
 }

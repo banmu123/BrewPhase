@@ -18,6 +18,7 @@ import type {
   AIRoundtableTaskSnapshot
 } from './roundtable-ai'
 import type { RoundtableLayoutSnapshot } from '../roundtable'
+import type { RemoteDiagnosis, RemoteStatus } from './remote'
 import type {
   CurrentState,
   CurrentStateDraft,
@@ -445,6 +446,25 @@ export interface RendererApi {
     createClient: (input: McpClientCreateInput) => Promise<McpClientCreated>
     revokeClient: (id: string) => Promise<McpClientInfo>
     bridgeStatus: () => Promise<McpBridgeStatus>
+  }
+  /**
+   * 远程访问（Remote MCP，Phase 1.1B）。
+   *
+   * 只有「状态 / 启停 / 配对 / 忘记 / 解绑 / 诊断」这些能力，**没有 `call`**：
+   * 远程调用只能由 Cloud 发起，本地不开手动触发入口。返回类型里没有
+   * device_token、私钥、claim_secret，也没有请求参数与结果。
+   */
+  remote: {
+    status: () => Promise<RemoteStatus>
+    /** 开启前应由界面完成「授权范围确认」；主进程不接受 scope 入参。 */
+    enable: () => Promise<RemoteStatus>
+    disable: () => Promise<RemoteStatus>
+    /** Mock 阶段：只返回待确认信息（`confirmCode`），不含 claim_secret。 */
+    register: () => Promise<{ deviceId: string; confirmCode: string; expiresAt: number }>
+    forget: () => Promise<RemoteStatus>
+    unbind: () => Promise<RemoteStatus>
+    diagnose: () => Promise<RemoteDiagnosis>
+    onChanged: (listener: (status: RemoteStatus) => void) => () => void
   }
   /**
    * 内置浏览器（Phase 1）。
