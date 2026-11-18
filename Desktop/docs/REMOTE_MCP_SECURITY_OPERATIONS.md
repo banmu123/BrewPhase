@@ -168,6 +168,21 @@ Remote MCP 不需要在 SQL 层加 `where user_id = ?`——因为 Desktop 的 S
 - 请求体永不进日志（现有 HTTP 日志已只记 method/path/status/duration，
   `cloud/src/app.ts` 的中间件是正确范例，照抄）
 
+#### 6.2.1 设备面的日志验证方式（Phase 1.2A）
+
+「不记录请求体」这条纪律在设备面上格外容易破：`register` / `confirm` /
+`credentials` 的请求体里**正好**装着 `claim_secret` 与 `confirm_code`。
+所以不能只靠代码评审，而要能机械验证：
+
+| 做法 | 说明 |
+|---|---|
+| 哨兵放在**非秘密**字段 | 例如把哨兵放进 `name` / `platform`。若塞进 `claim_secret`，它被脱敏是理所当然的（字段名就叫 secret），测不出任何东西——只有「看起来无害的字段」才能证明「请求体一律不入日志」 |
+| 把日志级别开到 `debug` | 否则 info 级的 `http_request` 根本不输出，「日志里没有哨兵」会因平凡成立而假通过 |
+| 断言日志里**有**请求记录 | 只断言「不含哨兵」而不确认「确实记录了这次请求」，等于允许「干脆不记日志」通过 |
+| 响应同查 | 错误响应的 `error_description` 必须是**固定文案**，不含任何输入片段 |
+
+落地：`cloud/tests/mcp-devices/security.test.ts`（7 条）。
+
 ### 6.3 用户可见性
 
 用户必须能在界面里看到，且能一键断：

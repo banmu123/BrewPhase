@@ -309,12 +309,26 @@ Web 设置页调用（Bearer 用户 token）。
 { "device_id": "0b7c…", "status": "active" }
 ```
 
-| 校验 | 失败响应 |
+| 校验 | 响应 |
 |---|---|
-| `user_id` 匹配 | 404 `device_not_found`（不泄露存在性） |
-| `status == 'pending'` | 409 `already_active`（幂等：已 active 直接返回 200） |
-| `now < expires_at` | 410 `confirm_expired` |
-| `constantTimeEqual(sha256(code), confirm_code_hash)` | 400 `invalid_confirm_code`；累计 5 次 → 该行 `status='revoked'` |
+| `user_id` 不匹配 / 设备不存在 | 404 `device_not_found`（**两者完全一致**，不泄露存在性） |
+| `status == 'active'` | **200 幂等**（返回 `{status:'active'}`，不再校验确认码） |
+| `status ∈ {suspended, revoked}` | 409 `invalid_device_state` |
+| `now >= expires_at`（仅 pending） | 410 `confirm_expired` |
+| 确认码不匹配 | 400 `invalid_confirm_code`；第 5 次失败时该行转 `revoked` |
+| 并发两个正确码 | 只有一条 UPDATE 命中；另一个按当前状态返回 200 幂等 |
+
+> **Phase 1.2A 修订（原文自相矛盾）**：原表把「已 active」写成
+> `409 already_active（幂等：已 active 直接返回 200）`——同一格既是 409 又是 200。
+> 取**幂等 200**：确认码在激活那一刻就完成使命，用户重复点确认不该报错。
+> `409` 保留给 `suspended` / `revoked` 这类确实不能再确认的状态。
+>
+> 同时明确两条实现要求：
+> - **计数必须原子**：单条 UPDATE 里 `confirm_attempts + 1` 在所有 SET 表达式中
+>   读的都是旧值，因此「自增」与「是否越线」用同一个基准。拆成
+>   「读计数 → 判断 → 写回」会让两个并发请求都读到 4。
+> - **触顶后对外仍是同一个错误**（`invalid_confirm_code`）：否则攻击者能靠
+>   错误码的变化判断自己离锁定还有几次。
 
 ### 3.4 `POST /mcp-devices/{id}/credentials`
 
@@ -352,6 +366,19 @@ Content-Type: application/json
 | 1 | Bearer 的 `sub` == `mcp_devices.user_id` | 404 `device_not_found`（统一话术，不区分「不是你的」与「不存在」） |
 | 2 | `constantTimeEqual(sha256(claim), claim_secret_hash)` | 403 `claim_mismatch` |
 | 3 | `status='active' AND token_issued_at IS NULL` | 409 `credentials_already_issued` |
+
+**「还没确认」不是错误（Phase 1.2A 补齐，原文缺失）**：
+
+| 设备状态 | 响应 | 理由 |
+|---|---|---|
+| `pending` 且未过期 | **202** `{status:'pending', retry_after_ms:1000}` | Desktop 的轮询把 4xx 当作**终态失败**。若 pending 也回 4xx，一次完全正常的注册会在第一次轮询（注册后 1 秒）就死掉——而「等用户点确认」恰恰是这条路径的常态 |
+| `pending` 且已过期 | 410 `confirm_expired` | 这一行确实没救了，必须让客户端停 |
+| `suspended` | 409 `invalid_device_state` | 用户主动暂停，不该悄悄恢复 |
+| `revoked` | 404 `device_not_found` | 与「不存在」一致：已撤销的设备不确认自己存在过 |
+
+> **顺序不可交换**：第 2 步（claim 校验）必须在第 3 步（状态判断）**之前**。
+> 反过来的话，「claim 错」与「状态不对」会得到同一个错误，等于白送攻击者
+> 一个 claim 正确性探针——他可以拿错误的状态去试 claim，靠响应差异反推。
 
 **原子领取（防重复与竞态的唯一可靠方式）**：
 

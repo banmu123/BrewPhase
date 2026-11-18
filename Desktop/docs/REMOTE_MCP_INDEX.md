@@ -93,6 +93,21 @@ Mock 与客户端两侧都不检查。逐条见 `REMOTE_MCP_PHASES.md` §1B.9。
 | 设备注册 | Mock 端点跑通闭环；`RemoteService.register()` 无 registrar 时**明确抛错** | 协议 §3；阶段 §1B.9 第 28 条 |
 | 畸形帧必须回话 | `req` 形状非法但 id 可用 → `PROTOCOL_VIOLATION`；提不出 id → close `4009`；`hello_ok` 形状错 `4009` / 版本错 `4002`；畸形 `grant_update` 也要 ack `applied=false` | 协议 §2.2.1；协议运行时 §6.5.2 规则 7 |
 
+## 9. Phase 1.2A：Cloud 设备面（已实现）
+
+范围与取舍见 `REMOTE_MCP_PHASES_ROADMAP.md` 的「Phase 1.2A」小节。要点：
+
+| 项 | 落地 | 权威 |
+|---|---|---|
+| `mcp_devices` / `mcp_grants` | 迁移 `0001_remote_mcp_devices`；两表无外键、互不级联 | 安全 §2.2 / §2.3 |
+| 注册 / 确认 / 领取 / 管理 | 8 个端点，全部只从 `authClaims.userId` 取身份 | 协议 §3.2–§3.5 |
+| 一次性领取 | 条件 UPDATE + `RETURNING` 行数；`claim_secret` 只走请求体 | 协议 §3.4 |
+| 「还没确认」 | **202** 而非 4xx（否则 Desktop 轮询在第一次就停） | 协议 §3.4 |
+| Desktop 接入 | `AccountService.accessToken()` → `DeviceRegistrar` → `RemoteService`（单向） | 协议 §3；安全 §2.3.1a |
+
+**未落地**（属 1.2B / 1.3）：WSS Gateway、`/device-link`、Ed25519 握手、
+ConnectionRegistry、心跳、req/res 转发、`grant_update` 在线同步、MCP OAuth。
+
 **新增验收**：§1B.7 之外 9 条（第 20–28 条）。
 **未改动**：错误码仍是 19 个（`PROTOCOL_VIOLATION` 复用，不新增）；ST 仍是 26 条
 （只补落点说明，不新增编号、不改阻断级别）；OQ 仍是 23 项。

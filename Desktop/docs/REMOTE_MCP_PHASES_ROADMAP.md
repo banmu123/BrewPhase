@@ -25,7 +25,39 @@
 
 ---
 
-## Phase 1.2 — Cloud 设备面
+## Phase 1.2A — Cloud 设备面（1.2 的第一个子阶段）
+
+**范围**：表结构 + 注册 / 确认 / 领取 / 管理 API + Desktop 注册客户端接入真实 Cloud。
+**不含**：WSS Gateway、`/device-link`、Ed25519 握手、ConnectionRegistry、心跳、
+req/res 转发、grant_update 在线同步、MCP OAuth（属 1.2B / 1.3）。
+
+| # | 1.2A 已落地 | 依据 |
+|---|---|---|
+| B1 | `mcp_devices`（含 `grant_epoch INTEGER NOT NULL DEFAULT 0`） | 协议 §3；安全 §2.3 |
+| B2 | `register` / `confirm` / `credentials` / `GET 列表` / `GET 详情` / `suspend` / `resume` / `DELETE` | 协议 §3.2–§3.5 |
+| B3 | 一次性领取：条件 UPDATE + `RETURNING` 行数 | 协议 §3.4 |
+| B4 | 状态机单条原子 UPDATE；`revoked` 终态 | 安全运维 §4.0 |
+| B10 | 迁移 `0001_remote_mcp_devices` + `startSweep` 清理过期 pending | 本文 §2.1 |
+| B12 | 两表**无外键、互不级联** | 安全运维 §4.1 规则 2 |
+
+**实现时补齐的两处契约缺口**（已回写协议 §3.3 / §3.4）：
+
+- 「还没确认」必须回 **202** 而不是 4xx：Desktop 的轮询把 4xx 当终态，
+  回 4xx 会让一次正常注册在第一次轮询就死掉。原文只写了「否则 409」。
+- 「已 active 再确认」原文自相矛盾（同一格既 409 又 200），取**幂等 200**。
+
+**1.2A 的两处已知取舍**（必须在 1.2B 之前决定是否收紧）：
+
+| 取舍 | 说明 |
+|---|---|
+| 注册的并发配额 | 「同一用户 ≤5 台」在事务里做「查计数 → 插入」，两个并发注册可能各自读到 4 而都插入（得到 6 台）。配额不是安全边界（用户只能多注册自己的设备），但若要严格需加部分唯一索引或行锁 |
+| `token_expires_at` 已入库但无人校验 | 30 天的 device_token 寿命现在只写不读；**1.2B 的握手第 4 步必须校验它**，否则「token 永不过期」 |
+
+---
+
+## Phase 1.2B — Cloud WSS Gateway
+
+范围：B5–B9、B11、B13、B14。前置条件是 1.2A 的管理面已经能签发并撤销设备凭证。
 
 ### 2.1 范围
 
