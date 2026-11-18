@@ -534,11 +534,14 @@ Desktop: 收到 4003 → 删 device.json → blocked → 不重连 → 界面「
 | `GET`/`DELETE` | `/mcp` | — | **恒 `405`**：规范已移除 GET 流与协议层会话（设计 §4.1） |
 | `GET` | `/.well-known/oauth-protected-resource` | RFC 9728 保护资源元数据 | 同时提供 path-inserted 变体 `…/oauth-protected-resource/mcp`（设计 §6.2） |
 | `GET` | `/.well-known/oauth-authorization-server` | RFC 8414 AS 元数据 | SDK `oauthMetadataResponse`；`issuer` 必须与 URL 逐字符一致 |
-| `GET` | `/mcp/oauth/authorize` | 授权入口 | **与根 `/oauth/authorize` 物理分离**；consent 在 `/mcp/consent` |
+| `GET` | `/mcp/oauth/authorize` | 授权入口：校验 + 建 `mcp_auth_requests` + 签发浏览器 Cookie | **与根 `/oauth/authorize` 物理分离** |
+| `GET` | `/mcp/oauth/login` | 登录选择页（HTML）；带 `provider` 时直接 302 到 Provider | **1.3.0-R1 新增**；需要浏览器 Cookie 绑定 |
+| `GET` | `/mcp/oauth/callback/:provider` | **MCP 专用** Provider 回调 | **不得复用** `/oauth/callback/:provider`（后者会签发 Desktop 登录码并重定向 127.0.0.1） |
+| `GET` | `/mcp/consent?rid=` | 渲染同意页（HTML）：`client_name` / 回调域名 / 逐项 scope | 需 Cookie 绑定 + 行内 `user_id` |
+| `POST` | `/mcp/consent` | 批准 / 拒绝 → upsert grant + 写 code → 302 回 `redirect_uri` | 需 Cookie 绑定 + CSRF |
 | `POST` | `/mcp/oauth/token` | `grant_type=authorization_code\|refresh_token` | **必须支持 `grant_type`**（与现有 `/oauth/token` 的差异） |
 | `POST` | `/mcp/oauth/register` | DCR（RFC 7591） | **已弃用，默认关闭**；`MCP_DCR_ENABLED=false` 时元数据不暴露 `registration_endpoint` |
 | `POST` | `/mcp/oauth/revoke` | RFC 7009 | 撤销该 refresh token 所属 family；**不**撤 grant |
-| `POST` | `/mcp/consent` | 用户批准 / 拒绝 | 需已登录（复用 `/auth/*`） |
 | `POST` | `/mcp-devices/register` | 设备注册（§3.2） | 需用户 Bearer |
 | `POST` | `/mcp-devices/{id}/confirm` | 用户确认码（§3.3） | Web 设置页 |
 | `POST` | `/mcp-devices/{id}/credentials` | 领取 device_token（§3.4） | 需 Bearer + 请求体 `claim_secret`（**不入 URL**） |
@@ -550,12 +553,29 @@ Desktop: 收到 4003 → 删 device.json → blocked → 不重连 → 界面「
 | `GET` | `/ready` | 就绪（新增 `instance_id` / `connection_count`） | 扩展现有 |
 
 `/mcp` 必须：
-- 校验 `Authorization: Bearer`，失败返回 401 + `WWW-Authenticate: Bearer resource_metadata="…", scope="…"`
+- 校验 `Authorization: Bearer`，失败返回 401 + `WWW-Authenticate: Bearer resource_metadata="…"`
+  （**不带 `scope`**：此刻不知道要调哪个工具，给全集等于默认索要全部数据权限；
+  见设计 §5.8.2）
 - 校验 `Host` 与 `Origin`（SDK 的 `hostHeaderValidationResponse` / `originValidationResponse`）；
   `Origin` **存在且非法** → `403`；无 `Origin`（服务端到服务端）→ 通过
 - 请求体上限 256 KB（MCP 请求本身不含大数据）；超限 `413`
 - **不提供** `GET` 的 SSE 长连接（`405`）。长连接通知在 2026-07-28 由
   `subscriptions/listen` 承载，属 Phase 1.5 可选增强
+
+**浏览器授权会话（`bp_mcp_bs`）不是登录态**，只用于把「这个浏览器」绑定到
+「这一次授权请求」：
+
+| 属性 | 值 |
+|---|---|
+| 载体 | `hono/cookie` 的 `setSignedCookie`（HMAC-SHA256），篡改后读回 `false`（已实测） |
+| 属性 | `HttpOnly`；`Secure`（生产）；`SameSite=Lax`；`Path=/mcp`；无 `Domain`；`Max-Age=1800`（不滑动） |
+| 内容 | `{sid, iat, exp}`——**不含** `user_id`、**不含**任何 token |
+| 密钥 | `MCP_BROWSER_SESSION_KEY`（独立于 `JWT_SIGNING_KEY`；未配置则 `/mcp/*` 不注册） |
+| 绑定 | `mcp_auth_requests.browser_binding_hash = sha256("mcp-browser"‖sid)`；TOFU |
+| 清理 | consent 提交后 `Max-Age=0`；行同时 `DELETE` |
+
+**它不能被用于任何其它目的**：`/auth/*` 不读它、`/mcp` 的 Bearer 校验不看它、
+它不参与 `sid` 的解析。`Path=/mcp` 是结构保证，不是约定。
 
 ### 15.1 OAuth 相关的三层要求必须分开（Phase 1.0.1，1.3.0 修订）
 

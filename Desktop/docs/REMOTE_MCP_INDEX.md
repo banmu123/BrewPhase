@@ -301,7 +301,9 @@ R1 收口了「派发与撤销」；R2 收口「`syncLag` 置位之后，**队�
 
 ### 15.4 OQ-3 定稿
 
-**独立 `mcp_sessions` 表，`auth_sessions` 零改动。** 三条决定性理由来自真实代码：
+**独立 `mcp_sessions` 表，`auth_sessions` 零改动。**（⚠️ **已被 §16 细化为两层**：
+`mcp_sessions` 只存身份，`mcp_refresh_tokens` 存每代凭据——否则 90 天会被无限续命。）
+三条决定性理由来自真实代码：
 全局 UNIQUE 的 `refresh_token_hash`、`logoutByRefreshToken`/重放检测**撤整族**、
 缺少 `client_id`/`grant_id`/`scope`/`resource`。完整决策、状态机、轮换流程与
 「登出/撤销/过期」矩阵见设计 §9。
@@ -330,3 +332,61 @@ R1 收口了「派发与撤销」；R2 收口「`syncLag` 置位之后，**队�
 
 **未改动**：`cloud/**`、`Desktop/src/**`、`cloud/src/db/migrations/`、
 `auth_sessions`、任何依赖版本。
+
+## 16. Phase 1.3.0-R1：浏览器授权闭环与 Session 模型修订（已冻结，未实现）
+
+对 §15（1.3.0）的**设计修订**。仍属于「只改文档」：`cloud/src/**`、
+`Desktop/src/**`、迁移目录、`auth_sessions` 全部未动。
+
+### 16.1 为什么必须修订（1.3.0 的三处硬伤）
+
+| # | 1.3.0 的说法 | 核对后的实际 |
+|---|---|---|
+| 1 | 「用户登录（复用 `/auth/*`）」 | **Cloud 里没有任何 Cookie**；`/auth/*` 只有 refresh/logout/me/identities，全是 Bearer；`handleProviderCallback()` 会签发 Desktop 登录码并重定向到 **127.0.0.1**。→ 浏览器侧根本没有登录态可复用 |
+| 2 | `mcp_sessions` 存 `refresh_token_hash`，每次 refresh 新建一行 | 新行 `created_at = now` → `min(now+30d, created_at+90d)` **永远到不了 90 天**；且 `sid` 随之变化 → 正常刷新会打挂尚未过期的 Access Token |
+| 3 | 401 challenge 带全部 4 个 scope | 等于默认索要全部数据权限，与最小权限原则冲突 |
+
+### 16.2 修订后的三个结论
+
+| 主题 | 结论 | 权威 |
+|---|---|---|
+| 浏览器登录 + Consent | 新建 `mcp_auth_requests` + 签名 Cookie `bp_mcp_bs` + **MCP 专用** Provider 回调 + `GET/POST /mcp/consent`；**不复用** Desktop 登录链路 | 设计 §5 |
+| Session / Refresh | `mcp_sessions`（身份，`sid` 稳定、`absolute_expires_at` 不可变）→ 1:N → `mcp_refresh_tokens`（每代凭据） | 设计 §9 |
+| 最小权限 | 401 **省略** `scope`；`tools/list` 不需业务 scope；`tools/call` 缺 scope 才 403 且**只报缺的那个**；consent 页可逐项取消；step-up 扩权 | 设计 §5.8 |
+
+### 16.3 关键问题的答案
+
+> 一个从未访问过 BrewPhase 的新用户，第一次在 ChatGPT 添加 Remote MCP，
+> 如何登录、确认身份、看到四种权限、批准、并把 Authorization Code 交还？
+
+**12 步，见设计 §5.0。** 要点：新用户不需要任何前置步骤——第 8 步的
+`findOrCreateUserWithIdentity()` 在 Provider 回调里当场创建账户（与现有
+Desktop 登录同一个函数），随后才进入同意页。
+
+### 16.4 关键决定：刷新失败**不能**自动恢复
+
+宽限窗口（30s）只避免「并发刷新被误判为盗用而撤族」，**不**让客户端拿回
+新的 refresh token。原因：实现它需要在服务端暂存明文 token（违反「只存哈希」），
+或在宽限内重新签发（等于给窃取旧 token 的人另一次成功）。
+v1 的选择是：**明确失败，要求重新授权**（设计 §9.10.1）。
+
+### 16.5 本阶段修改的文件
+
+| 文件 | 修订 |
+|---|---|
+| `REMOTE_MCP_PHASE_1_3_DESIGN.md` | §0.0 修订记录、§1.5 真实代码事实、§5 全文重写、§8.1/8.2、§9 全文重写、§10 五张表、§11.1 15 条、§12 19 组、§13 R1–R9、§14 N9–N11、§15 12 步、§16 术语、§17/§18 |
+| `REMOTE_MCP_PHASES_ROADMAP.md` | §3.1 C3/C10/C12/C13；§3.2 路由组与「不得复用」；§3.3 新增 6 组测试；§3.4 新增 3b/5b |
+| `REMOTE_MCP_PROTOCOL_LIFECYCLE.md` | §15 端点表 + 浏览器授权会话属性表 |
+| `REMOTE_MCP_SECURITY.md` | §3.2.1 两层模型；§3.2.2 Cookie 边界 |
+| `REMOTE_MCP_SECURITY_OPERATIONS.md` | §4.1 撤销矩阵；§4.1.7 浏览器会话安全（10 条不变量 + TOFU + CSRF 三层） |
+| `REMOTE_MCP_INDEX.md` | 本节 |
+
+### 16.6 仍未验证（新增三项，全部高危）
+
+| # | 项 | 影响 |
+|---|---|---|
+| N9 | ChatGPT 收到 403 `insufficient_scope` 后是否做 step-up | 若不做，用户取消勾选会导致工具「永久不可用」 |
+| N10 | ChatGPT 是否接受**可交互**的 consent 页 | 若要求静默批准，最小权限失去落点 |
+| N11 | 注册回调是否允许非 `localhost` 的 https `redirect_uri` | 若只允许 localhost，第三方 MCP 的 OAuth 模式结构上不成立 |
+
+叠加 §15 已有的 N1–N8（尤其 **N5：是否发送 `resource`**）。

@@ -56,7 +56,7 @@ revoked   → （终态，不可恢复）
 
 | 触发 | ① 先做（同步、持久化） | ② 再做（异步、可失败） | Desktop 动作 | 生效依据 |
 |---|---|---|---|---|
-| Web 撤销 grant | `mcp_grants.revoked_at = now()`，**先停路由**，`grant_epoch + 1`；**同一事务内**把该 grant 的全部 `mcp_sessions.revoked_at = now()`（OQ-3 已定：独立表） | 发 `grant_update{op:"revoke"}`（R2 的 `markSyncLag` 收口） | 移除上下文 + 清该 grant 缓存 + 在途结果不外传 + `grant_update_ack` | 上下文失效 + **每次 `/mcp` 回查 grant**（不依赖 ack） |
+| Web 撤销 grant | `mcp_grants.revoked_at = now()`，**先停路由**，`grant_epoch + 1`；**同一事务内**把该 grant 的全部 `mcp_sessions.revoked_at = now()`（`revoked_reason='grant_revoked'`），其 `mcp_refresh_tokens` 随 session 失效 | 发 `grant_update{op:"revoke"}`（R2 的 `markSyncLag` 收口） | 移除上下文 + 清该 grant 缓存 + 在途结果不外传 + `grant_update_ack` | 上下文失效 + **每次 `/mcp` 回查 grant 与 session**（不依赖 ack） |
 | Web 撤销设备 | `mcp_devices.status='revoked'` | 删连接表项 → 发 `bye(revoked)` → close `4003` | 删 `remote/device.json`，`linkState='blocked'`，不重连 | 连接表 + 请求前查设备状态 |
 | Desktop 用户关开关 | **`local_state` 写 `off`** | `POST /mcp-devices/{id}/suspend` → 断 WSS | 立即拒绝一切 `req` | 本地判定，不依赖 Cloud |
 | Desktop 用户开开关 | `local_state` 写 `on` | 连接 WSS（若未注册先走注册） | 进入 `connecting` | — |
@@ -273,6 +273,47 @@ markSyncLag(A 的失败)
 「对端收到但回不来」——这两种情况在 Desktop 侧的授权表状态完全不同。
 fail-closed 的代价是这台设备在重连前不可用；不做的话，队列里的请求会继续
 往一条已经不可写的连接上撞，每一次都白等一个超时。
+
+### 4.1.7 浏览器授权会话的安全边界（Phase 1.3.0-R1）
+
+MCP 授权需要在浏览器里登录并同意，因此 Cloud 首次引入 Cookie
+（`bp_mcp_bs`）。它的安全模型只有一句话：**证明这个浏览器发起了这个授权请求**。
+
+| # | 不变量 | 落地 |
+|---|---|---|
+| 1 | 它不是登录态 | `/auth/*` 不读它；`/mcp` 认证只认 `Authorization: Bearer` |
+| 2 | 不能跨路径 | `Path=/mcp`；`/oauth/*` 与 `/auth/*` 的请求里不出现 |
+| 3 | 不能跨站 | `SameSite=Lax`（登录是顶层 GET 跳转，需要 Lax；同时挡住跨站 POST） |
+| 4 | 不能被 JS 读 | `HttpOnly` |
+| 5 | 不能长期驻留 | `Max-Age=1800`，**不滑动**；consent 提交后立即 `Max-Age=0` |
+| 6 | 不能伪造 | HMAC 签名；篡改后 `getSignedCookie` 返回 `false`（已实测） |
+| 7 | 不能带身份 | 内容只有 `{sid, iat, exp}`；`user_id` 只在 `mcp_auth_requests` 行里 |
+| 8 | 不能被借用 | `mcp_auth_requests.browser_binding_hash = sha256("mcp-browser"‖sid)`，不匹配 → 400 + 删行 + 审计 |
+| 9 | 不能与 Desktop 共享密钥 | `MCP_BROWSER_SESSION_KEY` ≠ `JWT_SIGNING_KEY` |
+| 10 | 不能静默降级 | 密钥缺失 → `/mcp/*` 不注册 + `error` 日志（不生成临时密钥） |
+
+**绑定采用 TOFU（首次使用即绑定）**，而不是在 `authorize` 就绑死：
+
+```
+authorize 时 browser_binding_hash = NULL   ← 此时可能还没有真实浏览器
+首次 login / callback：NULL → 写入 hash(当前 sid)
+之后：必须相等
+```
+
+理由：客户端可能是**服务端**去拉 `authorize` URL（`Set-Cookie` 被丢弃），
+再把它交给用户浏览器。硬绑会锁死这条合法路径。
+TOFU 的代价是「同一 `rid` 第一次被谁打开就归谁」——而 `rid` 只在
+`Location` 里出现一次，行 10 分钟过期。
+
+**CSRF 三层**：
+
+| 层 | 机制 |
+|---|---|
+| L1 | `SameSite=Lax` 让跨站 POST 不带 Cookie |
+| L2 | `mcp_auth_requests.csrf_hash` 与表单隐藏字段比对（常量时间） |
+| L3 | `rid` 必须是存在的、未消费的行，且 `user_id` 非空 |
+
+三者任一不过：400 + 删行 + `auth_events`（`mcp_consent_csrf_mismatch`）。
 
 ### 4.2 与 Phase 1.0 的差异（修正点）
 

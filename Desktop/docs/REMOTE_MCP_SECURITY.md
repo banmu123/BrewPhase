@@ -793,7 +793,7 @@ MCP token 打 `/auth/me` 同样被拒。**这是 B6 的关闭方式。**
 **写工具开放前必须重评**：只读工具重放只造成重复读；一旦开放写工具，必须引入
 发送者约束（DPoP，RFC 9449）或 per-request nonce。见 `OQ-16`。
 
-> **refresh 的归属已定稿（OQ-3 关闭，Phase 1.3.0）**：采用**独立 `mcp_sessions` 表**，
+> **refresh 的归属已定稿（OQ-3 关闭，Phase 1.3.0；R1 细化为两层）**：采用**独立 `mcp_sessions`（身份）+ `mcp_refresh_tokens`（每代凭据）**，
 > **不改** `auth_sessions`（现有表没有、也不该有 `session_kind`）。
 >
 > 决定性理由有三条，均来自真实代码而非偏好：
@@ -809,6 +809,50 @@ MCP token 打 `/auth/me` 同样被拒。**这是 B6 的关闭方式。**
 > 完整状态机、轮换流程与「登出/撤销/过期」行为矩阵见
 > **`REMOTE_MCP_PHASE_1_3_DESIGN.md` §9**。该矩阵是 OQ-3 的验收本体：
 > 任何一行出现跨域联动（MCP 登出影响 Desktop、Desktop 登出撤 MCP）即违反决策。
+
+#### 3.2.1 两层模型（Phase 1.3.0-R1 修订）
+
+1.3.0 的版本把「会话身份」与「refresh 凭据」放在一张表里，导致两个安全缺陷：
+
+| 缺陷 | 机制 | 修法 |
+|---|---|---|
+| **90 天绝对期限可被无限续命** | 每次 refresh 新建一条 `mcp_sessions` 行，新行 `created_at = now`，于是 `min(now+30d, created_at+90d)` 永远到不了 90 天 | Session 行**只在授权时建一次**；`absolute_expires_at` 是不可变列，**没有任何 UPDATE 路径** |
+| **正常刷新打挂未过期的 Access Token** | `sid` 随新行变化，旧 token 的 `sid` 查不到 | `sid` 稳定；轮换只写 `mcp_refresh_tokens` |
+
+```
+mcp_sessions        ← 身份（sid / issued_scope / absolute_expires_at 不可变）
+    └─ 1:N ─▶ mcp_refresh_tokens   ← 每代凭据（hash / generation / consumed_at）
+```
+
+**Access Token 的失效规则因此变成两条**（设计 §9.6）：
+
+| 事件 | 旧 Access Token |
+|---|---|
+| 正常 refresh | **仍有效**，直到自身 `exp`（≤15 分钟） |
+| Session 撤销（登出 / grant 撤销 / 重放） | **立即失效**（`sid` 查不到） |
+
+这两条必须能同时成立——它们是「正常轮换」与「授权被收回」的区别。
+任何把 `sid` 设计成每轮变化的实现，都会把前者误表现为后者。
+
+#### 3.2.2 浏览器授权会话的边界（Phase 1.3.0-R1）
+
+MCP 授权需要在浏览器里完成登录与同意，因此引入一个**短时签名 Cookie**
+`bp_mcp_bs`。它是本项目**第一个也是唯一一个** Cookie，因此边界必须写死：
+
+| 约束 | 值 | 违反的后果 |
+|---|---|---|
+| 用途 | 仅「把浏览器绑定到某次授权请求」 | 一旦被当成登录态，就变成了平行账号系统 |
+| 寿命 | 30 分钟，**不滑动** | 滑动续期等于长期登录 |
+| 路径 | `Path=/mcp` | 不带 Path 会被送到 `/auth/*` |
+| 内容 | `{sid, iat, exp}` | 放 `user_id` 会让 Cookie 变成身份凭据 |
+| 服务端存储 | **无**（stateless） | 建表等于引入第二套会话体系 |
+| 是否参与 `/mcp` 认证 | **否**（只用 `Authorization: Bearer`） | 混用会让「浏览器登录」等价于「API 授权」 |
+| 密钥 | `MCP_BROWSER_SESSION_KEY`，**独立于 `JWT_SIGNING_KEY`** | 共用密钥会让一处泄露波及两处 |
+| 用户身份来源 | 只来自 `mcp_auth_requests.user_id`（由 Provider 回调写入） | 从 Cookie 读身份 = 可伪造 |
+
+**为什么可以 stateless**：它唯一的断言是「这个浏览器发起了这个 `rid`」。
+授权请求行 10 分钟过期、Cookie 30 分钟过期，且真正的一次性凭据（`code`）
+是另一套机制。没有需要撤销的长期状态，就不需要一张表。
 
 ### 3.3 `device_token`
 

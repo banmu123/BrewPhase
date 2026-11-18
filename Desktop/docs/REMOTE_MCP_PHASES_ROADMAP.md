@@ -439,7 +439,7 @@ cloud/tests/{mcp-devices,link}/*.test.ts
 ```
 
 > **`auth_sessions.session_kind` 不会加**（OQ-3 已于 1.3.0 定稿）：MCP 的
-> refresh 走独立 `mcp_sessions` 表，`auth_sessions` 保持零改动。详见
+> refresh 走独立两层（`mcp_sessions` 身份 + `mcp_refresh_tokens` 每代凭据），`auth_sessions` 保持零改动。详见
 > `REMOTE_MCP_PHASE_1_3_DESIGN.md` §9。
 
 ### 2.3 测试要求
@@ -547,21 +547,27 @@ cloud/tests/{mcp-devices,link}/*.test.ts
 |---|---|---|
 | C1 | `POST /mcp`：`createMcpHandler(...).fetch`（SDK 已内部封装 transport，**不再手接** `WebStandardStreamableHTTPServerTransport`） | 1.3.2 |
 | C2 | 工具面：8 个只读工具，schema 与 Desktop `TOOL_DEFINITIONS` 一致（一致性测试） | 1.3.2 |
-| C3 | MCP OAuth AS：`/mcp/oauth/authorize`（含 consent 页）、`/mcp/oauth/token`（`authorization_code` + `refresh_token`）、`/mcp/oauth/register`（DCR，**默认关闭**）、`/mcp/oauth/revoke` | 1.3.1 |
+| C3 | MCP OAuth AS：`/mcp/oauth/authorize`、**`/mcp/oauth/login`**、**`/mcp/oauth/callback/:provider`**（MCP 专用，非复用 Desktop 的）、**`GET/POST /mcp/consent`**、`/mcp/oauth/token`（`authorization_code` + `refresh_token`）、`/mcp/oauth/register`（DCR，**默认关闭**）、`/mcp/oauth/revoke` | 1.3.1 |
 | C4 | 元数据：`/.well-known/oauth-protected-resource`（含 path-inserted 变体）、`/.well-known/oauth-authorization-server` | 1.3.1 |
 | C5 | 表：`mcp_oauth_clients`、`mcp_sessions`、`mcp_auth_codes`（**`mcp_grants` 已在 1.2 建**，本阶段只写入 grant，不重建） | 1.3.1 |
 | C6 | Scope 校验：Cloud 侧**逐 grant**（每次 `/mcp` 回查 `mcp_grants`）+ Desktop 侧**逐请求**（按 `grant_ctx`） | 1.3.2 |
-| C7 | 401 / 403 challenge：`WWW-Authenticate: Bearer resource_metadata="…", scope="…"`（403 另带 `error="insufficient_scope"`） | 1.3.2 |
+| C7 | challenge：**401** = `Bearer resource_metadata="…"`（**不带 `scope`**）；**403** = `Bearer error="insufficient_scope", scope="<缺的那一个>", resource_metadata="…"` | 1.3.2 |
 | C8 | 日志纪律：只 tool/status/duration/error_code/delivery_id/**`jti` 前 8 位**/`grant_id`（安全 §3.2.1、协议 §13.3） | 1.3.2 |
 | C9 | **MCP 专用 JWT**：`signMcpAccessToken` / `verifyMcpAccessToken`，`aud = MCP_RESOURCE`（= `<baseUrl>/mcp`，≠ `brewphase-desktop`）；**不改**现有 `signAccessToken` | 1.3.1 |
-| C10 | **会话归属**：**独立 `mcp_sessions` 表**（OQ-3 已定，见设计 §9）；**不改** `auth_sessions` | 1.3.1 |
+| C10 | **会话归属**：**独立 `mcp_sessions`（身份）+ `mcp_refresh_tokens`（每代凭据）两层**（OQ-3 已定，见设计 §9）；`sid` 跨刷新不变；`absolute_expires_at` 不可变；**不改** `auth_sessions` | 1.3.1 |
 | C11 | **真实客户端验收**（见 §3.4 门禁表）——只有 1.3.3 能做 | 1.3.3 |
+| C12 | **浏览器授权会话**：签名 Cookie `bp_mcp_bs`（`HttpOnly` / `Secure` / `SameSite=Lax` / `Path=/mcp` / 30 min / 不滑动）、TOFU 绑定、CSRF | 1.3.1 |
+| C13 | **最小权限 scope**：401 省略 `scope`；`tools/list` 不需业务 scope；`tools/call` 缺 scope 才 403 且只报缺的那个；consent 页可逐项取消；step-up 扩权 | 1.3.1（consent 收窄）+ 1.3.2（403/step-up） |
 
 ### 3.2 关键差异（与现有登录 OAuth）
 
 | 项 | 现有 `/oauth/*` | 新增 MCP AS |
 |---|---|---|
-| 路径组 | `/oauth/*` | **`/mcp/oauth/*`**（元数据仍在根 `/.well-known/*`，RFC 要求） |
+| 路径组 | `/oauth/*` | **`/mcp/oauth/*`**（元数据仍在根 `/.well-known/*`，RFC 要求）；consent 在 `/mcp/consent` |
+| 浏览器会话 | **无**（Desktop 是应用内开系统浏览器 + 本机回环回调） | **签名 Cookie `bp_mcp_bs`**（仅 `/mcp` 路径，30 min） |
+| 授权请求表 | `oauth_transactions` | **`mcp_auth_requests`**（新建，两者不共用） |
+| 授权码表 | `oauth_codes` | **`mcp_auth_codes`**（新建，含 `grant_id` / `scope` / `resource`） |
+| 会话表 | `auth_sessions` | **`mcp_sessions` + `mcp_refresh_tokens`** |
 | `redirect_uri` | **只允许** `http://127.0.0.1:<port>/callback`（正则硬编码） | 注册表**精确匹配**（可 https，可 localhost），**不用通配** |
 | `grant_type` | 无此字段（`tokenRequestSchema` 只有 code/verifier/redirect_uri） | 必须支持 `authorization_code` + `refresh_token` |
 | scope | 无（JWT 无 scope claim） | 必须携带、必须校验、必须在同意页逐项展示 |
@@ -573,6 +579,13 @@ cloud/tests/{mcp-devices,link}/*.test.ts
 **必须新建路由组，不得改动现有 `/oauth/authorize` 的白名单**——那条白名单是
 Desktop 登录的安全边界，放宽它等于允许任意站点做 redirect 劫持。
 
+**同样不得复用 Desktop 的登录链路。** Phase 1.3.0-R1 核对真实代码后确认
+（设计 §1.5）：Cloud **没有任何 Cookie**、`/auth/*` **全是 Bearer**、
+`handleProviderCallback()` 会签发 `oauth_codes` 并重定向到 **127.0.0.1**。
+因此 MCP 必须有自己的浏览器授权流程：`mcp_auth_requests` + MCP 专用
+Provider 回调 + `/mcp/consent`。可复用的只有 Provider 适配器
+（参数化的 `cloudRedirectUri`）与 `findOrCreateUserWithIdentity()`。
+
 **协议版本策略**（1.3.0 新增，实现必须遵守）：`POST /mcp` 同时服务
 modern（2026-07-28）与 legacy（2025-06-18/25），用
 `createMcpHandler(..., { legacy: 'stateless' })`；**不发** `Mcp-Session-Id`；
@@ -581,7 +594,15 @@ modern（2026-07-28）与 legacy（2025-06-18/25），用
 ### 3.3 测试要求
 
 - 授权码：PKCE S256、一次性、60s、`redirect_uri` 严格匹配 ≥ 14 条
+- **浏览器授权会话**（Cookie 签名 / `Path` / `HttpOnly` / `SameSite` / TTL / 篡改）≥ 10 条
+- **Consent 闭环**（未登录→登录→同意；拒绝；全不选；过期；绑定不匹配；CSRF）≥ 14 条
+- **首次用户**：库中无此用户 → 走完 12 步后 `users` +1、`mcp_grants` +1 ≥ 3 条
+- **90 天绝对期限**（设计 §9.9 A1–A8）≥ 8 条：跨 4 个 30 天窗口不续命
+- **刷新后旧 Access Token 仍有效 / `sid` 不变** ≥ 6 条
 - scope：请求多于授予 → 拒；token 的 `scope` 与 grant 一致 ≥ 8 条
+- **最小权限**：仅 `records:read` 调 `list_beans` → 403 + `scope="coffee:read"`；
+  `tools/list` 返回按 grant 过滤的子集（**不是** 403）≥ 6 条
+- **Step-up**：403 → 重新 authorize → 新 token → 重试成功 ≥ 6 条
 - **`aud` 隔离**（双向）：Desktop 登录 token 打 `/mcp` → 401；MCP token 打
   `/auth/me` → 401 ≥ 6 条
 - 刷新：轮换 / 重放撤族 / 宽限窗口 / **绝对上限（90 天，锚 `created_at`）** ≥ 10 条
@@ -602,20 +623,28 @@ modern（2026-07-28）与 legacy（2025-06-18/25），用
   但不含 token 原文、工具参数、结果 ≥ 3 条
 - 工具一致性：Cloud 的 8 个 schema 与 Desktop 深度相等（fixture 对比）
 - 日志：用含哨兵字符串的参数跑一次，grep 日志与 DB，0 命中
-- **回归**：Cloud 557 条全绿（只增不减）+ Desktop 1265 条全绿；现有 9 条身份路由响应不变
+- **回归**：Cloud 557 条全绿（只增不减）+ Desktop 1265 条全绿；现有 9 条身份路由响应不变；
+  `auth_sessions` 的 `information_schema` 逐列相同；`grep` 证明没有任何
+  `UPDATE mcp_sessions SET absolute_expires_at`
 
 ### 3.4 验收标准
 
 1. **双时代连通**：用现代请求完成 `server/discover` → `tools/list`（8 个）→
    `tools/call search_records`；用 legacy 请求完成 `initialize` → 同上。
 2. 撤销 grant 后同一 token 立即 403（不是等 15 分钟）。
-3. 授权页正确列出 4 个 scope 与对应数据范围的可读描述。
+3. 授权页正确列出 4 个 scope 与对应数据范围的可读描述，**且允许逐项取消**
+   （只有 `records:read` 也能完成授权；随后调 `list_beans` 得到 403 而非空结果）。
+3b. **一个从未访问过 BrewPhase 的新用户**能走完全程：授权入口 → 登录页 →
+   Google/GitHub → 回到 `/mcp/consent` → 看到 4 项权限与回调域名 → 批准 →
+   `redirect_uri?code=…&state=…&iss=…`。全程无「请先在网页端登录」这类前置。
 4. 现有 Desktop 登录流程**完全不受影响**：`/oauth/authorize` 传非 127.0.0.1
    的 `redirect_uri` 仍返回 400；登录 token 仍只能用于 `/auth/*`；
    `auth_sessions` 的 `information_schema` 逐列不变。
 5. **同 token 多次调用不被误杀（P0-2）**：一个 15 分钟 TTL 的 access token 在其生命周期内
    连续完成 10 次 `tools/call` 全部成功（ST-25）；日志里只有 `jti` 前 8 位，无完整 token、
    无工具参数、无结果。**「按 `jti` 去重」的实现直接判不通过**。
+5b. **会话寿命**：连续刷新 5 次后 `sid` 不变、旧 Access Token 仍可用；
+   注入时钟跨过 90 天后刷新返回 `invalid_grant`（会话不可续命）。
 6. **撤销的授权闭环（P0-1，Cloud 侧）**：撤销 grant 后 Cloud 在该 WSS 上发
    `grant_update`（`epoch+1`）→ Desktop 回 `grant_update_ack` → 之后同 token 的新调用 403；
    若 ack 超时，按 fail-closed 处理：Cloud **暂停向该设备路由全部 grant**（不只被撤销的
