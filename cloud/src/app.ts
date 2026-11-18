@@ -1,10 +1,10 @@
 import { Hono } from "hono";
-import { and, eq, lt } from "drizzle-orm";
+import { and, eq, lt, or } from "drizzle-orm";
 import type { AppContext, AppHono } from "./context.js";
 import { createKeyRing, type AccessClaims } from "./sessions/jwt.js";
 import { createLogger } from "./logger.js";
 import { createDb } from "./db/client.js";
-import { mcpDevices, oauthCodes, oauthTransactions } from "./db/schema.js";
+import { mcpAuthRequests, mcpDevices, oauthCodes, oauthTransactions } from "./db/schema.js";
 import { loadEnv } from "./env.js";
 import { resolveProviderFetch } from "./net/proxy-fetch.js";
 import { createProviders } from "./oauth/providers.js";
@@ -13,6 +13,8 @@ import { routeAuth } from "./routes/auth.js";
 import { routeHealth } from "./routes/health.js";
 import { routeOauth } from "./routes/oauth.js";
 import { routeMcpDevices } from "./mcp-devices/index.js";
+import { routeMcpOAuth } from "./routes/mcp-oauth.js";
+import { resolveMcpOAuthEnablement } from "./mcp-oauth/enablement.js";
 
 /** 从进程环境装配完整应用上下文（生产入口用；测试自己构造 AppContext）。 */
 export function createContextFromProcessEnv(): AppContext {
@@ -92,6 +94,25 @@ export function createApp(ctx: AppContext): AppHono {
   // 设备面的路由与账号面的路由有各自的限流桶与错误码域。
   routeMcpDevices(app, ctx);
 
+  /**
+   * MCP 浏览器授权（Phase 1.3.1-C2a）。
+   *
+   * **能力边界，而不是启动边界**：密钥不合格时这组路由根本不注册（404），
+   * 而不是「注册了但每个请求 500」，更不是「用临时密钥凑合用」。
+   *
+   * 为什么不在 `loadEnv` 里强制要求密钥：Cloud 同时服务 Desktop 登录，
+   * 把 MCP 的密钥设成进程必填，会让「只跑 `/oauth/*` 的部署」因为一个尚未
+   * 启用的能力起不来——那是把新功能的门禁变成旧功能的故障。
+   *
+   * 日志只记**原因枚举**，绝不打印密钥或它的任何片段。
+   */
+  const mcpOAuth = resolveMcpOAuthEnablement(ctx.env);
+  if (mcpOAuth.enabled) {
+    routeMcpOAuth(app, ctx);
+  } else {
+    ctx.logger.warn("mcp_oauth_disabled", { reason: mcpOAuth.reason });
+  }
+
   return app;
 }
 
@@ -132,11 +153,36 @@ export function startSweep(ctx: AppContext, intervalMs = 60_000): SweepHandle {
       .delete(mcpDevices)
       .where(and(eq(mcpDevices.status, "pending"), lt(mcpDevices.expiresAt, now)))
       .returning({ id: mcpDevices.id });
-    if (transactions.length > 0 || codes.length > 0 || devices.length > 0) {
+    /**
+     * 过期/已消费的 MCP 授权请求。
+     *
+     * `mcp_auth_requests` 是浏览器授权流程的短期状态（10 分钟），一次成功的
+     * 流程会在 C2b 的同意页里删掉它。没走完的（用户关掉页面、Provider 拒绝后
+     * 没回跳）必须有人清——否则这张表会随每次「点了授权又放弃」无限增长。
+     *
+     * 已消费的也清：`provider_consumed_at` 非空意味着这次回调已经用掉，
+     * 行要么在同意页被删，要么就是残骸。
+     */
+    const authRequests = await ctx.db.db
+      .delete(mcpAuthRequests)
+      .where(
+        or(
+          lt(mcpAuthRequests.expiresAt, now),
+          lt(mcpAuthRequests.providerConsumedAt, new Date(now.getTime() - 60 * 60 * 1000)),
+        ),
+      )
+      .returning({ id: mcpAuthRequests.id });
+    if (
+      transactions.length > 0 ||
+      codes.length > 0 ||
+      devices.length > 0 ||
+      authRequests.length > 0
+    ) {
       ctx.logger.info("sweep_completed", {
         expiredTransactions: transactions.length,
         expiredCodes: codes.length,
         expiredDevices: devices.length,
+        expiredMcpAuthRequests: authRequests.length,
       });
     }
   };

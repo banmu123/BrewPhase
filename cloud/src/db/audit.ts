@@ -29,7 +29,18 @@ export type AuthEventType =
   | "mcp_refresh_success"
   | "mcp_refresh_grace_reuse"
   | "mcp_refresh_reuse_detected"
-  | "mcp_session_revoked";
+  | "mcp_session_revoked"
+  // ---- MCP 浏览器授权（Phase 1.3.1-C2a）----
+  //
+  // 这几个事件只记 `rid` / `client_id` / `provider` 与非敏感计数。
+  // **绝不**记 Provider State、Nonce、授权码或任何明文凭据：那张表会被
+  // 长期保留，而这些东西的有效期只有几分钟——写进去只会变成长期泄露面。
+  | "mcp_authorize_started"
+  | "mcp_login_provider_started"
+  | "mcp_browser_binding_mismatch"
+  | "mcp_provider_callback_succeeded"
+  | "mcp_provider_callback_failed"
+  | "mcp_provider_denied";
 
 export interface AuthEventInput {
   eventType: AuthEventType;

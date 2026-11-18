@@ -88,11 +88,27 @@ describe("撤销先拿到锁：创建必须被拒绝", () => {
     const held = new Promise<void>((resolve) => {
       releaseRevoke = resolve;
     });
+    /**
+     * 「grant 行锁已经拿到」的显式信号。
+     *
+     * 只等 `revokePid !== 0` 是**不够的**：pid 在事务刚开、`FOR UPDATE` 还没
+     * 执行时就已经有值了。那时若立刻启动 createMcpSession，它可能先拿到锁，
+     * 于是这条用例测的交错与名字里的相反——而且能通过，属于假绿。
+     *
+     * 这个 Deferred 在 `select ... for update` **返回之后**才 resolve，
+     * 因此 await 它就等于「撤销方确实握着那把锁」。
+     */
+    let signalGrantLocked!: () => void;
+    const grantLocked = new Promise<void>((resolve) => {
+      signalGrantLocked = resolve;
+    });
 
     let revokePid = 0;
     const revoking = handle.db.transaction(async (tx) => {
       revokePid = await backendPid(tx as unknown as Database);
       await tx.execute(drizzleSql`select 1 from mcp_grants where id = ${f.grantId} for update`);
+      // ← 到这一行，锁已经在撤销方手里了。
+      signalGrantLocked();
       await tx
         .update(mcpGrants)
         .set({ revokedAt: f.clock.current() })
@@ -103,9 +119,9 @@ describe("撤销先拿到锁：创建必须被拒绝", () => {
       await held;
     });
 
-    // 等撤销事务真正拿到锁（select 1 ... for update 已执行）。
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await waitFor(() => revokePid !== 0, "revoke transaction started");
+    // 等的是**锁**，不是 pid。
+    await grantLocked;
+    expect(revokePid).toBeGreaterThan(0);
 
     const creating = createMcpSession(f.deps, {
       userId: f.userId,
