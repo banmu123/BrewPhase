@@ -121,6 +121,7 @@ hi = min(c_max, s_max)
 | `res` | Desktop → Cloud | 返回结果或错误 |
 | `grant_update` | Cloud → Desktop | 授权上下文安装/撤销（**策略帧**，非业务数据） |
 | `grant_update_ack` | Desktop → Cloud | 上下文变更确认（附 `grant_epoch`） |
+| `status` | Desktop → Cloud | **服务能力提示**（`serviceable` + `reason`；见 §4.4.1） |
 | `cancel` | Cloud → Desktop | 取消在途请求 |
 | `drain` | Cloud → Desktop | 即将断开（重启/撤销前），拒绝新请求 |
 | `bye` | 双向 | 优雅关闭（附原因） |
@@ -128,7 +129,11 @@ hi = min(c_max, s_max)
 **单向约束**：Cloud 从不向 Desktop 推送「请求驱动」的**业务帧**；唯一例外是
 **策略帧** `grant_update`——它只改变授权上下文，不携带任何用户数据。
 Desktop 不主动发起 tool 调用。Desktop 主动的帧只有
-`hello` / `pong` / `res` / `grant_update_ack` / `bye`。
+`hello` / `pong` / `res` / `grant_update_ack` / `status` / `bye`。
+
+**`status` 是提示帧，不是授权帧**：Cloud 可据此暂停派发，但不得据此跳过
+自己的 grant/scope 校验；Desktop 也不得因为上报过 `serviceable:true`
+就跳过逐请求的本地校验（§4.4.1）。
 
 ### 2.1 `ts` 的语义：Unix epoch，不是 monotonic
 
@@ -490,6 +495,51 @@ effective_tools(grant)  = REMOTE_TOOLS ∩ hello_ok.allowed_tools
 出来的），所以 "Cloud 给了更多" 或 "Local 新增了工具" 都不会扩张远程面。
 `grants` 为空数组 → 仍然保持连接（让 Cloud 能下发新授权），但对任何 `req` 返回
 `GRANT_CONTEXT_INVALID`。
+
+#### 4.4.1 `serviceable` 的方向（Phase 1.1B 新增，**方向不可反**）
+
+「连上了」不等于「能干活的」。参考实现曾为此付出代价：服务端按 `status=online`
+派发，而设备本地执行器已死，导致整批调用被拒且没有一次成功。
+
+因此本协议把三个概念分开，且**方向严格单向**：
+
+| 概念 | 谁判定 | 含义 |
+|---|---|---|
+| `connected` | 双方各自 | WSS 已建立并通过握手 |
+| `authorized` | Desktop | `bound_user_id` 匹配、`grant_ctx` 有效、`epoch` 当前 |
+| **`serviceable`** | **Desktop 独占** | 本地具备执行条件：开关 on、用户匹配、业务库就绪、五个 Service 已装配、未处于停止/blocked |
+
+**`serviceable` 只能由 Desktop 上报，不能由 Cloud 设置。**
+方向是 Desktop → Cloud，载体是 **`hello` 帧的 `serviceable` 字段**：
+
+```jsonc
+// hello（Desktop → Cloud，§4.2）
+{
+  "v": 1, "type": "hello",
+  "device_id": "0b7c…",
+  "nonce": "…", "ts": 1763400000000,
+  "sig": "…",
+  "serviceable": true,        // ← 本连接建立时 Desktop 的自检结果
+  "client_version": "0.1.4"
+}
+```
+
+后续变更用 **`status` 帧**（Desktop → Cloud，已有帧型，不是新帧）：
+
+```jsonc
+{ "v": 1, "type": "status", "ts": 1763400100000, "serviceable": false, "reason": "remote_disabled" }
+```
+
+- `reason` ∈ `remote_disabled` / `user_mismatch` / `db_unavailable` / `services_unavailable` / `shutting_down`。
+- 语义是**提示**：Cloud 可以据此停止派发（推荐），但**不得**据此跳过自己的
+  grant/scope 校验；Desktop 也**不得**因为上报过 `true` 就跳过逐请求本地校验。
+- `hello_ok`（Cloud → Desktop）**没有** `serviceable` 字段——它是 Cloud 的帧，
+  不能承载 Desktop 的自报状态。这是「方向不可反」的具体含义。
+- `hello` 未知键一律 `PROTOCOL_VIOLATION`（闭合键集，§2.1）。
+
+**为什么不动态上报工具清单**：`REMOTE_TOOLS` 必须是 Desktop 写死的 8 个常量。
+一旦允许 Cloud 通过 `allowed_tools` 或任何动态字段扩张工具面，
+「Cloud 被攻破最多只能多读一点」的损害上限就不成立了（安全 §2.7.7）。
 
 ### 4.5 `connection_id` 的位置（Phase 1.0.1 明确）
 

@@ -168,64 +168,103 @@ Remote WSS ──frame──> remote request handler              │
                               Repository → SQLite
 ```
 
-#### 6.5.3 代码边界（最小改动，Phase 1.1A / 1.1B 执行）
+#### 6.5.3 代码边界（**Phase 1.1A 已实现，以实现为准**）
 
 | 动作 | 文件 | 说明 |
 |---|---|---|
 | **新增** | `src/main/application/mcp-tools/tool-services.ts` | `ToolServices = { records, coffee, canvas, workContexts, personalDirection }`——**无 `db`、无 `clients`** |
-| **新增** | `src/main/application/mcp-tools/handlers.ts` | 27 个 handler 从 `request-router.ts` **原样搬移**（每行仍是 `ctx.services.x.y(...)`，零逻辑改动） |
-| **新增** | `src/main/application/mcp-tools/tool-executor.ts` | `executeTool()`，含 `TOOL_EXECUTION_ERROR_CODES` 映射 |
-| **改（既有业务代码中唯一需要动的）** | `src/main/mcp-bridge/request-router.ts` | `HANDLERS` 与 `createShape`/`replayIdempotent` 移出；`routeBridgeRequest` 内部改调 `executeTool`；其余（协议版本、method、白名单、authenticate、幂等、scope 错误码）**逐字保留** |
-| **不动** | `src/mcp/**`、`src/main/mcp-bridge/bridge-server.ts`、`src/main/mcp-bridge/bridge-client.ts`、`src/main/sync/**` | 零改动 |
+| **新增** | `src/main/application/mcp-tools/handlers.ts` | `TOOL_HANDLERS`（27 个）从 `request-router.ts` **原样搬移**，另含 `createShape` |
+| **新增** | `src/main/application/mcp-tools/tool-executor.ts` | `executeTool()` + `errorCodeOf` / `messageOf` |
+| **改** | `src/main/mcp-bridge/request-router.ts` | `HANDLERS` / `createShape` / 错误映射移出（558 → 213 行）；改调 `executeTool`；**认证、协议、幂等表、审计、`sync_status` 逐字保留** |
+| **不动** | `src/mcp/**`、`bridge-server.ts`、`bridge-contract.ts`、`src/main/sync/**`、`tool-schemas.ts` | 零改动 |
 
-`RouterContext` 保留为 `ToolServices & { db, clients }`，供 `routeBridgeRequest`
-的幂等重放（`replayIdempotent` 需要 `ctx.db`）继续使用；`executeTool` 只接收
-`ToolServices`，因此 Remote 根本拿不到 `clients`。
+`RouterContext` 定义为 `ToolServices & { db, clients }`——结构类型让
+`routeBridgeRequest` 可以把 `ctx` 直接传给 `executeTool`，不必构造新对象。
 
-> 结构类型的好处：`RouterContext` 天然满足 `ToolServices`，所以
-> `routeBridgeRequest` 可以把 `ctx` 直接传给 `executeTool`，**不需要构造新对象**，
-> 抽取的 diff 因而非常小。
+> **实现与早期设计的三处偏差（1.1A 定稿，不再是「待定」）**：
+>
+> 1. **`replayIdempotent` 留在 `request-router.ts`，没有搬进共享层**。
+>    它需要 `ctx.db` 直接查 `record_tags`（Service 没有 `getTagForMcp`）。
+>    搬走就必须把 `db` 塞进 `ToolServices`，直接破坏「共享层不认识数据库」。
+>    代价是：幂等重放的**形状构造函数** `createShape` 必须共享，因此它留在
+>    `handlers.ts` 并被 router 复用——两边形状不可能漂移。
+> 2. **没有 `Channel` 类型，也没有 `channel` 参数**。执行层不需要知道调用方是谁；
+>    「按 channel 分化」的是审计与去重策略，都在调用方。
+> 3. **没有 `audit` 回参**。执行层改为返回 `stage` + `definition` + 解析后 `params`，
+>    由调用方按自己的策略记账。理由：`audit` 回调会逼共享层 import
+>    `mcp-bridge/audit-log`（结构测试禁止），且「哪几个阶段要记」本身是
+>    Local 与 Remote 各不相同的**策略**，不是执行层的职责。
 
-#### 6.5.4 契约
+#### 6.5.4 契约（**Phase 1.1A 实际签名**）
 
 ```ts
-// tool-executor.ts（设计示意，非最终签名）
-export type Channel = 'local' | 'remote'
+// tool-executor.ts —— 这是实现，不是示意
+export type ExecuteToolStage = 'tool' | 'scope' | 'params' | 'replay' | 'handler'
 
-export type ExecuteContext = {
+export type ExecuteToolOptions = {
   services: ToolServices
   /** 调用方已核实的授权集合。Local：mcp_clients.scopes；
-   *  Remote：grant_ctx.scopes ∩ 本地（逐 grant，不是连接级；见安全 §2.7） */
+   *  Remote：该 grant 的 effectiveScopes（逐 grant，不是连接级；安全 §2.7） */
   scopes: readonly McpScope[]
-  channel: Channel
-  /** 注入式审计：Local 只在写工具时调用；Remote 每次调用都记 */
-  audit: (entry: AuditEntry) => void
+  /** 可选短路钩子，插在「Zod 通过」与「Handler 执行」之间（Local 幂等表用） */
+  replay?: (call: {
+    toolName: ToolName
+    definition: ToolDefinition
+    params: Record<string, unknown>
+  }) => HandlerResult | undefined
 }
 
-export type ExecuteResult =
-  | { ok: true; data: unknown; entityType?: string; entityId?: string }
-  | { ok: false; code: string; message: string }
+export type ExecuteToolSuccess = {
+  ok: true
+  toolName: ToolName
+  definition: ToolDefinition
+  params: Record<string, unknown>   // Zod 解析后；记账必须用它
+  data: unknown
+  entityType?: string
+  entityId?: string
+  replayed: boolean                 // true = replay 钩子短路，Handler 未执行
+}
+
+export type ExecuteToolFailure = {
+  ok: false
+  toolName: ToolName | null
+  definition: ToolDefinition | null
+  params: Record<string, unknown> | null   // 仅 Zod 通过后非 null
+  stage: ExecuteToolStage
+  code: McpErrorCode                // **Local 码**
+  message: string
+}
 
 export function executeTool(
   tool: string,
   rawParams: unknown,
-  ctx: ExecuteContext
-): ExecuteResult
+  options: ExecuteToolOptions
+): ExecuteToolResult
 ```
 
 执行顺序（**固定，不可重排**）：
 
 ```
-1. tool ∈ TOOL_DEFINITIONS            → 否则 INVALID_TOOL（Remote 映射为 TOOL_NOT_ALLOWED）
-2. definition.scope ∈ ctx.scopes      → 否则 SCOPE_DENIED
-3. definition.input.safeParse(params) → 否则 INVALID_ARGUMENTS（Local 映射为 VALIDATION_ERROR）
-4. HANDLERS[tool](ctx.services, data) → 业务
-5. 失败：ApplicationError.code 走白名单透传；其余 INTERNAL_ERROR + 通用文案
-6. ctx.audit({ tool, entityType, entityId, success, errorCode })
+1. tool ∈ TOOL_DEFINITIONS            → 否则 VALIDATION_ERROR（stage='tool'）
+2. definition.scope ∈ options.scopes  → 否则 PERMISSION_DENIED（stage='scope'）
+3. definition.input.safeParse(params) → 否则 VALIDATION_ERROR（stage='params'）
+4. options.replay(...)                → 命中则短路（stage 不进，replayed=true）
+5. TOOL_HANDLERS[tool](services,data) → 业务
+6. 失败：ApplicationError.code 透传；其余 INTERNAL_ERROR + 通用文案
 ```
 
-**scope 检查放在执行层内部**是刻意的：这样「绕过 scope」在结构上不可能，
+**返回 `Local` 的 `McpErrorCode` 是刻意的**：`VALIDATION_ERROR` / `PERMISSION_DENIED`
+是 Local 的既有契约，反向映射会逼 Local 的每个错误码经过一次转译，
+而「Local 行为零变化」是 1.1A 的硬约束。**Remote 入口自己维护映射表**（见 §6.8.1），
+不许把 Local 码透传出去。
+
+**为什么 `replay` 必须是钩子而不是内部实现**：幂等表要读 `db`，且必须插在
+「Zod 已通过（摘要基于解析后参数）」与「Handler 未执行」之间——放在 Zod 之前会让
+每次重放都退化成冲突。共享层不认识幂等表，只提供这个时机。
+
+**`scope` 检查放在执行层内部**是刻意的：这样「绕过 scope」在结构上不可能，
 而不是靠「两处都记得写」。两个入口各自只负责算出自己的 `scopes`。
+Remote 侧**额外**在准入链里提前判一次（缓存之前），两次都保留——见 §6.8.1。
 
 #### 6.5.5 去重键的架构位置（Phase 1.0.2 明确）
 
@@ -250,7 +289,7 @@ Local:  协议校验 → authenticate → scope → 幂等表 → executeTool
 **共同点**：两者都**不按 tool + arguments 合并**。这是 Phase 1.0 的核心错误，
 Phase 1.0.1 移除后 **Phase 1.0.2 不得以任何形式恢复**。
 
-#### 6.5.6 审计策略按 channel 分化（Phase 1.0.1 的实质修正）
+#### 6.5.6 审计策略按 channel 分化（Phase 1.1B 落定边界）
 
 | | Local | Remote |
 |---|---|---|
@@ -259,9 +298,25 @@ Phase 1.0.1 移除后 **Phase 1.0.2 不得以任何形式恢复**。
 | 失败（含权限/参数） | 写工具时记（现状不变） | 必记 |
 | `client_id` | `mcp_clients.id` | `remote:<mcp_devices.id>` |
 
-所以「共享执行层」不等于「共享审计策略」——策略由 `ctx.audit` 的实现方决定，
-`executeTool` 只负责在正确时机调用它。这既满足「Local 行为不变」，
-也满足「Remote 必须可审计」。
+**责任边界（Phase 1.1B 明确）**：共享执行层**不写审计**，也不接受 `audit` 回调。
+它只返回「失败发生在哪个阶段（`stage`）+ 解析后参数（`params`）+ `definition.write`」，
+由各入口自己映射成审计决策：
+
+| `stage` | Local（router） | Remote（request-handler） |
+|---|---|---|
+| `tool`（未知工具） | 协议层已先拦一次，不会到这 | 记 1 行，`error_code=TOOL_NOT_ALLOWED` |
+| `scope` | 写工具才记 | **必记**（`SCOPE_DENIED`） |
+| `params` | 写工具才记 | **必记**（`INVALID_ARGUMENTS`） |
+| `replay`（幂等冲突/失效） | 冲突记 1 行；失效不记 | 不适用（Remote 无 replay 钩子） |
+| `handler` | 写工具才记 | **必记**（业务码或 `INTERNAL_ERROR`） |
+| 成功 | 写工具才记 | **必记**（只读也记） |
+
+**同一个失败只能有一行**。Remote 的规则是「一次 `req` 至多写一行审计」——
+由 `request-handler` 在准入链的**单一出口**统一记账，不在每个分支各写一次。
+Local 沿用原逻辑（可能写 0 行或 1 行），不受影响。
+
+`executeTool` 只负责在正确时机执行、并如实汇报 `stage`；这既满足
+「Local 行为不变」，也满足「Remote 必须可审计」。
 
 #### 6.5.7 审计结果不进 `ExecuteResult`（Phase 1.0.2 明确）
 
@@ -405,9 +460,34 @@ Gateway 只做「认证 → 授权 → 路由 → 转发 → 回传」。
 `direction:*`、`get_coffee_summary`（聚合值在 8 个工具之上可由 AI 自己算，
 少一个工具就少一条信息泄露路径）。
 
+#### 6.8.1 Local → Remote 错误码映射（Phase 1.1B 定稿，唯一权威）
+
+共享执行层返回 **Local `McpErrorCode`**。Remote 入口**必须**过这张表，
+不允许把 Local 码透传到协议层：
+
+| 触发条件 | `executeTool` 返回（Local） | `stage` | Remote 对外 |
+|---|---|---|---|
+| 工具不在 `effectiveTools(grant)` | — | 准入链第 6 步 | `TOOL_NOT_ALLOWED` |
+| `executeTool` 报未知工具（理论不可达，双保险） | `VALIDATION_ERROR` | `tool` | `TOOL_NOT_ALLOWED` |
+| Scope 不足 | `PERMISSION_DENIED` | `scope` | `SCOPE_DENIED` |
+| Zod 参数错误 | `VALIDATION_ERROR` | `params` | `INVALID_ARGUMENTS` |
+| 实体不存在 | `NOT_FOUND` | `handler` | `NOT_FOUND` |
+| 乐观锁冲突 | `STALE_RECORD` | `handler` | `NOT_FOUND`（远程不暴露「有这条记录但你版本旧了」） |
+| 其余 `ApplicationError` | 其 `code` | `handler` | 见下「白名单」 |
+| 未知异常 | `INTERNAL_ERROR` | `handler` | `INTERNAL_ERROR` |
+
+**白名单**（其余 `ApplicationError.code` 一律折成 `INTERNAL_ERROR`，不向外泄漏内部语义）：
+`NOT_FOUND` / `VALIDATION_ERROR` / `INTERNAL_ERROR`。
+
+**为什么 `STALE_RECORD` 折成 `NOT_FOUND`**：远程 8 个工具全只读，不会产生 `STALE_RECORD`；
+若真出现，说明内部有 bug，向外报「不存在」比报「版本冲突」泄漏更少。
+**为什么 `PERMISSION_DENIED` 不能直接外传**：协议只认 19 个码，
+`PERMISSION_DENIED` 不在其中，且语义上 Remote 的正确码是 `SCOPE_DENIED`。
+
 **契约常量唯一权威**：`REMOTE_SCOPES`（4 个）、`REMOTE_TOOLS`（8 个）、
 `REMOTE_ERROR_CODES`（19 个）在本文 §6.8、安全 §2.4、协议 §9.1、阶段 §1B.3
 四处必须一致；错误码的**唯一权威表**是协议 §9.1。
+实现侧唯一来源：`src/shared/contracts/remote.ts`。
 
 ### 6.9 身份生命周期（详见安全 §2.6）
 

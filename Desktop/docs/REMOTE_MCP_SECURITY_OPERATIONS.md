@@ -282,8 +282,56 @@ client_id := "remote:" + mcp_devices.id      // 例：remote:0b7c9e2a-…
 > 三者的分离见 §6.5.5——把「审计写失败」写进 `success=false` 会让统计里出现
 > 一批「业务成功但被记成失败」的行，反而污染审计。
 
-#### 6.5.5 审计写入失败：三段状态必须分离（Phase 1.0.2 定稿）
+#### 6.5.4.1 Remote 审计的逐阶段口径（Phase 1.1B 定稿，唯一权威）
 
+`executeTool` 不写审计，只返回 `stage`。Remote 的 `request-handler` 在
+**准入链的单一出口**统一记账，保证「一次 `req` 至多一行审计」。
+
+| 场景 | 是否记 | `success` | `error_code` | 说明 |
+|---|---|---|---|---|
+| 准入失败：开关 off / blocked | **不记** | — | — | 请求根本没被受理；记了等于让关机也有噪声 |
+| 准入失败：帧过大 / JSON 坏 | **不记** | — | — | 同上 |
+| 准入失败：deadline 已过 | **不记** | — | — | 未进入业务层，且 `REQUEST_TIMEOUT` 由 Cloud 侧也会判 |
+| 准入失败：`grant_ctx` 无效 / epoch 过期 | **记** | `false` | `GRANT_CONTEXT_INVALID` | 授权异常必须留痕 |
+| 准入失败：`bound_user_id` 不匹配 | **记** | `false` | `USER_MISMATCH` | 安全事件 |
+| 准入失败：工具不在 `effectiveTools` | **记** | `false` | `TOOL_NOT_ALLOWED` | 越权尝试 |
+| 准入失败：scope 不足 | **记** | `false` | `SCOPE_DENIED` | 越权尝试 |
+| 准入失败：`request_hash` 不一致 | **记** | `false` | `PROTOCOL_VIOLATION` | 内容被替换 |
+| 缓存命中（回放） | **记** | `true` | — | 也是一次真实读取，`meta.cached=true` 不进审计列 |
+| `executeTool` 成功 | **记** | `true` | — | **只读也记** |
+| `executeTool` 业务失败 | **记** | `false` | 映射后的 Remote 码 | 见 §6.5.4.2 |
+| 取消（`cancel` 在业务开始前） | **不记** | — | — | 未发生读取 |
+| 取消（业务已开始，结果丢弃） | **记** | `true` | — | 数据被读过，必须留痕 |
+
+**四条硬约束**：
+
+1. **不重复记账**：上表每行对应至多一行审计。实现上由单出口完成，
+   分支内**不得**再调 `writeAudit`。
+2. **scope 双重校验**：准入链第 7 步（缓存之前）判一次，`executeTool` 内部再判一次。
+   两次都保留——前者保证「缓存不被越权命中」，后者是结构保证。
+   只有第 7 步失败的那次会记账（`stage='scope'` 那次不会被执行到）。
+3. **缓存不得先于授权**：`(grant_ctx, delivery_id)` 的查询**必须**在
+   开关 / deadline / grant / scope / `request_hash` 之后（协议 §8.5）。
+4. **审计失败不改写结果**：见 §6.5.5 的三段分离。
+
+#### 6.5.4.2 业务错误如何落审计
+
+`executeTool` 失败时返回 Local 码 + `stage`。Remote 先按架构设计 §6.8.1 映射成
+Remote 码，**再用 Remote 码写审计**（不是 Local 码）：
+
+| `stage` | Local 码 | 审计里的 `error_code` |
+|---|---|---|
+| `tool` | `VALIDATION_ERROR` | `TOOL_NOT_ALLOWED` |
+| `scope` | `PERMISSION_DENIED` | `SCOPE_DENIED` |
+| `params` | `VALIDATION_ERROR` | `INVALID_ARGUMENTS` |
+| `handler` | `NOT_FOUND` | `NOT_FOUND` |
+| `handler` | 其余 / 未知异常 | `INTERNAL_ERROR` |
+
+**审计表不存在的列**：`grant_id`、`request_id`（1.1 零迁移约束）。
+它们只进 Desktop stderr（`[remote] tool=… grant=… req=…`），
+**且 stderr 里也不许出现参数、结果、token**（§6.5.8 哨兵测试覆盖 stdout/stderr）。
+
+#### 6.5.5 审计写入失败：三段状态必须分离（Phase 1.0.2 定稿）
 **问题（Phase 1.0.1 的表述不充分）**：原文只说「审计写失败不把查询报成失败」，
 但没有说明「那审计到底算不算数」，也没有禁止「声称审计完整」。
 这会让实现者与使用者都误以为「每次远程读取都有记录」。
