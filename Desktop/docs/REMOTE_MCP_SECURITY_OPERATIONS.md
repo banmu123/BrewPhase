@@ -83,6 +83,58 @@ revoked   → （终态，不可恢复）
 每次转发前必须查一次 `mcp_grants.revoked_at` 与 `mcp_devices.status`
 （允许 ≤ 5 秒的进程内缓存；撤销操作主动清该缓存）。
 
+### 4.1.1 撤停与握手的线性化（Phase 1.2B.1.2）
+
+§4.1 的「先持久化、再清理」解决的是**顺序**，但没有解决**并发**：
+清理发生时握手可能还没把连接登记进路由表，于是「清了个空」而握手随后 bind。
+结果是 §4.0 里最不该出现的那种组合——**S2 = revoked/suspended，S3 仍在线上**。
+
+修法是在准入阶段对设备行加锁（`cloud/src/link/admission.ts`）：
+
+```
+BEGIN;
+  SELECT ... FROM mcp_devices WHERE id = $1 FOR UPDATE;
+  -- 锁内重验：token_hash / status / token_expires_at
+  -- 锁内 registry.bind(...)          ← 路由与状态在同一个事务里成立
+COMMIT;
+```
+
+由此**只允许两种线性化结果**：
+
+| 顺序 | 结果 |
+|---|---|
+| 握手先拿锁 → bind → COMMIT → 撤停提交 | 撤停的 `cleanupConnection` 查得到连接 → `bye` + close 4005/4003 |
+| 撤停先提交 → 握手在锁内读到新状态 | 拒绝握手（4005/4003/4001），**不 bind** |
+
+严禁出现的第三种：DB 已停/已撤销，而 registry 仍认为设备在线。
+
+**为什么不用进程内互斥**：`UPDATE mcp_devices SET status=...` 无条件持有行锁，
+任何写路径都无法绕过；而进程内 mutex 需要每一条写路径都记得参与，漏一处就是
+静默回归。安全边界应当由数据库保证，而不是由「大家都记得」保证。
+
+**验证方式的两个要点**：
+
+1. **不用 `setTimeout` 制造竞态**。那测的是调度运气：快机器上碰不到，慢机器上
+   碰到别的交错。测试用可控 Deferred 在精确的 `await` 边界暂停。
+2. **锁的判据取自数据库**。`pg_stat_activity` 里出现 `wait_event_type = 'Lock'`
+   是「确实有一个事务在等这把锁」的直接证据；拿不到就是互斥不存在，
+   而不是「这次没碰上」。
+
+### 4.1.2 连接生命周期的三个独立事实（Phase 1.2B.1.2）
+
+`closed` 一个布尔同时表达「socket 没了」和「路由已清」是 P1 幽灵路由的根因。
+现在拆成：
+
+| 事实 | 含义 | 谁置 |
+|---|---|---|
+| `closing` | 已决定关闭；**此后禁止任何 bind** | close 事件 / hello 超时 / 顶替 / 撤停 / 停机 |
+| `bound` | `registry` 里确实存在本 `connectionId` 的表项 | bind 成功那一刻 |
+| `released` | 路由已解绑（或从未需要） | `releaseRoute` |
+
+不变量：`closing && bound && !released` 是**必须被清理**的状态，且清理不能依赖
+`converge()` 的幂等闸门——那条路径在 close 事件里已经跑完（当时 `bound=false`，
+无事可做）。因此 `releaseRoute()` 独立于 `converge()`，由 binder 在恢复执行时调用。
+
 ### 4.2 与 Phase 1.0 的差异（修正点）
 
 | Phase 1.0 | Phase 1.0.1 | 原因 |
@@ -565,6 +617,14 @@ mcp_operation_log`），让 SQLite 报错，再断言业务仍成功、计数真
 | ST-2 | `cloud/tests/link/link-server.test.ts` B 组：A 的 token + B 的私钥签名，且 `hello.device_id` 写成 A | ✅ close `4001`。**两个判据都在**：签名用 A 的公钥验失败，以及 `device_id ≠ token 对应设备` |
 | ST-11 | 同文件 D 组：旧实例关停 → 新实例起来 → registry 为空 → 重新握手成功 | ✅。「不重放旧 `delivery_id`」这一半**要等 1.2B.2 的缓存**才有对象可测——现在没有 `req`，也就没有 `delivery_id`。如实标注为部分覆盖 |
 | ST-12 | 同文件 G 组：先落库 `revoked`，再 `disconnectDevice`，再用旧 token 握手 | ✅ close `4003` + `lookupByDevice` 为 null；另有故障注入变体（`unbind` 抛错后仍拒绝） |
+
+**Phase 1.2B.1.2 补强**（`cloud/tests/link/link-concurrency.test.ts`，16 条）：
+
+ST-12 原来的落点验证的是「撤销**之后**握手被拒」——串行场景。并发场景
+（撤停留尚未 bind）在 1.2B.1 里会漏：清理查不到连接，握手随后 bind。
+现在由 T5/T6（撤停先提交）与 T7/T8（握手先持锁）覆盖，判据是
+`pg_stat_activity` 的锁等待 + 终态三重断言（`lookupByDevice` / `connectionCount` /
+`inspect`）。
 
 **补充五项（与 §2.6 生命周期、§8.5 竞态直接相关）**：
 

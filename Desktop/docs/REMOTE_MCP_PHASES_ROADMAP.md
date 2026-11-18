@@ -66,7 +66,97 @@ req/res 转发、grant_update 在线同步、MCP OAuth（属 1.2B / 1.3）。
 | 子阶段 | 范围 | 状态 |
 |---|---|---|
 | **1.2B.1** | B5（WSS 接入 + hello 握手）、B6（ConnectionRegistry）、B7（心跳）、B9（撤停联动）、B11（运维断言） | ✅ **已完成** |
+| **1.2B.1.2** | 连接生命周期与设备准入的并发收口（P1 幽灵路由 / P2 撤停与握手竞争） | ✅ **已完成**（见 §2.0.1） |
 | **1.2B.2** | B8（req/res/cancel 转发）、B13（轮换 `rotating`）、B14（转发前跨用户校验）、`grant_update` 在线同步 | 待做 |
+
+#### 2.0.1 Phase 1.2B.1.2：两个竞态与修复
+
+1.2B.1 的实现**功能正确但顺序不对**。两个竞态都不需要特殊条件就能触发，
+而且当时 377 条测试全绿——因为它们只检查终态，不检查「中途是否 bind 过」。
+
+**P1：握手期间的 close 会留下幽灵路由**
+
+| 步骤 | 发生了什么 |
+|---|---|
+| 1 | hello 到达，握手进入 `verifyHandshake`（await 数据库） |
+| 2 | 客户端断开 → close 事件 → 旧 `onClosed` 设 `closed = true`；此时 `userId` 还是空串，**没有** unbind |
+| 3 | 握手恢复，继续 bind（`registry` 里多了一条表项） |
+| 4 | `sendJson(hello_ok)` 失败 → 再调 `onClosed` → **被 `closed` 幂等闸门挡住，直接返回** |
+| 5 | 结果：registry 里有一条指向死 socket 的路由，`connection_count` 永远是 1 |
+
+根因是把「连接已关闭」和「路由已清理」当成**同一个事实**。现在拆成三个独立事实
+（`closing` / `bound` / `released`），并让清理不再复用同一个幂等闸门：
+`converge()`（幂等，负责定时器与 live 表）与 `releaseRoute()`（可重入，
+负责 unbind）分开。**迟到 bind 的清理只能由 binder 自己在恢复执行时完成**，
+因为那时 `converge()` 早已跑完。
+
+**P2：撤停与握手抢跑，已撤销的设备能重新上线**
+
+| 步骤 | 发生了什么 |
+|---|---|
+| 1 | `verifyHandshake` 读到 `status = active`（快照） |
+| 2 | 握手开始 `loadGrantRows`（await） |
+| 3 | HTTP `suspend`/`revoke` 提交成功 |
+| 4 | `disconnectDevice()` 查 registry：**还没有这条连接**，直接返回（无事可做） |
+| 5 | 握手恢复，bind → 一台已 revoked 的设备出现在路由表里 |
+
+根因是把 `verifyHandshake` 的设备快照当成「在这之后依然有效」。现在准入是
+**独立的一次事务**（`cloud/src/link/admission.ts`）：
+
+```sql
+BEGIN;
+SELECT id, user_id, status, token_hash, token_expires_at, grant_epoch
+  FROM mcp_devices WHERE id = $1
+   FOR UPDATE;          -- 与任何 UPDATE mcp_devices SET status=... 争同一把行锁
+-- 锁内重验 token_hash / status / token_expires_at
+-- 锁内 registry.bind(...)
+COMMIT;                 -- 线性化点
+```
+
+**为什么选行锁而不是进程内 per-device mutex**：
+
+| 方案 | 谁必须记得参与 | 失效方式 |
+|---|---|---|
+| 进程内 mutex | **每一个**写设备状态的代码路径（现在 3 条，将来更多） | 新增一条写路径忘了加锁 → 静默回归 |
+| **PG 行锁（采用）** | **没有人**——`UPDATE mcp_devices SET status` 自动持有行锁 | 写路径无法绕过 |
+
+行锁把「必须参与互斥」从一个约定变成了数据库事实。这正是任务书要求
+「不能只在握手内部加锁」的落地方式。
+
+**线性化后只允许两种结果**：
+
+```
+① 握手先拿锁 → bind → COMMIT → suspend 的 UPDATE 才提交
+   → cleanupConnection 查得到连接 → bye + close 4005
+
+② suspend 的 UPDATE 先提交 → 握手在锁内读到 suspended
+   → 拒绝 + close 4005，不 bind
+```
+
+不存在第三种（DB 已停/已撤销、registry 仍认为在线）。
+
+**测试**：`cloud/tests/link/link-concurrency.test.ts`（16 条）。用可控 Deferred
+在精确的 await 边界暂停，**不用 `setTimeout` 制造竞态**；行锁的判据是
+`pg_stat_activity` 里出现 `wait_event_type = 'Lock'`（数据库自己的状态，
+不是时间猜测）。
+
+**变异验证**（证明测试真的在防回归，不是自说自话）：
+
+| 变异 | 被抓到 |
+|---|---|
+| 迟到 bind 不自我清理 | T9 ✅ |
+| 去掉 `FOR UPDATE` | T7 / T8 ✅（`no lock waiter appeared`） |
+| 准入不重验 `suspended` | T5 ✅ |
+| 准入不重验 `revoked` | T6 ✅ |
+| 准入不重验 `token_expires_at` | 准入终审组 ✅ |
+| 取消信号恒为 false | T1 / T2 / T3 / T4 / T10b ✅ |
+| 停机不等进行中的握手 | T9b ✅ |
+| 顶替时不标 `closing` | **不可观测**——`onFrame` 还有 `state === 'handshaking'` 兜底，两者行为等价。属防御性加固，如实记录而非假装被测到 |
+
+**一个记录在案的协议行为**（不是缺陷）：同一设备并发发起两个握手时，
+**后完成 bind 的赢**，先完成的会被 `drain` + `4006` 顶替。这是协议 §4.6
+「后到者赢」的直接结果。Desktop 侧不会并发发起同设备握手，所以现实中不发生；
+写成断言会与协议冲突，因此只在文档记录。
 
 **1.2B.1 的验收边界（必须原样引用，不许省略）**：
 > 只证明 Cloud Gateway 能**安全接入设备、验证身份、维护连接与心跳**。
@@ -175,6 +265,10 @@ cloud/tests/{mcp-devices,link}/*.test.ts
 > | 6 张旧表结构未变 | ✅ 真实基线逐列比对 |
 > | Grant 上下文快照 | ✅ `hello_ok.grants` 只含同 user 且未撤销；`grant_update` 属 1.2B.2 |
 > | 迁移幂等 | ✅ 0002 重复执行不改变数据，旧行 `epoch = 1` |
+>
+> **1.2B.1.2 追加**：上面这张表里的「✅」在 1.2B.1 时都只验证了**终态**。
+> 并发收口之后，同样的条目改为结构断言（`bind` 调用次数、锁等待、定时器状态），
+> 见 §2.0.1。
 >
 > **1.2B.2 必须先做的第一件事**：`rotating` 状态（B13）。轮换窗口内旧连接仍持有
 > 有效 session；若不先落地「旧连接的新 `req` 立刻被拒」，转发层一开就是一个

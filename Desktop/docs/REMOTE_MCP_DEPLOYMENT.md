@@ -158,7 +158,30 @@ location / {
 
 `terminationGracePeriodSeconds` 建议 **≥ 15s**（内部兜底是 8s 强制退出）。
 
+**停机必须等进行中的握手**（Phase 1.2B.1.2）：一个卡在数据库查询上的握手
+若在 `registry.clear()` 之后恢复并 bind，`connection_count` 会永远停在 1，
+而那条连接永远不会再被处理。现在的顺序是：
+
+```
+accepting = false
+shuttingDown = true          ← 必须先于任何 await（进行中的握手据此取消）
+await waitForHandshakes(1s)  ← 必须在 registry.clear() 之前
+await waitForClose(1s)
+converge(每条连接)
+registry.clear()
+```
+
+等待有 1s 上限：一个永不返回的查询不该拖住停机。超时后仍有兜底——
+握手看到 `shuttingDown` 会自行收敛，那是结构保证，不依赖等待成功。
+
 ---
+
+## 7.1 数据库权限
+
+准入用了 `SELECT ... FOR UPDATE`（行锁），所以 Cloud 的数据库角色需要
+`SELECT` 之外无额外权限——行锁不需要授权，但**只读副本不能用于准入**
+（只读事务无法持写锁，会直接报错）。若用 PgBouncer 的
+`transaction` 模式，事务内多语句是允许的；`statement` 模式**不行**。
 
 ## 8. 上线前自查
 
