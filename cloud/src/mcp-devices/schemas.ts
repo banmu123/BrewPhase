@@ -27,9 +27,22 @@ export const confirmDeviceSchema = z.object({
  *
  * `claim_secret` **只允许出现在这里**——不放 URL、不放进 header 名、不放 cookie。
  * 所以这个 schema 只接受 body 传入，路由层不从 query 读取任何东西。
- */
-export const claimCredentialsSchema = z.object({
+ */export const claimCredentialsSchema = z.object({
   claim_secret: z.string().min(16).max(128),
+});
+
+/**
+ * 轮换请求体（协议 §3.5）。
+ *
+ * `new_public_key` 与 `ts` 都是签名原文的一部分，所以形态校验必须与签名
+ * 校验用同一套判据：这里只做「是不是 43 个 base64url 字符」，解码后是否
+ * 恰好 32 字节由 `rotate.ts` 再判一次——正则挡不住「末位字符携带多余 bit」
+ * 那种情况（43 个合法字符仍可能解出 31 或 33 字节）。
+ */
+export const rotateDeviceSchema = z.object({
+  new_public_key: z.string().regex(RAW_PUBLIC_KEY),
+  ts: z.number().int(),
+  sig: z.string().min(1).max(512),
 });
 
 /** 设备列表 DTO：**逐字段白名单**，绝不把 ORM 行直接返回。 */

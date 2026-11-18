@@ -34,6 +34,17 @@ export interface ConnectionInfo {
   lastPongAtMono: number | null;
   /** Desktop 自报的服务能力（`hello.serviceable` / `status` 帧）。提示，不是授权。 */
   serviceable: boolean;
+  /**
+   * 凭据已轮换、这条连接正在退场（协议 §11.6）。
+   *
+   * 语义只有一句话：**不能作为路由目标**。`lookup()` 对它返回 `null`，
+   * 所以任何走 `lookup()` 的派发路径（包括 1.2B.2 的 req 转发）在结构上
+   * 都打不到它——不需要每个调用点各写一个 if。
+   *
+   * 它**不是**设备状态：`mcp_devices.status` 仍然是 `active`（轮换不改状态），
+   * 而且这个标记只活在内存里，进程重启即消失（那时连接也早断了）。
+   */
+  rotating: boolean;
 }
 
 /** `bind` 的返回值：被顶替的旧连接（没有则为 null）。 */
@@ -42,20 +53,33 @@ export interface BindResult {
 }
 
 export interface ConnectionRegistry {
-  bind(entry: Omit<ConnectionInfo, "boundAtMono" | "lastPongAtMono">, nowMono: number): Promise<BindResult>;
+  bind(
+    entry: Omit<ConnectionInfo, "boundAtMono" | "lastPongAtMono" | "rotating">,
+    nowMono: number,
+  ): Promise<BindResult>;
   /** 只有 `connectionId` 与表内一致才删。返回是否真的删了。 */
   unbind(userId: string, deviceId: string, connectionId: string): Promise<boolean>;
-  /** 按 `(userId, deviceId)` 精确查；设备不匹配返回 null（顶替后的旧设备就是这种）。 */
+  /** 按 `(userId, deviceId)` 精确查；设备不匹配或已 rotating 时返回 null。 */
   lookup(userId: string, deviceId: string): Promise<ConnectionInfo | null>;
   lookupByUser(userId: string): Promise<ConnectionInfo | null>;
   /**
-   * 按 deviceId 反查。
+   * 按 deviceId 反查。**包含 rotating 的连接**（与 `lookup` 的差别就在这）。
    *
-   * 用于「设备被暂停/撤销后清连接」：那条路径手里只有设备行（`id` 是全表
-   * 唯一的 uuid），没有用户的 session 上下文。让路由层为了一个 userId 再
-   * 查一次库，既多一次 IO，也多一个「查错行」的机会。
+   * 两个用途都需要它看到 rotating 项：
+   * - 撤停清理要能找到它、把 socket 关掉；
+   * - 轮换自己要在标记之后再确认一次「表项还在我这条 connectionId 上」。
+   *
+   * 它是「有没有连接对象」，不是「能不能路由」——后者只有 `lookup` 能回答。
    */
   lookupByDevice(deviceId: string): Promise<ConnectionInfo | null>;
+  /**
+   * 标记某条连接为 rotating。返回是否命中。
+   *
+   * **必须带 connectionId**：从「查到 info」到「标记」之间，同设备可能已经
+   * 重连出一条新连接。只按 deviceId 标记会把新连接误标成 rotating，
+   * 于是它刚建立就被当成已退场。
+   */
+  markRotating(deviceId: string, connectionId: string): Promise<boolean>;
   /** 记录一次**有效 pong**（心跳续约）。`connectionId` 不匹配视为噪音，返回 false。 */
   touch(userId: string, deviceId: string, connectionId: string, nowMono: number): Promise<boolean>;
   setServiceable(userId: string, deviceId: string, connectionId: string, serviceable: boolean): Promise<boolean>;
@@ -72,11 +96,19 @@ export function createMemoryConnectionRegistry(): ConnectionRegistry {
       const previous = byUser.get(entry.userId) ?? null;
       byUser.set(entry.userId, {
         ...entry,
+        rotating: false,
         boundAtMono: nowMono,
         lastPongAtMono: null,
       });
       // 同一连接重复 bind（理论上不会发生）不算顶替。
-      const displaced = previous && previous.connectionId !== entry.connectionId ? previous : null;
+      //
+      // **rotating 的旧连接也不算顶替**：它已经在退场流程里（凭据已换、
+      // `bye(rotated)` + 4010 正在发出）。若在这里再判一次顶替，客户端会
+      // 先收到 `drain` + 4006，紧跟着又是 `bye(rotated)` + 4010——两个不同的
+      // 关闭原因，而 Desktop 的轮换逻辑按 4010 编排。少发一个信号比发两个
+      // 矛盾的信号更安全。
+      const displaced =
+        previous && previous.connectionId !== entry.connectionId && !previous.rotating ? previous : null;
       return { displaced };
     },
 
@@ -95,7 +127,11 @@ export function createMemoryConnectionRegistry(): ConnectionRegistry {
       if (!current) return null;
       // 设备不匹配 = 这台设备已被另一台顶替。返回 null 而不是 current：
       // 否则旧设备的请求会被路由到新设备的连接上。
-      return current.deviceId === deviceId ? current : null;
+      if (current.deviceId !== deviceId) return null;
+      // rotating = 凭据已换、连接正在退场 → **不可路由**。
+      // 这是 rotating 唯一的行为后果，也是 1.2B.2 转发层的结构性防线。
+      if (current.rotating) return null;
+      return current;
     },
 
     async lookupByUser(userId) {
@@ -109,6 +145,16 @@ export function createMemoryConnectionRegistry(): ConnectionRegistry {
         if (info.deviceId === deviceId) return info;
       }
       return null;
+    },
+
+    async markRotating(deviceId, connectionId) {
+      for (const info of byUser.values()) {
+        if (info.deviceId !== deviceId) continue;
+        if (info.connectionId !== connectionId) return false;
+        info.rotating = true;
+        return true;
+      }
+      return false;
     },
 
     async touch(userId, deviceId, connectionId, nowMono) {

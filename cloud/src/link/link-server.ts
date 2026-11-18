@@ -108,6 +108,33 @@ export interface LinkServer {
   shutdown(): Promise<void>;
   /** 设备被暂停/撤销后的连接清理（route 层在**持久化之后**调用）。 */
   disconnectDevice(deviceId: string, reason: DisconnectReason): Promise<void>;
+  /**
+   * 设备的凭据已轮换：让它的旧连接退场（route 层在**事务提交之后**调用）。
+   *
+   * 顺序是这一段的核心，且不可交换：
+   *
+   * ```
+   * registry.markRotating(...)         ← 立刻不可路由（lookup 返回 null）
+   * registry.unbind(...)               ← 表项彻底移除
+   * bye(rotated) → close 4010          ← 通知 + 断开
+   * ```
+   *
+   * 为什么标记必须早于断开：从「凭据已换」到「socket 真的关掉」之间有网络
+   * 往返。那段窗口里旧连接**仍然握着一个已失效的身份**；如果它还能被路由，
+   * 轮换就只是换了个 token（生命周期 §11.6 的原话）。
+   *
+   * 返回是否真的有一条连接被退场。**设备离线时返回 false 且不抛错**——
+   * 离线设备当然也可以轮换凭据（req 里明确要求）。
+   */
+  rotateConnection(deviceId: string): Promise<boolean>;
+  /**
+   * 该设备的连接是否处于 rotating。
+   *
+   * 给 1.2B.2 的转发层留的显式判据。虽然 `registry.lookup()` 已经对 rotating
+   * 返回 null（结构防线），但转发层在「已拿到 connectionId、准备 write」那一刻
+   * 仍应再查一次——两者代价相同，而多一道判据不会有害。
+   */
+  isRotating(deviceId: string): Promise<boolean>;
   connectionCount(): number;
   /**
    * **诊断/测试用**：等所有进行中的握手落定。
@@ -137,6 +164,8 @@ export interface LinkConnectionSnapshot {
   deviceId: string;
   state: LiveConnection["state"];
   closing: boolean;
+  /** 因凭据轮换而退场（与 `closing` 正交：普通关闭是 false）。 */
+  rotating: boolean;
   bound: boolean;
   released: boolean;
   /** 心跳定时器是否仍在跑。停机/关闭后必须为 false。 */
@@ -175,6 +204,8 @@ interface LiveConnection {
   state: "awaiting_hello" | "handshaking" | "active" | "closing" | "closed";
   /** 已决定关闭。**唯一**的 bind 准入判据之一。 */
   closing: boolean;
+  /** 本连接因凭据轮换而退场（`isRotating` / `inspect` 读它）。 */
+  rotating: boolean;
   /** registry 里存在本 connectionId 的表项。 */
   bound: boolean;
   /** 路由已释放。与 `bound` 分开，才不会被幂等短路挡住迟到的 bind。 */
@@ -237,6 +268,19 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
    * GC 能回收时立刻消失，也避免「顺手在别处读 connection.token」。
    */
   const tokenBySocket = new WeakMap<WebSocket, string>();
+  /**
+   * 正在因**凭据轮换**而退场的连接：`deviceId → connectionId`。
+   *
+   * 为什么不复用 registry 里的 `rotating` 标记：那条表项在退场流程里会被
+   * `unbind` 删掉（req 明确要求「删除路由项」），于是标记也一起消失。而
+   * `isRotating()` 要在**删掉之后**仍有意义——1.2B.2 的转发层需要把
+   * 「连接是 rotating」与「设备根本不在线」区分开：
+   * 前者应答 `DEVICE_UNAUTHORIZED`，后者应答 `DEVICE_OFFLINE`（协议 §11.6）。
+   *
+   * 清理点：该 connectionId 彻底收敛时删除（见 `converge`）。若之后同一
+   * 设备用**新**凭据重连，`rotateConnection` 没有再被调用，所以不会误报。
+   */
+  const rotatingDevices = new Map<string, string>();
   let accepting = true;
   /**
    * 停机中。与 `accepting` 分开：
@@ -357,6 +401,7 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
       helloTimeout: null,
       state: "awaiting_hello",
       closing: false,
+      rotating: false,
       bound: false,
       released: false,
       convergePromise: null,
@@ -759,6 +804,12 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
     connection.convergePromise = (async () => {
       await releaseRoute(connection);
       connection.state = "closed";
+      // rotating 标记只在这条连接的生命周期内有意义。收敛之后它必须消失，
+      // 否则同一设备用**新**凭据重连后，`isRotating` 会一直报 true，
+      // 转发层就会永久拒绝对这台设备的派发。
+      if (connection.deviceId && rotatingDevices.get(connection.deviceId) === connection.connectionId) {
+        rotatingDevices.delete(connection.deviceId);
+      }
     })();
     return connection.convergePromise;
   };
@@ -797,6 +848,60 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
     sendJson(target.ws, bye);
     closeWith(target.ws, code, text);
   };
+
+  /**
+   * 凭据已轮换：让旧连接退场。
+   *
+   * 调用点在**事务提交之后**（`rotateDevice` 成功返回）。顺序不可交换：
+   *
+   * ```
+   * 1. rotatingDevices.set(...)       ← 立刻可查，供 isRotating / 转发层
+   * 2. registry.markRotating(...)     ← 表项标记（lookup 从此返回 null）
+   * 3. registry.unbind(...)           ← 删除路由项
+   * 4. bye(rotated) → close 4010
+   * ```
+   *
+   * 为什么 2 和 3 都要做：2 让「仍在表里的这一瞬」也不可路由（`lookup`
+   * 按 flag 过滤，不依赖删除是否已经发生）；3 满足「路由项被清除」的字面
+   * 要求，也让 `connectionCount()` 立刻反映真实可路由数。
+   *
+   * 为什么整段都要能容忍「连接已经没了」：轮换是 HTTP 请求，而这条 WSS 可能
+   * 在请求到达前就已经断了（用户切网络、进程被杀）。此时返回 false，
+   * **不抛错**——凭据已经换完，回 5xx 只会让客户端误以为轮换失败并重试，
+   * 而重试必然 401（旧 token 已失效），最后卡在一个说不清的状态里。
+   */
+  const rotateConnection: LinkServer["rotateConnection"] = async (deviceId) => {
+    const info = await registry.lookupByDevice(deviceId);
+    if (!info) {
+      // 离线设备也可以轮换凭据——**但不能因此伪造一条在线连接**。
+      // 这里什么都不做，正是「不伪造」的具体形态。
+      return false;
+    }
+
+    rotatingDevices.set(deviceId, info.connectionId);
+    await registry.markRotating(deviceId, info.connectionId);
+    await registry.unbind(info.userId, info.deviceId, info.connectionId);
+
+    const target = live.get(info.connectionId);
+    if (!target) return true;
+
+    // 标 closing 之后再发 bye：反过来的话，这条连接可能在「已收到 bye、
+    // 尚未关闭」的窗口里被当成仍然可用。
+    target.rotating = true;
+    target.closing = true;
+    target.state = "closing";
+    // 路由已由上面的 unbind 处理；置 released 避免 converge 再解绑一次。
+    target.released = true;
+    target.heartbeat.stop();
+
+    const bye: ByeFrame = { v: 1, type: "bye", ts: now(), reason: "rotated" };
+    sendJson(target.ws, bye);
+    // 4010 = 凭据已轮换，用新凭据**立即**重连一次（不算退避）。
+    closeWith(target.ws, REMOTE_CLOSE.CREDENTIALS_ROTATED, REMOTE_CLOSE_REASON.CREDENTIALS_ROTATED);
+    return true;
+  };
+
+  const isRotating: LinkServer["isRotating"] = async (deviceId) => rotatingDevices.has(deviceId);
 
   /**
    * 有序停机。
@@ -858,6 +963,8 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
     handleUpgrade,
     shutdown,
     disconnectDevice,
+    rotateConnection,
+    isRotating,
     connectionCount: () => registry.count(),
     awaitHandshakes: (timeoutMs = 2000) => waitForHandshakes(inFlightHandshakes, timeoutMs),
     inspect: () =>
@@ -866,6 +973,7 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
         deviceId: connection.deviceId,
         state: connection.state,
         closing: connection.closing,
+        rotating: connection.rotating,
         bound: connection.bound,
         released: connection.released,
         heartbeatRunning: connection.heartbeat.running(),

@@ -2,11 +2,12 @@ import type { Context } from "hono";
 import type { AppContext, AppHono } from "../context.js";
 import type { AccessClaims } from "../sessions/jwt.js";
 import { createRequireAuth, authenticateUser } from "../routes/auth.js";
-import { parseOr400, readStringFields } from "../routes/body.js";
-import { invalidRequest } from "../security/errors.js";
+import { parseOr400, readJsonObject, readStringFields } from "../routes/body.js";
+import { deviceUnauthorized, invalidRequest } from "../security/errors.js";
 import { rateLimit } from "../security/rate-limit.js";
 import { claimCredentials } from "./claim.js";
 import { DEVICE_TOKEN_PATTERN } from "./device-token.js";
+import { rotateDevice } from "./rotate.js";
 import {
   confirmDevice,
   getDevice,
@@ -17,7 +18,12 @@ import {
   suspendDevice,
   suspendDeviceWithToken,
 } from "./service.js";
-import { claimCredentialsSchema, confirmDeviceSchema, registerDeviceSchema } from "./schemas.js";
+import {
+  claimCredentialsSchema,
+  confirmDeviceSchema,
+  registerDeviceSchema,
+  rotateDeviceSchema,
+} from "./schemas.js";
 
 /**
  * Remote MCP 设备管理路由（协议 §3.2–§3.5）。
@@ -226,10 +232,69 @@ export function routeMcpDevices(app: AppHono, ctx: AppContext): void {
     return c.json(summary);
   });
 
-  /** 恢复：`suspended → active`。撤销后不可恢复（协议 §3.5）。 */
+  /**
+   * 恢复：`suspended → active`。撤销后不可恢复（协议 §3.5）。
+   */
   app.post("/mcp-devices/:id/resume", deviceLimiter, requireAuth, async (c) => {
     const userId = userIdOf(c);
     return c.json(await resumeDevice(ctx.db.db, { userId, deviceId: deviceIdOf(c) }));
+  });
+
+  /**
+   * 轮换凭据（协议 §3.5 / 生命周期 §11.6）。
+   *
+   * 只认 `Authorization: Bearer bp_dev_…` —— **不接受用户 Bearer**。
+   * 理由：轮换的意义是「证明我还持有旧私钥」，而用户 Bearer 证明不了这一点
+   * （它可能在浏览器里、在另一个进程里）。只拿用户 Bearer 就能换钥匙，
+   * 等于把设备身份降级成账号密码。
+   *
+   * 顺序（不可交换）：
+   *
+   * ```
+   * rotateDevice(...)             ← 事务提交：新公钥 + 新 token 落库
+   * ctx.link.rotateConnection()   ← 旧连接退场（标记 rotating → 停路由 → bye → 4010）
+   * 返回新 device_token
+   * ```
+   *
+   * 为什么清理失败仍然回 200：凭据已经换完，回 5xx 会让客户端以为失败并
+   * 重试，而重试必然 401（旧 token 已失效）——最后卡在一个说不清的状态里。
+   * 清理失败的真实后果很轻：那条旧连接会在下一次心跳超时（≤60s）收敛，
+   * 而它已经**不再可路由**（`lookup` 对 rotating 返回 null）。
+   */
+  app.post("/mcp-devices/:id/rotate", deviceLimiter, async (c) => {
+    const deviceId = deviceIdOf(c);
+    const bearer = bearerOf(c);
+    // 形态不符 → 401，且**不查库**：这里与握手第 1 步同一套判据，
+    // 目的是廉价地挡掉「拿错凭据域」（用户 access token / `bp_mcp_*`）。
+    if (!DEVICE_TOKEN_PATTERN.test(bearer)) throw deviceUnauthorized();
+
+    // 用 readJsonObject 而不是 readStringFields：`ts` 是数字，后者会把它丢掉。
+    const input = parseOr400(rotateDeviceSchema, await readJsonObject(c));
+    const rotated = await rotateDevice(ctx.db.db, {
+      deviceId,
+      deviceToken: bearer,
+      newPublicKey: input.new_public_key,
+      ts: input.ts,
+      sig: input.sig,
+    });
+
+    // 数据库已经提交。从这里开始，旧 token 与旧公钥都失效了。
+    if (ctx.link) {
+      try {
+        await ctx.link.rotateConnection(deviceId);
+      } catch (err) {
+        ctx.logger.warn("link_rotate_cleanup_failed", {
+          deviceId: deviceId.slice(0, 8),
+          error: err instanceof Error ? err.name : String(err),
+        });
+      }
+    }
+
+    // 新 token 明文**只在这一次响应里**出现。
+    return c.json({
+      device_token: rotated.deviceToken,
+      expires_at: rotated.expiresAt.getTime(),
+    });
   });
 
   /**

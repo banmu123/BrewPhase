@@ -40,6 +40,28 @@ export async function readStringFields(c: Context): Promise<Record<string, strin
   return out;
 }
 
+/**
+ * 请求体解析：**保留字段类型**，只用于含数字字段的端点（如 rotate 的 `ts`）。
+ *
+ * 为什么不能复用 `readStringFields`：它按「OAuth 表单习惯」只收字符串，
+ * 于是 `{"ts": 1763400000000}` 里的 ts 会被丢掉，schema 随即报「缺字段」。
+ * 那会把一个类型正确的请求判成畸形请求——而错误码会说 `invalid_request`，
+ * 完全指错方向。
+ *
+ * 与 `readStringFields` 共享同一条纪律：**不记录任何 body 内容**。
+ */
+export async function readJsonObject(c: Context): Promise<Record<string, unknown>> {
+  const contentType = c.req.header("content-type") ?? "";
+  if (!contentType.includes("application/json")) {
+    throw invalidRequest("request body must be JSON");
+  }
+  const raw = await c.req.json().catch(() => null);
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw invalidRequest("request body must be a JSON object");
+  }
+  return raw as Record<string, unknown>;
+}
+
 export function sessionMetaFromRequest(c: Context, env: Env): SessionMeta {
   const ip = clientIp(c, env.trustProxy, env.trustProxyHops);
   return {

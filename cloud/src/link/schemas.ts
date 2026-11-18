@@ -112,6 +112,8 @@ export const REMOTE_CLOSE_REASON = {
   DEVICE_REVOKED: "device revoked",
   DEVICE_SUSPENDED: "device suspended",
   SUPERSEDED: "superseded",
+  /** 凭据已轮换：旧连接必须退场，客户端用新凭据立刻重连一次（不按退避）。 */
+  CREDENTIALS_ROTATED: "credentials rotated",
   HELLO_TIMEOUT: "hello timeout",
   HEARTBEAT_TIMEOUT: "heartbeat timeout",
   PROTOCOL_VIOLATION: "protocol violation",

@@ -30,12 +30,20 @@ export interface AppContext {
 /**
  * 路由层需要的**唯一**连接控制面。
  *
- * 刻意只暴露两个方法：`disconnectDevice`（suspend / revoke 之后清连接）
- * 与 `connectionCount`（`/ready`）。路由层不该看到 `bind` / `lookup` /
- * 心跳——那些属于连接层，混进来就会长出「HTTP 路由直接操作 socket」的代码。
+ * 刻意只暴露三个方法：`disconnectDevice`（suspend / revoke 之后清连接）、
+ * `rotateConnection`（轮换之后让旧连接退场）与 `connectionCount`（`/ready`）。
+ * 路由层不该看到 `bind` / `lookup` / 心跳——那些属于连接层，混进来就会长出
+ * 「HTTP 路由直接操作 socket」的代码。
  */
 export interface LinkControl {
   readonly instanceId: string;
   connectionCount(): number;
   disconnectDevice(deviceId: string, reason: "suspended" | "revoked"): Promise<void>;
+  /**
+   * 凭据轮换后让旧连接退场（`bye(rotated)` + close 4010）。
+   *
+   * **必须在数据库事务提交之后调用**：反过来（先断连接再改库）会留下
+   * 「旧连接已死、旧凭据仍然有效」的窗口，攻击者可以拿旧 token 重新握手。
+   */
+  rotateConnection(deviceId: string): Promise<boolean>;
 }

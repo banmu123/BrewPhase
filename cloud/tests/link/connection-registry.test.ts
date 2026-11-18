@@ -137,3 +137,94 @@ describe("ConnectionRegistry", () => {
     expect(await registry.lookupByUser("u1")).toBeNull();
   });
 });
+
+/**
+ * `rotating` 的连接级语义（Phase 1.2B.2.1）。
+ *
+ * 这一组的核心是**两个不同的问题不能共用一个答案**：
+ *
+ * | 问题 | 方法 | rotating 时 |
+ * |---|---|---|
+ * | 「能不能往这台设备派发？」 | `lookup` | `null`（不可路由） |
+ * | 「它还有连接对象吗？」 | `lookupByDevice` | 有（要能关掉它） |
+ *
+ * 合并成一个方法就会二选一地错：要么把请求发给一条凭据已失效的连接，
+ * 要么在轮换时找不到 socket、只能等心跳超时。
+ */
+describe("ConnectionRegistry · rotating", () => {
+  it("markRotating 后 lookup 返回 null，但 lookupByDevice 仍能找到", async () => {
+    const registry = createMemoryConnectionRegistry();
+    await registry.bind(entry(), 1000);
+    expect(await registry.lookup("u1", "d1")).not.toBeNull();
+
+    expect(await registry.markRotating("d1", "c1")).toBe(true);
+
+    expect(await registry.lookup("u1", "d1")).toBeNull();
+    const info = await registry.lookupByDevice("d1");
+    expect(info).not.toBeNull();
+    expect(info?.rotating).toBe(true);
+    // 表项仍在：connectionCount 反映的是「有连接对象」，不是「可路由」。
+    expect(registry.count()).toBe(1);
+  });
+
+  it("markRotating 必须 connectionId 匹配（否则会误标刚重连的新连接）", async () => {
+    const registry = createMemoryConnectionRegistry();
+    await registry.bind(entry({ connectionId: "c1" }), 1000);
+    expect(await registry.markRotating("d1", "c2")).toBe(false);
+    // 没被误标。
+    expect((await registry.lookup("u1", "d1"))?.rotating).toBe(false);
+    expect(await registry.lookup("u1", "d1")).not.toBeNull();
+  });
+
+  it("markRotating 对不存在的连接返回 false（离线轮换不伪造状态）", async () => {
+    const registry = createMemoryConnectionRegistry();
+    expect(await registry.markRotating("d1", "c1")).toBe(false);
+    expect(registry.count()).toBe(0);
+  });
+
+  it("rotating 的旧连接不算「被顶替」：新连接 bind 时不得再发 4006", async () => {
+    const registry = createMemoryConnectionRegistry();
+    await registry.bind(entry({ connectionId: "c1" }), 1000);
+    await registry.markRotating("d1", "c1");
+
+    const result = await registry.bind(entry({ connectionId: "c2" }), 2000);
+    // 旧连接正在按 4010 退场，客户端按 4010 编排；再来一个 4006 只会让它
+    // 收到两个矛盾的关闭原因。
+    expect(result.displaced).toBeNull();
+    expect((await registry.lookup("u1", "d1"))?.connectionId).toBe("c2");
+  });
+
+  it("rotating 之后旧 connectionId 的 unbind 不影响新连接", async () => {
+    const registry = createMemoryConnectionRegistry();
+    await registry.bind(entry({ connectionId: "c1" }), 1000);
+    await registry.markRotating("d1", "c1");
+    await registry.bind(entry({ connectionId: "c2" }), 2000);
+
+    expect(await registry.unbind("u1", "d1", "c1")).toBe(false);
+    expect((await registry.lookup("u1", "d1"))?.connectionId).toBe("c2");
+  });
+
+  it("重新 bind 同一设备会清掉 rotating 标记（新连接是健康的）", async () => {
+    const registry = createMemoryConnectionRegistry();
+    await registry.bind(entry({ connectionId: "c1" }), 1000);
+    await registry.markRotating("d1", "c1");
+    await registry.bind(entry({ connectionId: "c2" }), 2000);
+
+    const info = await registry.lookup("u1", "d1");
+    expect(info?.rotating).toBe(false);
+    expect(info?.connectionId).toBe("c2");
+  });
+
+  it("rotating 只影响 lookup：心跳与 serviceable 续约仍然照常", async () => {
+    // rotating 不是「把连接对象作废」，只是「不可路由」。如果连 touch 都被
+    // 挡住，这条正在退场的连接会在日志里刷出一串假的心跳超时，
+    // 把真正的故障淹掉。
+    const registry = createMemoryConnectionRegistry();
+    await registry.bind(entry(), 1000);
+    await registry.markRotating("d1", "c1");
+
+    expect(await registry.touch("u1", "d1", "c1", 5000)).toBe(true);
+    expect(await registry.setServiceable("u1", "d1", "c1", false)).toBe(true);
+    expect((await registry.lookupByDevice("d1"))?.lastPongAtMono).toBe(5000);
+  });
+});

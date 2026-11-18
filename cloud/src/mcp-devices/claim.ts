@@ -1,7 +1,8 @@
 import { and, eq, isNull } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { mcpDevices } from "../db/schema.js";
-import { randomToken, sha256Hex } from "../security/crypto.js";
+import { sha256Hex } from "../security/crypto.js";
+import { generateDeviceToken } from "./device-token.js";
 import {
   claimMismatch,
   confirmExpired,
@@ -76,7 +77,8 @@ export async function claimCredentials(
   if (device.status === "suspended") throw invalidDeviceState("device is suspended");
   if (device.status === "revoked") throw deviceNotFound();
 
-  const token = `${DEVICE_TOKEN_PREFIX}${randomToken(24)}`;
+  // 与轮换共用同一个生成器：两处各写一份迟早会漂移（见 device-token.ts）。
+  const token = generateDeviceToken();
   const expiresAt = new Date(now.getTime() + DEVICE_TOKEN_TTL_MS);
 
   // 原子领取：守卫 + RETURNING 行数是唯一判据。**不是**「先查 token_issued_at

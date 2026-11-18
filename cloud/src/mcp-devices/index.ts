@@ -25,3 +25,12 @@ export {
   type DeviceSummary,
   type RegisterDeviceInput,
 } from "./schemas.js";
+export {
+  ROTATE_MAX_CLOCK_SKEW_MS,
+  ROTATE_SIGNING_PREFIX,
+  rotateDevice,
+  rotateSigningPayload,
+  verifyRotationSignature,
+  type RotateInput,
+  type RotatedCredentials,
+} from "./rotate.js";

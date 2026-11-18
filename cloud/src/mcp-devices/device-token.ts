@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { mcpDevices } from "../db/schema.js";
-import { sha256Hex } from "../security/crypto.js";
+import { randomToken, sha256Hex } from "../security/crypto.js";
 
 /**
  * `device_token` → 设备行。**两处共用**：设备自暂停（HTTPS）与 WSS 握手。
@@ -41,6 +41,23 @@ export interface AuthedDevice {
   status: "pending" | "active" | "suspended" | "revoked";
   tokenExpiresAt: Date | null;
   grantEpoch: number;
+}
+
+/** `device_token` 的随机字节数（24 字节 = 192 bit）。 */
+const DEVICE_TOKEN_RANDOM_BYTES = 24;
+
+/**
+ * 生成一个新的 `device_token` 明文。
+ *
+ * 首次领取（§3.4）与轮换（§3.5）**必须**用同一个生成器：两处各写一份，
+ * 迟早出现「一边 24 字节一边 32 字节」这种不可观测的漂移——而它不会让任何
+ * 测试变红，只会让熵上限在某一侧悄悄降低。
+ *
+ * 前缀 + CSPRNG（`randomToken` 用 `crypto.randomBytes`）。明文只活在调用方
+ * 的局部变量与响应体里，落库的永远是 `sha256Hex(...)`。
+ */
+export function generateDeviceToken(): string {
+  return `${DEVICE_TOKEN_PREFIX}${randomToken(DEVICE_TOKEN_RANDOM_BYTES)}`;
 }
 
 /**
