@@ -400,7 +400,7 @@ describe('设备注册（RemoteService 门面）', () => {
       secretBox: memoryBox(),
       webSocketFactory: countingFactory,
       clientVersion: '0.1.5-test',
-      registrar,
+      registrar: () => registrar,
       onChanged: () => undefined,
       log: () => undefined
     })
@@ -451,7 +451,7 @@ describe('设备注册（RemoteService 门面）', () => {
       secretBox: memoryBox(),
       webSocketFactory: countingFactory,
       clientVersion: '0.1.5-test',
-      registrar,
+      registrar: () => registrar,
       onChanged: () => undefined,
       log: () => undefined
     })

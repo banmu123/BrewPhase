@@ -156,7 +156,21 @@ export function createRequestHandler(deps: RequestHandlerDeps) {
     if (remaining <= 0) {
       return reject('REQUEST_TIMEOUT', 'request deadline has passed', null)
     }
-    const expiresAtMono = startedMono + remaining
+    /**
+     * 到期点必须锚在**换算这一刻**的 monotonic，不能复用入口处的 `startedMono`。
+     *
+     * `startedMono` 是在函数第一行取的，而 `remaining` 是过了两条准入检查之后
+     * 才取的——两者之间隔着若干次开关/draining 判断（以及未来可能加的任何前置
+     * 工作）。用 `startedMono + remaining` 等于**悄悄扣掉那段时间**：
+     *
+     * - 期限被缩短，且缩短量与前置检查耗时成正比（不可预测）；
+     * - 一旦前置检查真的变慢（例如将来加了一次 DB 读），预算就会莫名其妙缩水，
+     *   而协议承诺的是「`deadline_ms` 之前的预算就是剩下的那段」。
+     *
+     * `startedMono` 仍然有用——它算 `duration_ms`，那是「这个请求处理了多久」，
+     * 与「还剩多久可用」是两个不同的量，不能互相顶替。
+     */
+    const expiresAtMono = deps.nowMono() + remaining
 
     // ---- 4. grant 上下文 ----
     const state = deps.grants()

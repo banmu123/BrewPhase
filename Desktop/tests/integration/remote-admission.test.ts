@@ -611,6 +611,37 @@ describe('request_hash：首次投递也要验（协议 §8.2）', () => {
 })
 
 describe('deadline：epoch 只换算一次，之后只看 monotonic（ST-9）', () => {
+  it('到期点锚在换算时刻，而不是入口的 startedMono', () => {
+    // 入口 monotonic = 1000；等到换算时已经走到 1500（前置检查花了 500ms）。
+    let mono = 1_000
+    let epoch = 1_000_000
+    monoNow = () => mono
+    epochNow = () => {
+      // 模拟「前置检查耗时」：读 epoch 时钟时 monotonic 已经推进到 1500。
+      mono = 1_500
+      return epoch
+    }
+
+    // 期限 = epoch 现在 + 1000ms。
+    const deadline = epoch + 1_000
+
+    // 让业务执行把 monotonic 推到 2400：距「换算时刻 1500」只过了 900ms（未超），
+    // 但距「入口 1000」已过 1400ms（若用 startedMono 就会误判为超时）。
+    const before = serviceCalls
+    const original = services.records.searchForMcp
+    services.records.searchForMcp = ((input) => {
+      const result = original(input)
+      mono = 2_400
+      return result
+    }) as typeof services.records.searchForMcp
+
+    const outcome = createRequestHandler(deps())(req({ deadline_ms: deadline }))
+    expect(serviceCalls - before).toBe(1)
+    // 关键：结果必须照常发出。用 startedMono 计算时这里会变成 expired。
+    expect(outcome.deliver).toBe(true)
+    expect(outcome.stage).toBe('executed')
+  })
+
   it('整个过程只读一次 epoch 时钟', () => {
     let epochCalls = 0
     monoNow = () => 1_000

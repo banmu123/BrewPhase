@@ -68,7 +68,7 @@ import { backoffDelayMs, shouldResetBackoff } from './reconnect'
 import { createResultCache, type ResultCache } from './result-cache'
 import { createRequestHandler, writeRemoteAudit } from './request-handler'
 import { effectiveScopes, effectiveTools, isRemoteTool } from './remote-policy'
-import type { DeviceRegistrar } from './registration'
+import type { DeviceRegistrar, DeviceRegistrarFactory } from './registration'
 
 /**
  * Remote Service 门面：把身份、连接、上下文、缓存、准入、审计串起来。
@@ -123,13 +123,16 @@ export type RemoteServiceDeps = {
   /** 注册时展示的设备名；默认取主机名。 */
   deviceName?: string
   /**
-   * 设备注册客户端。
+   * 设备注册客户端的**工厂**（接收本服务实际使用的 Cloud origin）。
    *
-   * **生产环境默认没有**：真实 Cloud 的注册端点要求用户 Bearer，而 Remote
-   * 拿不到用户 token（凭据域分离）。Phase 1.2 才把它接到 AccountService 上。
-   * 在此之前 `register()` 会明确抛错，而不是伪造一个假成功。
+   * 为什么是工厂而不是实例：注册必须打到「这台设备将来要连的那个 Cloud」，
+   * 而那个 origin 由本服务从 `deps.cloudOrigin ?? state.json` 解析出来。
+   * 让调用方各传一份 origin 迟早会漂移——设备注册到 A 然后去连 B，
+   * 正是 `cloudOrigin` 绑定要防的事。所以由这里把 origin 交出去。
+   *
+   * **生产环境默认没有**：没有工厂时 `register()` 明确抛错，而不是伪造成功。
    */
-  registrar?: DeviceRegistrar
+  registrar?: DeviceRegistrarFactory
   /** 状态变化广播（IPC）。 */
   onChanged?(status: RemoteStatus): void
   /** 调试日志（不含参数/结果/凭据）。 */
@@ -201,6 +204,11 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
   let localState = readRemoteState(paths)
   /** 当前**配置**的 Cloud 源（进程启动时确定，不随载荷变化）。 */
   const configuredOrigin = deps.cloudOrigin ?? localState.cloudOrigin
+  /**
+   * 注册客户端：用**同一个** origin 构造，避免「注册到 A、连接 B」。
+   * 工厂只调用一次——它只是把 origin 绑进闭包，没有状态。
+   */
+  const registrar: DeviceRegistrar | null = deps.registrar ? deps.registrar(configuredOrigin) : null
 
   let deviceId: string | null = null
   let boundUserId: string | null = null
@@ -409,6 +417,10 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
    */
   const enterBlocked = (reason: string): void => {
     needsReauth = true
+    // 进行中的注册必须一起取消：它的 `userId` 可能已经不是当前用户了，
+    // 而 `claimOnce` 是异步的——不在这里断掉，它会在 await 之后继续用
+    // 旧用户身份轮询（并把结果落盘到新用户的设备目录）。
+    cancelRegistration('blocked')
     localState = { ...localState, enabled: false }
     try {
       writeRemoteState(paths, localState)
@@ -983,7 +995,7 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
   const claimOnce = async (): Promise<void> => {
     const pending = pendingRegistration
     if (!pending || pending.cancelled) return
-    const registrar = deps.registrar
+    // 用闭包里的那个实例（由工厂按 configuredOrigin 构造）。
     if (!registrar) return
 
     // 注册期间用户换了账户：这次注册的绑定对象已经不存在了。
@@ -993,8 +1005,16 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     }
 
     const result = await registrar.claim({ deviceId: pending.deviceId, claimSecret: pending.claimSecret })
-    // await 期间可能被 forget / 新注册 / 登出取代——引用相等是判据。
+    // await 期间可能被 forget / 新注册 / 账户切换取代。三种都要拦：
+    // 1. 引用变了（被 forget 或新注册顶替）
+    // 2. 自己被标了 cancelled
+    // 3. **登录用户变了**——引用可能还是同一个对象（没人动过它），
+    //    但身份已经不是发起注册的那个人了
     if (pendingRegistration !== pending || pending.cancelled) return
+    if (deps.currentUserId() !== pending.userId) {
+      cancelRegistration('account changed')
+      return
+    }
 
     if (!result.ok) {
       if (result.retryable) {
@@ -1006,6 +1026,13 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
       link.lastError = `device registration failed: ${result.reason}`
       if (link.state !== 'blocked') transition(link, 'blocked', `registration ${result.reason}`)
       publish()
+      return
+    }
+
+    // 最后一次身份确认：`store.save` 是异步的（要等 safeStorage 加密），
+    // 期间切换账户的话，这份凭据属于「上一个人」，绝不能落盘。
+    if (deps.currentUserId() !== pending.userId) {
+      cancelRegistration('account changed before save')
       return
     }
 
@@ -1196,7 +1223,6 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
 
     async register() {
       if (shuttingDown) throw new Error('remote service is stopping')
-      const registrar = deps.registrar
       if (!registrar) {
         // 诚实失败：Phase 1.1B.1 还没有把注册接到真实 Cloud（缺用户 Bearer 的
         // 合法来源）。伪造一个「已注册」比报错更糟——用户会以为配对完成了。

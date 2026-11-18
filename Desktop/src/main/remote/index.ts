@@ -24,11 +24,14 @@ export {
 } from './device-identity'
 export {
   createHttpDeviceRegistrar,
+  type AccessTokenProvider,
   type DeviceClaimResult,
+  type DeviceFetchLike,
   type DeviceRegisterInput,
   type DeviceRegisterResult,
   type DeviceRegistrar,
-  type FetchLike
+  type DeviceRegistrarFactory,
+  type HttpDeviceRegistrarOptions
 } from './registration'
 export {
   applyGrantUpdate,

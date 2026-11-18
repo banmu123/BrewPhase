@@ -46,6 +46,7 @@ import { resolveDataLocation, setActiveDataDir } from './data-location'
 import { DataLocationService } from './data-location-service'
 import { BridgeServer } from './mcp-bridge/bridge-server'
 import { createRemoteService, type RemoteService } from './remote/remote-service'
+import { createHttpDeviceRegistrar } from './remote/registration'
 import { REMOTE_CHANNELS } from '../shared/contracts/remote'
 import { BRIDGE_PROTOCOL_VERSION, bridgePaths, platformSupportsBridge } from './mcp-bridge/bridge-contract'
 import type { McpBridgeStatus } from '../shared/contracts/mcp'
@@ -585,6 +586,27 @@ function bootstrap(): void {
     services: { records, coffee, canvas, workContexts, personalDirection },
     currentUserId: () => account.snapshot().user?.id ?? null,
     clientVersion: app.getVersion(),
+    /**
+     * 设备注册客户端（Phase 1.2A 接入真实 Cloud）。
+     *
+     * 用**工厂**形式是为了让 origin 只有一个来源：RemoteService 从
+     * `deps.cloudOrigin ?? state.json` 解析出实际要连的 Cloud，再把同一个
+     * origin 交给这里。若让本文件各传一份，迟早出现「注册到 A、连接 B」。
+     *
+     * `accessToken` 每次请求前向 AccountService 要一个**当前有效**的 token：
+     * - 过期由 AccountService 自己刷（它已经有这套逻辑），本层不缓存；
+     * - refresh token 从不流经 Remote；
+     * - 未登录时 `accessToken()` 抛错 → registrar 归成 `unauthorized`
+     *   （不可重试），轮询立刻停，而不是拿着旧身份继续敲。
+     *
+     * 依赖方向保持单向：AccountService → DeviceRegistrar → RemoteService。
+     * 账户层完全不知道 Remote MCP 的存在。
+     */
+    registrar: (origin) =>
+      createHttpDeviceRegistrar({
+        origin,
+        accessToken: () => account.accessToken()
+      }),
     onChanged: (status) => {
       for (const window of BrowserWindow.getAllWindows()) {
         if (window.isDestroyed()) continue
