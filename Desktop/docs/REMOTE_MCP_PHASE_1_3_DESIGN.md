@@ -378,9 +378,9 @@ SSE 而解析失败；若只说「返回 SSE」，modern 客户端会等不到�
 | `GET` | `/mcp/oauth/authorize` | 校验 + 建授权请求 + 签发浏览器 Cookie + 分流 | 无（公开） |
 | `GET` | `/mcp/oauth/login` | 登录选择页（HTML）；带 `provider` 时直接 302 到 Provider | 浏览器 Cookie（绑定） |
 | `GET` | `/mcp/oauth/callback/:provider` | MCP 专用 Provider 回调：换身份 → 建/取用户 → 写 `user_id` | Provider `state` |
-| `GET` | `/mcp/oauth/consent` | 渲染同意页（HTML） | 浏览器 Cookie（绑定）+ 行内 `user_id` |
-| `POST` | `/mcp/oauth/consent` | 批准 / 拒绝 → 写 grant + code → 302 回 `redirect_uri` | 浏览器 Cookie + CSRF |
-| `POST` | `/mcp/oauth/token` | `authorization_code` / `refresh_token` | 无（PKCE / refresh 本身就是凭据） |
+| `GET` | `/mcp/oauth/consent` | 渲染同意页（HTML）——**C2b 未实现** | 浏览器 Cookie（绑定）+ 行内 `user_id` |
+| `POST` | `/mcp/oauth/consent` | 批准 / 拒绝 → 写 grant + code → 302 回 `redirect_uri`——**C2b 未实现** | 浏览器 Cookie + CSRF |
+| `POST` | `/mcp/oauth/token` | `authorization_code` / `refresh_token`（**C3 未实现**） | 无（PKCE / refresh 本身就是凭据） |
 | `POST` | `/mcp/oauth/revoke` | RFC 7009；只撤 refresh 所属 **session**，不撤 grant | 无（token 即凭据） |
 | `GET` | `.well-known/oauth-protected-resource` | PRM | 无 |
 | `GET` | `.well-known/oauth-authorization-server` | AS 元数据 | 无 |
@@ -1430,8 +1430,10 @@ CREATE UNIQUE INDEX "mcp_refresh_tokens_session_active_uq"
 > / `verifyMcpAccessToken`、`browser-session.ts` 的签名 Cookie、`constants.ts`）；
 > 并修掉 Session 创建与 Grant 撤销的竞态（`createMcpSession` 对 Grant 行加
 > `FOR UPDATE`）。
-> 余下第 5–15 条（路由、consent、token endpoint、discovery、CIMD、DCR）属
-> 1.3.1-C2 / C3。详见路线图 §3.8 / 索引 §19。
+> **1.3.1-C2a 已交付第 6–7 条**（`/mcp/oauth/authorize`、`/login`、
+> `/callback/:provider`，98 条测试，含启用边界与并发消费）。
+> 余下第 8–15 条（consent、token endpoint、discovery、CIMD、DCR）属
+> 1.3.1-C2b / C3。详见路线图 §3.8 / §3.9 与索引 §19 / §20。
 
 | # | 范围 | 验收 |
 |---|---|---|
@@ -1594,9 +1596,9 @@ CREATE UNIQUE INDEX "mcp_refresh_tokens_session_active_uq"
       ↓
 5. ✅ MCP_BROWSER_SESSION_KEY + 签名 Cookie 工具 + 篡改用例
       ↓  ← 没有它，authorize 无法绑定浏览器
-6. /mcp/oauth/authorize（校验 + mcp_auth_requests + Set-Cookie + 分流）
+6. ✅ /mcp/oauth/authorize（校验 + mcp_auth_requests + Set-Cookie + 分流）
       ↓
-7. /mcp/oauth/login + /mcp/oauth/callback/:provider（复用 adapter + 建用户）
+7. ✅ /mcp/oauth/login + /mcp/oauth/callback/:provider（复用 adapter + 建用户）
       ↓
 8. GET/POST /mcp/oauth/consent（HTML + CSRF + scope 收窄）
       ↓  ← 到这里"新用户第一次接入"才第一次可端到端跑（C4）

@@ -626,7 +626,7 @@ Cloud 现在同时服务 Desktop 登录（`/oauth/*`、`/auth/*`）。把它设�
 | 项 | 结果 |
 |---|---|
 | Cloud `typecheck` / `lint` / `build` | 通过 |
-| Cloud `pnpm test` | **697 passed / 41 files**（1.3.1-B 基线 643，**+54**） |
+| Cloud `pnpm test` | **697 passed / 44 files**（1.3.1-B 基线 643，**+54**） |
 | Desktop `typecheck` / `test` | 通过；1265 passed / 89 files（未改 Desktop） |
 | 新增迁移 | **无** |
 | 新增 HTTP 路由 | **无** |
@@ -651,3 +651,106 @@ Cloud 现在同时服务 Desktop 登录（`/oauth/*`、`/auth/*`）。把它设�
 
 authorize / login / callback / consent 路由（C2）；token / revoke /
 PRM / AS 元数据 / CIMD / DCR（C3）；`/mcp` 数据端点（1.3.2）。
+
+## 20. Phase 1.3.1-C2a：authorize / login / Provider callback（已交付）
+
+C2 的第一半。授权流程现在能从「客户端发起」走到「Provider 身份已确认、用户已
+写回授权请求」，然后停在 `/mcp/oauth/consent`（**该路由属 C2b，当前 404**）。
+
+### 20.1 交付物
+
+| 项 | 落点 |
+|---|---|
+| 路由 | `cloud/src/routes/mcp-oauth.ts`：`GET /mcp/oauth/authorize` / `/login` / `/callback/:provider` |
+| 业务层 | `cloud/src/mcp-oauth/authorize-flow.ts` |
+| 登录页 | `cloud/src/mcp-oauth/login-page.ts` |
+| 启用边界 | `cloud/src/mcp-oauth/enablement.ts` + `app.ts` 的能力判定 |
+| 测试 | `authorize-route`(24) / `login-route`(24) / `callback-route`(23) / `route-enablement`(14) / `authorize-flow`(13) = **98 条** |
+
+### 20.2 流程（本阶段实际打通的路径）
+
+```
+客户端 → GET /mcp/oauth/authorize?…（8 个参数逐项校验）
+         → INSERT mcp_auth_requests（csrf 占位、binding NULL、user NULL）
+         → Set-Cookie（复用或新建）→ 302 /mcp/oauth/login?rid=
+用户浏览器 → GET /mcp/oauth/login?rid=…（TOFU 绑定）
+         → 200 登录页（只列已配置的 Provider）
+用户点 Google → GET /mcp/oauth/login?rid=&provider=google
+         → 条件 UPDATE 占用 Provider（写 PR 哈希 + nonce 哈希）→ 302 到 Provider
+Provider 回调 → GET /mcp/oauth/callback/google?code&state
+         → 原子消费 State → 交换身份 → findOrCreateUserWithIdentity
+         → 写 user_id → 302 /mcp/oauth/consent?rid=（**C2b 才实现**）
+```
+
+### 20.3 五条安全判据（每条都有测试）
+
+| # | 判据 | 反例（被测试拒绝） |
+|---|---|---|
+| 1 | `redirect_uri` **逐字符**匹配注册值 | 尾斜杠、多路径、加 query、加 fragment、换协议、显式 443、主机名大小写 |
+| 2 | `resource` 逐字符等于 `BASE_URL + "/mcp"` | 无 `/mcp`、多斜杠、换域名、换协议、缺失 |
+| 3 | PKCE 只接受 `S256` + 43 字符 base64url | `plain`、`s256`、空、42/44 字符、带 `+`/`=` |
+| 4 | `scope` 非空且 ⊆ `MCP_SCOPES` | 空、全空格、`records:write`、混合未知值 |
+| 5 | `grant_types` 必须含 `authorization_code` | 只有 `refresh_token` 的客户端 |
+
+### 20.4 与 Desktop 登录的隔离（回归已覆盖）
+
+| 断言 | 结果 |
+|---|---|
+| MCP 流程不写 `oauth_codes` / `oauth_transactions` / `auth_sessions` | 0 行 |
+| `/oauth/authorize` 仍只接受 `127.0.0.1` 回调 | 非回环仍 400 |
+| `/oauth/callback/:provider` 仍在（JSON `invalid_grant`，不是 MCP 的 HTML 400） | 通过 |
+| MCP 的 `bp_mcp_bs` 发给 `/auth/me` | 仍 401 |
+| MCP 的 `bp_mcp_bs` 发给 `/oauth/token` | 仍 400 `invalid_request` |
+
+### 20.5 启用边界（这是本阶段最容易被做错的一处）
+
+`MCP_BROWSER_SESSION_KEY` 不合格时，`/mcp/oauth/*` **三个路由都不注册（404）**，
+而 `/oauth/*`、`/auth/*`、`/mcp-devices/*`、`/health` 全部照常。
+
+| 密钥状态 | `/mcp/oauth/*` | 其它路由 | 日志 |
+|---|---|---|---|
+| 缺失 / 空串 | 404 | 正常 | `mcp_oauth_disabled{reason:"missing_browser_session_key"}` |
+| < 32 字节（按 UTF-8 字节） | 404 | 正常 | `…too_short` |
+| 与 `JWT_SIGNING_KEY` 相同 | 404 | 正常 | `…reused_from_jwt` |
+| 合格 | 正常 | 正常 | 无 disabled 日志 |
+
+日志里**只有原因枚举**：不含密钥、不含长度、不含任何片段（有哨兵测试）。
+
+### 20.6 变异验证（9/9 全部被抓）
+
+| 变异 | 抓它的判据 |
+|---|---|
+| 移除 `redirect_uri` 精确匹配（改前缀） | 7 种近似 URI 全部 400 |
+| 移除 `resource` 检查 | 5 种错误 resource 全部 400 |
+| 放宽 PKCE（接受 `plain`） | `plain` 必须 400 |
+| 跳过 TOFU 绑定 | 不同 sid 必须 400 + 删行 |
+| State 不做原子消费（去掉 `consumed_at` 判据） | 行锁制造的交叠下「恰好一条成功」 |
+| callback 不验证 provider | `reason` 必须是 `provider_mismatch`（不是 `consumed`） |
+| 使用 Desktop 的回调地址 | `redirect_uri` 必须以 `/mcp/oauth/callback/` 开头 |
+| 使用 Desktop 的表 | `oauth_transactions` 必须 0 行 |
+| 缺密钥仍挂载路由 | `/mcp/oauth/*` 必须 404 |
+
+**其中两条一开始是存活的**（State 原子消费、provider 验证）：它们各有第二道
+防护（读阶段的 `consumed_at` / UPDATE 的 `provider` 条件），路由层的 400 无法
+区分「第一道挡住了」与「第二道挡住了」。修法不是删掉纵深防御，而是**加业务层
+测试**：断言内部 `reason`、并用行锁让两条并发调用**必然**都读到「未消费」。
+
+### 20.7 实测与门禁（本次执行）
+
+| 项 | 结果 |
+|---|---|
+| Cloud `typecheck` / `lint` / `build` | 通过 |
+| Cloud `pnpm test` | **795 passed / 49 files**（1.3.1-C1 基线 697，**+98**） |
+| Desktop `typecheck` / `test` / `build` / `mcp:build` | 全部通过；**1265 passed / 89 files**；`stdio.mjs` 911.67 kB 不变 |
+| 新增迁移 | **无** |
+| 新增 HTTP 路由 | **3 条**（均在 `/mcp/oauth/*`，缺密钥时不注册） |
+| 跳过/待定的测试 | 无 `skip`、无 `todo` |
+
+### 20.8 未做（C2b / C3 / 1.3.2）
+
+- **C2b**：`GET/POST /mcp/oauth/consent`、grant upsert、`mcp_auth_codes` 签发、
+  CSRF 重新生成。当前 `csrf_hash` 是「一次性丢弃明文的随机占位」，**任何提交
+  都不可能通过**（fail-closed）。
+- **C3**：`/mcp/oauth/token`、`/revoke`、PRM、AS metadata、CIMD、DCR。
+- **1.3.2**：`/mcp` 数据端点、工具面、`scopeForTool`、`MCP_SCOPES` 与
+  Desktop `REMOTE_SCOPES` 的一致性测试。

@@ -541,7 +541,8 @@ cloud/tests/{mcp-devices,link}/*.test.ts
 | **1.3.1-A** | **数据层**：迁移 `0003` 五张表 + Drizzle schema + 约束测试 | ✅ **已完成**（见 §3.6） |
 | **1.3.1-B** | Refresh Token 核心服务（签发 / 轮换 / 重放 / 90 天上限）+ Session 生命周期 | ✅ **已完成**（见 §3.7） |
 | **1.3.1-C1** | Access Token + 浏览器 Cookie 基础设施；修 Grant 撤销竞态 | ✅ **已完成**（见 §3.8） |
-| **1.3.1-C2** | authorize / login / callback / consent 路由 | 待开工 |
+| **1.3.1-C2a** | authorize / login / Provider callback 浏览器授权基础流程 | ✅ **已完成**（见 §3.9） |
+| **1.3.1-C2b** | Consent GET/POST（同意页 + grant upsert + 授权码签发） | 待开工 |
 | **1.3.1-C3** | token / revoke / discovery / CIMD / DCR | 待开工 |
 | **1.3.2** | Streamable HTTP 与工具服务 | `POST /mcp`（dual-era）、Bearer + audience + grant 回查、8 个只读工具、错误面、日志纪律 |
 | **1.3.3** | 真实客户端联调 | Inspector、ChatGPT、Grok、refresh 行为、撤销/离线/异常恢复、回填 `NOT VERIFIED` |
@@ -756,6 +757,54 @@ PostgreSQL 行锁串行化保证；测试用 `pg_blocking_pids()` 把「确实�
 
 **锁顺序约定：grant 行永远在 session 行之前。** 撤销路径与创建路径一致，
 20 轮并发无 `40P01`。
+
+### 3.9 1.3.1-C2a 已交付（authorize / login / provider callback）
+
+| 项 | 落点 |
+|---|---|
+| 路由 | `cloud/src/routes/mcp-oauth.ts`：`GET /mcp/oauth/authorize`、`/login`、`/callback/:provider` |
+| 业务层 | `cloud/src/mcp-oauth/authorize-flow.ts`：参数校验、建行、TOFU 绑定、Provider 占用、State 原子消费、写 user_id |
+| 登录页 | `cloud/src/mcp-oauth/login-page.ts`：纯静态 HTML、无脚本、无外部资源、全量转义 |
+| 启用边界 | `cloud/src/mcp-oauth/enablement.ts` + `app.ts`：密钥不合格就不注册路由组 |
+| 测试 | `tests/mcp-oauth/{authorize-route,login-route,callback-route,route-enablement,authorize-flow}.test.ts` = **98 条** |
+| 迁移 | **无** |
+
+**启用边界为什么是「能力」而不是「进程」**：`MCP_BROWSER_SESSION_KEY` 缺失
+或不合格时，`/mcp/oauth/*` 三个路由**根本不注册**（404），而 `/oauth/*`、
+`/auth/*`、`/mcp-devices/*` 照常工作。把密钥设成进程必填会让「只跑 Desktop
+登录的部署」因为一个未启用的能力起不来——那是把新功能的门禁变成旧功能的故障。
+
+三条拒绝理由（都只进日志、不含密钥片段）：
+`missing_browser_session_key` / `browser_session_key_too_short` /
+`browser_session_key_reused_from_jwt`。
+
+**三条一次性语义**（都有对应并发测试）：
+
+| 动作 | 判据 |
+|---|---|
+| TOFU 绑定 | 条件 UPDATE `WHERE browser_binding_hash IS NULL`；两个浏览器只有一个命中 |
+| 占用 Provider 流程 | 条件 UPDATE 带 `provider IS NULL OR provider = $same`；换 provider → 409 语义的 400 |
+| 消费 Provider State | 读一次区分五种原因 → **条件 UPDATE `WHERE provider_consumed_at IS NULL`** 才是判据 |
+
+**Provider State 与 Nonce 只落哈希**。Nonce 的哈希**不加域前缀**——Google
+适配器验证 ID Token 时算的是 `sha256(idToken.nonce)`，加前缀会让所有 Google
+登录失败。Mock 适配器会校验这一点（不是「假装成功」）。
+
+**同一 rid 只能属于一个 Provider**：`provider_conflict` 时不静默切换。
+
+**用户拒绝 vs 交换失败**：前者 302 回客户端带 `error=access_denied`（并删行、
+清 Cookie），后者 500 `server_error`（也删行）。**不把交换失败伪装成用户拒绝**
+——那会让客户端以为用户放弃，而实际是服务端坏了。
+
+**Cookie 不跨界**：把 `bp_mcp_bs` 发给 `/auth/me` 仍是 401、发给 `/oauth/token`
+仍是 400（有测试）。
+
+**未做（C2b）**：`GET/POST /mcp/oauth/consent`、grant upsert、授权码签发。
+`csrf_hash` 目前是**一次性丢弃明文的随机占位**：满足 NOT NULL 且**永远不可能
+匹配任何提交**（fail-closed）。C2b 渲染同意页时必须重新生成并覆盖。
+
+**sweep 扩展**：过期或已消费超过 1 小时的 `mcp_auth_requests` 由 `startSweep`
+清理，避免「点了授权又放弃」把表撑大。
 
 ### 3.5 风险
 
