@@ -539,7 +539,7 @@ cloud/tests/{mcp-devices,link}/*.test.ts
 | **1.3.0** | 规范对齐与设计冻结 | 本文件 + `REMOTE_MCP_PHASE_1_3_DESIGN.md`；**零代码** |
 | **1.3.0-R1** | 浏览器授权闭环 + Session 两层模型 + 最小权限 | 只改文档 |
 | **1.3.1-A** | **数据层**：迁移 `0003` 五张表 + Drizzle schema + 约束测试 | ✅ **已完成**（见 §3.6） |
-| **1.3.1-B** | Refresh Token 核心服务（签发 / 轮换 / 重放 / 90 天上限） | 待开工 |
+| **1.3.1-B** | Refresh Token 核心服务（签发 / 轮换 / 重放 / 90 天上限）+ Session 生命周期 | ✅ **已完成**（见 §3.7） |
 | **1.3.1-C** | authorize / login / callback / consent / token / discovery / CIMD | 待开工 |
 | **1.3.2** | Streamable HTTP 与工具服务 | `POST /mcp`（dual-era）、Bearer + audience + grant 回查、8 个只读工具、错误面、日志纪律 |
 | **1.3.3** | 真实客户端联调 | Inspector、ChatGPT、Grok、refresh 行为、撤销/离线/异常恢复、回填 `NOT VERIFIED` |
@@ -689,6 +689,34 @@ consent 页随之从 `/mcp/consent` 挪到 `/mcp/oauth/consent`（理由见设�
 
 **1.3.1-B 的入口条件**：`mcp_refresh_tokens` 的部分唯一索引必须先在库里（本阶段
 已建并有 3 条回归测试盯着），否则轮换服务的「当前这代」判据在并发下不成立。
+
+### 3.7 1.3.1-B 已交付（Refresh Token 与 Session 生命周期）
+
+| 项 | 落点 |
+|---|---|
+| 服务 | `cloud/src/mcp-oauth/sessions.ts`：`createMcpSession` / `rotateMcpRefreshToken` / `getMcpSessionState` / `revokeMcpSession` / `revokeMcpSessionsByGrant` |
+| 审计 | `db/audit.ts` 新增 5 个 `mcp_*` 事件类型（`event_type` 是 text 且无 CHECK，**不加列、不迁移**） |
+| 测试 | `tests/mcp-oauth/{refresh-token-service,absolute-expiry,session-lifecycle}.test.ts` = **44 条** + 夹具 `tests/helpers/mcp-oauth.ts` |
+| 常量 | `MCP_SESSION_ABSOLUTE_TTL_MS = 90d`、`MCP_REFRESH_TOKEN_TTL_MS = 30d`、`MCP_REFRESH_REUSE_GRACE_MS = 30s` |
+| 哈希域 | `pepperedSha256Hex(pepper, "mcp-refresh", raw)`，与 Desktop 的 `"refresh-token"` 域**物理隔离** |
+| 迁移 | **无**（本阶段不新增迁移） |
+
+**三个必须记住的实现细节**：
+
+1. **锁顺序恒为「先 refresh 行、后 session 行」**。反过来会让两个并发刷新各自
+   持有 session 锁再互等对方的 refresh 锁——死锁。宽限判定分支同样遵守这个顺序。
+2. **`absolute_expires_at` 与 `created_at` 没有任何 UPDATE 路径**：A8 用
+   「剥注释后的源码扫描 + 运行期全列快照比对（除 `last_used_at`）」双重证明，
+   而不是靠注释声称。
+3. **撤销必须先提交、再抛错**：事务内返回结论（`grace` / `reuse` / `rejected`），
+   提交后写审计并抛 `invalid_grant`。在事务内直接抛异常会把撤销一起回滚。
+
+**宽限期不是幂等恢复**：宽限内重放同样只得到 `invalid_grant`，客户端拿不到
+上一代新 token（v1 明确不做恢复，理由见设计 §9.10.1）。
+
+**同阶段修正**：设计 §9.9 的 A1/A3 两处数字与 30 天 token TTL 不自洽
+（A1 少了初始那一代；A3 的 +31d 必然先撞 token 过期），已在设计文档中修正，
+语义不变。
 
 ### 3.5 风险
 

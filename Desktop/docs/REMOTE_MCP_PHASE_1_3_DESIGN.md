@@ -1118,14 +1118,26 @@ refresh_token.expires_at = min(now + 30 days, session.absolute_expires_at)
 
 | # | 场景 | 断言 |
 |---|---|---|
-| A1 | 连续 5 次正常刷新（每次间隔 1 小时） | `sid` 不变；`absolute_expires_at` 逐字节不变；5 条 `mcp_refresh_tokens`，前 4 条 `consumed_at` 非空 |
-| A2 | 每次刷新后 `expires_at` | 恒 ≤ `absolute_expires_at` |
-| A3 | 模拟跨 4 个 30 天窗口（注入时钟 +31d、+62d、+89d） | 每次都成功，`absolute_expires_at` **不变** |
+| A1 | 连续 5 次正常刷新（每次间隔 1 小时） | `sid` 不变；`absolute_expires_at` 逐字节不变；**6 条** `mcp_refresh_tokens`（初始 + 5 代），前 5 条 `consumed_at` 非空 |
+| A2 | 每次刷新后 `expires_at` | 恒 ≤ `absolute_expires_at`，且 ≤ 自己 `created_at` + 30d |
+| A3 | 在第 **29 / 58 / 87 / 89** 天各刷新一次（注入时钟） | 每次都成功，`absolute_expires_at` **不变** |
 | A4 | 第 90 天 + 1 秒再刷新 | `invalid_grant`；Session 状态为 `expired` |
 | A5 | 在第 89 天刷新 | 成功，但新 token 的 `expires_at` = `absolute_expires_at`（不是 now+30d） |
 | A6 | 撤销后刷新 | `invalid_grant`；不新建任何 token 行 |
 | A7 | 宽限外重放 | `invalid_grant` 且 Session `revoked`；该 Session 全部 refresh 行不可用 |
 | A8 | 全表扫描 | 没有任何 `UPDATE mcp_sessions SET absolute_expires_at`（grep 源码 + 运行期快照比对） |
+
+> **1.3.1-B 修正了 A1/A3 两处数字自洽问题**（语义未变）：
+>
+> - A1 原写「5 条 token，前 4 条已消费」，那是 **4 次**刷新的结果。
+>   5 次刷新应为 6 条（初始 + 5 代）、前 5 条已消费。
+> - A3 原写「+31d / +62d / +89d」，但**单代 token 只有 30 天寿命**：
+>   第 31 天时第一代必然已过期，那次刷新只会得到 `token_expired`，
+>   与「Session 绝对上限」毫无关系。要跨窗口就必须在每代到期前刷新一次，
+>   所以取 29/58/87/89 天。
+>
+> 这两处若不修正，实现者会照抄一组永远不可能通过的期望值，然后为了让它
+> 「通过」而去放宽 token TTL——那正好会破坏模型的另一半。
 
 ### 9.10 Refresh 并发与重放（行为矩阵）
 
@@ -1411,9 +1423,10 @@ CREATE UNIQUE INDEX "mcp_refresh_tokens_session_active_uq"
 
 顺序即依赖，不可并行。
 
-> **1.3.1-A 已交付第 1 条**（迁移 `0003` 五张表 + Drizzle schema + 42 条约束测试，
-> 见路线图 §3.6 / 索引 §17）。第 2 条起属 1.3.1-B（2–3、9 的 refresh 分支）
-> 与 1.3.1-C（4–8、10–15）。
+> **1.3.1-A 已交付第 1 条**（迁移 `0003` 五张表 + Drizzle schema + 42 条约束测试）。
+> **1.3.1-B 已交付第 2–3 条**（`src/mcp-oauth/sessions.ts`：签发 / 轮换 / 重放 /
+> 90 天绝对期限 / 撤销族，42 条服务层测试）。
+> 余下第 4–15 条属 1.3.1-C。详见路线图 §3.7 / 索引 §18。
 
 | # | 范围 | 验收 |
 |---|---|---|
@@ -1568,9 +1581,9 @@ CREATE UNIQUE INDEX "mcp_refresh_tokens_session_active_uq"
 ```
 1. ✅ 迁移 0003（五张表）+ schema + 幂等测试 + information_schema 快照比对
       ↓  ← 1.3.1-A 已交付；部分唯一索引就位后，「当前这代」才有确定答案
-2. mcp_refresh_tokens 服务（签发 / 轮换 / 消费 / 重放）+ 纯单测
-      ↓  ← 90 天模型在这里定死（A1–A8），后面才可能"不续命"
-3. mcp_sessions 服务（create / revoke / 过期判定 / issued_scope）
+2. ✅ mcp_refresh_tokens 服务（签发 / 轮换 / 消费 / 重放）+ 集成测试
+      ↓  ← 90 天模型在这里定死（A1–A8），后面才可能「不续命」
+3. ✅ mcp_sessions 服务（create / revoke / 过期判定 / issued_scope）
       ↓  ← sid 稳定性在这里定死（B3）
 4. signMcpAccessToken / verifyMcpAccessToken + 双向 aud 隔离
       ↓

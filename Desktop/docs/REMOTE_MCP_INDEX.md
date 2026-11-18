@@ -457,3 +457,85 @@ mcp_refresh_tokens（每代凭据）
 
 Refresh Token 签发与轮换、Session 服务、`signMcpAccessToken`、`MCP_BROWSER_SESSION_KEY`、
 Cookie、consent HTML、CIMD 抓取器、DCR、`/mcp` 路由、MCP SDK 引入。
+
+## 18. Phase 1.3.1-B：Refresh Token 与 Session 生命周期（已交付）
+
+承接 §17（数据层）。本阶段实现设计 §9 的**运行时**语义：签发、轮换、重放检测、
+90 天绝对期限、Session 生命周期与三方隔离。仍然没有路由、没有 JWT、没有 Cookie。
+
+### 18.1 交付物
+
+| 项 | 落点 |
+|---|---|
+| 服务 | `cloud/src/mcp-oauth/sessions.ts` |
+| 审计 | `cloud/src/db/audit.ts` +5 个 `mcp_*` 事件类型（**无迁移**） |
+| 测试 | `tests/mcp-oauth/{refresh-token-service,absolute-expiry,session-lifecycle}.test.ts` = **44 条**；夹具 `tests/helpers/mcp-oauth.ts`（可注入时钟） |
+
+### 18.2 服务接口
+
+| 接口 | 用途 |
+|---|---|
+| `createMcpSession(deps, {userId, grantId, issuedScope})` | 一个事务里校验 user active / grant 未撤销 / scope ⊆ grant，写 Session + 第一代 token，返回 `{sessionId, refreshToken}` |
+| `rotateMcpRefreshToken(deps, {refreshToken})` | 锁 refresh → 锁 session → 逐条判态 → 消费旧代 + 插新代 + 只推 `last_used_at`；返回新 token 与 `effectiveScope` |
+| `getMcpSessionState(db, sid, now?)` | `active` / `revoked` / `expired` / `missing` 惰性判定，不写库 |
+| `revokeMcpSession(deps, {sessionId, reason})` | 打标记，**不删行**；幂等 |
+| `revokeMcpSessionsByGrant(deps, {grantId, reason})` | 撤该 grant 全部 Session；**可传 tx**，与 grant 撤销同事务 |
+
+`client_id` / `resource` 不由调用方传入，直接从 Grant 取——「Session 与 Grant 一致」
+因此不是一条要校验的规则，而是不可能违反的结构事实。
+
+### 18.3 Refresh Token 状态流转
+
+```
+                createMcpSession
+                       │
+                       ▼
+              ┌──────────────────┐
+              │  未消费（当前代）  │
+              └────────┬─────────┘
+      rotate           │           重放（≤30s）→ invalid_grant（**不撤会话**）
+      ┌────────────────┤           重放（>30s） → invalid_grant + **撤 Session**
+      ▼                │
+┌──────────────┐       │
+│ 已消费        │───────┘
+│ consumed_at  │   replaced_by ──▶ 下一代（未消费）
+└──────────────┘
+      │ 历史行永久保留（重放检测依赖它）
+      ▼
+ （Session 删除时才 CASCADE）
+```
+
+### 18.4 三条实现不变量（都有对应测试）
+
+| # | 不变量 | 证据 |
+|---|---|---|
+| 1 | 锁序恒为「先 refresh 行、后 session 行」 | 并发刷新用例：恰好一个成功，另一个 `invalid_grant`，会话不撤 |
+| 2 | `created_at` / `absolute_expires_at` 无任何 UPDATE 路径 | ① 剥注释后扫描全部 `.set({…})`；② 5 次刷新后 Session 全列快照（除 `last_used_at`）逐字节相同；③ 反证 `last_used_at` 确实被推进 |
+| 3 | 撤销先提交、再抛错 | 事务内只返回结论，审计与 `invalid_grant` 在 commit 之后 |
+
+### 18.5 三方隔离（设计 §9.11 验收本体）
+
+| 动作 | MCP Session | Desktop `auth_sessions` | 证据 |
+|---|---|---|---|
+| 撤销 MCP Session | revoked | **不受影响**（且 Desktop token 仍可轮换） | `session-lifecycle` |
+| Desktop 登出（撤整族） | **不受影响**（MCP token 仍可轮换） | revoked | 同上 |
+| MCP 刷新 | 只推 `last_used_at` | **零写入**（表里 0 行） | 同上 |
+| 设备撤销 | **不受影响** | 不受影响 | 同上 |
+
+### 18.6 实测与门禁（本次执行）
+
+| 项 | 结果 |
+|---|---|
+| Cloud `typecheck` / `lint` / `build` | 通过 |
+| Cloud `pnpm test` | **643 passed / 41 files**（1.3.1-A 基线 599，**+44**） |
+| Desktop `typecheck` / `test` | 通过；1265 passed / 89 files（未改 Desktop） |
+| 新增迁移 | **无** |
+| 变异验证 | **9/9 全被抓**（续期缺陷 / 换 sid / 不夹绝对期限 / 宽限窗口失效 / 宽限外不撤 / 跨域哈希 / 不查 grant / 不查用户 / 撤销后删行） |
+
+**过程中抓到并修掉一个假绿**：宽限用例最初在同一毫秒内重放（`sinceConsumedMs = 0`），
+把窗口改成 0 也能通过。改为轮换后推进 5 秒再重放，「窗口 = 0」立刻变红。
+
+### 18.7 未做（属 1.3.1-C）
+
+authorize / login / callback / consent / token endpoint / `signMcpAccessToken` /
+浏览器 Cookie / PRM 与 AS 元数据 / CIMD / DCR / `/mcp` 数据端点。
