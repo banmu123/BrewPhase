@@ -806,6 +806,79 @@ PostgreSQL 行锁串行化保证；测试用 `pg_blocking_pids()` 把「确实�
 **sweep 扩展**：过期或已消费超过 1 小时的 `mcp_auth_requests` 由 `startSweep`
 清理，避免「点了授权又放弃」把表撑大。
 
+### 3.10 1.3.1-C2b 已交付（Consent / Grant / 授权码）
+
+C2 的后半。授权流程现在能一路走到「客户端拿到 `code`」，Cloud 侧不再有
+404 的断点；token 兑换仍属 C3。
+
+| 项 | 落点 |
+|---|---|
+| 路由 | `cloud/src/routes/mcp-oauth.ts` 追加 `GET/POST /mcp/oauth/consent` |
+| 业务层 | `cloud/src/mcp-oauth/consent-flow.ts`：前置校验、CSRF 轮换、deny 原子删除、allow 事务 |
+| 页面 | `cloud/src/mcp-oauth/consent-page.ts`：纯静态 HTML、无脚本、全量转义 |
+| 在线同步 | `cloud/src/mcp-oauth/grant-sync.ts`：按 `inspectForwarder()` 决定 install / replace / skip |
+| 审计 | `mcp_consent_allowed` / `mcp_consent_denied` / `mcp_consent_csrf_mismatch` / `mcp_auth_code_issued` / `mcp_grant_sync_failed`（无迁移） |
+| 测试 | 新增 7 个文件 **104 条**；C2a 回归 **+13 条**（login 24→29 / callback 23→28 / authorize-flow 13→16） |
+| 迁移 | **无** |
+
+**C2a 的四处回归**（本阶段一起修）：
+
+| 问题 | 修法 |
+|---|---|
+| 服务端拉 `authorize` 后，真实浏览器首次进 `/login` 没有 Cookie → 被锁死 | 仅当 `browser_binding_hash IS NULL` 时新建会话并 TOFU；已绑定的行仍 fail-closed；callback 永不匿名建会话 |
+| 所有 Provider `error` 都映射成 `access_denied` | 只把 `access_denied` 原样回传；其余（含 `server_error`）一律 `server_error` |
+| Provider 交换失败返回 Cloud 500 页面 | 用已验证的 `redirect_uri` 302 回客户端，带 `error=server_error` + 原 `state` + `iss` |
+| 旧 State 的拒绝回调可能删掉同一 rid 上新发起的授权 | `DELETE` 条件补 `provider_state_hash` / `provider` / `browser_binding_hash` / `consumed_at IS NULL` / `expires_at > now` |
+
+**同意页的十道门**：rid 格式、行存在、未过期、Provider 已消费、`user_id`
+非空、provider 合法、Cookie 有效、绑定一致、未被别的流程消费、请求 scope
+非空。绑定不匹配与过期都会**删行**（前者还写审计）；其余只给 400 页面。
+
+**CSRF**：每次渲染重新生成 32 字节明文并覆盖 `csrf_hash`，明文只进 HTML
+隐藏字段；POST 用 `constantTimeEqual` 比对。不匹配 → 删行 + 审计 + 400。
+表单只收 urlencoded，`rid`/`csrf`/`decision` 重复即 400。
+
+**Step-up**：已有 active grant 的 scope ⊆ 本次请求且新增了 scope 时，
+已有项在页面上勾选且 `disabled`（不提交），服务端按**并集**补回；因此
+`final ⊆ requested` 是结构事实。非 Step-up 按勾选覆盖，支持收窄。
+`no_scope_granted`（允许但一个都没勾）按拒绝处理。
+
+**Grant upsert**：`INSERT … ON CONFLICT (user_id, client_id, resource) DO UPDATE`。
+新建 epoch=1；scope 未变不涨；scope 变了 +1；已撤销后再次授权 +1 并清
+`revoked_at`。**不做「先 SELECT 再 INSERT」**——不存在的行没有可锁对象。
+
+**授权码**：32 字节明文只在 302 的 `Location` 出现一次；库内
+`sha256("mcp-code:"‖code)`；TTL 60 秒；scope/resource/redirect_uri/
+code_challenge 继承授权请求。grant upsert、code 插入、删授权请求**同一事务**，
+删行命中数 ≠ 1 就整体回滚。
+
+**在线 Grant 同步**：
+
+| 情形 | 动作 |
+|---|---|
+| 新 grant / 撤销后重新激活，且设备在线 | `installGrant()` |
+| scope 变了、旧 ctx 已安装 | `replaceGrant()` |
+| scope 未变且已安装 | 不发帧 |
+| 无在线设备 | 不同步，等下次 `hello_ok` 快照 |
+
+ack 超时 / `applied=false` / 离线都**不回滚数据库**：授权与设备在线状态是
+两个生命周期。转发层会 fail-closed（该连接或该 grant 不可路由），设备重新
+握手时 `hello_ok` 按数据库重建快照——这条路径不依赖那次在线同步成功。
+
+**实测与门禁**：Cloud `typecheck` / `lint` / `build` 通过，`pnpm test`
+**912 passed / 56 files**（C2a 基线 795 / 49，**+117**）；Desktop
+`typecheck` / `test` / `build` / `mcp:build` 通过，**1265 passed / 89 files**，
+`stdio.mjs` 911.67 kB 不变；**无新增迁移**；无 `skip` / `todo`。
+
+**变异验证 13/13 全部被抓**。其中 `M13`（ack 失败仍把 ctx 当作已安装）
+第一版**存活**：`syncLag` 也会让派发失败，于是「只看派发结果」看不出差别。
+修法是直接断言转发层的事实——`inspectForwarder().connections[].grants[].installed`
+必须是 `false`。
+
+**未做（C3 / 1.3.2 / 1.3.3）**：`/mcp/oauth/token`、`/revoke`、PRM、AS
+metadata、CIMD、DCR、`POST /mcp`、工具面、真实客户端联调。授权码兑换时创建
+Session 也属 C3（`mcp_sessions` 在 C2b 里**一行都不写**）。
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、

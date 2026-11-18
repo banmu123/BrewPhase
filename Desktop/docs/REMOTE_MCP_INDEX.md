@@ -746,11 +746,112 @@ Provider 回调 → GET /mcp/oauth/callback/google?code&state
 | 新增 HTTP 路由 | **3 条**（均在 `/mcp/oauth/*`，缺密钥时不注册） |
 | 跳过/待定的测试 | 无 `skip`、无 `todo` |
 
-### 20.8 未做（C2b / C3 / 1.3.2）
+### 20.8 未做（当时的状态；C2b 已补齐，见 §21）
 
 - **C2b**：`GET/POST /mcp/oauth/consent`、grant upsert、`mcp_auth_codes` 签发、
-  CSRF 重新生成。当前 `csrf_hash` 是「一次性丢弃明文的随机占位」，**任何提交
-  都不可能通过**（fail-closed）。
+  CSRF 重新生成。当时 `csrf_hash` 是「一次性丢弃明文的随机占位」，**任何提交
+  都不可能通过**（fail-closed）。**现已由 §21 实现。**
 - **C3**：`/mcp/oauth/token`、`/revoke`、PRM、AS metadata、CIMD、DCR。
 - **1.3.2**：`/mcp` 数据端点、工具面、`scopeForTool`、`MCP_SCOPES` 与
   Desktop `REMOTE_SCOPES` 的一致性测试。
+
+---
+
+## 21. Phase 1.3.1-C2b：Consent / Grant / 授权码（已交付）
+
+C2 的后半。授权流程现在从「客户端发起」一直走到「302 带 `code` 回客户端」，
+Cloud 侧不再有断点；`POST /mcp/oauth/token` 兑换 token 仍属 **C3（未实现）**。
+
+### 21.1 交付物
+
+| 项 | 落点 |
+|---|---|
+| 路由 | `cloud/src/routes/mcp-oauth.ts`：追加 `GET /mcp/oauth/consent`、`POST /mcp/oauth/consent` |
+| 业务层 | `cloud/src/mcp-oauth/consent-flow.ts`（前置校验 / CSRF / deny / allow 事务） |
+| 页面 | `cloud/src/mcp-oauth/consent-page.ts`（纯静态 HTML） |
+| 在线同步 | `cloud/src/mcp-oauth/grant-sync.ts` |
+| 审计 | 5 个新事件（无迁移） |
+| 测试 | 7 个新文件 **104 条** + C2a 回归 **+13** |
+| 迁移 | **无** |
+
+### 21.2 流程（本阶段打通的路径）
+
+```
+GET  /mcp/oauth/consent?rid=…（Cookie + 绑定 + user_id + 已消费 Provider）
+     → 生成 CSRF（只存哈希）→ 200 同意页（客户端名 / 回调 host / scope 列表）
+POST /mcp/oauth/consent（rid / csrf / decision / scope[]）
+     → 事务：行锁 → 重校验 → upsert grant → 插 60s 授权码 → 删授权请求
+     → 提交 → 审计 → 清 Cookie → 302 redirect_uri?code&state&iss
+```
+
+拒绝（或取消全部勾选）走同一条原子删除，返回 `error=access_denied`。
+
+### 21.3 四条安全判据（每条都有测试）
+
+| # | 判据 | 反例（被测试拒绝） |
+|---|---|---|
+| 1 | CSRF 每次渲染换一把，比对用常量时间 | 旧表单、留十分钟的表单、重复字段、缺字段 |
+| 2 | 最终 scope ⊆ 请求 scope | 提交未请求的 scope、未知 scope、写入权限 |
+| 3 | 授权请求只被消费一次 | 同 rid 两个 allow、allow×deny、重放 |
+| 4 | 三个写入同事务 | 授权码插入失败 → grant 不残留、请求仍可重试 |
+
+### 21.4 Step-up 与 epoch
+
+- Step-up 只在「已有 active scope ⊆ 本次请求 且 新增了 scope」时成立；
+  已有项灰置不提交，服务端按并集补回（**旧权限不会丢**）。
+- 非 Step-up 按勾选覆盖（支持**收窄**），不能凭旧 grant 把本次未请求的
+  scope 加回来（越界即 400）。
+- `mcp_grants.epoch`：新建 1；scope 未变不涨；scope 变了 +1；撤销后复活 +1。
+
+### 21.5 在线 Grant 同步（提交之后）
+
+| 情形 | 动作 |
+|---|---|
+| 新 grant / 复活，设备在线 | `installGrant()` |
+| scope 变了、旧 ctx 已安装 | `replaceGrant()` |
+| scope 未变且已安装 | 不发帧 |
+| 无在线设备 | 不同步，等 `hello_ok` 快照 |
+
+`ack` 超时 / `applied=false` / 离线都**不回滚数据库**；转发层 fail-closed，
+设备重新握手时 `hello_ok` 按数据库重建快照。**授权码不会因为同步失败丢失。**
+
+### 21.6 C2a 的四处回归（本阶段一起修）
+
+| 问题 | 修法 |
+|---|---|
+| 服务端拉 `authorize` 后浏览器首次进 `/login` 无 Cookie | 仅未绑定时新建会话 + TOFU；已绑定仍 fail-closed；callback 永不匿名建会话 |
+| Provider `error` 全部映射成 `access_denied` | 只有 `access_denied` 原样回传，其余 `server_error` |
+| 交换失败返回 Cloud 500 | 302 回客户端带 `error=server_error` + `state` + `iss` |
+| 旧 State 拒绝回调删掉新授权 | DELETE 补 `state_hash` / `provider` / `binding` / `consumed_at IS NULL` / 未过期 |
+
+### 21.7 变异验证（13/13 全部被抓）
+
+覆盖：删 CSRF 校验、CSRF 改普通比较、允许空 scope、允许越界 scope、
+Grant 重复 INSERT、scope 变更不涨 epoch、撤销后无法复活、授权码明文入库、
+TTL 改 1 小时、成功后不删授权请求、并发去掉行锁、授权码没落库但 grant 留下、
+ack 失败仍当作已安装。
+
+**M13 第一版存活**：`syncLag` 也会让派发失败，所以「只看派发结果」区分不出
+「已安装」与「未安装」。改为直接断言
+`inspectForwarder().connections[].grants[].installed === false` 之后被抓。
+
+### 21.8 实测与门禁（本次执行）
+
+| 项 | 结果 |
+|---|---|
+| Cloud `typecheck` / `lint` / `build` | 通过 |
+| Cloud `pnpm test` | **912 passed / 56 files**（C2a 基线 795 / 49，**+117**） |
+| Desktop `typecheck` / `test` / `build` / `mcp:build` | 全部通过；**1265 passed / 89 files**；`stdio.mjs` 911.67 kB 不变 |
+| 新增迁移 | **无** |
+| 新增 HTTP 路由 | **2 条**（`GET`/`POST /mcp/oauth/consent`，缺密钥时整组不注册） |
+| 跳过/待定的测试 | 无 `skip`、无 `todo` |
+
+### 21.9 未做（C3 / 1.3.2 / 1.3.3）
+
+- **C3**：`/mcp/oauth/token`（code 兑换 + refresh 轮换）、`/revoke`、PRM、
+  AS metadata、CIMD、DCR。**授权码兑换时创建 Session 也属 C3**——
+  `mcp_sessions` / `mcp_refresh_tokens` 在 C2b 里一行都不写。
+- **1.3.2**：`/mcp` 数据端点、8 个只读工具、`scopeForTool` 一致性。
+- **1.3.3**：ChatGPT / Grok 真实联调。
+- **仍未验证**：真实 Google / GitHub 的完整回调（本阶段用契约校验型 Mock）；
+  真实客户端对 `iss` 参数与 60 秒授权码的接受度。

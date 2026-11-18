@@ -378,8 +378,8 @@ SSE 而解析失败；若只说「返回 SSE」，modern 客户端会等不到�
 | `GET` | `/mcp/oauth/authorize` | 校验 + 建授权请求 + 签发浏览器 Cookie + 分流 | 无（公开） |
 | `GET` | `/mcp/oauth/login` | 登录选择页（HTML）；带 `provider` 时直接 302 到 Provider | 浏览器 Cookie（绑定） |
 | `GET` | `/mcp/oauth/callback/:provider` | MCP 专用 Provider 回调：换身份 → 建/取用户 → 写 `user_id` | Provider `state` |
-| `GET` | `/mcp/oauth/consent` | 渲染同意页（HTML）——**C2b 未实现** | 浏览器 Cookie（绑定）+ 行内 `user_id` |
-| `POST` | `/mcp/oauth/consent` | 批准 / 拒绝 → 写 grant + code → 302 回 `redirect_uri`——**C2b 未实现** | 浏览器 Cookie + CSRF |
+| `GET` | `/mcp/oauth/consent` | 渲染同意页（HTML）；每次渲染轮换 CSRF（C2b 已实现） | 浏览器 Cookie（绑定）+ 行内 `user_id` |
+| `POST` | `/mcp/oauth/consent` | 批准 / 拒绝 → upsert grant + 签 60s code + 删行（**同一事务**）→ 302 回 `redirect_uri`（C2b 已实现） | 浏览器 Cookie + CSRF |
 | `POST` | `/mcp/oauth/token` | `authorization_code` / `refresh_token`（**C3 未实现**） | 无（PKCE / refresh 本身就是凭据） |
 | `POST` | `/mcp/oauth/revoke` | RFC 7009；只撤 refresh 所属 **session**，不撤 grant | 无（token 即凭据） |
 | `GET` | `.well-known/oauth-protected-resource` | PRM | 无 |
@@ -665,6 +665,101 @@ WWW-Authenticate: Bearer error="insufficient_scope",
 
 **`invalid_grant` 不区分「不存在」与「已用过」**：区分会变成一个 code
 存在性探针。
+
+### 5.10 Consent 与授权码（1.3.1-C2b 已落地）
+
+#### 5.10.1 同意页的十道门
+
+进入 `GET /mcp/oauth/consent` 必须同时满足：rid 是 UUID、行存在、未过期、
+`provider_consumed_at` 非空、`user_id` 非空、provider ∈ {google, github}、
+浏览器 Cookie 有效且 `browser_binding_hash` 与当前 sid 一致。失败时：
+
+| 失败 | 副作用 |
+|---|---|
+| 绑定不匹配 | **删行** + `mcp_browser_binding_mismatch{stage:"consent"}` |
+| 过期 | 删行（10 分钟窗口外没有任何用途） |
+| 行不存在 / 未登录 | 只给 400 页面；没有可信 `redirect_uri`，不重定向 |
+
+**同意页不允许新建浏览器会话**：绑定只发生在 `/login`。否则「拿到 rid」
+就足以在任意浏览器里打开同意页。
+
+#### 5.10.2 CSRF 是「每次渲染换一把」
+
+- 明文 = 32 字节随机值，只写进 HTML 隐藏字段；库里只有 `hashCsrf()`。
+- 每次 GET 都**覆盖** `csrf_hash`：旧表单立刻失效（留十分钟再提交、两个
+  标签页用旧的那个提交，都会 400）。
+- POST 用 `constantTimeEqual(hashCsrf(提交值), row.csrf_hash)` 比对。
+- 不匹配：**删行** + `mcp_consent_csrf_mismatch` + 400，不签发任何东西。
+- 表单解析只接受 `application/x-www-form-urlencoded`，`rid`/`csrf`/`decision`
+  必须**恰好出现一次**（重复即 400）——避免不同解析层各挑一个值。
+
+#### 5.10.3 Step-up：已有 scope 不能丢
+
+```
+isStepUp = 已有 active grant 的 scope ⊆ 本次请求的 scope
+           且 本次请求新增了 scope
+```
+
+| 页面表现 | 服务端行为 |
+|---|---|
+| 已有项：勾选 + `disabled` | 浏览器不提交它们；服务端按并集补回 |
+| 新增项：默认勾选、可取消 | 只接受 ⊆ 请求范围的提交值 |
+
+最终 scope = `已有 scope ∪ 用户勾选的新增 scope`，因此 `final ⊆ requested`
+是结构事实。非 Step-up（例如上次授了两个、这次只请求一个）不做并集，
+按用户勾选覆盖——那是**收窄**，不是越权。
+
+#### 5.10.4 Grant upsert 与 epoch
+
+同一 `(user_id, client_id, resource)` 只有一行（唯一索引），用
+`INSERT … ON CONFLICT DO UPDATE` 完成，**不做「先 SELECT 再 INSERT」**
+（不存在的行在 Postgres 里没有可锁对象，并发首授会撞唯一约束）。
+
+| 情况 | epoch |
+|---|---|
+| 新建 | 1（列默认值） |
+| active 且 scope 未变 | **不变** |
+| active 且 scope 变了 | +1 |
+| 已撤销（`revoked_at` 非空）后再次授权 | +1，并清空 `revoked_at` |
+
+注意这是 `mcp_grants.epoch`（单条 grant 的版本），不是
+`mcp_devices.grant_epoch`（设备级帧门槛）。
+
+#### 5.10.5 授权码
+
+- 明文 = 32 字节随机（43 字符 base64url），**只出现一次**：302 的 `Location`。
+- 库内 `code_hash = sha256("mcp-code:" ‖ code)`；TTL **60 秒**。
+- 继承原授权请求的 `resource` / `redirect_uri` / `code_challenge`；
+  `scope` 是**用户实际勾选**的最终集合。
+- 与 grant upsert、删授权请求**同一个事务**。删行命中数不是 1 就整体回滚。
+
+#### 5.10.6 在线 Grant 同步（提交之后，不可回滚）
+
+```
+事务提交 → 选在线设备 → install / replace / skip → 302 带 code
+```
+
+| 情形 | 动作 |
+|---|---|
+| 新 grant，用户有在线设备 | `installGrant()` |
+| 原 grant 已撤销、重新激活 | `installGrant()` |
+| scope 变了、旧 ctx 已安装 | `replaceGrant()`（revoke 旧 ctx → ack → install 新 ctx） |
+| scope 未变且 ctx 已安装 | **不发帧**（重复 install 会白涨设备级 epoch） |
+| 用户没有在线设备 | 不同步；数据库授权照常成立 |
+
+设备选择只读 `inspectForwarder()`（不碰 socket / registry）；Phase 1.3 是
+单设备模型，多设备属 1.4。
+
+**ack 超时 / `applied=false` / 离线**：转发层把该连接或该 grant 置为不可
+路由（R2 的 `syncLag`），但**数据库不回滚**——授权与「设备此刻是否在线」是
+两个生命周期。设备重新握手时 `hello_ok` 会按数据库重建整张快照，那条路径
+不依赖这次在线同步是否成功。
+
+#### 5.10.7 与 Desktop OAuth 的隔离（C2b 复核）
+
+一次完整的同意流程不写 `oauth_codes` / `oauth_transactions` / `auth_sessions`；
+`bp_mcp_bs` 发给 `/auth/me` 仍 401、发给 `/oauth/token` 仍 400；
+`/oauth/authorize` 仍只认 `127.0.0.1` 回调。
 
 ## 6. Discovery 设计
 
@@ -1431,9 +1526,12 @@ CREATE UNIQUE INDEX "mcp_refresh_tokens_session_active_uq"
 > 并修掉 Session 创建与 Grant 撤销的竞态（`createMcpSession` 对 Grant 行加
 > `FOR UPDATE`）。
 > **1.3.1-C2a 已交付第 6–7 条**（`/mcp/oauth/authorize`、`/login`、
-> `/callback/:provider`，98 条测试，含启用边界与并发消费）。
-> 余下第 8–15 条（consent、token endpoint、discovery、CIMD、DCR）属
-> 1.3.1-C2b / C3。详见路线图 §3.8 / §3.9 与索引 §19 / §20。
+> `/callback/:provider`），并在 C2b 里补齐了四处回归（首次进入 login 的
+> Cookie 建立、Provider 错误映射、旧 State 删除竞态、State 原子消费条件）。
+> **1.3.1-C2b 已交付第 8 条**（`GET/POST /mcp/oauth/consent`：CSRF、Step-up、
+> Grant upsert、授权码签发、在线 Grant 同步），实现要点见 §5.10。
+> 余下第 9–15 条（token endpoint、revoke、discovery、CIMD、DCR）属 **C3**，
+> 尚未实现。详见路线图 §3.8–§3.10 与索引 §19–§21。
 
 | # | 范围 | 验收 |
 |---|---|---|
