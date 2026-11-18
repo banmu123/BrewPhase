@@ -4,7 +4,9 @@ import {
   authorizeQuery,
   cookiePair,
   createMcpOAuthHarness,
+  parseSetCookie,
   seedAuthorizeClient,
+  setCookieOf,
   signBrowserCookie,
   type McpOAuthHarness,
 } from "../helpers/mcp-oauth-app.js";
@@ -79,12 +81,17 @@ describe("前置校验", () => {
     expect(res.status).toBe(400);
   });
 
-  it("没有浏览器 Cookie → 400（不允许只凭 rid 进入）", async () => {
-    const { rid } = await startAuthorization();
+  it("已绑定的授权请求缺 Cookie → 400（不允许靠新建 Cookie 接管）", async () => {
+    const { rid, cookie } = await startAuthorization();
+    await login(rid, cookie); // 浏览器 A 先绑定
+
+    // 浏览器 B 拿着同一个 rid、但没有 Cookie。
     const res = await login(rid, "");
     expect(res.status).toBe(400);
-    // 关键：没有绑定成功。行仍是未绑定状态。
-    expect((await rows())[0]!.browserBindingHash).toBeNull();
+    // 不签发新 Cookie：签发就等于把绑定让给了任何拿到 rid 的人。
+    expect(setCookieOf(res)).toBeNull();
+    // 行仍然绑定在浏览器 A 上。
+    expect((await rows())[0]!.browserBindingHash).not.toBeNull();
   });
 
   it("已过期的授权请求 → 400 且行被清理", async () => {
@@ -104,6 +111,86 @@ describe("前置校验", () => {
 
     const res = await login(rid, cookie);
     expect(res.status).toBe(400);
+  });
+});
+
+describe("首次进入时建立浏览器会话（C2b 修复）", () => {
+  it("authorize 的 Set-Cookie 被服务端丢弃后，真实浏览器首次访问 login → 200 并完成 TOFU", async () => {
+    // 模拟「客户端在服务端拉 authorize，Set-Cookie 被丢弃」：这里刻意不
+    // 回填 authorize 拿到的 Cookie。
+    const { rid } = await startAuthorization();
+
+    const res = await login(rid, "");
+    expect(res.status).toBe(200);
+
+    // 新 Cookie 被签发，属性与 authorize 那次一致。
+    const header = setCookieOf(res);
+    expect(header).toBeTruthy();
+    const parsed = parseSetCookie(header!);
+    expect(parsed.__name).toBe("bp_mcp_bs");
+    expect(parsed.path).toBe("/mcp/oauth");
+    expect(parsed.httponly).toBe("true");
+    expect(parsed.samesite?.toLowerCase()).toBe("lax");
+
+    // 行被绑定到这把新 Cookie 的 sid，而不是「未绑定」。
+    const cookieValue = decodeURIComponent(parsed.__value ?? "");
+    const sid = JSON.parse(cookieValue.slice(0, cookieValue.lastIndexOf("."))).sid as string;
+    expect((await rows())[0]!.browserBindingHash).toBe(sha256Hex(`mcp-browser:${sid}`));
+
+    // 这把 Cookie 能继续走到 Provider。
+    const cookie = `bp_mcp_bs=${parsed.__value}`;
+    const next = await login(rid, cookie, "&provider=google");
+    expect(next.status).toBe(302);
+  });
+
+  it("被篡改的 Cookie 在未绑定时按缺失处理：新建会话并绑定", async () => {
+    const { rid, cookie } = await startAuthorization();
+    const tampered = `${cookie.split("=")[0]}=${cookie.split("=")[1]}x`;
+
+    const res = await login(rid, tampered);
+    expect(res.status).toBe(200);
+    expect(setCookieOf(res)).toBeTruthy();
+    expect((await rows())[0]!.browserBindingHash).not.toBeNull();
+  });
+
+  it("过期的 Cookie 不影响未绑定行的首次绑定（新建一把）", async () => {
+    const { rid } = await startAuthorization();
+    const nowSec = Math.floor(Date.now() / 1000);
+    const expired = await signBrowserCookie(h.env, {
+      sid: "e".repeat(43),
+      iat: nowSec - 3600,
+      exp: nowSec - 1800,
+    });
+
+    const res = await login(rid, expired);
+    expect(res.status).toBe(200);
+    expect(setCookieOf(res)).toBeTruthy();
+  });
+
+  it("已绑定的行遇到被篡改的 Cookie → 400（按缺失处理，不新建）", async () => {
+    const { rid, cookie } = await startAuthorization();
+    await login(rid, cookie);
+
+    const res = await login(rid, `${cookie.split("=")[0]}=${cookie.split("=")[1]}x`);
+    expect(res.status).toBe(400);
+    expect(setCookieOf(res)).toBeNull();
+  });
+
+  it("Provider 回调不允许匿名创建浏览器会话", async () => {
+    const { rid, cookie } = await startAuthorization();
+    const jump = await login(rid, cookie, "&provider=google");
+    expect(jump.status).toBe(302);
+    const state = new URL(jump.headers.get("location")!).searchParams.get("state")!;
+
+    // 回调时没有 Cookie：这里**不能**像 login 那样补一把新的。
+    const res = await h.app.request(
+      `/mcp/oauth/callback/google?code=c&state=${state}`,
+      { headers: {} },
+    );
+    expect(res.status).toBe(400);
+    expect(setCookieOf(res)).toBeNull();
+    expect(await rows()).toHaveLength(1);
+    expect((await rows())[0]!.providerConsumedAt).toBeNull();
   });
 });
 

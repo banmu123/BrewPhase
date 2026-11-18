@@ -47,7 +47,14 @@ export const AUTH_PAGE_HEADERS: Record<string, string> = {
     "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
 };
 
-function page(title: string, body: string): string {
+/**
+ * 页面外壳（登录页与同意页共用）。
+ *
+ * 共用同一个 `<style>` 与同一套响应头，是为了让两个页面在视觉上属于同一次
+ * 流程；更重要的是，**只有一处**定义 CSP 与安全头，就不会出现「登录页加了
+ * `X-Frame-Options`、同意页忘了加」这种漂移。
+ */
+export function renderAuthPage(title: string, body: string, extraCss = ""): string {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -83,6 +90,7 @@ function page(title: string, body: string): string {
     ul.providers a { background: #221b16; border-color: #3a2f27; }
     .notice { background: #2d2213; border-color: #4d3a1d; }
   }
+${extraCss}
 </style>
 </head>
 <body>
@@ -113,7 +121,7 @@ export function renderLoginPage(input: LoginPageInput): string {
   const heading = `<h1>使用 ${safeClient} 连接 BrewPhase</h1>`;
 
   if (input.availableProviders.length === 0) {
-    return page(
+    return renderAuthPage(
       "登录方式不可用",
       `${heading}
 <p class="sub">此服务未配置任何可用的登录方式。</p>
@@ -130,7 +138,7 @@ export function renderLoginPage(input: LoginPageInput): string {
     )
     .join("\n");
 
-  return page(
+  return renderAuthPage(
     "登录 BrewPhase",
     `${heading}
 <p class="sub">继续前需要确认你的 BrewPhase 账号。授权完成后可以选择这个应用可以读取哪些数据。</p>
@@ -142,7 +150,7 @@ ${items}
 
 /** 通用错误页（不带任何回跳链接：出错时没有可信的 redirect_uri）。 */
 export function renderErrorPage(title: string, message: string): string {
-  return page(
+  return renderAuthPage(
     title,
     `<h1>${escapeHtml(title)}</h1>
 <div class="notice">${escapeHtml(message)}</div>`,

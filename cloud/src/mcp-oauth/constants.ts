@@ -52,6 +52,28 @@ export function formatScopeClaim(scopes: readonly string[]): string {
 }
 
 /**
+ * 按 `MCP_SCOPES` 的固定顺序重排一组 scope，并去重。
+ *
+ * **只排序，不做校验**：未知值会被静默丢弃，所以调用前必须先验证
+ * 每一项都是 `MCP_SCOPES` 的成员（`parseScopeClaim` / `isMcpScope`）。
+ *
+ * 为什么需要它：`scope` 是 `text[]`，数组相等是**逐元素含顺序**的比较。
+ * 如果同一组权限有时写成 `["records:read","coffee:read"]`、有时写成
+ * `["coffee:read","records:read"]`，那么「scope 没变」的判断会随机为假，
+ * 于是每次授权都白涨一个 epoch，Desktop 也会被要求重装上下文。
+ */
+export function orderMcpScopes(scopes: readonly string[]): McpScope[] {
+  const present = new Set(scopes);
+  return MCP_SCOPES.filter((scope) => present.has(scope));
+}
+
+/** 授权码有效期：60 秒（设计 §5.5 / §5.6）。 */
+export const MCP_AUTH_CODE_TTL_MS = 60_000;
+
+/** CSRF 明文的随机字节数。32 字节 = 256 bit，远高于「不可猜」的要求。 */
+export const MCP_CSRF_BYTES = 32;
+
+/**
  * MCP Resource（RFC 8707）。
  *
  * 同一个字符串必须同时是：

@@ -71,4 +71,15 @@ export interface LinkControl {
   revokeGrant(input: Parameters<Forwarder["revokeGrant"]>[0]): Promise<GrantSyncOutcome>;
   /** scope 变更：旧 ctx revoke → ack → 新 ctx install → ack。 */
   replaceGrant(input: Parameters<Forwarder["replaceGrant"]>[0]): Promise<GrantSyncOutcome>;
+  /**
+   * **只读诊断**：每条连接当前的授权同步状态。
+   *
+   * 授权路径（Phase 1.3.1-C2b）用它回答「这个用户有没有在线设备、那条连接
+   * 装的是哪一份 scope」。它是 `Forwarder["inspect"]` 的投影，不含 socket、
+   * 不含 `grant_ctx` 以外的任何凭据。
+   *
+   * 单独暴露这一条而不是整个 `Forwarder`：路由层一旦拿到转发层实例，
+   * 就会开始「顺手 dispatch 一下」——那会让 `/mcp` 的准入校验被绕过。
+   */
+  inspectForwarder(): ReturnType<Forwarder["inspect"]>;
 }

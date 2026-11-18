@@ -40,7 +40,20 @@ export type AuthEventType =
   | "mcp_browser_binding_mismatch"
   | "mcp_provider_callback_succeeded"
   | "mcp_provider_callback_failed"
-  | "mcp_provider_denied";
+  | "mcp_provider_denied"
+  // ---- MCP 用户同意与授权码（Phase 1.3.1-C2b）----
+  //
+  // 这四个事件回答的是「用户到底同意了哪些权限」。`scope` 是授权内容本身，
+  // 可以记；**授权码、CSRF 明文、Provider State、任何 token 都不能记**。
+  //
+  // `mcp_grant_sync_failed` 单独一个事件：授权已经在数据库里成立，只是没
+  // 同步到在线设备。把它混进 `mcp_consent_allowed` 的成功/失败里，会让
+  // 「用户授权失败」与「设备暂时离线」看起来是同一件事。
+  | "mcp_consent_allowed"
+  | "mcp_consent_denied"
+  | "mcp_consent_csrf_mismatch"
+  | "mcp_auth_code_issued"
+  | "mcp_grant_sync_failed";
 
 export interface AuthEventInput {
   eventType: AuthEventType;

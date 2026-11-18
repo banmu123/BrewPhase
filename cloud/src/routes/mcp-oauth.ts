@@ -1,10 +1,11 @@
 import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { AppContext, AppHono } from "../context.js";
-import { recordAuthEvent } from "../db/audit.js";
+import { recordAuthEvent, type AuthEventInput } from "../db/audit.js";
 import { mcpAuthRequests } from "../db/schema.js";
-import { providerNotConfigured, type AppError } from "../security/errors.js";
+import { providerNotConfigured, serverError, type AppError } from "../security/errors.js";
+import { constantTimeEqual } from "../security/crypto.js";
 import { rateLimit } from "../security/rate-limit.js";
 import { isProviderName, type ProviderName } from "../oauth/providers.js";
 import { findOrCreateUserWithIdentity } from "../users/user-service.js";
@@ -24,11 +25,20 @@ import {
   consumeProviderCallback,
   createAuthorizeRequest,
   deleteAuthRequest,
+  deleteDeniedProviderRequest,
   hashProviderSecret,
   isAuthRequestId,
   loadAuthRequest,
   validateAuthorizeParams,
 } from "../mcp-oauth/authorize-flow.js";
+import {
+  decideConsent,
+  issueConsentCsrf,
+  loadConsentRequest,
+  type ConsentFailure,
+} from "../mcp-oauth/consent-flow.js";
+import { renderConsentPage } from "../mcp-oauth/consent-page.js";
+import { syncGrantToOnlineDevice } from "../mcp-oauth/grant-sync.js";
 import { AUTH_PAGE_HEADERS, renderErrorPage, renderLoginPage } from "../mcp-oauth/login-page.js";
 
 /**
@@ -90,6 +100,121 @@ function buildRedirectUri(
   return url.toString();
 }
 
+/**
+ * 审计的**非阻断**包装。
+ *
+ * `recordAuthEvent` 失败会抛错。在授权/拒绝路径上，这个错发生在**事务已提交
+ * 之后**——把它抛出去会让一次已经成立的授权变成 500，而客户端永远拿不到
+ * `code`（数据库里却已经躺着一个有效的 grant 与授权码）。审计是记账，不是
+ * 授权的前置条件，所以这里只记一条不含上下文的告警。
+ */
+async function audit(ctx: AppContext, input: AuthEventInput): Promise<void> {
+  try {
+    await recordAuthEvent(ctx.db.db, input);
+  } catch {
+    ctx.logger.warn("mcp_audit_failed", { eventType: input.eventType });
+  }
+}
+
+/**
+ * 取**恰好一个**查询参数。
+ *
+ * 重复参数（`?rid=a&rid=b`）在 OAuth 里没有合法语义，不同的解析层会各自
+ * 挑一个（Hono 的 `query()` 取第一个，某些框架取最后一个），于是「校验的
+ * 那一个」与「使用的那一个」可能不是同一个。这里直接判成无效。
+ */
+function singleQuery(c: Context, name: string): string | null {
+  const values = c.req.queries(name);
+  if (!values || values.length !== 1) return null;
+  return values[0] ?? null;
+}
+
+const CONSENT_FAILURE_MESSAGES: Record<ConsentFailure, { title: string; message: string }> = {
+  not_found: { title: "授权链接无效", message: LINK_INVALID_HINT },
+  expired: { title: "授权已过期", message: "这次授权已超过 10 分钟。请回到发起授权的应用重新开始。" },
+  not_authenticated: {
+    title: "尚未完成登录",
+    message: "这次授权还没有确认你的 BrewPhase 账号。请回到发起授权的应用重新开始。",
+  },
+  provider_not_consumed: {
+    title: "尚未完成登录",
+    message: "这次授权还没有完成登录。请回到发起授权的应用重新开始。",
+  },
+  binding_mismatch: {
+    title: "授权会话不匹配",
+    message: "这个授权链接已在另一个浏览器中打开。请重新开始授权。",
+  },
+  unsupported_provider: {
+    title: "不支持的登录方式",
+    message: "这次授权使用的登录方式不受支持。请重新开始授权。",
+  },
+};
+
+/**
+ * 同意表单的解析结果。
+ *
+ * ## 为什么不用 `c.req.parseBody()`
+ *
+ * `parseBody()` 对 urlencoded 是 `Object.fromEntries(new URLSearchParams(...))`：
+ * 同名参数**后者覆盖前者**，于是 `rid=好&rid=坏` 在不同层会得到不同的值，
+ * 而「校验的 rid」与「使用的 rid」可能不是同一个。这里用 `getAll()`，
+ * 对安全关键字段要求「恰好一个」，其余按数组收。
+ */
+interface ConsentForm {
+  rid: string;
+  csrf: string;
+  decision: string;
+  scopes: string[];
+}
+
+const MAX_CONSENT_BODY_BYTES = 8 * 1024;
+const MAX_CSRF_LENGTH = 256;
+
+/**
+ * 调 `decideConsent` 并在异常时收口成 `server_error`。
+ *
+ * **为什么不能让它原样抛给 `onError`**：drizzle 的错误 message 会带上整条 SQL
+ * 与全部参数，其中包含 `code_hash`（授权码的等价物）与 CSRF 哈希。`onError`
+ * 对非 `AppError` 会把 message 写进日志——那等于把凭据写进日志。
+ * 换成固定文案的 `AppError` 之后，日志里只剩 `{code, status}`。
+ */
+async function decideConsentSafely(
+  ctx: AppContext,
+  input: Parameters<typeof decideConsent>[1],
+): Promise<Awaited<ReturnType<typeof decideConsent>>> {
+  try {
+    return await decideConsent(ctx.db.db, input);
+  } catch {
+    throw serverError("consent transaction failed");
+  }
+}
+
+async function parseConsentForm(c: Context): Promise<ConsentForm | null> {
+  const contentType = (c.req.header("content-type") ?? "").toLowerCase();
+  // 只接受标准 urlencoded：multipart 会引入文件名/编码层，而这张表单
+  // 只有几个纯文本字段，没有任何理由接受它。
+  if (!contentType.startsWith("application/x-www-form-urlencoded")) return null;
+
+  const body = await c.req.text();
+  // 表单只有 ~200 字节。上限存在的意义不是「省内存」，而是让「用一个巨大的
+  // body 撑爆解析」变成 400 而不是一次昂贵的分配。
+  if (body.length > MAX_CONSENT_BODY_BYTES) return null;
+
+  const params = new URLSearchParams(body);
+  const single = (name: string): string | null => {
+    const all = params.getAll(name);
+    return all.length === 1 ? (all[0] ?? null) : null;
+  };
+
+  const rid = single("rid");
+  const csrf = single("csrf");
+  const decision = single("decision");
+  if (rid === null || csrf === null || decision === null) return null;
+  if (csrf.length === 0 || csrf.length > MAX_CSRF_LENGTH) return null;
+
+  return { rid, csrf, decision, scopes: params.getAll("scope") };
+}
+
 export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
   // 只有通过启用边界才会被调用（见 app.ts）。这里再断言一次，是为了让
   // 「绕过边界直接挂载」在启动时就炸掉，而不是每个请求 500。
@@ -145,7 +270,7 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
     // 用户真正打开登录页那一刻（TOFU）。
     const browser = await ensureBrowserSession(c, browserOptions);
 
-    await recordAuthEvent(ctx.db.db, {
+    await audit(ctx, {
       eventType: "mcp_authorize_started",
       detail: {
         rid: created.rid,
@@ -170,20 +295,53 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
    * 迟早会漂移——漂移的那一份就是漏洞。
    */
   app.get("/mcp/oauth/login", limiter, async (c) => {
-    const rid = c.req.query("rid") ?? "";
+    const rid = singleQuery(c, "rid") ?? "";
     if (!isAuthRequestId(rid)) {
       return htmlError(c, 400, "授权链接无效", "这个授权链接格式不正确。请回到发起授权的应用重新开始。");
     }
 
-    const cookie = await readBrowserSessionCookie(c, browserOptions);
-    if (!cookie.ok) {
-      // Cookie 缺失/过期/被篡改：**不能**只凭 rid 继续——那会让「拿到 rid」
-      // 等于「拿到授权」。正确做法是回到客户端重开流程（authorize 发新 Cookie）。
-      return htmlError(c, 400, "浏览器会话已失效", BROWSER_EXPIRED_HINT);
+    const currentTime = now();
+    const existing = await loadAuthRequest(ctx.db.db, rid);
+    if (!existing) return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
+    if (existing.providerConsumedAt !== null) {
+      // Provider 回调已经用掉这一次性状态，下一站是同意页。再走登录只会
+      // 覆盖 `provider`/`nonce`，把已经成立的身份写丢。
+      return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
+    }
+    if (existing.expiresAt.getTime() <= currentTime.getTime()) {
+      await deleteAuthRequest(ctx.db.db, rid);
+      return htmlError(c, 400, "授权已过期", "这次授权已超过 10 分钟。请回到发起授权的应用重新开始。");
     }
 
-    const binding = browserBindingHash(cookie.session.sid);
-    const currentTime = now();
+    /**
+     * 浏览器会话：**缺失时可以新建，但只在「这一行还没绑过」时**。
+     *
+     * 为什么允许新建：客户端可能是在服务端去拉 `authorize`（拿到的
+     * `Set-Cookie` 被丢弃），然后把登录地址交给真实浏览器。此时服务端那次
+     * 请求会留下一个从未被任何浏览器持有的 Cookie，用户第一次打开 `/login`
+     * 必然没有 Cookie——旧实现会在这里报「会话已失效」，合法流程被锁死。
+     *
+     * 为什么只在未绑定时允许：`browser_binding_hash` 非空意味着「这一行已经
+     * 属于某个浏览器」。此时缺失 Cookie 只能说明「你不是那个浏览器」，
+     * 新建一个再绑定等于让任何拿到 `rid` 的人接管授权。
+     *
+     * 注意 `bindBrowser` 仍然使用条件 UPDATE（`WHERE browser_binding_hash
+     * IS NULL`），所以「两个浏览器同时首次进入」依然只有一个能绑上。
+     */
+    let sid: string;
+    const cookie = await readBrowserSessionCookie(c, browserOptions);
+    if (cookie.ok) {
+      sid = cookie.session.sid;
+    } else {
+      if (existing.browserBindingHash !== null) {
+        return htmlError(c, 400, "浏览器会话已失效", BROWSER_EXPIRED_HINT);
+      }
+      const session = createBrowserSession(browserOptions);
+      await setBrowserSessionCookie(c, session, browserOptions);
+      sid = session.sid;
+    }
+
+    const binding = browserBindingHash(sid);
     const bound = await bindBrowser(ctx.db.db, rid, binding, currentTime);
 
     if (!bound.ok) {
@@ -191,7 +349,7 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
         // 有劫持嫌疑：删行 + 审计。删行让「另一个浏览器」也无法继续，
         // 这是 fail-closed 的选择——宁可打断一次合法流程，也不放行一次可疑流程。
         await deleteAuthRequest(ctx.db.db, rid);
-        await recordAuthEvent(ctx.db.db, {
+        await audit(ctx, {
           eventType: "mcp_browser_binding_mismatch",
           detail: { rid, stage: "login" },
         });
@@ -244,7 +402,7 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
     if (!claim.ok) {
       if (claim.reason === "binding_mismatch") {
         await deleteAuthRequest(ctx.db.db, rid);
-        await recordAuthEvent(ctx.db.db, {
+        await audit(ctx, {
           eventType: "mcp_browser_binding_mismatch",
           detail: { rid, stage: "login_provider" },
         });
@@ -270,7 +428,7 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
       return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
     }
 
-    await recordAuthEvent(ctx.db.db, {
+    await audit(ctx, {
       eventType: "mcp_login_provider_started",
       detail: { rid, provider: providerParam, clientId: request.clientId },
     });
@@ -321,6 +479,7 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
         ctx,
         browserOptions,
         provider,
+        providerError: errorParam,
         stateHash: hashProviderSecret(stateParam),
         binding,
         now: now(),
@@ -347,7 +506,7 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
     if (!consumed.ok) {
       if (consumed.reason === "binding_mismatch") {
         if (consumed.rid) await deleteAuthRequest(ctx.db.db, consumed.rid);
-        await recordAuthEvent(ctx.db.db, {
+        await audit(ctx, {
           eventType: "mcp_browser_binding_mismatch",
           detail: { rid: consumed.rid, stage: "callback", provider },
         });
@@ -360,14 +519,14 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
       }
       if (consumed.reason === "expired") {
         if (consumed.rid) await deleteAuthRequest(ctx.db.db, consumed.rid);
-        await recordAuthEvent(ctx.db.db, {
+        await audit(ctx, {
           eventType: "mcp_provider_callback_failed",
           detail: { rid: consumed.rid, provider, reason: "expired" },
         });
         return htmlError(c, 400, "授权已过期", "这次授权已超过 10 分钟。请回到发起授权的应用重新开始。");
       }
       // unknown_state / provider_mismatch / consumed：对外不透露是哪一种。
-      await recordAuthEvent(ctx.db.db, {
+      await audit(ctx, {
         eventType: "mcp_provider_callback_failed",
         detail: { provider, reason: consumed.reason },
       });
@@ -385,11 +544,18 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
         expectedNonceHash: request.nonceHash,
       });
     } catch (err) {
-      // 交换失败：清理这一行（已被消费，无法重放），然后把错误如实交给统一
-      // 出口。**不伪装成 access_denied**：那是「用户拒绝」的信号，会让客户端
-      // 以为用户放弃了，而实际是服务端/Provider 出了问题。
+      // 交换失败：清理这一行（已被消费，无法重放），然后把「服务端/Provider
+      // 故障」如实交回客户端。
+      //
+      // **不伪装成 access_denied**：那是「用户拒绝」的信号，会让客户端以为
+      // 用户放弃了（并可能停止重试），而实际是服务端坏了。
+      //
+      // 也**不返回 Cloud 的 500 页面**：此时 `redirect_uri` 已经由 authorize
+      // 阶段按注册值逐字符校验过，可信；把用户丢在一个 Cloud 的错误页上，
+      // 客户端就永远等不到那次回调。用 `server_error` 回到客户端，让它按
+      // OAuth 的错误语义决定是否重试。
       await deleteAuthRequest(ctx.db.db, request.rid);
-      await recordAuthEvent(ctx.db.db, {
+      await audit(ctx, {
         eventType: "mcp_provider_callback_failed",
         detail: {
           rid: request.rid,
@@ -399,7 +565,15 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
           code: (err as AppError).code ?? "unknown",
         },
       });
-      throw err;
+      clearBrowserSessionCookie(c, browserOptions);
+      return c.redirect(
+        buildRedirectUri(request.redirectUri, {
+          error: "server_error",
+          state: request.state ?? undefined,
+          iss: ctx.env.baseUrl,
+        }),
+        302,
+      );
     }
 
     const resolved = await findOrCreateUserWithIdentity(ctx.db.db, {
@@ -414,7 +588,7 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
     if (resolved.user.status !== "active") {
       // 被暂停的账号不能进入同意页。删行：这次授权不该留任何可用状态。
       await deleteAuthRequest(ctx.db.db, request.rid);
-      await recordAuthEvent(ctx.db.db, {
+      await audit(ctx, {
         eventType: "mcp_provider_callback_failed",
         detail: { rid: request.rid, provider, reason: "user_inactive", userId: resolved.user.id },
       });
@@ -428,26 +602,346 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
       return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
     }
 
-    await recordAuthEvent(ctx.db.db, {
+    await audit(ctx, {
       eventType: "mcp_provider_callback_succeeded",
       userId: resolved.user.id,
       detail: { rid: request.rid, provider, created: resolved.created },
     });
 
-    // **保留**授权请求行：C2b 的同意页还要读它（client / scope / redirect_uri）。
+    // **保留**授权请求行：同意页还要读它（client / scope / redirect_uri）。
     return c.redirect(`/mcp/oauth/consent?rid=${encodeURIComponent(request.rid)}`, 302);
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /mcp/oauth/consent
+  // -------------------------------------------------------------------------
+
+  /**
+   * 同意页。
+   *
+   * 十条前置条件全部在 `loadConsentRequest` 里（行存在、未过期、Provider 回调
+   * 已消费、`user_id` 已就位、provider 合法、Cookie 有效且绑定一致）。这里
+   * 只负责「失败时给出哪个页面」与「成功时渲染什么」。
+   *
+   * **每次打开都换一把 CSRF**：旧表单里的值立刻失效，于是「把页面留十分钟
+   * 再提交」和「两个标签页用旧的那个提交」都会 400，而不是绕过检查。
+   */
+  app.get("/mcp/oauth/consent", limiter, async (c) => {
+    const rid = singleQuery(c, "rid") ?? "";
+    if (!isAuthRequestId(rid)) {
+      return htmlError(c, 400, "授权链接无效", "这个授权链接格式不正确。请回到发起授权的应用重新开始。");
+    }
+
+    const cookie = await readBrowserSessionCookie(c, browserOptions);
+    if (!cookie.ok) {
+      // 同意页**不允许**新建浏览器会话：绑定必须发生在登录那一步，
+      // 否则「拿到 rid」就足以在任意浏览器里打开同意页。
+      return htmlError(c, 400, "浏览器会话已失效", BROWSER_EXPIRED_HINT);
+    }
+    const binding = browserBindingHash(cookie.session.sid);
+    const currentTime = now();
+
+    const loaded = await loadConsentRequest(ctx.db.db, {
+      rid,
+      bindingHash: binding,
+      now: currentTime,
+    });
+    if (!loaded.ok) {
+      return await consentFailurePage(c, ctx, rid, loaded.reason);
+    }
+
+    const csrf = await issueConsentCsrf(ctx.db.db, {
+      rid,
+      bindingHash: binding,
+      userId: loaded.request.userId,
+      now: currentTime,
+    });
+    if (!csrf) {
+      // 这一行在「读」与「写 CSRF」之间被消费/删除/换了浏览器。fail-closed：
+      // 渲染一张没有 CSRF 的同意页等于给出一个永远提交不了的陷阱。
+      return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
+    }
+
+    /**
+     * Step-up：已有 active grant 的 scope **全部**在本次请求里，且请求新增了
+     * scope。只有这种情形才把已有项灰置——否则（例如上一次授了
+     * `records+coffee`、这次只请求 `records`）它是一次正常的收窄授权，
+     * 每一项都必须可选。
+     */
+    const grantedScopes = loaded.activeGrant?.scopes ?? [];
+    const requested = new Set<string>(loaded.request.requestedScopes);
+    const isStepUp =
+      grantedScopes.length > 0 &&
+      grantedScopes.every((scope) => requested.has(scope)) &&
+      grantedScopes.length < requested.size;
+
+    return c.html(
+      renderConsentPage({
+        rid,
+        csrf,
+        clientName: loaded.request.clientName,
+        redirectHost: loaded.request.redirectHost,
+        scopes: loaded.request.requestedScopes.map((scope) => ({
+          scope,
+          granted: isStepUp && grantedScopes.includes(scope),
+        })),
+      }),
+      200,
+      AUTH_PAGE_HEADERS,
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // POST /mcp/oauth/consent
+  // -------------------------------------------------------------------------
+
+  /**
+   * 提交同意或拒绝。
+   *
+   * 所有判据都在 `decideConsent` 的事务里重新取一遍（Cookie 绑定、CSRF、
+   * `user_id`、`provider_consumed_at`、有效期、请求 scope）。**不信任 GET
+   * 时的任何结论**——GET 与 POST 之间可能有另一个标签页、另一台设备或
+   * 一次过期的流逝。
+   */
+  app.post("/mcp/oauth/consent", limiter, async (c) => {
+    const form = await parseConsentForm(c);
+    if (!form) {
+      return htmlError(
+        c,
+        400,
+        "请求无法处理",
+        "这张授权表单已失效。请回到发起授权的应用重新开始。",
+      );
+    }
+    if (!isAuthRequestId(form.rid)) {
+      return htmlError(c, 400, "授权链接无效", "这个授权链接格式不正确。请回到发起授权的应用重新开始。");
+    }
+
+    const cookie = await readBrowserSessionCookie(c, browserOptions);
+    if (!cookie.ok) {
+      return htmlError(c, 400, "浏览器会话已失效", BROWSER_EXPIRED_HINT);
+    }
+    const binding = browserBindingHash(cookie.session.sid);
+    const currentTime = now();
+
+    const outcome = await decideConsentSafely(ctx, {
+      rid: form.rid,
+      csrf: form.csrf,
+      decision: form.decision,
+      scopes: form.scopes,
+      bindingHash: binding,
+      now: currentTime,
+    });
+
+    if (!outcome.ok) {
+      return await consentSubmitFailure(c, ctx, form.rid, outcome.reason, {
+        userId: outcome.userId,
+        clientId: outcome.clientId,
+      });
+    }
+
+    const result = outcome.result;
+
+    // ---- 用户拒绝（含「取消全部勾选」）----
+    if (result.kind === "denied") {
+      await audit(ctx, {
+        eventType: "mcp_consent_denied",
+        userId: result.userId,
+        detail: { rid: form.rid, clientId: result.clientId },
+      });
+      clearBrowserSessionCookie(c, browserOptions);
+      return c.redirect(
+        buildRedirectUri(result.redirectUri, {
+          error: "access_denied",
+          state: result.state ?? undefined,
+          iss: ctx.env.baseUrl,
+        }),
+        302,
+      );
+    }
+
+    // ---- 用户允许：授权码已经提交，之后只剩「记账」与「同步」----
+    await audit(ctx, {
+      eventType: "mcp_consent_allowed",
+      userId: result.userId,
+      detail: {
+        rid: form.rid,
+        clientId: result.clientId,
+        grantId: result.grantId,
+        scope: result.scopes,
+        epoch: result.epoch,
+      },
+    });
+    await audit(ctx, {
+      eventType: "mcp_auth_code_issued",
+      userId: result.userId,
+      // **不记 code、不记 code_hash**：前者是凭据，后者是它的等价物。
+      detail: { rid: form.rid, clientId: result.clientId, grantId: result.grantId },
+    });
+
+    /**
+     * 在线 Grant 同步：**数据库已提交**，这一步失败不回滚。
+     *
+     * 设备离线时授权依然成立——下次握手时 `hello_ok` 会按数据库重建整张
+     * 上下文表。同步失败只影响「现在能不能派发」，转发层自己会 fail-closed
+     * （未 ack 的 ctx 不可路由）。
+     */
+    const sync = await syncGrantToOnlineDevice(ctx, {
+      userId: result.userId,
+      grantId: result.grantId,
+      clientId: result.clientId,
+      clientName: result.clientName,
+      scopes: result.scopes,
+      epoch: result.epoch,
+    });
+    if (sync.status === "failed") {
+      ctx.logger.warn("mcp_grant_sync_failed", {
+        grantId: result.grantId,
+        deviceId: sync.deviceId?.slice(0, 8),
+        reason: sync.reason,
+      });
+      await audit(ctx, {
+        eventType: "mcp_grant_sync_failed",
+        userId: result.userId,
+        detail: {
+          rid: form.rid,
+          grantId: result.grantId,
+          reason: sync.reason,
+          deviceId: sync.deviceId,
+        },
+      });
+    }
+
+    clearBrowserSessionCookie(c, browserOptions);
+    return c.redirect(
+      buildRedirectUri(result.redirectUri, {
+        code: result.code,
+        state: result.state ?? undefined,
+        iss: ctx.env.baseUrl,
+      }),
+      302,
+    );
   });
 }
 
 /**
- * 用户主动拒绝（`error=access_denied` 等）。
+ * 同意页 GET 的失败出口。
  *
- * 关键约束：**只有拿到已验证且精确匹配的 `redirect_uri` 才允许重定向**。
- * 这里的「精确」由行的来源保证——`redirect_uri` 是 authorize 阶段按注册值
- * 逐字符校验后写进去的，回调阶段只读不写。
+ * 两类失败带副作用：
+ * - **绑定不匹配**：删行 + 审计（有劫持嫌疑，行不能再被任何人使用）；
+ * - **过期**：删行（这张表只承载 10 分钟内的状态，过期行没有任何用途）。
  *
- * 一次性由 `DELETE ... RETURNING` 保证：同一个 state 拒绝两次，第二次拿不到行，
- * 也就拿不到可重定向的地址。
+ * 其余失败（行不存在、未登录）只给页面：此时没有可信的 `redirect_uri`，
+ * 不做任何重定向。
+ */
+async function consentFailurePage(
+  c: Context,
+  ctx: AppContext,
+  rid: string,
+  reason: ConsentFailure,
+): Promise<Response> {
+  if (reason === "binding_mismatch") {
+    await deleteAuthRequest(ctx.db.db, rid);
+    await audit(ctx, {
+      eventType: "mcp_browser_binding_mismatch",
+      detail: { rid, stage: "consent" },
+    });
+  } else if (reason === "expired") {
+    await deleteAuthRequest(ctx.db.db, rid);
+  }
+  const mapped = CONSENT_FAILURE_MESSAGES[reason];
+  return htmlError(c, 400, mapped.title, mapped.message);
+}
+
+/**
+ * 同意页 POST 的失败出口。
+ *
+ * `csrf_mismatch` 的行**已经在 `decideConsent` 里删掉**（那里是事务内删除，
+ * 与「表单被篡改」这件事属于同一个决定），这里只补审计与页面。
+ */
+async function consentSubmitFailure(
+  c: Context,
+  ctx: AppContext,
+  rid: string,
+  reason: ConsentFailure | "invalid_request" | "csrf_mismatch" | "invalid_scope" | "no_scope_granted",
+  context: { userId?: string | undefined; clientId?: string | undefined },
+): Promise<Response> {
+  if (reason === "csrf_mismatch") {
+    await audit(ctx, {
+      eventType: "mcp_consent_csrf_mismatch",
+      userId: context.userId,
+      detail: { rid, clientId: context.clientId },
+    });
+    return htmlError(
+      c,
+      400,
+      "表单已失效",
+      "这张授权表单已失效，可能是页面打开太久或在另一处重新打开了授权。请重新开始授权。",
+    );
+  }
+
+  if (reason === "binding_mismatch") {
+    await deleteAuthRequest(ctx.db.db, rid);
+    await audit(ctx, {
+      eventType: "mcp_browser_binding_mismatch",
+      detail: { rid, stage: "consent_submit" },
+    });
+    return htmlError(
+      c,
+      400,
+      "授权会话不匹配",
+      "这个授权链接已在另一个浏览器中打开。请重新开始授权。",
+    );
+  }
+
+  if (reason === "expired") {
+    await deleteAuthRequest(ctx.db.db, rid);
+  }
+
+  if (reason === "invalid_scope" || reason === "no_scope_granted") {
+    // 不删行：这多半是客户端/页面 bug，用户重新打开同意页即可。删行会让
+    // 一次可恢复的失败变成「必须重新走 Provider 登录」。
+    return htmlError(
+      c,
+      400,
+      "权限范围无效",
+      "这次提交的权限范围不在授权请求之内。请重新打开授权页面。",
+    );
+  }
+
+  if (reason === "invalid_request" || reason === "not_found") {
+    return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
+  }
+
+  const mapped = CONSENT_FAILURE_MESSAGES[reason];
+  return htmlError(c, 400, mapped.title, mapped.message);
+}
+
+/**
+ * Provider 侧返回了 `error`：用户拒绝、Provider 故障，或一个我们不认识的错误。
+ *
+ * ## 错误映射（Phase 1.3.1-C2b 修正）
+ *
+ * | Provider 返回 | 客户端看到 | 理由 |
+ * |---|---|---|
+ * | `access_denied` | `access_denied` | 用户确实拒绝了 |
+ * | `server_error` | `server_error` | Provider 自己报故障 |
+ * | 其他 / 未知 | `server_error` | 不能把未识别的失败说成「用户拒绝」 |
+ *
+ * C2a 把所有 `error` 都映射成 `access_denied`。那会让客户端在 Provider 宕机
+ * 时以为「用户不同意」，于是停止重试并可能把授权标记为被拒绝——一个服务端
+ * 故障被记成了用户意愿。
+ *
+ * ## 重定向的前提
+ *
+ * **只有拿到已验证且精确匹配的 `redirect_uri` 才允许重定向**。这里的「精确」
+ * 由行的来源保证——`redirect_uri` 是 authorize 阶段按注册值逐字符校验后写
+ * 进去的，回调阶段只读不写。所以「拿不到行」时必须 400，绝不回跳。
+ *
+ * 一次性由条件 `DELETE … RETURNING` 保证：同一个 state 拒绝两次，第二次
+ * 拿不到行，也就拿不到可重定向的地址。删除条件里带上当时那把 State 的哈希
+ * 与浏览器绑定（见 `deleteDeniedProviderRequest`），才能避免「旧 State 的
+ * 拒绝回调把同一 rid 上新发起的授权删掉」。
  */
 async function handleProviderDenied(
   c: Context,
@@ -455,6 +949,8 @@ async function handleProviderDenied(
     ctx: AppContext;
     browserOptions: BrowserSessionOptions;
     provider: ProviderName;
+    /** Provider 回传的原始 `error` 值。只用于分类，不原样写入审计。 */
+    providerError: string;
     stateHash: string;
     binding: string;
     now: Date;
@@ -462,6 +958,7 @@ async function handleProviderDenied(
 ): Promise<Response> {
   const { ctx } = input;
 
+  // 读一次只为**区分失败原因**（绑定不匹配要留证）。判据是下面的条件删除。
   const rows = await ctx.db.db
     .select({
       id: mcpAuthRequests.id,
@@ -475,9 +972,9 @@ async function handleProviderDenied(
   if (!row || row.provider !== input.provider) {
     return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
   }
-  if (row.browserBindingHash !== input.binding) {
+  if (!row.browserBindingHash || !constantTimeEqual(row.browserBindingHash, input.binding)) {
     await deleteAuthRequest(ctx.db.db, row.id);
-    await recordAuthEvent(ctx.db.db, {
+    await audit(ctx, {
       eventType: "mcp_browser_binding_mismatch",
       detail: { rid: row.id, stage: "denied", provider: input.provider },
     });
@@ -489,30 +986,39 @@ async function handleProviderDenied(
     );
   }
 
-  // 原子删除：同一个 state 只可能换来一次重定向。
-  const deleted = await ctx.db.db
-    .delete(mcpAuthRequests)
-    .where(
-      and(
-        eq(mcpAuthRequests.id, row.id),
-        isNull(mcpAuthRequests.providerConsumedAt),
-        gt(mcpAuthRequests.expiresAt, input.now),
-      ),
-    )
-    .returning({ redirectUri: mcpAuthRequests.redirectUri, state: mcpAuthRequests.state });
-  const hit = deleted[0];
-  if (!hit) return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
+  const deleted = await deleteDeniedProviderRequest(ctx.db.db, {
+    rid: row.id,
+    provider: input.provider,
+    stateHash: input.stateHash,
+    bindingHash: input.binding,
+    now: input.now,
+  });
+  // 命中 0 行 = 这一行已经不是「那把被拒绝的 state 对应的授权」了
+  // （被新的 Provider 流程覆盖 / 已被消费 / 已过期）。不重定向。
+  if (!deleted) return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
 
-  await recordAuthEvent(ctx.db.db, {
+  const clientError = input.providerError === "access_denied" ? "access_denied" : "server_error";
+  await audit(ctx, {
     eventType: "mcp_provider_denied",
-    detail: { rid: row.id, provider: input.provider },
+    detail: {
+      rid: deleted.rid,
+      provider: input.provider,
+      clientError,
+      // 只记分类，不记 Provider 的原始字符串（它可能带换行或任意内容）。
+      providerErrorKind:
+        input.providerError === "access_denied"
+          ? "access_denied"
+          : input.providerError === "server_error"
+            ? "server_error"
+            : "other",
+    },
   });
 
   clearBrowserSessionCookie(c, input.browserOptions);
   return c.redirect(
-    buildRedirectUri(hit.redirectUri, {
-      error: "access_denied",
-      state: hit.state ?? undefined,
+    buildRedirectUri(deleted.redirectUri, {
+      error: clientError,
+      state: deleted.state ?? undefined,
       iss: ctx.env.baseUrl,
     }),
     302,

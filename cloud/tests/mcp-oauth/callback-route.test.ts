@@ -327,23 +327,110 @@ describe("Provider 侧失败", () => {
     expect(res.headers.get("location")).toBeNull();
   });
 
-  it("交换失败：500 server_error（不是 access_denied），且行被清理", async () => {
+  it("交换失败：302 回 redirect_uri 带 error=server_error（不是 access_denied），且行被清理", async () => {
     const started = await startProvider("google");
     h.providers.google.state.failure = serverError("google is down");
 
     const res = await callback("google", { code: "c", state: started.state }, started.cookie);
 
-    expect(res.status).toBe(500);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe("server_error");
+    // 不能返回 Cloud 的 500 页面：`redirect_uri` 已经过 authorize 的精确校验，
+    // 客户端在那边等着 code/error，把用户丢在 Cloud 错误页等于断链。
+    expect(res.status).toBe(302);
+    const location = new URL(res.headers.get("location")!);
+    expect(location.origin + location.pathname).toBe("https://client.example/callback");
+    expect(location.searchParams.get("error")).toBe("server_error");
     // 关键：不能伪装成用户拒绝。
-    expect(body.error).not.toBe("access_denied");
+    expect(location.searchParams.get("error")).not.toBe("access_denied");
+    expect(location.searchParams.get("state")).toBe("client-state-1");
+    expect(location.searchParams.get("iss")).toBe("https://gateway.example");
+    // 明文 code 不能出现在任何地方。
+    expect(location.searchParams.get("code")).toBeNull();
+
     expect(await rows()).toHaveLength(0);
+
+    // Cookie 被清（Path 必须是 /mcp/oauth，否则清不掉原来那个）。
+    const cookie = parseSetCookie(setCookieOf(res)!);
+    expect(cookie.__name).toBe("bp_mcp_bs");
+    expect(cookie["max-age"]).toBe("0");
+    expect(cookie.path).toBe("/mcp/oauth");
 
     const audit = await handle.sql<{ count: string }[]>`
       select count(*)::text as count from auth_events
        where event_type = 'mcp_provider_callback_failed' and detail->>'reason' = 'exchange_failed'`;
     expect(audit[0]?.count).toBe("1");
+  });
+
+  it("Provider 返回 server_error → error=server_error（不是用户拒绝）", async () => {
+    const started = await startProvider("google");
+    const res = await callback("google", { error: "server_error", state: started.state }, started.cookie);
+
+    expect(res.status).toBe(302);
+    const location = new URL(res.headers.get("location")!);
+    expect(location.searchParams.get("error")).toBe("server_error");
+    expect(await rows()).toHaveLength(0);
+  });
+
+  it("Provider 返回未知 error → error=server_error（不冒充 access_denied）", async () => {
+    const started = await startProvider("google");
+    const res = await callback("google", { error: "temporarily_unavailable", state: started.state }, started.cookie);
+
+    expect(res.status).toBe(302);
+    expect(new URL(res.headers.get("location")!).searchParams.get("error")).toBe("server_error");
+  });
+
+  it("旧 State 的拒绝回调不能删掉同一 rid 上新发起的授权", async () => {
+    // 用同一个 rid 启动两次 Provider 流程：第二次会换掉 provider_state_hash。
+    const started = await startProvider("google");
+    const relogin = await h.app.request(
+      `/mcp/oauth/login?rid=${started.rid}&provider=google`,
+      { headers: { cookie: started.cookie } },
+    );
+    expect(relogin.status).toBe(302);
+    const secondState = new URL(relogin.headers.get("location")!).searchParams.get("state")!;
+    expect(secondState).not.toBe(started.state);
+
+    // 旧 State 的拒绝回调抵达。
+    const res = await callback("google", { error: "access_denied", state: started.state }, started.cookie);
+
+    // 不重定向：这一行已经不是「当初被拒绝的那次授权」。
+    expect(res.status).toBe(400);
+    expect(res.headers.get("location")).toBeNull();
+
+    // 新流程完好无损。
+    const all = await rows();
+    expect(all).toHaveLength(1);
+    expect(all[0]!.id).toBe(started.rid);
+    expect(all[0]!.providerConsumedAt).toBeNull();
+  });
+
+  it("旧 State 无法消费重新发起后的授权", async () => {
+    const started = await startProvider("google");
+    const relogin = await h.app.request(
+      `/mcp/oauth/login?rid=${started.rid}&provider=google`,
+      { headers: { cookie: started.cookie } },
+    );
+    expect(relogin.status).toBe(302);
+
+    // 用旧 State 走「正常回调」：SELECT 已经查不到那把哈希。
+    const res = await callback("google", { code: "c", state: started.state }, started.cookie);
+    expect(res.status).toBe(400);
+    expect(res.headers.get("location")).toBeNull();
+
+    const all = await rows();
+    expect(all).toHaveLength(1);
+    expect(all[0]!.providerConsumedAt).toBeNull();
+    // Provider 一次都没被调用。
+    expect(h.providers.google.state.exchangeCount).toBe(0);
+  });
+
+  it("同一状态被拒绝后重放 → 第二次 400（一次性）", async () => {
+    const started = await startProvider("google");
+    const first = await callback("google", { error: "access_denied", state: started.state }, started.cookie);
+    expect(first.status).toBe(302);
+
+    const second = await callback("google", { error: "access_denied", state: started.state }, started.cookie);
+    expect(second.status).toBe(400);
+    expect(second.headers.get("location")).toBeNull();
   });
 
   it("被暂停的用户 → 403，且行被删除（不进同意页）", async () => {

@@ -279,6 +279,68 @@ export async function deleteAuthRequest(db: Database, rid: string): Promise<void
   await db.delete(mcpAuthRequests).where(eq(mcpAuthRequests.id, rid));
 }
 
+export interface DeniedProviderRequest {
+  rid: string;
+  redirectUri: string;
+  state: string | null;
+}
+
+/**
+ * Provider 侧拒绝后**一次性**取回可回跳的地址（顺便删行）。
+ *
+ * ## 为什么 DELETE 必须带上当时读到的那把 State（Phase 1.3.1-C2b 修复）
+ *
+ * 同一 `rid` 允许重新发起 Provider 流程（用户点了两次「用 Google 登录」），
+ * 每次都会换一把新的 `provider_state_hash`。如果拒绝回调只按 `id` 删行，
+ * 下面这条真实路径会删掉**新**那次授权：
+ *
+ * ```
+ * 用户在 Google 页面点「拒绝」（旧 State S1）      ← 请求 A 还在路上
+ * 用户回到登录页重新点「用 Google 登录」→ 写入 S2   ← 行被换成新的
+ * 请求 A 抵达：SELECT 命中的是 S2 那一行（按 id 删）→ S2 被删
+ * ```
+ *
+ * 因此 DELETE 的条件必须包含 `provider_state_hash = hash(S1)`：S1 已经不是
+ * 当前那把，删除命中 0 行，回调得到 400 而不是把新流程一起带走。
+ *
+ * 其余条件同样是判据的一部分：`provider`（不是另一个 Provider 的流程）、
+ * `browser_binding_hash`（不是另一个浏览器）、`provider_consumed_at IS NULL`
+ * （没被当成正常回调消费过）、`expires_at > now`（过期行不再产生重定向）。
+ *
+ * 返回 `undefined` = 这一行已经不是「那个被拒绝的授权」了，**不得重定向**。
+ */
+export async function deleteDeniedProviderRequest(
+  db: Database,
+  input: {
+    rid: string;
+    provider: "google" | "github";
+    stateHash: string;
+    bindingHash: string;
+    now: Date;
+  },
+): Promise<DeniedProviderRequest | undefined> {
+  const deleted = await db
+    .delete(mcpAuthRequests)
+    .where(
+      and(
+        eq(mcpAuthRequests.id, input.rid),
+        eq(mcpAuthRequests.providerStateHash, input.stateHash),
+        eq(mcpAuthRequests.provider, input.provider),
+        eq(mcpAuthRequests.browserBindingHash, input.bindingHash),
+        isNull(mcpAuthRequests.providerConsumedAt),
+        gt(mcpAuthRequests.expiresAt, input.now),
+      ),
+    )
+    .returning({
+      id: mcpAuthRequests.id,
+      redirectUri: mcpAuthRequests.redirectUri,
+      state: mcpAuthRequests.state,
+    });
+  const hit = deleted[0];
+  if (!hit) return undefined;
+  return { rid: hit.id, redirectUri: hit.redirectUri, state: hit.state };
+}
+
 export type BindOutcome =
   | { ok: true; alreadyBound: boolean }
   | { ok: false; reason: "not_found" | "expired" | "consumed" | "binding_mismatch" };
@@ -433,6 +495,21 @@ export type ConsumeOutcome =
  * 里恰好一个能进入网络交换，另一个拿到 `consumed`。这满足了「不允许先普通
  * SELECT 检查，再在另一个事务中无条件 UPDATE」。
  *
+ * ## 条件 UPDATE 的五个条件缺一不可（Phase 1.3.1-C2b 补强）
+ *
+ * ```
+ * provider_state_hash = hash(state)   ← 这一把 state 确实是当前那把
+ * provider            = :provider     ← 不是拿 Google 的码兑 GitHub 的行
+ * browser_binding_hash = :binding     ← 不是另一个浏览器
+ * provider_consumed_at IS NULL        ← 没被消费过（并发只有一条赢）
+ * expires_at > :now                   ← SELECT 与 UPDATE 之间不会「跑着跑着过期」
+ * ```
+ *
+ * 后两个条件在 C2a 只写在 SELECT 里。那样会留下一个窄窗口：SELECT 读到「未
+ * 过期、未消费」，随后同一行被另一个事务改掉（换 state / 过期），UPDATE 仍会
+ * 命中并写 `provider_consumed_at`。把判据全部搬进 UPDATE 之后，唯一能写成功
+ * 的就是「读到的那个状态仍然是当前状态」。
+ *
  * **不在网络请求期间持有事务**：这里没有 `db.transaction`，消费是一次
  * 自动提交的 UPDATE，之后才去调 Provider。
  */
@@ -479,7 +556,9 @@ export async function consumeProviderCallback(
       and(
         eq(mcpAuthRequests.providerStateHash, stateHash),
         eq(mcpAuthRequests.provider, input.provider),
+        eq(mcpAuthRequests.browserBindingHash, input.bindingHash),
         isNull(mcpAuthRequests.providerConsumedAt),
+        gt(mcpAuthRequests.expiresAt, input.now),
       ),
     )
     .returning({
@@ -490,6 +569,8 @@ export async function consumeProviderCallback(
     });
 
   const hit = consumed[0];
+  // 没命中就 fail-closed：这一行在读与写之间被别人改过（换 state、消费、
+  // 过期或换浏览器），任何一条都足以说明「这次回调不该继续」。
   if (!hit) return { ok: false, reason: "consumed" };
   return {
     ok: true,

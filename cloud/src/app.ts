@@ -4,7 +4,7 @@ import type { AppContext, AppHono } from "./context.js";
 import { createKeyRing, type AccessClaims } from "./sessions/jwt.js";
 import { createLogger } from "./logger.js";
 import { createDb } from "./db/client.js";
-import { mcpAuthRequests, mcpDevices, oauthCodes, oauthTransactions } from "./db/schema.js";
+import { mcpAuthCodes, mcpAuthRequests, mcpDevices, oauthCodes, oauthTransactions } from "./db/schema.js";
 import { loadEnv } from "./env.js";
 import { resolveProviderFetch } from "./net/proxy-fetch.js";
 import { createProviders } from "./oauth/providers.js";
@@ -172,17 +172,34 @@ export function startSweep(ctx: AppContext, intervalMs = 60_000): SweepHandle {
         ),
       )
       .returning({ id: mcpAuthRequests.id });
+    /**
+     * 过期/已兑换的 MCP 授权码（Phase 1.3.1-C2b）。
+     *
+     * 授权码只有 60 秒寿命，兑换由 C3 的 `/mcp/oauth/token` 完成（那次是
+     * 条件 UPDATE + `consumed_at`）。**没被兑换的**（客户端拿到 code 之后
+     * 崩了 / 用户关掉了标签页）必须有人清，否则每失败一次授权就留一行。
+     *
+     * 只删已过期的：`consumed_at` 非空但还没过期的行留着，让 C3 能对
+     * 「同一个 code 兑换两次」给出确定的 `invalid_grant`（而不是「查不到」
+     * 与「已用过」在时间上漂移）。
+     */
+    const mcpCodes = await ctx.db.db
+      .delete(mcpAuthCodes)
+      .where(lt(mcpAuthCodes.expiresAt, now))
+      .returning({ codeHash: mcpAuthCodes.codeHash });
     if (
       transactions.length > 0 ||
       codes.length > 0 ||
       devices.length > 0 ||
-      authRequests.length > 0
+      authRequests.length > 0 ||
+      mcpCodes.length > 0
     ) {
       ctx.logger.info("sweep_completed", {
         expiredTransactions: transactions.length,
         expiredCodes: codes.length,
         expiredDevices: devices.length,
         expiredMcpAuthRequests: authRequests.length,
+        expiredMcpAuthCodes: mcpCodes.length,
       });
     }
   };

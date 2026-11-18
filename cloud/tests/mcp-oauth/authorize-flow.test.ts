@@ -258,6 +258,101 @@ describe("并发消费：条件 UPDATE 是唯一判据", () => {
     // 条件 UPDATE 没命中。
     expect((rejected[0] as { reason: string }).reason).toBe("consumed");
   });
+
+  // ---- 读与写之间的变化：条件 UPDATE 必须全部覆盖（Phase 1.3.1-C2b）----
+
+  /**
+   * 在「读已经通过、UPDATE 正阻塞」的那一刻改动这一行。
+   *
+   * 这是唯一能确定性复现「SELECT 与 UPDATE 之间被改」的做法：行锁让 UPDATE
+   * 停在锁上，`pg_stat_activity` 让我们确认它**确实**已经停在锁上，然后才
+   * 在持锁事务里改数据并提交。提交后 READ COMMITTED 会让那条 UPDATE 针对
+   * 新版本重新求值 WHERE——这正是要验证的语义。
+   */
+  async function consumeWithConcurrentMutation(
+    started: { rid: string; state: string; binding: string },
+    mutate: (tx: Database) => Promise<void>,
+  ) {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let signal!: () => void;
+    const locked = new Promise<void>((resolve) => {
+      signal = resolve;
+    });
+
+    const holding = handle.db.transaction(async (tx) => {
+      await tx.execute(
+        drizzleSql`select 1 from mcp_auth_requests where id = ${started.rid} for update`,
+      );
+      signal();
+      await held;
+      await mutate(tx as unknown as Database);
+    });
+    await locked;
+
+    const consuming = consumeProviderCallback(handle.db, {
+      provider: "google",
+      state: started.state,
+      bindingHash: started.binding,
+      now: new Date(),
+    });
+    try {
+      const waiters = await waitForLockWaiters(1);
+      expect(waiters, "UPDATE 必须已经进入等锁状态").toBeGreaterThanOrEqual(1);
+    } finally {
+      release();
+      await holding;
+    }
+    return await consuming;
+  }
+
+  it("SELECT 与 UPDATE 之间过期 → 不消费（fail-closed）", async () => {
+    const h = await createMcpOAuthHarness();
+    const started = await seedClaimedRequest(h);
+
+    const out = await consumeWithConcurrentMutation(started, async (tx) => {
+      await tx.execute(
+        drizzleSql`update mcp_auth_requests set expires_at = now() - interval '1 second' where id = ${started.rid}`,
+      );
+    });
+
+    expect(out.ok).toBe(false);
+    expect((out as { reason: string }).reason).toBe("consumed");
+    // 没有被写成「已消费」——那一列一旦写上就再也不能重试。
+    expect((await loadAuthRequest(handle.db, started.rid))!.providerConsumedAt).toBeNull();
+  });
+
+  it("SELECT 与 UPDATE 之间换了浏览器绑定 → 不消费", async () => {
+    const h = await createMcpOAuthHarness();
+    const started = await seedClaimedRequest(h);
+
+    const out = await consumeWithConcurrentMutation(started, async (tx) => {
+      await tx.execute(
+        drizzleSql`update mcp_auth_requests set browser_binding_hash = ${"f".repeat(64)} where id = ${started.rid}`,
+      );
+    });
+
+    expect(out.ok).toBe(false);
+    expect((out as { reason: string }).reason).toBe("consumed");
+    expect((await loadAuthRequest(handle.db, started.rid))!.providerConsumedAt).toBeNull();
+  });
+
+  it("SELECT 与 UPDATE 之间换了 Provider State → 不消费", async () => {
+    const h = await createMcpOAuthHarness();
+    const started = await seedClaimedRequest(h);
+
+    const out = await consumeWithConcurrentMutation(started, async (tx) => {
+      await tx.execute(
+        drizzleSql`update mcp_auth_requests set provider_state_hash = ${hashProviderSecret("newer-state")} where id = ${started.rid}`,
+      );
+    });
+
+    expect(out.ok).toBe(false);
+    expect((out as { reason: string }).reason).toBe("consumed");
+    expect((await loadAuthRequest(handle.db, started.rid))!.providerConsumedAt).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
