@@ -443,6 +443,32 @@ rotate_sig_msg = "brewphase.remote.rotate.v1\n" + device_id + "\n" + new_public_
 条 UPDATE 覆盖，立即失效。响应返回后再 close `4010`。Desktop 侧必须
 **先落盘新凭据、再重连**，顺序反了会丢掉唯一一次下发的 token。
 
+**Phase 1.2B.2.1 的实现顺序（`cloud/src/mcp-devices/rotate.ts` + `link-server.ts`）**：
+
+```
+① 旧 token → 设备行；路径 id 必须与行 id 相同（否则 404，不给存在性探针）
+② status=active（revoked/suspended → 409，两者处置完全不同）
+③ token_expires_at > now（过期 → 401）
+④ 新公钥是**规范**的 32 字节（字符集 + 长度 + 重编码逐字相同）
+⑤ |now - ts| ≤ 120s
+⑥ 用**旧公钥**验签（缺任一步都不构成"证明持有旧私钥"）
+⑦ 事务：SELECT ... FOR UPDATE → 重验 token_hash/status/token_expires_at
+   → 同一条 UPDATE 写 public_key + token_hash + token_issued_at +
+     token_expires_at + key_rotated_at
+⑧ COMMIT 之后：标 rotating → 从路由表摘除 → bye(rotated) → close 4010
+```
+
+三处不能动：
+
+| 约束 | 理由 |
+|---|---|
+| **④ 早于 ⑥** | 新公钥进了签名原文。先拒一个不可能是合法公钥的输入，且「公钥形态错」（客户端 bug）与「签名错」（攻击）是两种故障，错误码必须分开 |
+| **⑦ 是 `FOR UPDATE` + 重验** | ①–⑥ 读的是**快照**。并发的第二个轮换会在此处读到已被覆盖的 `token_hash` → 401。串行与并发的错误面因此一致 |
+| **⑧ 在 COMMIT 之后** | 先断连接再改库会留下「旧连接已死、旧凭据仍有效」的窗口——攻击者能拿旧 token 重新握手。清理失败**不回滚**已提交的轮换 |
+
+轮换与 `suspend` / `revoke` / 握手准入争的是**同一把行锁**（`UPDATE mcp_devices`
+无条件持有它），所以四者天然串行，不需要第二套互斥。
+
 ### 3.6 过期与清理
 
 - `expires_at = now + 300s`，`confirm_code_hash` 与 `claim_secret_hash` 同时失效。

@@ -253,7 +253,45 @@ reconcile()   ─┘
 | 旧路由表项 | ③ | 显式删除 |
 | 旧 WSS 连接 | ③ | close `4010` |
 
-**验证**：ST-3（轮换后旧连接发新请求 → 拒绝）。
+**验证**：ST-3 的**连接层那一半**已由 Phase 1.2B.2.1 覆盖；「发新请求 → 拒绝」
+那一半要等 1.2B.2 的 `req` 转发（现在没有 req，也就没有这个判据点）。
+
+## 11.6.1 Phase 1.2B.2.1 的落地与两处补强
+
+**`rotating` 落在哪一层**：它是**连接级**状态，不是设备的 `status` 枚举值。
+`mcp_devices.status` 仍然只有 `pending / active / suspended / revoked`——
+把 `rotating` 塞进去会让「设备能不能握手」与「这条连接能不能被路由」
+共用一个字段，而它们的判据完全不同（轮换中的设备本来就可以立刻用新凭据握手）。
+
+| 位置 | 含义 | 谁读 |
+|---|---|---|
+| `ConnectionInfo.rotating` | 这条连接正在退场，**不可路由** | 转发层（1.2B.2）读它决定 `DEVICE_UNAUTHORIZED` |
+| `LinkServer.isRotating(deviceId)` | 该设备最近一次轮换留下的标记 | 转发层与诊断 |
+| `registry.markRotating(deviceId, connectionId)` | 置标记，**必须 connectionId 匹配** | `rotateConnection` |
+
+`lookup()` 在 `rotating` 时返回 `null`（不可路由），但 `lookupByDevice()` 仍
+返回它（还得能关掉它）。这两个问题必须分开答——合并成一个方法就会二选一地错。
+
+**两处补强（原协议没写，但实现时必须定下来）**：
+
+1. **离线设备也能轮换，但不能伪造在线连接**。`rotateConnection` 查不到路由项
+   时返回 `false` 而不是建一条空记录。
+2. **清理失败不回滚轮换**。DB 已提交，`rotateConnection` 抛错只记
+   `link_rotate_cleanup_failed` 并照常返回 200——撤销/轮换生效的判据是
+   「新请求前查设备状态」，不是「连接已断」。
+
+**Desktop 侧的触发时机**（协议只规定了 4010 是**结果**，不是触发条件）：
+
+| 触发 | 依据 |
+|---|---|
+| `enable()` / 首次连上 | 读了 `device_token` 的 `expires_at`（Cloud 签发时给的），落在提前量窗口内就轮换 |
+| `resume()`（系统唤醒） | 合盖两周会整段跨过窗口；唤醒后先判定再连 |
+| 在线兜底定时器（1h） | 覆盖「一直开着」与「定时器被节流」 |
+| 收到 4010 | **不是轮换触发**：它是「别人已经换过」或「我们这次换完了」。前者必须 blocked |
+
+提前量 `REMOTE_ROTATION_LEAD_MS = 7 天`（Cloud TTL 是 30 天）。老凭据没有
+`tokenExpiresAt` 时**不猜**——猜早会做无谓轮换，猜晚会让 token 静默过期；
+这类设备只能等 4010 或重新配对。
 
 ---
 

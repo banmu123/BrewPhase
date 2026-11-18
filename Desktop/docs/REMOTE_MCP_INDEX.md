@@ -148,3 +148,32 @@ ConnectionRegistry、心跳、req/res 转发、`grant_update` 在线同步、MCP
 
 **部署约束**：Phase 1.2–1.3 必须**单副本**；滚动更新 `maxSurge=0, maxUnavailable=1`；
 进程重启会断开所有在线设备，Desktop 按 1001 退避重连。
+
+## 11. Phase 1.2B.2.1：设备凭据轮换与 `rotating`（已实现）
+
+| 项 | 落地 | 权威 |
+|---|---|---|
+| 轮换端点 | `POST /mcp-devices/{id}/rotate`，**只认 device_token** + 旧私钥签名 | 协议 §3.5 |
+| 签名原文 | `brewphase.remote.rotate.v1\n{device_id}\n{new_public_key}\n{ts}` | 协议 §3.5；fixture |
+| 黄金向量 | `fixtures/remote-mcp/rotate-v1.json`，**两端读同一份** | 本文 §11 |
+| 原子更新 | 事务 + `SELECT … FOR UPDATE` + 重验 `token_hash` → 同一条 UPDATE 换 key 与 token | 协议 §3.5 |
+| 并发 | 同一旧 token 的两个轮换只有一个成功（第二个 401）；与 suspend/revoke/准入共用行锁 | 生命周期 §11.6.1 |
+| `rotating` | **连接级**：`registry.markRotating(deviceId, connectionId)`；`lookup` 返回 null，`lookupByDevice` 仍可见 | 生命周期 §11.6.1 |
+| 旧连接退场 | DB 提交后：摘路由 → `bye(rotated)` → close `4010`；清理失败不回滚 | 生命周期 §11.6 |
+| 离线轮换 | 允许；`rotateConnection` 返回 `false`，不伪造在线连接 | 生命周期 §11.6.1 |
+| Desktop 触发 | `enable` / `resume` / 在线 1h 定时器 + 每次握手成功；提前量 7 天，取自 Cloud 下发的 `expires_at` | 生命周期 §11.6.1 |
+| 4010 语义 | 按阶段区分 `requesting` / `reconnecting` / 无轮换 | 安全运维 §4.1.4 |
+| 失败处置 | 网络未知 / 落盘失败 / 401 / 409 → blocked；仅 429、公钥形态、响应非法可重试 | 安全运维 §4.1.3 |
+
+**迁移**：**无**。轮换只写 `mcp_devices` 既有列（`public_key` / `token_hash` /
+`token_issued_at` / `token_expires_at` / `key_rotated_at`），不新增表也不新增列。
+
+**新增契约**：无新增错误码、无新增 close code（复用 `4010`）、无新增 ST 编号。
+
+**明确未做**（属 1.2B.2.2）：`req`/`res`/`cancel` 转发、`grant_update` 在线同步、
+`install` 未 ack 阻断、`max_inflight` 调度、`delivery_id` 缓存重投、`deadline_ms` 预算、
+`rotating` 连接上的 `req` 拒绝（需要转发层才有判据点）、MCP OAuth、`/mcp`、写工具、Redis。
+
+**Test 基线**：Cloud 393 → **432**；Desktop 1219 → **1245**。
+真实进程联调 13/13（旧凭据握手 → 轮换 200 → 旧连接 4010+bye → 旧 token 4001 →
+新 token 配旧私钥 4001 → 新凭据 hello_ok → 日志无明文 token）。
