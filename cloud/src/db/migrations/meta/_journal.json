@@ -15,6 +15,13 @@
       "when": 1794979492116,
       "tag": "0001_remote_mcp_devices",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794981893295,
+      "tag": "0002_mcp_grant_epoch",
+      "breakpoints": true
     }
   ]
 }

@@ -291,6 +291,21 @@ export const mcpGrants = pgTable(
     scopes: text("scopes").array().notNull(),
     /** RFC 8707 resource indicator：绑定 Gateway URL，token 不能挪到别处用。 */
     resource: text("resource").notNull(),
+    /**
+     * **单条 grant 自身**的版本（协议 §6.5 的 `grants[].epoch`）。
+     *
+     * 与 `mcp_devices.grant_epoch` 是两个不同字段，**绝不能混用**：
+     *
+     * | 字段 | 层级 | 何时 +1 | 谁读 |
+     * |---|---|---|---|
+     * | `mcp_devices.grant_epoch` | 设备级 | 该设备的授权上下文**每次**变化 | `grant_update` 的新旧门槛 |
+     * | `mcp_grants.epoch` | 单 grant | **该 grant 自己**的 scope 变化 | 准入时判断「`req` 引用的版本是否仍是当前」 |
+     *
+     * 默认 1 而不是 0：0 在协议里没有定义语义（Desktop 的 schema 允许 0，
+     * 但那只表示「客户端接受」）。从 1 起算，让「这是第几个版本」在
+     * 排障时可直接读——0 会被误认为「未初始化」。
+     */
+    epoch: integer("epoch").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -302,5 +317,8 @@ export const mcpGrants = pgTable(
     // UPDATE 同一行的 revoked_at，不新增行——否则历史会散成多条。
     uniqueIndex("mcp_grants_user_client_resource_uq").on(t.userId, t.clientId, t.resource),
     index("mcp_grants_user_idx").on(t.userId),
+    // epoch 从 1 起算。约束放在库里而不是只放应用层：这是协议语义
+    // （「版本号」），不是一个可以被任意写入的计数器。
+    check("mcp_grants_epoch_check", sql`${t.epoch} >= 1`),
   ],
 );

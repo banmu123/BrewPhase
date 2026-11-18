@@ -44,6 +44,28 @@ const rawSchema = z.object({
   TRUST_PROXY_HOPS: z.coerce.number().int().min(1).max(5).default(1),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 
+  /**
+   * 期望的 Gateway 副本数（协议 §12.2）。
+   *
+   * **只允许 1**。WSS 连接只存在于某一台实例的内存里，两个副本各自维护
+   * 一份路由表，于是「设备连到 A、请求打到 B」表现为 `DEVICE_OFFLINE`
+   * ——看起来像设备掉线，实际是部署错误。
+   *
+   * 这在应用层**无法技术强制**（运维仍可能误配），所以这里是「启动断言 +
+   * 就绪探测里的 instance_id」两层约束，而不是一个能自动纠正的东西。
+   */
+  GATEWAY_EXPECTED_REPLICAS: z.coerce.number().int().positive().default(1),
+
+  /**
+   * WSS Upgrade 允许的 `Host`（逗号分隔）。
+   *
+   * 留空时从 `BASE_URL` 的 host 推导——正常部署只有这一个公网主机名。
+   * 只有「反代不改写 Host 且后端需要接受另一个名字」时才需要显式配。
+   *
+   * **绝不用 `X-Forwarded-Host` 兜底**：那是客户端可写的。
+   */
+  GATEWAY_ALLOWED_HOSTS: z.string().default(""),
+
   // Provider 端点覆盖（测试/私有化部署用）
   GOOGLE_AUTH_URL: z.string().url().optional(),
   GOOGLE_TOKEN_URL: z.string().url().optional(),
@@ -89,6 +111,12 @@ export type Env = {
   /** XFF 右端跳过的可信代理条目数（1 = 单层反代）。 */
   trustProxyHops: number;
   logLevel: "debug" | "info" | "warn" | "error";
+
+  /** Remote MCP 单实例约束与 WSS 主机白名单（协议 §12.2）。 */
+  gateway: {
+    expectedReplicas: number;
+    allowedHosts: string[];
+  };
 
   googleAuthUrl: string;
   googleTokenUrl: string;
@@ -191,6 +219,35 @@ export function loadEnv(input: Record<string, string | undefined>): Env {
 
   const baseUrl = parsed.BASE_URL.replace(/\/+$/, "");
 
+  /**
+   * 单实例启动断言（协议 §12.2）。
+   *
+   * 拒绝启动而不是「警告后照跑」：多副本下 Remote 会以 `DEVICE_OFFLINE`
+   * 的形式随机失败，那种故障最难查——设备明明在线、日志里也没有错误，
+   * 只有大约一半的请求会「设备离线」。宁可起不来。
+   */
+  if (parsed.GATEWAY_EXPECTED_REPLICAS !== 1) {
+    throw new Error(
+      `[env] GATEWAY_EXPECTED_REPLICAS must be 1 for Remote MCP Phase 1.2–1.3.\n` +
+        `  Got ${parsed.GATEWAY_EXPECTED_REPLICAS}. A shared routing table (Phase 1.4 / Redis)\n` +
+        `  is required before running more than one replica: WSS connections live in a single\n` +
+        `  process's memory, so a request landing on another replica shows up as DEVICE_OFFLINE.`,
+    );
+  }
+
+  // WSS 的 Host 白名单：显式配置优先，否则从 BASE_URL 推导（正常部署只有一个公网名）。
+  const allowedHosts = parsed.GATEWAY_ALLOWED_HOSTS.split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => s.length > 0);
+  if (allowedHosts.length === 0) {
+    try {
+      allowedHosts.push(new URL(baseUrl).host.toLowerCase());
+    } catch {
+      // BASE_URL 已被 zod 校验为 url，这里不可达；留空等于「不校验」，
+      // 由 createLinkServer 的注释说明为什么空数组只在测试里可以接受。
+    }
+  }
+
   return {
     nodeEnv: parsed.NODE_ENV,
     isProduction: parsed.NODE_ENV === "production",
@@ -225,6 +282,11 @@ export function loadEnv(input: Record<string, string | undefined>): Env {
     trustProxy: parsed.TRUST_PROXY,
     trustProxyHops: parsed.TRUST_PROXY_HOPS,
     logLevel: parsed.LOG_LEVEL,
+
+    gateway: {
+      expectedReplicas: parsed.GATEWAY_EXPECTED_REPLICAS,
+      allowedHosts,
+    },
 
     googleAuthUrl:
       parsed.GOOGLE_AUTH_URL ?? "https://accounts.google.com/o/oauth2/v2/auth",

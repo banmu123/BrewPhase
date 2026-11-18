@@ -357,3 +357,151 @@ describe("Phase 1.2A migration (mcp_devices / mcp_grants)", () => {
     }
   });
 });
+
+/**
+ * Phase 1.2B.1 的迁移（`0002_mcp_grant_epoch`）。
+ *
+ * 这一组要回答的问题只有一个：**给一张已有数据的表加 NOT NULL 列，
+ * 旧行会得到什么**。答案必须是 1（协议 §6.5 的 `grants[].epoch` 起点），
+ * 而不是 NULL（会让 Desktop 的 `z.number().int().nonnegative()` 直接拒绝）
+ * 或 0（协议里 0 没有定义，排障时会被误读成「未初始化」）。
+ */
+describe("Phase 1.2B.1 migration (mcp_grants.epoch)", () => {
+  /** 只保留前 N 个迁移的临时目录（用来造「迁移前的库」）。 */
+  function makePartialMigrationsDir(keep: number): string {
+    const journal = JSON.parse(
+      readFileSync(join(MIGRATIONS_FOLDER, "meta", "_journal.json"), "utf8"),
+    ) as { entries: { idx: number; tag: string }[] };
+    const entries = journal.entries.filter((entry) => entry.idx < keep);
+    expect(entries).toHaveLength(keep);
+    const dir = mkdtempSync(join(tmpdir(), `brewphase-migrations-${keep}-`));
+    mkdirSync(join(dir, "meta"), { recursive: true });
+    for (const entry of entries) {
+      copyFileSync(join(MIGRATIONS_FOLDER, `${entry.tag}.sql`), join(dir, `${entry.tag}.sql`));
+    }
+    writeFileSync(
+      join(dir, "meta", "_journal.json"),
+      JSON.stringify({ ...journal, entries }, null, 2),
+    );
+    return dir;
+  }
+
+  async function snapshotColumns(
+    handle: ReturnType<typeof createDb>,
+    table: string,
+  ): Promise<string[]> {
+    const rows = await handle.sql<{ column_name: string; data_type: string; is_nullable: string; column_default: string | null }[]>`
+      select column_name, data_type, is_nullable, column_default
+        from information_schema.columns
+       where table_schema = 'public' and table_name = ${table}
+       order by column_name`;
+    return rows.map((r) => `${r.column_name}|${r.data_type}|${r.is_nullable}|${r.column_default ?? ""}`);
+  }
+
+  it("旧数据的 epoch 自动是 1，且数据本身不丢", async () => {
+    const dbName = "brewphase_cloud_epoch_migration_test";
+    await admin`drop database if exists ${admin(dbName)}`;
+    await admin`create database ${admin(dbName)}`;
+    const url = TEST_DATABASE_URL.replace(/\/[^/]+$/, `/${dbName}`);
+    const partialDir = makePartialMigrationsDir(2);
+    const handle = createDb(url);
+    try {
+      // 只应用到 0001：此时 mcp_grants 还没有 epoch 列。
+      await runMigrations(handle.db, partialDir);
+      const columns = await handle.sql<{ column_name: string }[]>`
+        select column_name from information_schema.columns
+         where table_schema = 'public' and table_name = 'mcp_grants'`;
+      expect(columns.map((c) => c.column_name)).not.toContain("epoch");
+
+      // 造一条「迁移前就存在」的 grant。
+      const userRows = await handle.sql<{ id: string }[]>`
+        insert into users (display_name) values ('legacy') returning id`;
+      const userId = userRows[0]?.id as string;
+      const grantRows = await handle.sql<{ id: string }[]>`
+        insert into mcp_grants (user_id, client_id, client_name, scopes, resource)
+        values (${userId}, 'chatgpt', 'ChatGPT', array['records:read'], 'https://gw.example/mcp')
+        returning id`;
+      const grantId = grantRows[0]?.id as string;
+
+      // 再应用全部迁移。
+      await runMigrations(handle.db, MIGRATIONS_FOLDER);
+
+      const after = await handle.sql<{ epoch: number; client_name: string; scopes: string[] }[]>`
+        select epoch, client_name, scopes from mcp_grants where id = ${grantId}`;
+      expect(after[0]?.epoch).toBe(1);
+      expect(after[0]?.client_name).toBe("ChatGPT");
+      expect(after[0]?.scopes).toEqual(["records:read"]);
+    } finally {
+      await handle.close();
+      rmSync(partialDir, { recursive: true, force: true });
+      await admin`drop database if exists ${admin(dbName)}`;
+    }
+  });
+
+  it("只增加 mcp_grants.epoch：mcp_devices 的结构一字未改", async () => {
+    const dbName = "brewphase_cloud_epoch_shape_test";
+    await admin`drop database if exists ${admin(dbName)}`;
+    await admin`create database ${admin(dbName)}`;
+    const url = TEST_DATABASE_URL.replace(/\/[^/]+$/, `/${dbName}`);
+    const partialDir = makePartialMigrationsDir(2);
+    const handle = createDb(url);
+    try {
+      await runMigrations(handle.db, partialDir);
+      const devicesBefore = await snapshotColumns(handle, "mcp_devices");
+      const grantsBefore = await snapshotColumns(handle, "mcp_grants");
+      // 基线本身不能是空的，否则下面的比对毫无意义。
+      expect(devicesBefore.length).toBeGreaterThan(10);
+      expect(grantsBefore.length).toBeGreaterThan(5);
+
+      await runMigrations(handle.db, MIGRATIONS_FOLDER);
+
+      expect(await snapshotColumns(handle, "mcp_devices")).toEqual(devicesBefore);
+
+      const grantsAfter = await snapshotColumns(handle, "mcp_grants");
+      // 只多一列，且正是 epoch。
+      expect(grantsAfter).toHaveLength(grantsBefore.length + 1);
+      const added = grantsAfter.filter((col) => !grantsBefore.includes(col));
+      expect(added).toHaveLength(1);
+      expect(added[0]).toContain("epoch|integer|NO|1");
+      // 原有列逐字不变（顺序无关：snapshotColumns 已按列名排序）。
+      expect(grantsAfter.filter((col) => col.includes("epoch") === false)).toEqual(grantsBefore);
+    } finally {
+      await handle.close();
+      rmSync(partialDir, { recursive: true, force: true });
+      await admin`drop database if exists ${admin(dbName)}`;
+    }
+  });
+
+  it("epoch 有正数约束：0 与负数写不进去，默认值可重复应用", async () => {
+    const handle = createDb(migratedUrl);
+    try {
+      const userRows = await handle.sql<{ id: string }[]>`
+        insert into users (display_name) values ('epoch-check') returning id`;
+      const userId = userRows[0]?.id as string;
+
+      for (const bad of [0, -1]) {
+        await expect(
+          handle.sql`
+            insert into mcp_grants (user_id, client_id, client_name, scopes, resource, epoch)
+            values (${userId}, 'chatgpt', 'ChatGPT', array['records:read'], 'https://gw.example/mcp', ${bad})`,
+        ).rejects.toThrow();
+      }
+
+      const inserted = await handle.sql<{ epoch: number }[]>`
+        insert into mcp_grants (user_id, client_id, client_name, scopes, resource)
+        values (${userId}, 'chatgpt', 'ChatGPT', array['records:read'], 'https://gw.example/mcp')
+        returning epoch`;
+      expect(inserted[0]?.epoch).toBe(1);
+
+      // 重复执行迁移：列还在、值不变。
+      await runMigrations(handle.db, MIGRATIONS_FOLDER);
+      const after = await handle.sql<{ epoch: number }[]>`
+        select epoch from mcp_grants where user_id = ${userId}`;
+      expect(after[0]?.epoch).toBe(1);
+
+      await handle.sql`delete from users where id = ${userId}`;
+    } finally {
+      await handle.close();
+    }
+  });
+});

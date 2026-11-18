@@ -21,20 +21,34 @@ import {
   sessionMetaFromRequest,
 } from "./body.js";
 
+/**
+ * 用户 Bearer 的**唯一**校验实现。
+ *
+ * 抽成独立函数的原因是 `POST /mcp-devices/{id}/suspend` 同时接受两种凭据
+ * （用户 Bearer 或 device_token），它必须在同一个 handler 里二选一。
+ * 如果那条路径自己抄一遍 JWT 校验，将来 `verifyAccessToken` 的参数
+ * （audience、issuer、leeway）只会在一处更新——而漏掉的那处就是后门。
+ */
+export async function authenticateUser(
+  ctx: AppContext,
+  c: Context<{ Variables: { authClaims: AccessClaims } }>,
+): Promise<AccessClaims> {
+  const header = c.req.header("authorization");
+  if (!header || !header.startsWith("Bearer ")) {
+    throw invalidToken();
+  }
+  try {
+    return await verifyAccessToken(ctx.keyRing, header.slice(7), {
+      issuer: ctx.env.baseUrl,
+    });
+  } catch {
+    throw invalidToken();
+  }
+}
+
 export function createRequireAuth(ctx: AppContext) {
   return async (c: Context<{ Variables: { authClaims: AccessClaims } }>, next: Next) => {
-    const header = c.req.header("authorization");
-    if (!header || !header.startsWith("Bearer ")) {
-      throw invalidToken();
-    }
-    let claims: AccessClaims;
-    try {
-      claims = await verifyAccessToken(ctx.keyRing, header.slice(7), {
-        issuer: ctx.env.baseUrl,
-      });
-    } catch {
-      throw invalidToken();
-    }
+    const claims = await authenticateUser(ctx, c);
     c.set("authClaims", claims);
     await next();
   };

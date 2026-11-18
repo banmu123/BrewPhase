@@ -51,6 +51,15 @@ export function makeTestEnv(overrides: TestEnvOverrides = {}): Env {
     trustProxyHops: 1,
     logLevel: "error",
 
+    gateway: {
+      // 单实例约束（协议 §12.2）。测试里恒为 1：多实例没有实现，
+      // 而「把它设成 2 让测试通过」会让这条约束彻底失去意义。
+      expectedReplicas: 1,
+      // 集成测试的服务器监听 127.0.0.1:<随机端口>，Host 就是这个名字。
+      // 端口在 normalizeHost 里被剥掉，所以这里只需 hostname。
+      allowedHosts: ["127.0.0.1"],
+    },
+
     googleAuthUrl: "https://accounts.google.com/o/oauth2/v2/auth",
     googleTokenUrl: "https://oauth2.googleapis.com/token",
     googleJwksUrl: "https://www.googleapis.com/oauth2/v3/certs",

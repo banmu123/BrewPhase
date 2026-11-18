@@ -1,11 +1,12 @@
 import type { Context } from "hono";
 import type { AppContext, AppHono } from "../context.js";
 import type { AccessClaims } from "../sessions/jwt.js";
-import { createRequireAuth } from "../routes/auth.js";
+import { createRequireAuth, authenticateUser } from "../routes/auth.js";
 import { parseOr400, readStringFields } from "../routes/body.js";
 import { invalidRequest } from "../security/errors.js";
 import { rateLimit } from "../security/rate-limit.js";
 import { claimCredentials } from "./claim.js";
+import { DEVICE_TOKEN_PATTERN } from "./device-token.js";
 import {
   confirmDevice,
   getDevice,
@@ -14,6 +15,7 @@ import {
   resumeDevice,
   revokeDevice,
   suspendDevice,
+  suspendDeviceWithToken,
 } from "./service.js";
 import { claimCredentialsSchema, confirmDeviceSchema, registerDeviceSchema } from "./schemas.js";
 
@@ -43,6 +45,37 @@ import { claimCredentialsSchema, confirmDeviceSchema, registerDeviceSchema } fro
  */
 function claimQuota(maxAuth: number): number {
   return Math.max(120, maxAuth * 10);
+}
+
+/**
+ * 设备状态变更后的连接清理（协议 §11.2 第 ② 步）。
+ *
+ * ## 为什么这里必须吞掉异常
+ *
+ * 调用点在**持久化之后**：DB 里已经是 `suspended` / `revoked` 了。此时
+ * 清理失败（registry 内部错误、socket 已消失、甚至 link 层整个不存在）
+ * 都不能让 HTTP 响应变成 5xx——客户端会重试，而重试拿到的是「状态已经是
+ * 目标值」的幂等成功。两种结果自相矛盾，只会让排障变难。
+ *
+ * 而且**撤销不依赖清理成功**：真正的安全边界是「每次转发前查设备状态」，
+ * 清理只是让在线连接尽快断开。清理失败时那条连接会在下一次心跳超时
+ * （≤60s）或下一个请求被拒时收敛——永远不会变成「撤销后还能继续用」。
+ */
+async function cleanupConnection(
+  ctx: AppContext,
+  deviceId: string,
+  reason: "suspended" | "revoked",
+): Promise<void> {
+  if (!ctx.link) return;
+  try {
+    await ctx.link.disconnectDevice(deviceId, reason);
+  } catch (err) {
+    ctx.logger.warn("link_cleanup_failed", {
+      deviceId: deviceId.slice(0, 8),
+      reason,
+      error: err instanceof Error ? err.name : String(err),
+    });
+  }
 }
 
 export function routeMcpDevices(app: AppHono, ctx: AppContext): void {
@@ -79,6 +112,19 @@ export function routeMcpDevices(app: AppHono, ctx: AppContext): void {
     const id = c.req.param("id");
     if (!id) throw invalidRequest("device id is required");
     return id;
+  };
+
+  /**
+   * 取 `Authorization: Bearer` 的原始值，**不做任何校验**。
+   *
+   * 只有 `suspend` 用它做「这条凭据属于哪个域」的分流：形态匹配
+   * `bp_dev_*` 就按设备凭据处理，否则交给用户 JWT 校验器。
+   * 分流本身不是鉴权——两条分支各自完整校验，形态判断只是路由。
+   */
+  const bearerOf = (c: Context<{ Variables: { authClaims: AccessClaims } }>): string => {
+    const header = c.req.header("authorization");
+    if (!header || !header.startsWith("Bearer ")) return "";
+    return header.slice("Bearer ".length).trim();
   };
 
   /** 注册：创建 pending 设备并返回**唯一一次**明文确认码与 claim_secret。 */
@@ -150,13 +196,37 @@ export function routeMcpDevices(app: AppHono, ctx: AppContext): void {
     return c.json(await getDevice(ctx.db.db, { userId, deviceId: deviceIdOf(c) }));
   });
 
-  /** 暂停：`active → suspended`。 */
-  app.post("/mcp-devices/:id/suspend", deviceLimiter, requireAuth, async (c) => {
-    const userId = userIdOf(c);
-    return c.json(await suspendDevice(ctx.db.db, { userId, deviceId: deviceIdOf(c) }));
+  /**
+   * 暂停：`active → suspended`。
+   *
+   * 协议 §3.5 明确这条接受**两种**凭据：
+   *
+   * | 凭据 | 能做什么 | 边界 |
+   * |---|---|---|
+   * | 用户 Bearer | 暂停**自己名下任意**设备 | 归属靠 `user_id` 过滤，别人的设备一律 404 |
+   * | device_token | 只能暂停**它自己那台** | 归属靠「token 反查到的行 id == 路径 id」 |
+   *
+   * 为什么需要第二种：Desktop 关远程开关时，用户 access token 可能刚好过期。
+   * 如果关开关必须等重新登录，Cloud 上就会留下一台「看着在线、实际用户已经关了」
+   * 的设备——正是安全运维 §4.0 里 S1/S2 不一致最难解释的那种状态。
+   *
+   * 顺序（安全运维 §4.1）：**先持久化，后清连接**。清理失败不回滚已写入的
+   * `suspended`——反过来的话，一次网络抖动就能让「暂停」静默失效。
+   */
+  app.post("/mcp-devices/:id/suspend", deviceLimiter, async (c) => {
+    const deviceId = deviceIdOf(c);
+    const bearer = bearerOf(c);
+    const summary = DEVICE_TOKEN_PATTERN.test(bearer)
+      ? await suspendDeviceWithToken(ctx.db.db, { deviceToken: bearer, deviceId })
+      : await suspendDevice(ctx.db.db, { userId: (await authenticateUser(ctx, c)).userId, deviceId });
+    // **持久化之后**才清连接。清理失败只记日志，绝不把 200 变成 500：
+    // DB 里已经是 suspended 了，回 5xx 会让客户端重试并看到一个「已暂停」
+    // 的成功，反而更困惑。
+    await cleanupConnection(ctx, deviceId, "suspended");
+    return c.json(summary);
   });
 
-  /** 恢复：`suspended → active`。撤销后不可恢复。 */
+  /** 恢复：`suspended → active`。撤销后不可恢复（协议 §3.5）。 */
   app.post("/mcp-devices/:id/resume", deviceLimiter, requireAuth, async (c) => {
     const userId = userIdOf(c);
     return c.json(await resumeDevice(ctx.db.db, { userId, deviceId: deviceIdOf(c) }));
@@ -166,10 +236,14 @@ export function routeMcpDevices(app: AppHono, ctx: AppContext): void {
    * 撤销：任意状态 → `revoked`（终态）。
    *
    * **不删行**：设备行是审计历史。**不删 grant**：grant 属于用户
-   * （安全运维 §4.1 规则 2）。WSS 连接清理在 Phase 1.2B。
+   * （安全运维 §4.1 规则 2）。连接清理（`bye` + close 4003）在这里，
+   * 但**必须排在持久化之后**。
    */
   app.delete("/mcp-devices/:id", requireAuth, async (c) => {
     const userId = userIdOf(c);
-    return c.json(await revokeDevice(ctx.db.db, { userId, deviceId: deviceIdOf(c) }));
+    const deviceId = deviceIdOf(c);
+    const summary = await revokeDevice(ctx.db.db, { userId, deviceId });
+    await cleanupConnection(ctx, deviceId, "revoked");
+    return c.json(summary);
   });
 }

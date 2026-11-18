@@ -27,7 +27,15 @@ export type ErrorCode =
   | "invalid_confirm_code"
   | "claim_mismatch"
   | "credentials_already_issued"
-  | "invalid_device_state";
+  | "invalid_device_state"
+  /**
+   * device_token 认证失败（不存在 / 未领取 / 已过期 / 形态不符）。
+   *
+   * 与 `invalid_token`（用户 access token）分开：两条凭据域物理分离，
+   * 合成一个码会让「Desktop 拿用户 token 去连 WSS」这类错误看起来像
+   * 「登录过期」，排障方向从一开始就是错的。
+   */
+  | "device_unauthorized";
 
 export class AppError extends Error {
   readonly code: ErrorCode;
@@ -121,6 +129,17 @@ export const credentialsAlreadyIssued = () =>
  */
 export const invalidDeviceState = (description: string) =>
   new AppError("invalid_device_state", 409, description);
+
+/**
+ * device_token 认证失败。**固定文案**，不区分四种原因：
+ * token 不存在 / 从未领取 / 已过期 / 形态不符。
+ *
+ * 区分会给出两条探针：「这个 token 存在吗」（404 vs 401）与
+ * 「它是不是刚过期」（不同的 description）。前者能枚举已领取的 token 形态，
+ * 后者能告诉攻击者「再等一会就轮换窗口了」。
+ */
+export const deviceUnauthorized = () =>
+  new AppError("device_unauthorized", 401, "device credentials rejected");
 
 export interface ErrorBody {
   error: ErrorCode;

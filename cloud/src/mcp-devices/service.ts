@@ -1,3 +1,4 @@
+import { randomInt } from "node:crypto";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { mcpDevices } from "../db/schema.js";
@@ -7,10 +8,12 @@ import {
   deviceExists,
   deviceLimitReached,
   deviceNotFound,
+  deviceUnauthorized,
   invalidConfirmCode,
   invalidDeviceState,
   invalidPublicKey,
 } from "../security/errors.js";
+import { findDeviceByToken, isDeviceTokenExpired } from "./device-token.js";
 import { rawPublicKeyByteLength, toDeviceSummary, type DeviceSummary } from "./schemas.js";
 
 /**
@@ -56,11 +59,25 @@ const DEVICE_SUMMARY_COLUMNS = {
   revokedAt: mcpDevices.revokedAt,
 } as const;
 
-/** 6 位数字确认码。前导零必须保留，所以用字符串而不是数字。 */
-function makeConfirmCode(): string {
-  return Math.floor(Math.random() * 1_000_000)
-    .toString()
-    .padStart(6, "0");
+/**
+ * 6 位数字确认码。前导零必须保留，所以用字符串而不是数字。
+ *
+ * `randomInt(0, 1_000_000)` 而不是 `Math.floor(Math.random() * …)`：
+ *
+ * - `Math.random()` 是**非密码学** PRNG。它的内部状态可以从少量输出反推，
+ *   而确认码恰好是用户唯一持有的凭证——可预测就等于没有。
+ * - `randomInt` 用拒绝采样消除模偏差（`Math.random() * 1e6` 的分布是偏的），
+ *   且直接读 CSPRNG。
+ *
+ * 值域是 `[0, 999999]` 闭区间，所以 `padStart(6, "0")` 得到的是**恰好 6 位**：
+ * 0 → `"000000"`，999999 → `"999999"`。这与 `confirmDeviceSchema` 的
+ * `/^\d{6}$/` 一致。
+ *
+ * 导出只为了让测试能直接验证分布与形态：走 HTTP 循环注册会在第 31 次
+ * 撞上限流、第 6 次撞上设备配额，测出来的东西和被测对象无关。
+ */
+export function makeConfirmCode(): string {
+  return randomInt(0, 1_000_000).toString().padStart(6, "0");
 }
 
 export interface RegisterResult {
@@ -244,6 +261,44 @@ export async function suspendDevice(
   input: { userId: string; deviceId: string },
 ): Promise<DeviceSummary> {
   return moveState(db, input, ["active"], "suspended", "suspended");
+}
+
+/**
+ * 设备自己暂停自己（协议 §3.5：`suspend` 接受「用户 Bearer **或** device_token」）。
+ *
+ * ## 为什么需要这条路径
+ *
+ * Desktop 的「关闭远程开关」发生在**用户已登录**的前提下，但也发生在
+ * 「access token 恰好过期」的时刻。那条路径必须能在只持有设备凭据的情况下
+ * 把自己停掉——否则用户关开关失败，设备会一直在 Cloud 上显示在线。
+ *
+ * ## 四道边界（每一条都有对应测试）
+ *
+ * 1. **只能停自己**：token → 行 → 行 id 与路径 id 不等就 404。不是 403——
+ *    403 等于承认「这个 id 存在但不属于你」。
+ * 2. **不保存明文**：查库用的是 `sha256(token)`，此后链路上只有哈希。
+ * 3. **状态更新仍是单条带守卫的 UPDATE**（复用 `moveState`）：靠 `RETURNING`
+ *    行数判成败，不做「先查状态再写」。设备自己并发点两次开关不会互相覆盖。
+ * 4. **token 过期即拒**（401）：过期凭据不该有任何写权限，哪怕只是把
+ *    自己从 active 改成 suspended。
+ *
+ * 明确**不做**的事：不校验 `expires_at`（那是 pending 窗口），也不清
+ * `token_hash`（暂停不是撤销，恢复后要继续用同一个 token）。
+ */
+export async function suspendDeviceWithToken(
+  db: Database,
+  input: { deviceToken: string; deviceId: string; now?: Date },
+): Promise<DeviceSummary> {
+  const now = input.now ?? new Date();
+  const device = await findDeviceByToken(db, input.deviceToken);
+  // 没有这个 token / 从未领取 / 库不可用：同一个错误。
+  if (!device) throw deviceUnauthorized();
+  if (isDeviceTokenExpired(device, now)) throw deviceUnauthorized();
+
+  // 拿别人的 id 来试：与「设备不存在」完全一致。
+  if (device.id !== input.deviceId) throw deviceNotFound();
+
+  return moveState(db, { userId: device.userId, deviceId: device.id }, ["active"], "suspended", "suspended");
 }
 
 /** `suspended → active`。撤销后不可恢复（协议 §3.5、安全运维 §4.0 终态）。 */
