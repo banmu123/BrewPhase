@@ -561,3 +561,177 @@ describe("grant_epoch 与 grant.epoch 不混用", () => {
     expect(rows[0]?.grantEpoch).toBe(second.epoch);
   });
 });
+
+describe("syncLag 是连接级发送闸门（Phase 1.2B.2.2-R2）", () => {
+  /**
+   * 用同一条 grant 占满 2 个在途槽位，再让第三条排队。
+   *
+   * **必须逐条等 req 到达**再发下一条：三次 `dispatchToolCall` 各自要 await
+   * 两次查库，谁先 `reserve` 没有保证。并发发起时「第三条被排队」可能实际是
+   * 第一条，于是后面「完成 req1 触发 pump」的断言会指向另一条请求——测试仍然
+   * 可能绿，但它测的不是你以为的那条。
+   */
+  async function fillAndQueue(grantId: string) {
+    const first = h.link.dispatchToolCall({
+      userId,
+      grantId,
+      tool: "search_records",
+      arguments: { n: 1 },
+    });
+    const firstFrame = await online!.next(
+      (f) => f.type === "req" && (f.arguments as { n?: number }).n === 1,
+    );
+    const second = h.link.dispatchToolCall({
+      userId,
+      grantId,
+      tool: "search_records",
+      arguments: { n: 2 },
+    });
+    const secondFrame = await online!.next(
+      (f) => f.type === "req" && (f.arguments as { n?: number }).n === 2,
+    );
+    const third = h.link.dispatchToolCall({
+      userId,
+      grantId,
+      tool: "search_records",
+      arguments: { n: 3 },
+    });
+    await waitUntil(() => h.link.inspectForwarder().counts.queued === 1, "third request queued");
+    // 排队项**不该**已经写出，这是后面所有断言的基线。
+    expect(reqFrames(online!)).toHaveLength(2);
+    return { first, second, third, firstFrame, secondFrame };
+  }
+
+  it("applied=false 之后：其他 grant 的排队项立刻收敛，不再等槽位", async () => {
+    // 两条 grant 都必须在握手**之前**插库（否则不在 hello_ok 快照里）。
+    const grantA = await seedGrant(h, userId, { clientId: "chatgpt" });
+    const grantB = await seedGrant(h, userId, { clientId: "claude" });
+    online = await goOnline(h, { deviceId, deviceToken, keys: deviceKeys });
+
+    const { third } = await fillAndQueue(grantB);
+
+    // Grant A 的在线更新：重复 install → 先撤旧 ctx → Desktop **明确拒绝**。
+    const reinstalling = h.link.installGrant({
+      deviceId,
+      grant: { grantId: grantA, clientId: "chatgpt", clientName: "ChatGPT", scopes: ["records:read"], epoch: 1 },
+    });
+    const revokeFrame = await online.next((f) => f.type === "grant_update");
+    expect(revokeFrame.op).toBe("revoke");
+    online.send(grantAck(revokeFrame.grant_epoch as number, false, "protocol_violation"));
+
+    expect((await withTimeout(reinstalling, 2_000, "duplicate install should fail fast")).ok).toBe(false);
+    expect(h.link.inspectForwarder().connections[0]?.syncLag).toBe(true);
+
+    // 排队项必须在**这一刻**就结算：不需要等任何在途请求完成，也不需要
+    // 等下一次 pump。旧实现要等 req1 回到 res、pump 把它 promote 出来才动，
+    // 而那一步恰好是「把已撤销授权下的请求写出去」。
+    expect(
+      await withTimeout(third, 2_000, "the queued request was not settled when syncLag was set"),
+    ).toMatchObject({
+      ok: false,
+      error: { code: "GRANT_CONTEXT_INVALID", retryable: false },
+    });
+    expect(h.link.inspectForwarder().counts).toMatchObject({ queued: 0 });
+  });
+
+  it("applied=false 之后：完成在途请求触发的 pump 不得写出任何新 req", async () => {
+    const grantA = await seedGrant(h, userId, { clientId: "chatgpt" });
+    const grantB = await seedGrant(h, userId, { clientId: "claude" });
+    online = await goOnline(h, { deviceId, deviceToken, keys: deviceKeys });
+
+    const { first, second, firstFrame, secondFrame } = await fillAndQueue(grantB);
+    const reqsBefore = reqFrames(online).length;
+
+    const reinstalling = h.link.installGrant({
+      deviceId,
+      grant: { grantId: grantA, clientId: "chatgpt", clientName: "ChatGPT", scopes: ["records:read"], epoch: 1 },
+    });
+    const revokeFrame = await online.next((f) => f.type === "grant_update");
+    online.send(grantAck(revokeFrame.grant_epoch as number, false, "protocol_violation"));
+    await withTimeout(reinstalling, 2_000, "duplicate install should fail fast");
+
+    // 两条**已写出**的请求保持原有生命周期：发出去的 res 仍然能完成它们。
+    // （syncLag 拦的是「新的写出」，不是「已经发生的事实」。）
+    online.send(okRes(String(firstFrame.id), { n: 1 }));
+    expect((await withTimeout(first, 2_000, "in-flight request should still complete")).ok).toBe(true);
+
+    // ★ 核心断言：这次 settle 会触发 pump → promote。队列里那条不能被写出。
+    expect(reqFrames(online)).toHaveLength(reqsBefore);
+
+    online.send(okRes(String(secondFrame.id), { n: 2 }));
+    expect((await withTimeout(second, 2_000, "in-flight request should still complete")).ok).toBe(true);
+    expect(reqFrames(online)).toHaveLength(reqsBefore);
+    expect(h.link.inspectForwarder().counts).toMatchObject({
+      user: 0,
+      device: 0,
+      connection: 0,
+      pending: 0,
+      queued: 0,
+    });
+  });
+
+  it("syncLag 之后的迟到 ACK、install 与派发都不能恢复旧连接的路由", async () => {
+    const grantA = await seedGrant(h, userId, { clientId: "chatgpt" });
+    online = await goOnline(h, { deviceId, deviceToken, keys: deviceKeys });
+
+    // 制造 syncLag：新 grant 的 install 被明确拒绝。
+    const extra = await seedGrant(h, userId, { clientId: "gemini" });
+    const installing = h.link.installGrant({
+      deviceId,
+      grant: { grantId: extra, clientId: "gemini", clientName: "Gemini", scopes: ["records:read"], epoch: 1 },
+    });
+    const installFrame = await online.next((f) => f.type === "grant_update");
+    online.send(grantAck(installFrame.grant_epoch as number, false, "protocol_violation"));
+    await withTimeout(installing, 2_000, "install should fail fast");
+    expect(h.link.inspectForwarder().connections[0]?.syncLag).toBe(true);
+
+    const reqsBefore = reqFrames(online).length;
+
+    // 1. 迟到的旧 ack（applied=true，epoch 更大）不能清掉 syncLag。
+    online.send(grantAck((installFrame.grant_epoch as number) + 1, true));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(h.link.inspectForwarder().connections[0]?.syncLag).toBe(true);
+
+    // 2. install 直接被拒为 sync_lag（不碰 Desktop）。
+    const again = await h.link.installGrant({
+      deviceId,
+      grant: { grantId: extra, clientId: "gemini", clientName: "Gemini", scopes: ["records:read"], epoch: 1 },
+    });
+    expect(again).toEqual({ ok: false, reason: "sync_lag" });
+
+    // 3. 派发被拒，且一个 req 帧都没多。
+    expect(await dispatchCode(grantA)).toBe("GRANT_CONTEXT_INVALID");
+    expect(reqFrames(online)).toHaveLength(reqsBefore);
+  });
+
+  it("恢复只依赖重新握手：新连接不继承旧连接的 syncLag", async () => {
+    const grantA = await seedGrant(h, userId, { clientId: "chatgpt" });
+    online = await goOnline(h, { deviceId, deviceToken, keys: deviceKeys });
+
+    const extra = await seedGrant(h, userId, { clientId: "gemini" });
+    const installing = h.link.installGrant({
+      deviceId,
+      grant: { grantId: extra, clientId: "gemini", clientName: "Gemini", scopes: ["records:read"], epoch: 1 },
+    });
+    const installFrame = await online.next((f) => f.type === "grant_update");
+    online.send(grantAck(installFrame.grant_epoch as number, false, "protocol_violation"));
+    await withTimeout(installing, 2_000, "install should fail fast");
+    expect(h.link.inspectForwarder().connections[0]?.syncLag).toBe(true);
+
+    // 旧连接作废 → 新连接、新 connectionId、新快照。
+    online.close();
+    await h.link.awaitHandshakes();
+    await waitUntil(() => h.link.connectionCount() === 0, "old connection closed");
+    const fresh = await goOnline(h, { deviceId, deviceToken, keys: deviceKeys });
+    online = fresh;
+
+    expect(h.link.inspectForwarder().connections).toHaveLength(1);
+    expect(h.link.inspectForwarder().connections[0]?.syncLag).toBe(false);
+
+    // 新连接上正常派发（A 在快照里）。
+    const dispatch = h.link.dispatchToolCall({ userId, grantId: grantA, tool: "search_records", arguments: {} });
+    const req = await fresh.next((f) => f.type === "req");
+    fresh.send(okRes(String(req.id), { recovered: true }));
+    expect(await dispatch).toMatchObject({ ok: true, data: { recovered: true } });
+  });
+});

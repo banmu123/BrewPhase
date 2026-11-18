@@ -81,6 +81,11 @@ export interface ForwarderInspect {
     deviceId: string;
     grantEpoch: number;
     syncLag: boolean;
+    /**
+     * 让这条连接进入 `syncLag` 的那一次失败。诊断用（不进协议）：
+     * `syncLag` 本身只回答「能不能路由」，不回答「为什么」。
+     */
+    syncLagCause: SyncLagCause | null;
     pendingAckEpoch: number | null;
     grants: Array<{
       grantCtx: string;
@@ -92,6 +97,21 @@ export interface ForwarderInspect {
   }>;
   counts: ReturnType<RequestRegistry["counts"]>;
 }
+
+/**
+ * 把连接置为 `syncLag` 的原因。**三种必须分开**：
+ *
+ * | 原因 | 已知事实 | 排障方向 |
+ * |---|---|---|
+ * | `apply_rejected` | Desktop 明确 `applied=false` | 两端对协议的理解不一致，是 bug |
+ * | `ack_timeout` | 帧写出去了，但没回 ack | 设备卡住 / 网络 |
+ * | `offline` | 帧**根本没写出去** | 连接已不可写，等重连 |
+ *
+ * 三者都收敛到同一个状态（同一套 fail-closed 行为），但日志事件与
+ * `inspect().syncLagCause` 保留差异——把它们折叠起来，「这台设备到底有没有
+ * 收到撤销」就永远没有答案。
+ */
+export type SyncLagCause = "apply_rejected" | "ack_timeout" | "offline";
 
 export interface Forwarder {
   /** 握手完成、`hello_ok` 已发出：安装授权快照（它是同步屏障）。 */
@@ -197,6 +217,8 @@ type ConnSync = {
   byCtx: Map<string, GrantSlot>;
   byGrantId: Map<string, string>;
   syncLag: boolean;
+  /** 进入 `syncLag` 的那一次失败；`syncLag=false` 时为 `null`。 */
+  syncLagCause: SyncLagCause | null;
   /**
    * 凭据已轮换、这条连接正在退场。
    *
@@ -235,6 +257,15 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
   /** 每台设备的授权变更串行链（保证「epoch 顺序」与「帧顺序」一致）。 */
   const chains = new Map<string, Promise<unknown>>();
   let shuttingDown = false;
+  /**
+   * `pump()` 正在运行。
+   *
+   * 泵的过程中会「结算被闸门拒绝的项」，而结算又会调用 `pump()`（每个 settle
+   * 之后都要泵）。用这个标志把重入变成空操作，让外层循环继续取下一批：
+   * 递归写法的问题不是栈深度本身，而是每一层都会重复一次 `promote()`，
+   * 队列上限 32 时最坏 32 层、约 500 次多余遍历。
+   */
+  let pumping = false;
 
   // MARK: - 帧构造与写出
 
@@ -271,9 +302,65 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
    * **每次 settle 之后都要调用**。漏掉一处，那条请求释放出来的槽位就只能等
    * 下一次「别的请求完成」才会被用到——而如果刚好没有别的请求，队列会一直
    * 停在那里直到排队预算超时。
+   *
+   * 循环而不是单次 `promote()`：被发送闸门拒绝的项会释放槽位，于是「刚腾出来
+   * 的槽位」需要再取一批。写出去的那些则占着槽位，下一轮 `promote()` 自然返回
+   * 空数组——循环因此有界。
    */
   const pump = (): void => {
-    for (const entry of requests.promote()) sendEntry(entry);
+    if (pumping) return;
+    pumping = true;
+    try {
+      for (;;) {
+        const batch = requests.promote();
+        if (batch.length === 0) return;
+        for (const entry of batch) sendEntry(entry);
+      }
+    } finally {
+      pumping = false;
+    }
+  };
+
+  /**
+   * **发送闸门**：真正写帧之前的最后一道检查，只看内存事实。
+   *
+   * 它必须存在，因为队列项不重新经过 `dispatchToolCall` 的入口检查：
+   * 一条在 `syncLag` 之前就排队的请求，会在 `syncLag` 之后被 `pump()` 取出，
+   * 而那时入口检查早已跑完。`syncLag` 是**连接级**状态，闸门因此也必须是
+   * 连接级的——按 grant 拒绝（`rejectByGrantCtx`）拦不住**别的 grant** 的队列项。
+   *
+   * 这里**不查数据库**。授权事实由派发时的准入给出；在每次 `pump()` 里重查
+   * 只会把「检查→写出」的窗口换成另一个形状，还让一个纯内存操作变成一个
+   * 可能失败的 IO。
+   */
+  const sendGate = (entry: PendingRequest): { code: RemoteErrorCode; message: string } | null => {
+    const conn = conns.get(entry.connectionId);
+    if (!conn) {
+      // 连接已收敛（close / 停机）。此时它上面不会有任何 ctx 还能用。
+      return { code: "DEVICE_OFFLINE", message: "device connection is gone" };
+    }
+    if (conn.rotating) {
+      // 凭据已作废：重试永远不会成功，所以**不可**报成 DEVICE_OFFLINE。
+      return { code: "DEVICE_UNAUTHORIZED", message: "device credentials were rotated" };
+    }
+    if (conn.syncLag) {
+      // 授权状态不可信：整台设备停止路由，直到新的 hello_ok 快照。
+      return {
+        code: "GRANT_CONTEXT_INVALID",
+        message: "grant state is not synchronized with the device",
+      };
+    }
+    if (conn.byGrantId.get(entry.grantId) !== entry.grantCtx) {
+      // 撤销或替换发生在登记之后。撤销路径会先 `rejectByGrantCtx` 再删映射，
+      // 所以正常路径上这里看不到「已撤销」；能走到这里的是替换（scope 变更）
+      // 或实现里两处顺序出了错。两种都不该把 req 发出去。
+      return { code: "GRANT_CONTEXT_INVALID", message: "grant context is no longer current" };
+    }
+    const slot = conn.byCtx.get(entry.grantCtx);
+    if (!slot || !slot.installed) {
+      return { code: "GRANT_CONTEXT_INVALID", message: "grant context is no longer current" };
+    }
+    return null;
   };
 
   /**
@@ -292,6 +379,11 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
    */
   const sendEntry = (entry: PendingRequest): void => {
     if (entry.state === "settled") return;
+    const blocked = sendGate(entry);
+    if (blocked !== null) {
+      endEntry(entry, blocked.code, blocked.message);
+      return;
+    }
     if (sendFrame(entry.connectionId, buildReqFrame(entry))) {
       // 「写成功了」这个事实只在这里产生。`cancel` 只发给真的收到过 req 的
       // 请求（协议 §7.5），所以它必须独立于 `state === 'sent'` 记录。
@@ -320,6 +412,64 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
     return resultOf(entry);
   };
 
+  /**
+   * **`syncLag` 的唯一入口**（协议运行时 §9.6，安全运维 §4.1.6）。
+   *
+   * 四条失败路径（`applied=false` / ack 超时 / 帧未写出 / 重复 install 的撤销
+   * 失败）都必须走这里。各自只置一个布尔值的问题是：置完之后队列仍然活着，
+   * 下一次**任何**请求完成触发的 `pump()` 都会把别的 grant 的排队项送出去——
+   * 于是「停止路由整台设备」只兑现了一半。
+   *
+   * 四件事，顺序固定：
+   *
+   * 1. `syncLag` 只从 false 变 true（第二次失败不覆盖第一次的原因）；
+   * 2. 记录原因（诊断用）；
+   * 3. **立刻**结算该连接上尚未写出的排队项——不等下次 pump，因为等的那段
+   *    时间里它们随时可能被 promote 出去；
+   * 4. 泵一次（被结算的项腾出了本来就没占用的槽位；这次泵是幂等的，
+   *    闸门会拒绝同连接的一切）。
+   *
+   * 已经写出的请求**不动**：它们在 Desktop 手里，属于「已经发生的事实」。
+   * 那一批里，被撤销 grant 的请求由 `rejectByGrantCtx` 以 `GRANT_REVOKED`
+   * 结算，其余按各自既有的生命周期收敛（`res` / 超时 / 断线）——本阶段
+   * 不扩张协议语义。
+   */
+  const markSyncLag = (conn: ConnSync, cause: SyncLagCause): void => {
+    // 连接已经收敛：这条失败属于一段已经结束的历史。**不能**在删掉的
+    // ConnSync 上继续动队列——那个 connectionId 的请求已由
+    // `onConnectionLost` 结算，而新连接有自己的（干净的）状态。
+    if (conns.get(conn.connectionId) !== conn) {
+      logger.debug("link_grant_sync_lag_on_detached_connection", {
+        connectionId: conn.connectionId,
+        cause,
+      });
+      return;
+    }
+    if (conn.syncLag) {
+      // 幂等：先发生的那件事才是「为什么不可信」的答案。
+      logger.debug("link_grant_sync_lag_already_set", {
+        connectionId: conn.connectionId,
+        cause,
+        current: conn.syncLagCause,
+      });
+      return;
+    }
+    conn.syncLag = true;
+    conn.syncLagCause = cause;
+    const dropped = requests.rejectQueuedByConnection(
+      conn.connectionId,
+      "GRANT_CONTEXT_INVALID",
+      "grant state is not synchronized with the device",
+    );
+    logger.warn("link_grant_sync_lag_set", {
+      connectionId: conn.connectionId,
+      deviceId: conn.deviceId.slice(0, 8),
+      cause,
+      droppedQueued: dropped.length,
+    });
+    pump();
+  };
+
   // MARK: - 连接生命周期
 
   const onConnectionReady: Forwarder["onConnectionReady"] = (input) => {
@@ -345,6 +495,7 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
       byCtx,
       byGrantId,
       syncLag: false,
+      syncLagCause: null,
       rotating: false,
       pendingAck: null,
     });
@@ -543,7 +694,7 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
               epoch,
               op: frame.op,
             });
-            conn.syncLag = true;
+            markSyncLag(conn, "apply_rejected");
           }
           resolve(result);
         },
@@ -558,6 +709,9 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
           op: frame.op,
         });
         conn.pendingAck = null;
+        // 帧没写出去 ≠ 什么都没发生：Desktop 可能已经收到上一条、也可能
+        // 正处于未知状态。fail-closed 与另外两种失败一致。
+        markSyncLag(conn, "offline");
         resolve("offline");
       }
     });
@@ -613,10 +767,14 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
     });
     pump();
     if (outcome !== "applied") {
-      // 三种失败都收敛到 syncLag：超时/断线时我们**不知道**撤销有没有生效，
-      // 而「不知道」在授权语义里等于「可能没生效」，所以必须停路由。
-      // （`rejected` 已经在 sendGrantUpdateAndAwait 里置过、也记过日志。）
-      conn.syncLag = true;
+      // 三种失败都已由 `sendGrantUpdateAndAwait` 走统一入口置了 `syncLag`
+      // （`applied=false` / 帧未写出 / 由 sweep 判定的 ack 超时）。这里再调一次
+      // 是**幂等兜底**：覆盖「上一条 ack 尚未落定就被新帧顶替」时那种
+      // 「结论是 offline、但没有任何一条路径真正写过帧」的组合。
+      markSyncLag(
+        conn,
+        outcome === "rejected" ? "apply_rejected" : outcome === "offline" ? "offline" : "ack_timeout",
+      );
       // 三种失败**不能**折叠成同一个返回值：调用方要据此决定「这条设备还能
       // 不能继续做授权同步」。折叠成 ack_timeout 会让「帧根本没写出去」
       // 看起来像「写出去但没回应」，前者重连即可，后者要先查设备。
@@ -1000,11 +1158,13 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
       if (!pending) continue;
       if (mono < pending.deadlineMono) continue;
       conn.pendingAck = null;
-      conn.syncLag = true;
       logger.warn("link_grant_ack_timeout", {
         connectionId: conn.connectionId,
         epoch: pending.epoch,
       });
+      // 先置状态（会立刻结算排队项），再解 Promise：等待方恢复执行时，
+      // 队列已经收敛，不会有人趁这个间隙泵出一条新 req。
+      markSyncLag(conn, "ack_timeout");
       pending.resolve("timeout");
     }
 
@@ -1020,6 +1180,7 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
       deviceId: conn.deviceId,
       grantEpoch: conn.grantEpoch,
       syncLag: conn.syncLag,
+      syncLagCause: conn.syncLagCause,
       pendingAckEpoch: conn.pendingAck?.epoch ?? null,
       grants: [...conn.byCtx.values()].map((slot) => ({
         grantCtx: slot.grantCtx,

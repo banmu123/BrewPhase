@@ -259,3 +259,69 @@ describe("断线与 grant 撤销", () => {
     expect(registry.counts().connection).toBe(0);
   });
 });
+
+describe("按连接拒绝「尚未写出」的请求", () => {
+  it("只结算排队项：已写出的保持原状态，计数不变", () => {
+    const registry = createRequestRegistry();
+    // 连接上限 2：前两条 admitted，后两条排进队列。
+    const sent = reserve(registry) as { entry: PendingRequest };
+    reserve(registry);
+    const queued = reserve(registry) as { entry: PendingRequest };
+    const alsoQueued = reserve(registry) as { entry: PendingRequest };
+    expect(sent.entry.state).toBe("sent");
+    expect(queued.entry.state).toBe("queued");
+    expect(alsoQueued.entry.state).toBe("queued");
+
+    const dropped = registry.rejectQueuedByConnection("conn-1", "GRANT_CONTEXT_INVALID", "sync lag");
+    expect(dropped.map((entry) => entry.deliveryId).sort()).toEqual(
+      [queued.entry.deliveryId, alsoQueued.entry.deliveryId].sort(),
+    );
+    // **已写出的那条一个字节都没动**：它已经在 Desktop 手里执行。
+    expect(sent.entry.state).toBe("sent");
+    expect(sent.entry.result).toBeNull();
+    // 排队项从未占计数，所以结算前后三层计数都还是 2（那两条在途）。
+    expect(registry.counts()).toMatchObject({ user: 2, device: 2, connection: 2, pending: 2, queued: 0 });
+  });
+
+  it("只影响指定连接；其它连接的排队项保持排队", () => {
+    const registry = createRequestRegistry();
+    reserve(registry, { connectionId: "conn-1" });
+    reserve(registry, { connectionId: "conn-1" });
+    const mine = reserve(registry, { connectionId: "conn-1" }) as { entry: PendingRequest };
+    reserve(registry, { connectionId: "conn-2", deviceId: "device-2" });
+    reserve(registry, { connectionId: "conn-2", deviceId: "device-2" });
+    const other = reserve(registry, { connectionId: "conn-2", deviceId: "device-2" }) as {
+      entry: PendingRequest;
+    };
+
+    const dropped = registry.rejectQueuedByConnection("conn-1", "GRANT_CONTEXT_INVALID", "sync lag");
+    expect(dropped.map((entry) => entry.deliveryId)).toEqual([mine.entry.deliveryId]);
+    expect(other.entry.state).toBe("queued");
+    expect(registry.counts()).toMatchObject({ queued: 1, connection: 4 });
+  });
+
+  it("被拒绝的排队项不会在 promote 里复活，重复调用也不会二次释放", () => {
+    const registry = createRequestRegistry();
+    reserve(registry);
+    reserve(registry);
+    const queued = reserve(registry) as { entry: PendingRequest; promise: Promise<unknown> };
+
+    expect(registry.rejectQueuedByConnection("conn-1", "GRANT_CONTEXT_INVALID", "sync lag")).toHaveLength(1);
+    // 第二次：队列已空，什么都不返回。
+    expect(registry.rejectQueuedByConnection("conn-1", "GRANT_CONTEXT_INVALID", "again")).toHaveLength(0);
+    expect(registry.promote()).toHaveLength(0);
+    expect(queued.entry.result).toMatchObject({ ok: false, error: { code: "GRANT_CONTEXT_INVALID" } });
+  });
+
+  it("排队项的等待者被唤醒（调用方不会永久悬挂）", async () => {
+    const registry = createRequestRegistry();
+    reserve(registry);
+    reserve(registry);
+    const queued = reserve(registry) as { entry: PendingRequest; promise: Promise<unknown> };
+    registry.rejectQueuedByConnection("conn-1", "GRANT_CONTEXT_INVALID", "sync lag");
+    await expect(queued.promise).resolves.toMatchObject({
+      ok: false,
+      error: { code: "GRANT_CONTEXT_INVALID", retryable: false },
+    });
+  });
+});

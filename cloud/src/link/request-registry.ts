@@ -159,6 +159,26 @@ export interface RequestRegistry {
   /** 拒绝某个 grant 上下文上全部未结算请求（grant 被撤销）。 */
   rejectByGrantCtx(grantCtx: string, code: RemoteErrorCode, message: string): PendingRequest[];
   /**
+   * 拒绝某条连接上**尚未写出**的请求（仍在队列里）。
+   *
+   * 与 `rejectByConnection` 的差别是**范围**，不是错误码：这一条只动 `queued`，
+   * 一条已经在 Desktop 手里执行的请求不受影响。
+   *
+   * 为什么需要它：连接进入 `syncLag` 时，队列里可能有**别的 grant** 的请求。
+   * 按 ctx 拒绝（`rejectByGrantCtx`）找不到它们；按连接全拒
+   * （`rejectByConnection`）会把已经写出的那些也一并改写生命周期——那是协议
+   * 之外的行为扩张。而放着不管，下一次 `pump()` 就会把它们写出去，等于在
+   * 「授权状态不可信」的连接上继续路由。
+   *
+   * 排队项从未占用三层计数，所以这里的结算**不归还任何计数**（`finish`
+   * 里 `wasQueued` 分支）：调用方不应期待计数变化。
+   */
+  rejectQueuedByConnection(
+    connectionId: string,
+    code: RemoteErrorCode,
+    message: string,
+  ): PendingRequest[];
+  /**
    * 拒绝某条连接上全部未结算请求（凭据轮换 / 连接被驱逐）。
    *
    * 与 `onConnectionLost` 的区别只在错误码：那条路径是「socket 没了」
@@ -402,6 +422,18 @@ export function createRequestRegistry(options: RequestRegistryOptions = {}): Req
       const affected: PendingRequest[] = [];
       for (const entry of [...entries.values()]) {
         if (entry.grantCtx !== grantCtx) continue;
+        if (finish(entry, failure(code, message))) affected.push(entry);
+      }
+      return affected;
+    },
+
+    rejectQueuedByConnection(connectionId, code, message) {
+      const affected: PendingRequest[] = [];
+      for (const entry of [...entries.values()]) {
+        if (entry.connectionId !== connectionId) continue;
+        // `queued` 是唯一判据：它等价于「req 还没有写出」。用 `frameSent`
+        // 也行，但那是转发层的事实；这一层的语言是请求状态机。
+        if (entry.state !== "queued") continue;
         if (finish(entry, failure(code, message))) affected.push(entry);
       }
       return affected;
