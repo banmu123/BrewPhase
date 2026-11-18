@@ -1426,7 +1426,12 @@ CREATE UNIQUE INDEX "mcp_refresh_tokens_session_active_uq"
 > **1.3.1-A 已交付第 1 条**（迁移 `0003` 五张表 + Drizzle schema + 42 条约束测试）。
 > **1.3.1-B 已交付第 2–3 条**（`src/mcp-oauth/sessions.ts`：签发 / 轮换 / 重放 /
 > 90 天绝对期限 / 撤销族，42 条服务层测试）。
-> 余下第 4–15 条属 1.3.1-C。详见路线图 §3.7 / 索引 §18。
+> **1.3.1-C1 已交付第 4 条与第 5 条的基础设施**（`tokens.ts` 的 `signMcpAccessToken`
+> / `verifyMcpAccessToken`、`browser-session.ts` 的签名 Cookie、`constants.ts`）；
+> 并修掉 Session 创建与 Grant 撤销的竞态（`createMcpSession` 对 Grant 行加
+> `FOR UPDATE`）。
+> 余下第 5–15 条（路由、consent、token endpoint、discovery、CIMD、DCR）属
+> 1.3.1-C2 / C3。详见路线图 §3.8 / 索引 §19。
 
 | # | 范围 | 验收 |
 |---|---|---|
@@ -1585,9 +1590,9 @@ CREATE UNIQUE INDEX "mcp_refresh_tokens_session_active_uq"
       ↓  ← 90 天模型在这里定死（A1–A8），后面才可能「不续命」
 3. ✅ mcp_sessions 服务（create / revoke / 过期判定 / issued_scope）
       ↓  ← sid 稳定性在这里定死（B3）
-4. signMcpAccessToken / verifyMcpAccessToken + 双向 aud 隔离
+4. ✅ signMcpAccessToken / verifyMcpAccessToken + 双向 aud 隔离
       ↓
-5. MCP_BROWSER_SESSION_KEY + 签名 Cookie 工具 + 篡改用例
+5. ✅ MCP_BROWSER_SESSION_KEY + 签名 Cookie 工具 + 篡改用例
       ↓  ← 没有它，authorize 无法绑定浏览器
 6. /mcp/oauth/authorize（校验 + mcp_auth_requests + Set-Cookie + 分流）
       ↓

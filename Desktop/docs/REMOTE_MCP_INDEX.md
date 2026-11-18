@@ -539,3 +539,115 @@ Cookie、consent HTML、CIMD 抓取器、DCR、`/mcp` 路由、MCP SDK 引入。
 
 authorize / login / callback / consent / token endpoint / `signMcpAccessToken` /
 浏览器 Cookie / PRM 与 AS 元数据 / CIMD / DCR / `/mcp` 数据端点。
+
+## 19. Phase 1.3.1-C1：Access Token / 浏览器 Cookie / Grant 竞态（已交付）
+
+承接 §18。本阶段只交付**安全基础模块**：没有 HTTP 路由、没有 consent、
+没有 token endpoint、没有 discovery、没有 CIMD/DCR、没有 `/mcp`、没有 SDK。
+
+### 19.1 交付物
+
+| 项 | 落点 |
+|---|---|
+| 常量 | `cloud/src/mcp-oauth/constants.ts`（`MCP_SCOPES`、scope 解析、`mcpResourceFor`、Cookie 名与属性） |
+| Access Token | `cloud/src/mcp-oauth/tokens.ts`（`signMcpAccessToken` / `verifyMcpAccessToken` / `McpTokenError`） |
+| 浏览器 Cookie | `cloud/src/mcp-oauth/browser-session.ts` |
+| env | `MCP_BROWSER_SESSION_KEY`（可选，≥32 字节）+ `.env.example` |
+| 竞态修复 | `createMcpSession` 的 Grant 读取加 `.for("update")` |
+| 测试 | `grant-race`（4）+ `tokens`（28）+ `browser-session`（22）= **54 条** |
+
+### 19.2 JWT
+
+```
+aud = MCP_RESOURCE = BASE_URL + "/mcp"     ← 真实资源 URI，不是常量
+iss = BASE_URL
+sub = 用户 id
+sid = mcp_sessions.id                      ← 跨刷新不变
+scope = issued_scope ∩ grant.scopes        ← 空格分隔，⊆ MCP_SCOPES
+jti = randomToken(16)                      ← token 级标识，**不是请求去重键**
+```
+
+两套 token **共用 `JwtKeyRing`**（密钥轮换只有一处），隔离靠 `aud` + `iss` 的
+**强制校验**。测试用「同 `sub` 同 `sid`」的同位对照排除「因为 claims 不同才失败」。
+
+`jti` 有专门的用例断言「同一 token 可被反复验证」——任何「按 `jti` 拦重复」
+的实现都会让 `/mcp` 的同 token 多次工具调用失败。
+
+### 19.3 浏览器 Cookie
+
+| 属性 | 值 | 为什么 |
+|---|---|---|
+| 名 | `bp_mcp_bs` | — |
+| `Path` | **`/mcp/oauth`** | 前缀匹配：写 `/mcp` 会把它送到数据端点 |
+| `HttpOnly` | true | JS 不可读 |
+| `SameSite` | `Lax` | 登录是顶层跳转；同时挡跨站 POST |
+| `Secure` | 生产 true | 开发 `http://localhost` 下会被丢弃，故可关 |
+| `Domain` | 不设 | host-only |
+| `Max-Age` | 1800 | **不滑动**（读取不回写） |
+| 内容 | `{sid, iat, exp}` | 无 `user_id`、无任何 token |
+
+读取时六种失败（缺 / 篡改 / 非法 JSON / 字段类型 / sid 形态 / 过期）**一律
+`{ok:false}`**，绝不降级成匿名放行。额外两条防「窗口被悄悄放大」：`exp-iat`
+不得超过 1800；`iat` 超前当前时间不得超过 60 秒（时钟漂移容差）。
+
+密钥缺失或 <32 字节时 `assertBrowserSessionKey()` **抛错**，不生成临时密钥
+（那会让重启后所有进行中的授权静默失效）。
+
+### 19.4 Grant 竞态
+
+```
+不加锁：A: SELECT grant(未撤销) → B: UPDATE grant + 撤会话 + COMMIT
+        → A: INSERT session（关联已撤销 grant，revoked_at IS NULL）→ COMMIT
+        ⇒ 撤销完成之后又长出一条有效 Session，且那次撤销永远扫不到它
+```
+
+加 `FOR UPDATE` 后只剩两种合法结果（由 PG 行锁串行化）：
+
+1. **A 先拿锁** → B 阻塞到 A 提交，然后 B 看到并撤销新 Session；
+2. **B 先拿锁** → A 阻塞到 B 提交，重新读到 `revoked_at` 并拒绝创建。
+
+**锁顺序：grant 行永远在 session 行之前**（创建与撤销一致）。20 轮并发无 `40P01`。
+
+测试用 `pg_blocking_pids()` 把「确实有人在等这把锁」变成**可观测事实**，
+不靠 sleep 猜时序。移除 `FOR UPDATE` 后 3 条用例立刻红，且失败原因明确
+（`timed out waiting for a session blocked by …`）。
+
+### 19.5 为什么 `MCP_BROWSER_SESSION_KEY` 不参与启动断言
+
+Cloud 现在同时服务 Desktop 登录（`/oauth/*`、`/auth/*`）。把它设为必填会让
+「只跑登录的部署」因为一个尚未启用的 MCP 能力起不来——那是把新功能的门禁
+变成旧功能的故障。
+
+正确纪律：**C2 挂载 `/mcp/oauth/*` 时，缺密钥就不注册那些路由**（fail-closed
+在能力边界上，而不是整个进程上）。本阶段只提供 `assertBrowserSessionKey()`。
+
+### 19.6 实测与门禁（本次执行）
+
+| 项 | 结果 |
+|---|---|
+| Cloud `typecheck` / `lint` / `build` | 通过 |
+| Cloud `pnpm test` | **697 passed / 41 files**（1.3.1-B 基线 643，**+54**） |
+| Desktop `typecheck` / `test` | 通过；1265 passed / 89 files（未改 Desktop） |
+| 新增迁移 | **无** |
+| 新增 HTTP 路由 | **无** |
+| 变异验证 | **15/15 全被抓**（见下） |
+
+| 变异 | 结果 |
+|---|---|
+| 移除 Grant `FOR UPDATE` | 3 条红 |
+| Cookie `Path` 改回 `/mcp` | 2 条红（`expected '/mcp' to be '/mcp/oauth'`） |
+| Cookie TTL → 24h | 红 |
+| `HttpOnly` → false | 红 |
+| 不校验 `exp` | 红 |
+| 签名失败降级为匿名放行 | 红 |
+| 清除时用默认 Path | 红 |
+| MCP token 用 Desktop 的 `aud` | 8 条红 |
+| 验证时不校验 `aud` | 红 |
+| 验证时不校验 scope 白名单 | 红 |
+| 允许 `alg=none` | 红 |
+| `jti` 改成固定值 | 红 |
+
+### 19.7 未做（C2 / C3）
+
+authorize / login / callback / consent 路由（C2）；token / revoke /
+PRM / AS 元数据 / CIMD / DCR（C3）；`/mcp` 数据端点（1.3.2）。

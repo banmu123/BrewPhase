@@ -540,7 +540,9 @@ cloud/tests/{mcp-devices,link}/*.test.ts
 | **1.3.0-R1** | 浏览器授权闭环 + Session 两层模型 + 最小权限 | 只改文档 |
 | **1.3.1-A** | **数据层**：迁移 `0003` 五张表 + Drizzle schema + 约束测试 | ✅ **已完成**（见 §3.6） |
 | **1.3.1-B** | Refresh Token 核心服务（签发 / 轮换 / 重放 / 90 天上限）+ Session 生命周期 | ✅ **已完成**（见 §3.7） |
-| **1.3.1-C** | authorize / login / callback / consent / token / discovery / CIMD | 待开工 |
+| **1.3.1-C1** | Access Token + 浏览器 Cookie 基础设施；修 Grant 撤销竞态 | ✅ **已完成**（见 §3.8） |
+| **1.3.1-C2** | authorize / login / callback / consent 路由 | 待开工 |
+| **1.3.1-C3** | token / revoke / discovery / CIMD / DCR | 待开工 |
 | **1.3.2** | Streamable HTTP 与工具服务 | `POST /mcp`（dual-era）、Bearer + audience + grant 回查、8 个只读工具、错误面、日志纪律 |
 | **1.3.3** | 真实客户端联调 | Inspector、ChatGPT、Grok、refresh 行为、撤销/离线/异常恢复、回填 `NOT VERIFIED` |
 
@@ -717,6 +719,43 @@ consent 页随之从 `/mcp/consent` 挪到 `/mcp/oauth/consent`（理由见设�
 **同阶段修正**：设计 §9.9 的 A1/A3 两处数字与 30 天 token TTL 不自洽
 （A1 少了初始那一代；A3 的 +31d 必然先撞 token 过期），已在设计文档中修正，
 语义不变。
+
+### 3.8 1.3.1-C1 已交付（Access Token / 浏览器 Cookie / Grant 竞态收口）
+
+| 项 | 落点 |
+|---|---|
+| 常量 | `cloud/src/mcp-oauth/constants.ts`：`MCP_SCOPES`、`parseScopeClaim` / `formatScopeClaim`、`mcpResourceFor(baseUrl)`、Cookie 名与属性 |
+| Access Token | `cloud/src/mcp-oauth/tokens.ts`：`signMcpAccessToken` / `verifyMcpAccessToken` / `McpTokenError` |
+| 浏览器 Cookie | `cloud/src/mcp-oauth/browser-session.ts`：`createBrowserSession` / `setBrowserSessionCookie` / `readBrowserSessionCookie` / `clearBrowserSessionCookie` / `assertBrowserSessionKey` / `browserBindingHash` |
+| env | `MCP_BROWSER_SESSION_KEY`（**可选**，≥32 字节；见下「为什么不在启动时强制」）+ `.env.example` |
+| 竞态修复 | `createMcpSession` 读 Grant 时加 `.for("update")` |
+| 测试 | `tests/mcp-oauth/{grant-race,tokens,browser-session}.test.ts` = **54 条** |
+| 迁移 | **无** |
+| 路由 | **无**（本阶段不挂载任何 HTTP 端点） |
+
+**JWT claims**：`sub` / `sid` / `iss` / `aud`(= `MCP_RESOURCE`) / `iat` / `exp` / `jti` / `scope`。
+**没有** `client_id`——客户端身份由 `sid → grant_id` 反查，放进 JWT 只是又一处可能与 Grant 不一致的副本。
+
+**双向 audience 隔离**是这一层唯一的安全边界：两套 token 共用 `JwtKeyRing`，
+靠 `aud` + `iss` 的强制校验分开。测试用「同 sub 同 sid 的两份 token」做同位对照，
+排除「因为 claims 不同才失败」的可能。
+
+**Cookie 的 Path 是 `/mcp/oauth`**（不是 `/mcp`）：Cookie 的 Path 是前缀匹配，
+写 `/mcp` 会把授权 Cookie 送到真正的数据端点。代价是 consent 页必须在
+`/mcp/oauth/consent`——两者是同一个决定的两面。
+
+**为什么 `MCP_BROWSER_SESSION_KEY` 不在启动时强制**：Cloud 现在同时服务
+Desktop 登录。把它设成必填会让「只跑 `/oauth/*` 的部署」因为一个尚未启用的
+能力而起不来——那是把新功能的门禁变成旧功能的故障。正确纪律是 **C2 挂载
+`/mcp/oauth/*` 时，缺密钥就不注册那些路由**（fail-closed 在能力边界上）。
+
+**Grant 竞态**：不加锁时存在「撤销完成之后又长出一条有效 Session」的窗口
+（撤销事务已经跑完，扫不到未来才插入的行）。加锁后只剩两种合法结果，由
+PostgreSQL 行锁串行化保证；测试用 `pg_blocking_pids()` 把「确实在等锁」
+变成可观测事实，不靠 sleep 猜时序。
+
+**锁顺序约定：grant 行永远在 session 行之前。** 撤销路径与创建路径一致，
+20 轮并发无 `40P01`。
 
 ### 3.5 风险
 
