@@ -65,6 +65,30 @@ async function dispatchCode(grantId: string, tool = "search_records"): Promise<s
   return result.error.code;
 }
 
+/**
+ * 给「本该立刻失败」的授权同步加一个上限。
+ *
+ * 重复 install 的正确行为是**不再发第二条帧**，所以测试不会为它回 ack。
+ * 没有这个上限时，错误实现会卡在等 ack 上直到 vitest 的 30 秒超时——那既
+ * 拖慢变异验证，也让失败信息指向「超时」而不是「它多发了一条 install」。
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    timer.unref?.();
+    void promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 /** 在线的设备上装一条新 grant，并按测试的意图回 ack。 */
 async function installWithAck(
   grantId: string,
@@ -273,6 +297,99 @@ describe("revoke 的顺序与后果", () => {
     expect(result).toEqual({ ok: false, reason: "not_installed" });
     // 没有发出任何帧（除了前面可能的 ping）。
     expect(online.frames.filter((frame) => frame.type === "grant_update")).toHaveLength(0);
+  });
+});
+
+describe("重复 install：撤销没被确认就绝不继续安装", () => {
+  /**
+   * 这条路径的正确行为只有一句话：**只有 `not_installed` 才能往下走**。
+   *
+   * 旧的写法只挡 `ack_timeout`，于是 `applied=false`（Desktop 明确拒绝）
+   * 之后仍然会发第二条 `install`。那一步的后果不是「多一条无用帧」：
+   * 新 slot 的 ack 一到 `installed` 就被置成 true，而 `syncLag` 本来只允许
+   * 由重新握手清除——一次明确的同步失败就这样被「悄悄撤销」了。
+   */
+  it("旧 ctx 撤销被拒（applied=false）→ 返回 rejected、不发第二条 install、syncLag 生效", async () => {
+    const existing = await seedGrant(h, userId, { clientId: "chatgpt" });
+    const target = await seedGrant(h, userId, { clientId: "claude" });
+    // 两条都必须在握手**之前**插库，否则它们不在 hello_ok 快照里，
+    // 「另一条也不能派发」的断言会因为「它压根没装上」而假绿。
+    online = await goOnline(h, { deviceId, deviceToken, keys: deviceKeys });
+
+    const reinstalling = h.link.installGrant({
+      deviceId,
+      grant: { grantId: target, clientId: "claude", clientName: "Claude", scopes: ["records:read"], epoch: 1 },
+    });
+
+    // 第一步只能是对旧 ctx 的 revoke。
+    const revokeFrame = await online.next((f) => f.type === "grant_update");
+    expect(revokeFrame.op).toBe("revoke");
+    expect(String(revokeFrame.grant_ctx)).toMatch(/^gc_/);
+    // Desktop 明确拒绝：它不接受这次撤销。
+    online.send(grantAck(revokeFrame.grant_epoch as number, false, "protocol_violation"));
+
+    expect(
+      await withTimeout(reinstalling, 2_000, "the duplicate install kept waiting for a second ack"),
+    ).toEqual({ ok: false, reason: "rejected" });
+
+    // 没有第二条 grant_update（install 从未发出）。
+    const grantFrames = online.frames.filter((frame) => frame.type === "grant_update");
+    expect(grantFrames).toHaveLength(1);
+    expect(grantFrames[0]?.op).toBe("revoke");
+
+    // fail-closed：整台设备停止路由，包括那条本来正常的 grant。
+    expect(h.link.inspectForwarder().connections[0]?.syncLag).toBe(true);
+    expect(await dispatchCode(existing)).toBe("GRANT_CONTEXT_INVALID");
+    expect(await dispatchCode(target)).toBe("GRANT_CONTEXT_INVALID");
+    expect(reqFrames(online)).toHaveLength(0);
+  });
+
+  it("旧 ctx 撤销没 ack（超时）→ 返回 ack_timeout、不发第二条 install", async () => {
+    const target = await seedGrant(h, userId, { clientId: "claude" });
+    online = await goOnline(h, { deviceId, deviceToken, keys: deviceKeys });
+
+    const reinstalling = h.link.installGrant({
+      deviceId,
+      grant: { grantId: target, clientId: "claude", clientName: "Claude", scopes: ["records:read"], epoch: 1 },
+    });
+    const revokeFrame = await online.next((f) => f.type === "grant_update");
+    expect(revokeFrame.op).toBe("revoke");
+    h.link.sweep(performance.now() + REMOTE_GRANT_ACK_TIMEOUT_MS + 1);
+
+    expect(
+      await withTimeout(reinstalling, 2_000, "the duplicate install kept waiting for a second ack"),
+    ).toEqual({ ok: false, reason: "ack_timeout" });
+    expect(online.frames.filter((frame) => frame.type === "grant_update")).toHaveLength(1);
+    expect(h.link.inspectForwarder().connections[0]?.syncLag).toBe(true);
+  });
+
+  it("旧 ctx 撤销被拒之后，重复 install 也不会「意外恢复」路由", async () => {
+    const target = await seedGrant(h, userId, { clientId: "claude" });
+    online = await goOnline(h, { deviceId, deviceToken, keys: deviceKeys });
+
+    const first = h.link.installGrant({
+      deviceId,
+      grant: { grantId: target, clientId: "claude", clientName: "Claude", scopes: ["records:read"], epoch: 1 },
+    });
+    const revokeFrame = await online.next((f) => f.type === "grant_update");
+    online.send(grantAck(revokeFrame.grant_epoch as number, false, "protocol_violation"));
+    expect((await withTimeout(first, 2_000, "the duplicate install kept waiting for a second ack")).ok).toBe(
+      false,
+    );
+
+    // 再装一次：`syncLag` 还在，必须直接拒（不碰 Desktop）。
+    const again = await h.link.installGrant({
+      deviceId,
+      grant: { grantId: target, clientId: "claude", clientName: "Claude", scopes: ["records:read"], epoch: 1 },
+    });
+    expect(again).toEqual({ ok: false, reason: "sync_lag" });
+    expect(online.frames.filter((frame) => frame.type === "grant_update")).toHaveLength(1);
+
+    // 一条迟到的 ack（旧 epoch）也不能把路由恢复。
+    online.send(grantAck((revokeFrame.grant_epoch as number) + 1, true));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(h.link.inspectForwarder().connections[0]?.syncLag).toBe(true);
+    expect(await dispatchCode(target)).toBe("GRANT_CONTEXT_INVALID");
   });
 });
 

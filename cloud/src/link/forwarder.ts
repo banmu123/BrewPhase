@@ -8,6 +8,7 @@ import { admitDispatch, type DispatchRejection } from "./dispatch-guard.js";
 import { computeRequestHash } from "./request-hash.js";
 import {
   createRequestRegistry,
+  resultOf,
   type DispatchResult,
   type PendingRequest,
   type RequestRegistry,
@@ -275,12 +276,48 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
     for (const entry of requests.promote()) sendEntry(entry);
   };
 
+  /**
+   * 写出一条 `req`。
+   *
+   * **已结算的请求绝不写出**。这条守卫不是防御性编程，而是「取消/撤销与发送
+   * 之间」唯一的结构性保证：
+   *
+   * - `pump()` 取出的排队项可能在上一次 settle 里已经被结算（撤销 /
+   *   断线 / 取消），`promote()` 只是从队列里取，它不判断「还该不该发」；
+   * - `dispatchToolCall` 在最终检查之后直接调用这里，而那次检查与这里之间
+   *   虽然同一轮同步执行，但**检查本身是 await 之后的最后一句话**——
+   *   一旦将来有人在中间加一个 await，这条守卫就是唯一还成立的东西。
+   *
+   * 写失败 → 以 `DEVICE_OFFLINE` 结算并继续泵：槽位不能因为一次写失败而漏掉。
+   */
   const sendEntry = (entry: PendingRequest): void => {
-    if (!sendFrame(entry.connectionId, buildReqFrame(entry))) {
-      requests.fail(entry, "DEVICE_OFFLINE", "device connection is gone");
-      // 这条失败也会释放槽位，继续泵。
-      pump();
+    if (entry.state === "settled") return;
+    if (sendFrame(entry.connectionId, buildReqFrame(entry))) {
+      // 「写成功了」这个事实只在这里产生。`cancel` 只发给真的收到过 req 的
+      // 请求（协议 §7.5），所以它必须独立于 `state === 'sent'` 记录。
+      entry.frameSent = true;
+      return;
     }
+    requests.fail(entry, "DEVICE_OFFLINE", "device connection is gone");
+    // 这条失败也会释放槽位，继续泵。
+    pump();
+  };
+
+  /**
+   * 把一条**已登记**的请求收敛掉，并返回它自己的结果。
+   *
+   * 为什么返回 `resultOf(entry)` 而不是就地构造一个 `fail(code)`：`fail` 可能是
+   * 第二次结算（撤销 / 取消已经先手），那次会返回 false 并保留先手路径写的
+   * 错误码。此时调用方必须看到**先发生的那件事**——把「已被撤销」改写成
+   * 「连接变了」，会让排障方向从授权问题偏到网络问题。
+   */
+  const endEntry = (entry: PendingRequest, code: RemoteErrorCode, message: string): DispatchResult => {
+    const first = requests.fail(entry, code, message);
+    pump();
+    if (first) {
+      logger.info("link_dispatch_aborted", { deliveryId: entry.deliveryId, tool: entry.tool, code });
+    }
+    return resultOf(entry);
   };
 
   // MARK: - 连接生命周期
@@ -485,6 +522,10 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
     // 同一时刻只允许一个未完成 ack：第二条更新必须等第一条落定，
     // 否则「applied=false 标记 syncLag」与「新 install」会互相覆盖。
     if (conn.pendingAck) {
+      logger.warn("link_grant_ack_superseded", {
+        connectionId: conn.connectionId,
+        epoch: conn.pendingAck.epoch,
+      });
       conn.pendingAck.resolve("offline");
       conn.pendingAck = null;
     }
@@ -508,6 +549,14 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
         },
       };
       if (!sendFrame(conn.connectionId, frame)) {
+        // 帧根本没写出去。它与「写出去了但没回应」是两件事：
+        // 前者连接已经不可写（等重连即可），后者要先怀疑设备卡住。
+        // 日志必须分开，否则运维会把一次断线当成一次 ack 超时去查设备。
+        logger.warn("link_grant_sync_offline", {
+          connectionId: conn.connectionId,
+          epoch,
+          op: frame.op,
+        });
         conn.pendingAck = null;
         resolve("offline");
       }
@@ -526,7 +575,7 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
     conn: ConnSync,
     grantId: string,
     reason: string,
-  ): Promise<{ ok: true } | { ok: false; reason: "not_installed" | "ack_timeout" | "rejected" }> {
+  ): Promise<{ ok: true } | { ok: false; reason: "not_installed" | "ack_timeout" | "rejected" | "offline" }> {
     const grantCtx = conn.byGrantId.get(grantId);
     if (!grantCtx) return { ok: false, reason: "not_installed" };
 
@@ -534,12 +583,22 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
     conn.byCtx.delete(grantCtx);
     // 该 ctx 上正在等结果的请求也必须结束——否则撤销之后调用方仍会
     // 拿到撤销之前读到的数据。
+    //
+    // 这条 `rejectByGrantCtx` 能命中「刚登记、还没写出 req」的请求，前提是
+    // 派发路径**先** reserve 再做最后的连接核对（见 `dispatchToolCall` 第 6 步）。
+    // 少了那个顺序，撤销会在这里看到一个空集合，然后继续放行一条已撤销的 ctx。
     const rejected = requests.rejectByGrantCtx(grantCtx, "GRANT_REVOKED", "this grant has been revoked");
     if (rejected.length > 0) {
       logger.info("link_requests_dropped_on_revoke", {
         deviceId: conn.deviceId.slice(0, 8),
         count: rejected.length,
+        // 其中有多少是「还没写出 req」的：这类请求 Desktop 从没见过，
+        // 也不需要 cancel。分开记，排查「凭空 cancel」时才有据可查。
+        unsent: rejected.filter((entry) => !entry.frameSent).length,
       });
+      // 这些结算释放了槽位，队列必须立刻泵一次：撤销自己的 ack 可能要等 3 秒，
+      // 那段时间里排队项不该因为「没人通知它槽位空了」而耗尽排队预算。
+      pump();
     }
 
     const epoch = await bumpGrantEpoch(conn.deviceId);
@@ -556,9 +615,14 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
     if (outcome !== "applied") {
       // 三种失败都收敛到 syncLag：超时/断线时我们**不知道**撤销有没有生效，
       // 而「不知道」在授权语义里等于「可能没生效」，所以必须停路由。
-      // （`rejected` 已经在 sendGrantUpdateAndAwait 里置过了。）
+      // （`rejected` 已经在 sendGrantUpdateAndAwait 里置过、也记过日志。）
       conn.syncLag = true;
-      return { ok: false, reason: outcome === "rejected" ? "rejected" : "ack_timeout" };
+      // 三种失败**不能**折叠成同一个返回值：调用方要据此决定「这条设备还能
+      // 不能继续做授权同步」。折叠成 ack_timeout 会让「帧根本没写出去」
+      // 看起来像「写出去但没回应」，前者重连即可，后者要先查设备。
+      if (outcome === "rejected") return { ok: false, reason: "rejected" };
+      if (outcome === "offline") return { ok: false, reason: "offline" };
+      return { ok: false, reason: "ack_timeout" };
     }
     return { ok: true };
   }
@@ -585,8 +649,22 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
           grantId: input.grant.grantId,
         });
         const removed = await revokeInstalled(conn, input.grant.grantId, "scope_changed");
-        if (!removed.ok && removed.reason === "ack_timeout") {
-          return { ok: false as const, reason: "ack_timeout" as const };
+        // ---- 只有「旧 ctx 本来就不在」才能继续安装 ----
+        //
+        // 其余三种（rejected / ack_timeout / offline）都意味着**撤销没有被
+        // 确认**：Desktop 手里可能还留着旧 ctx，也可能已经按 applied=false
+        // 拒绝了这次变更。此时继续发 install 的后果不是「多一条无用帧」——
+        // 它会新建一个 slot，等那条 install 的 ack 回来就把 `installed` 置成
+        // true，于是连接在 `syncLag=true` 的状态下**重新开始路由**，而
+        // `syncLag` 本来只允许由重新握手（新的 hello_ok 快照）清除。
+        // 换句话说：继续安装等于把一次明确的同步失败悄悄撤销掉。
+        if (!removed.ok && removed.reason !== "not_installed") {
+          logger.warn("link_grant_reinstall_aborted", {
+            deviceId: input.deviceId.slice(0, 8),
+            grantId: input.grant.grantId,
+            reason: removed.reason,
+          });
+          return { ok: false as const, reason: removed.reason };
         }
       }
 
@@ -684,6 +762,14 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
   const dispatchToolCall: Forwarder["dispatchToolCall"] = async (input) => {
     if (shuttingDown) return fail("DEVICE_OFFLINE", "gateway is shutting down");
 
+    // ---- 0. 调用方在进入之前就取消了 ----
+    //
+    // 必须在任何 IO 之前判：这条请求注定不会发出，为它查两次数据库
+    // （grant + device）只是让一个已经离开的调用方继续占着连接池。
+    // 也**不能**沿用后面那套「先 reserve 再 onAbort」的写法：那会让一次
+    // 从未有意的派发短暂占用三层计数。
+    if (input.signal?.aborted) return fail("REQUEST_CANCELLED", "client cancelled the request");
+
     // ---- 1. 目标连接：这个用户当前有没有活跃连接 ----
     const connection = await deps.registry.lookupByUser(input.userId);
     if (!connection) {
@@ -746,17 +832,7 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
       return fail("GRANT_CONTEXT_INVALID", "grant context is stale");
     }
 
-    // ---- 5. 最后一次连接核对（把 check→send 的窗口压到一行）----
-    const stillCurrent = await deps.registry.lookup(input.userId, connection.deviceId);
-    if (!stillCurrent || stillCurrent.connectionId !== connection.connectionId) {
-      // 顶替 / 断线 / rotating：三种都收敛到「这条连接已经不是路由目标」。
-      return fail(
-        stillCurrent === null ? "DEVICE_OFFLINE" : "DEVICE_UNAUTHORIZED",
-        "device connection changed",
-      );
-    }
-
-    // ---- 6. 预算 ----
+    // ---- 5. 预算 ----
     const nowMs = now();
     const deadlineMs = computeDeadline({
       nowMs,
@@ -772,6 +848,24 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
       arguments: input.arguments,
     });
 
+    // ---- 6. 登记：**在任何并发敏感的 await 之前** ----
+    //
+    // 这一步的位置是本文件最关键的一处顺序，不能挪到下面那次连接核对之后。
+    //
+    // 反过来的写法（先核对连接、再 reserve）会留下一个**撤销看不见的窗口**：
+    // `revokeInstalled()` 做的是「删 byGrantId / 删 byCtx → rejectByGrantCtx
+    // → 发 grant_update → 等 ack」，而 rejectByGrantCtx 只能找到已经登记在
+    // RequestRegistry 里的请求。若请求此刻还没登记，撤销会认为「没有在途请求」
+    // 并顺利完成，随后这条派发恢复执行，带着一个**刚刚被撤销的 grant_ctx**
+    // 把 req 写出——调用方拿到的错误会指向「Desktop 不认这个上下文」，
+    // 而真实原因是「Cloud 把一条已撤销的授权发出去了」。
+    //
+    // 登记在前，线性化边界就落在 `reserve()` 上：
+    //
+    // | 谁先发生 | 结果 |
+    // |---|---|
+    // | 撤销先（rejectByGrantCtx 命中） | entry 已 settled，第 8 步直接返回撤销的原因，**不发 req** |
+    // | 登记先（撤销随后） | 撤销一定能找到并结算它，同样不发/不交付 |
     const reserved = requests.reserve({
       deliveryId: makeDeliveryId(),
       requestHash,
@@ -792,10 +886,13 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
     const entry = reserved.entry;
     const promise = reserved.promise;
 
-    // ---- 7. 调用方取消 ----
+    // ---- 7. 调用方取消（必须在下面那次 await **之前**挂上） ----
+    //
+    // 晚挂一步就会漏掉「await 期间发生的 abort」：那时 signal 已经是
+    // aborted，但监听器还没装，于是 onAbort 不会跑，请求会照常发出。
     const onAbort = (): void => {
       if (entry.state === "settled") return;
-      const wasSent = entry.state === "sent";
+      const wasSent = entry.frameSent;
       if (requests.fail(entry, "REQUEST_CANCELLED", "client cancelled the request")) {
         if (wasSent) {
           // 执行中的同步 handler 无法被中断（协议 §7.3），但我们仍要尽力告知：
@@ -813,15 +910,58 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
       }
     };
     if (input.signal) {
+      // 第 0 步之后、这里之前也可能已经 abort（准入那两次数据库查询期间）。
+      // `abort` 事件只发一次，所以两个分支互斥——不是「先补调一次再挂监听」，
+      // 那样会留下一个永远不会再触发的监听器。
       if (input.signal.aborted) onAbort();
       else input.signal.addEventListener("abort", onAbort, { once: true });
     }
 
-    if (reserved.kind === "admitted") sendEntry(entry);
+    try {
+      // ---- 8. 最终核对：连接与授权上下文必须仍是「当前的那一个」 ----
+      //
+      // 这里**不重读数据库**——授权事实由第 3 步的准入给出，再查一次只会把
+      // 窗口换成另一个形状。这里只复核三样会在 await 期间变化的内存事实：
+      // 请求是否已被结算、连接是否仍是路由目标、grant_ctx 是否仍是当前映射。
+      const stillCurrent = await deps.registry.lookup(input.userId, connection.deviceId);
 
-    const result = await promise;
-    input.signal?.removeEventListener("abort", onAbort);
-    return result;
+      if (entry.state === "settled") {
+        // 撤销 / 取消 / 超时 / 断线已经先手结算了它。**绝不能**再写出 req；
+        // 返回**先发生的那件事**给出的错误码，而不是我们本来要报的那个。
+        return resultOf(entry);
+      }
+      if (conns.get(connection.connectionId) !== conn) {
+        // 连接已收敛（socket 关了 / 被顶替 / 停机）。此时没有任何 ctx 还能用。
+        return endEntry(entry, "DEVICE_OFFLINE", "device connection is gone");
+      }
+      if (conn.rotating) {
+        // 轮换：凭据已作废，重试永远不会成功，所以**不可**报成 DEVICE_OFFLINE。
+        return endEntry(entry, "DEVICE_UNAUTHORIZED", "device credentials were rotated");
+      }
+      if (!stillCurrent) {
+        // 路由项已被删除且不是轮换 → 设备真的掉了。
+        return endEntry(entry, "DEVICE_OFFLINE", "no active device connection for this user");
+      }
+      if (stillCurrent.connectionId !== connection.connectionId) {
+        // 被另一条连接顶替：这条连接上的身份已经不作数（不可重试）。
+        return endEntry(entry, "DEVICE_UNAUTHORIZED", "device connection changed");
+      }
+      if (conn.syncLag) {
+        // 授权同步在窗口内失败过：整台设备停止路由（fail-closed）。
+        return endEntry(entry, "GRANT_CONTEXT_INVALID", "grant state is not synchronized with the device");
+      }
+      if (conn.byGrantId.get(input.grantId) !== grantCtx || conn.byCtx.get(grantCtx) !== slot || !slot.installed) {
+        // 撤销或替换发生在窗口内，而这条请求没有被 rejectByGrantCtx 命中
+        // （例如它是在撤销之后才登记、但拿的是窗口开始时的旧 ctx）。
+        // 这是最后一道防线：ctx 不再是当前映射，就绝不发送。
+        return endEntry(entry, "GRANT_CONTEXT_INVALID", "grant context is no longer current");
+      }
+
+      if (reserved.kind === "admitted") sendEntry(entry);
+      return await promise;
+    } finally {
+      input.signal?.removeEventListener("abort", onAbort);
+    }
   };
 
   // MARK: - 扫描
@@ -831,7 +971,15 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
     const outcome = requests.sweep(mono);
     for (const entry of outcome.timedOut) {
       // Cloud 已超时返回；`cancel` 只是尽力让 Desktop 别白做一次查询。
-      // 注意：**只对已经发出 `req` 的发 cancel**——排队项从没离开过 Cloud。
+      // 注意：**只对真的写出过 `req` 的发 cancel**——排队项，以及「已登记、
+      // 但被最终核对拦下」的项，从没离开过 Cloud。用 `frameSent` 而不是
+      // `state === 'sent'`：后者的语义是「占了槽位」，不是「帧已写出」。
+      logger.info("link_request_timeout", {
+        deliveryId: entry.deliveryId,
+        tool: entry.tool,
+        sent: entry.frameSent,
+      });
+      if (!entry.frameSent) continue;
       const cancel: CancelFrame = {
         v: REMOTE_PROTOCOL_VERSION,
         type: "cancel",
@@ -840,7 +988,6 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
         reason: "gateway_timeout",
       };
       sendFrame(entry.connectionId, cancel);
-      logger.info("link_request_timeout", { deliveryId: entry.deliveryId, tool: entry.tool });
     }
     for (const entry of outcome.queueExpired) {
       // 排队项没发出去，不发 cancel（Desktop 从未见过这个 id）。

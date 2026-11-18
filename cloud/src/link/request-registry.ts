@@ -68,6 +68,16 @@ export interface PendingRequest {
   /** 进入队列的时刻（monotonic）；未入队为 `null`。 */
   queuedAtMono: number | null;
   state: RequestState;
+  /**
+   * `req` 帧**真的写出过**。
+   *
+   * 必须与 `state === 'sent'` 分开：`sent` 只表示「已占着三层计数里的一个槽位」，
+   * 而 `reserve()` 一旦返回 `admitted` 就已经是 `sent`——那时帧还没构造。
+   * 两者混用会让「reserve 之后、写出之前被取消/撤销」的请求收到一条
+   * `cancel`，而 Desktop 从没见过它的 id（协议 §7.5：cancel 只能针对已投递的
+   * 请求）。这个区分也是「已取消请求不得发出」的可观测判据。
+   */
+  frameSent: boolean;
   /** 结果（`state === 'settled'` 时有效，用于诊断与测试断言）。 */
   result: DispatchResult | null;
   /** 三层计数是否已归还。**恰好一次**。 */
@@ -264,6 +274,7 @@ export function createRequestRegistry(options: RequestRegistryOptions = {}): Req
         ...input,
         queuedAtMono: null,
         state: "sent",
+        frameSent: false,
         result: null,
         released: false,
       };
