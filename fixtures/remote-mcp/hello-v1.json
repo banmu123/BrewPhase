@@ -1,0 +1,33 @@
+{
+  "$comment": "Remote Link Protocol v1 的 hello 签名黄金向量。Cloud 与 Desktop 的测试都必须读这一个文件；任何一端改了规范串，这里就会红。私钥是全 0x01..0x20 的测试种子，绝不用于生产。",
+  "protocol": "brewphase.remote.hello.v1",
+  "private_key": {
+    "format": "pkcs8-der-base64url",
+    "seed_base64url": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"
+  },
+  "public_key": {
+    "format": "raw-32-bytes-base64url",
+    "base64url": "ebVWLo_mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ",
+    "spki_der_base64url": "MCowBQYDK2VwAyEAebVWLo_mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ"
+  },
+  "hello": {
+    "v": 1,
+    "type": "hello",
+    "ts": 1763400000123,
+    "device_id": "0b7c9e2a-3d41-4f6b-9c8d-2e1a5b7f0c93",
+    "nonce": "Q2hhbmdlTWUtMTIzNDU2Nw",
+    "min_version": 1,
+    "max_version": 1,
+    "app_version": "0.1.5",
+    "platform": "darwin",
+    "capabilities": [
+      "cancel",
+      "drain",
+      "tools.call"
+    ],
+    "serviceable": true,
+    "sig": "roqXSKvonu0HNhWY2WsunYyiTFlrikUs3vzthXSV9NHnXbcprSkPNd4IFvfBz-sr_2d62PxJaOQ0o7S785B6AQ"
+  },
+  "canonical_payload": "brewphase.remote.hello.v1\nv=1\ntype=hello\nts=1763400000123\ndevice_id=0b7c9e2a-3d41-4f6b-9c8d-2e1a5b7f0c93\nnonce=Q2hhbmdlTWUtMTIzNDU2Nw\nmin_version=1\nmax_version=1\napp_version=0.1.5\nplatform=darwin\ncapabilities=cancel,drain,tools.call\nserviceable=true",
+  "signature_base64url": "roqXSKvonu0HNhWY2WsunYyiTFlrikUs3vzthXSV9NHnXbcprSkPNd4IFvfBz-sr_2d62PxJaOQ0o7S785B6AQ"
+}
