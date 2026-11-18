@@ -8,6 +8,23 @@
 
 ---
 
+## Phase 1.1B.1 — Desktop 协议与安全边界收口
+
+范围与验收见 `REMOTE_MCP_PHASES.md` §1B.9（同一阶段，不另立章节编号）。
+这里只记**它如何改变 1.2 的开工条件**：
+
+| 对 1.2 的影响 | 内容 |
+|---|---|
+| 接入校验的真值来源变了 | 1.2 的 `/device-link` 必须按协议 §4.3 的 10 步实现，**不能**照抄 Mock 的简化版（Mock 不做 nonce 去重、不做多实例路由、不做 OAuth） |
+| `hello` 字段与签名已冻结 | Cloud 侧验签必须用 `helloSigningPayload` 的同一份规范串；字段集变更需递增版本前缀 |
+| `serviceable` 是 Desktop 上报的提示 | 1.2 的路由可以据此暂停派发，但**不得**据此跳过 grant/scope 校验 |
+| 注册端点契约已定 | §3.2/§3.3/§3.4 的请求/响应形状已在 Mock 上跑通；1.2 照实现即可，`claim_secret` 只存 `sha256`、领取必须条件 UPDATE |
+| Desktop 侧注册客户端已就绪 | `createHttpDeviceRegistrar` 已实现；1.2 之后只需把「用户 Bearer 从哪来」接到 AccountService（当前 `RemoteService.register()` 在没有 registrar 时**明确抛错**，不伪造成功） |
+
+**仍然阻塞 1.2 的项**：无。1.1B.1 的验收项与方法见 §1B.9。
+
+---
+
 ## Phase 1.2 — Cloud 设备面
 
 ### 2.1 范围

@@ -113,6 +113,45 @@ Phase 1.0 曾把它写成「可选增强、第一版不做」；P0-1 后它变�
 后者是「Cloud 知道设备被暂停」。两者都不可重试，但排障含义不同——
 有 `REMOTE_DISABLED` 说明 Cloud 状态同步失败，这正是要观测的信号。
 
+#### 11.4.1 「主动断开」必须自己做完整收敛（Phase 1.1B.1 新增）
+
+传输层有一个刻意的设计：**本地主动 `close()` 不会触发 `onClose` 回调**——
+我们自己的意志不该被当成「对端异常」，否则每次正常退出都会走一遍重连。
+
+代价是：任何「本地判定要断开」的路径（心跳超时、握手超时、帧超限、账户不匹配）
+**不能只调 `transport.close()`**，否则状态机停在 `online`、`lastCloseCode`
+不更新、也不会有重连——留下一条「看着在线、实际已死」的连接，而这正是这一层
+要防的状态。
+
+所以统一走一个 `dropConnection(code, reason)`：设 `lastCloseCode/Reason` →
+`close(code, reason)` → 失效在途尝试 → 走清理清单 → 按 close code 分类决定
+`blocked` 还是退避重连。
+
+| 触发 | close code | 之后 |
+|---|---|---|
+| 心跳超时（`idle_timeout_ms` 内无 ping） | `4008` | 退避重连 |
+| 握手超时（连上后 10s 无 `hello_ok`） | `4001` | 退避重连 |
+| 单帧超 `max_frame_bytes` | `4009` | 退避重连 |
+| 账户不匹配（运行时 `reconcile`） | `4009` | **blocked**，零重连 |
+| 用户关开关 | `1000` | `idle` |
+
+**心跳看门狗的起点是 `hello_ok`，不是第一条 `ping`。** 旧实现在
+`lastPongAtMono === null` 时直接 return，于是「握手成功但 Cloud 再没发过
+任何 ping」永远不会被判死——那是最常见的半开连接（NAT 超时、LB 掉表），
+连接在路由表里看着 online，实际早就发不出来了。
+
+#### 11.4.2 `draining` 期间必须拒绝新 `req`
+
+`drain` 的语义是「我要断了」。draining 期间仍可能收到 Cloud 已经排队的
+`req`（它还没处理完自己的队列）。本地**必须拒绝而不是执行**：
+
+- 执行完的 `res` 多半发不出去（socket 正在关闭）；
+- 白做一次读取，并留下一条「成功」审计；
+- 用 `DEVICE_BUSY`（可重试）：Cloud 在重连后重投即可。
+
+这条与「缓存必须在准入之后」是同一个原则的两面：**先判能不能服务，再决定
+要不要干活**。
+
 ### 11.5 用户切换（A 登出 → B 登录）
 
 **这条不在 Cloud 侧处理，全部在 Desktop 侧拦截。** 因为 Cloud 只知道
@@ -135,6 +174,43 @@ B 登录成功 → remote.prepareFor(uB)
 旧行由 A 在自己的 Web 设置页删除。
 
 **验证**：ST-4（A 登出 B 登录 → 不继承 A 的设备授权）。
+
+#### 11.5.1 连接前只有一道门（Phase 1.1B.1 新增，实现硬要求）
+
+上面那段伪代码是**结论**；这里规定**结构**，因为第一版实现正是把结论写在了
+`start()` 的一个分支里，于是别的入口绕过了它：
+
+```
+start()       ─┐
+enable()      ─┤
+resume()      ─┼──→  canConnect()  ──→  connect()  ──→  出站 socket
+reconnect     ─┤        （唯一判据）        （自己再查一次）
+reconcile()   ─┘
+```
+
+**`canConnect()` 的判据与顺序**（顺序即优先级）：
+
+| # | 判据 | 失败时的收敛 |
+|---|---|---|
+| 1 | `!shuttingDown` | 什么都不做 |
+| 2 | `localState.enabled` | `idle` |
+| 3 | `!needsReauth` | `blocked` |
+| 4 | `deviceId` / `deviceToken` / `privateKey` / `boundUserId` 都齐备 | 未配对 → `idle`；有 deviceId 但凭据不可用 → `blocked` |
+| 5 | 当前已登录（`currentUserId !== null`） | `idle` |
+| 6 | `boundUserId === currentUserId` | **`enterBlocked`**：落盘 `enabled=false`、清缓存与 Grant 上下文、杀在途尝试、断开、`needsReauth=true` |
+| 7 | `deviceOrigin` 与配置的 Cloud 源一致 | `blocked`，**不发送旧凭据** |
+
+**三条实现纪律**：
+
+1. **`connect()` 内部再查一次。** 这不是冗余：它是「任何新调用路径都不可能
+   绕过检查」的结构保证。新增一条调用路径时，最坏结果是被拦下，而不是静默放行。
+2. **`enable()` 必须先过身份门禁再落盘 `enabled=true`。** 反过来的话，两个
+   并发的 `enable()` 会把状态写成「开着 + blocked」——这是测试真实抓到的序列。
+3. **`blocked` 是终态，不自动恢复。** 账户抖回原用户也不自动重连：否则
+   「切走又切回」会反复建连断连，而每次建连都带着一次真实凭据出站。
+
+**`canConnect()` 不检查的东西**：它不看 `linkState`。连接状态与「是否允许
+连接」是两件事，混在一起会出现「因为断线所以不允许连接」这种死锁。
 
 ### 11.6 设备 Token / 密钥轮换
 

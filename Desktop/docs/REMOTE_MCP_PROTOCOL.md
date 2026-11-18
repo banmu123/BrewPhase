@@ -168,9 +168,52 @@ ts = Date.now()        // Unix epoch 毫秒，跨进程可比
 | 无法解析且提取不到 `id` | close `4009`（帧格式非法） | 无法回话，连接上下文已不可信 |
 | 单帧超过 `max_frame_bytes` | close `4009`，并记审计 | 同上 |
 
+**`max_frame_bytes` 的两个口径（Phase 1.1B.1 定稿）**：
+
+| 项 | 约定 |
+|---|---|
+| 计量单位 | **UTF-8 字节数**（`Buffer.byteLength(data, 'utf8')`），不是 JS 字符数。`data.length` 对中文会少算约 2/3 |
+| 生效上限 | `min(本机 REMOTE_MAX_FRAME_BYTES, hello_ok.max_frame_bytes)`。Cloud 只能**收紧**，不能放宽——本机上限是内存保护，不该被对端协商掉 |
+| 超限动作 | close `4009`，**不解析、不回显帧内容**（它可能整段是业务数据） |
+| 检查位置 | 传输层，在 JSON 解析与业务准入之前 |
+
 **Desktop 侧实现约束**：`req` 的处理必须包在 `try/catch/finally` 里，
 `finally` 中保证「要么发出 `res`，要么显式记录 deliberate-drop 原因」。
 不允许出现「解析失败就 return」的早退路径。
+
+#### 2.2.1 三条「必须回话」的具体落点（Phase 1.1B.1 补齐）
+
+上表的三行在实现里最容易写成「记一行日志然后 return」，因为那是最省事的。
+它们的共同代价是：**Cloud 分不清「设备没收到」与「设备拒收」**，只能等到
+deadline 超时，而超时错误（`REQUEST_TIMEOUT`，可重试）会诱导 AI 重试一次坏帧。
+
+| 输入 | 必须做的事 | 不得做的事 |
+|---|---|---|
+| `req` 形状非法（未知键 / 类型错 / 缺字段），但 `id` 可用 | 回 `res{ok:false, code:'PROTOCOL_VIOLATION', retryable:false}` | 静默丢弃；执行工具；写缓存 |
+| 非 JSON 文本，但能提取出 `req` 的 `id` | 同上（尽力回话） | 静默丢弃 |
+| 非 JSON 且提不出 `id`；或 `req` 连 `id` 都没有 | close `4009` | 继续用一条已不可信的连接 |
+| `hello_ok` 形状非法（未知键 / 缺字段） | close `4009`（帧格式非法） | 报 `4002`（那是「版本不兼容」的专属码） |
+| `hello_ok` 的 `v` 不受支持 | close `4002` | 与形状错误混用同一个 code |
+
+**「提取 id」的保守判据**（避免把业务参数里恰好叫 `id` 的字段当投递 id）：
+
+1. 原文必须同时出现 `"type"` 与 `"req"`；
+2. 取 `"arguments"` / `"tool"` **之前**的那一段里的第一个 `"id"`。
+
+猜错的代价可控：协议规定未知 `res.id` 一律忽略，所以一个错 id 不会污染任何
+真实请求的状态；而「不回话」的代价是必然的一次超时。
+
+**审计口径（形状非法的 `req`）**：
+
+| 情况 | 审计 |
+|---|---|
+| `tool` 属于 `REMOTE_TOOLS`（帧能解析出字段，只是多了/错了键） | 记 **1 行**：`success=false, error_code=PROTOCOL_VIOLATION` |
+| `tool` 不可信 / 整帧不是 JSON | **不记**，只写日志 |
+
+不记的理由不是省事：`tool_name` 这一列有语义，塞占位符会让「按工具统计」
+永远对不上账。**宁可少一行，也不用不可信的数据污染审计表。**
+反过来，往一个合法工具调用里塞未知键正是「篡改 WSS 载荷」最现实的形态
+（序列化 bug 或中间人），所以工具名可信时**必须**留痕。
 
 ---
 
@@ -395,6 +438,27 @@ wss://<gateway-host>/device-link
 - 服务端必须校验 `Host`（`hostHeaderValidationResponse` 的语义），拒绝与配置不符的连接。
 - 子协议：`Sec-WebSocket-Protocol: brewphase.remote.v1`（便于未来并行支持多版本）。
 
+**Desktop 侧的承载方式（Phase 1.1B.1 实测并定稿）**：用 Electron 主进程的
+`net.WebSocket(url, { headers, protocols })`。Spike（Electron 45.2.3 真实主进程）
+实测结果：
+
+| 能力 | `net.WebSocket` | 全局 `WebSocket` |
+|---|---|---|
+| 自定义 header 送达 | ✅ 服务端收到完整 `Bearer` | ❌ 标准 API 无此能力 |
+| 子协议送达 | ✅ | ✅ |
+| 服务端发起的 4xxx close code | ✅ 精确到达（需完整关闭握手） | ✅ |
+| TLS 失败时的行为 | `net::ERR_INSECURE_RESPONSE`，**服务端连 header 都收不到** | 同 |
+
+因此实现是 **fail-closed** 的：需要自定义头却拿不到 `electron.net` 时直接抛错，
+**绝不静默退回全局 WebSocket**。那种「退回」会让设备认证在测试里等于没做，
+而所有用例仍然是绿的——这正是本阶段要消灭的那类假通过。
+
+> **反向教训（记录在此以免重犯）**：Phase 1.1B 的连接层签名是
+> `connect(url)`，`headers` 参数在类型里存在、在实现里被丢弃，而 Mock Gateway
+> 无条件返回 `101`。于是「设备认证」整条链路在两侧都没实现，测试却全绿。
+> 现在两侧都补上了：Mock 按 §4.3 前 3 步 + 子协议拒绝非法 Upgrade，
+> 测试用真实发送 header 的最小客户端驱动（`tests/helpers/ws-client.ts`）。
+
 ### 4.2 `hello`（Desktop → Cloud，连接后 5s 内必须发）
 
 ```jsonc
@@ -404,16 +468,61 @@ wss://<gateway-host>/device-link
   "ts": 1763400000123,
   "device_id": "0b7c…",
   "nonce": "base64url(16B random)",   // 每次握手唯一
-  "sig": "base64url(Ed25519(device_id + '\n' + nonce + '\n' + ts))",
-  "min_version": 1,
+  "min_version": 1,                    // §1.1 协商公式的输入
   "max_version": 1,
-  "app_version": "0.1.5",
-  "platform": "darwin",
-  "capabilities": ["tools.call", "cancel", "drain"]
+  "app_version": "0.1.5",              // 排障用，不参与授权
+  "platform": "darwin",                // 同上
+  "capabilities": ["cancel", "drain", "tools.call"],
+  "serviceable": true,                 // Desktop 独占的自检结果（§4.4.1）
+  "sig": "base64url(Ed25519(规范串))"
 }
 ```
 
 `device_token` **不放进 `hello`**——它已在 header 里，重复传递只会增加泄漏面。
+
+#### 4.2.1 签名规范串（Phase 1.1B.1 定稿，唯一实现）
+
+**除 `sig` 之外，`hello` 的每个字段都进签名**，顺序固定，`capabilities` 排序后
+以 `,` 连接：
+
+```
+brewphase.remote.hello.v1
+v=1
+type=hello
+ts=1763400000123
+device_id=0b7c…
+nonce=<base64url>
+min_version=1
+max_version=1
+app_version=0.1.5
+platform=darwin
+capabilities=cancel,drain,tools.call
+serviceable=true
+```
+
+四条硬要求：
+
+| # | 要求 | 为什么 |
+|---|---|---|
+| 1 | 首行是域分隔串 `brewphase.remote.hello.v1` | 没有它，同一把私钥在别处签的消息（例如 §3.5 的 rotate）可能与 hello 同形，形成**跨协议签名复用** |
+| 2 | 签名覆盖 `min_version` / `max_version` / `capabilities` | 不覆盖就能被篡改成「这台设备只支持老版本」，从而关掉它本可用的保护 |
+| 3 | 字段值**不得含换行**；含则拒绝生成签名 | 规范串是「换行 + `=`」分隔的，值里带换行会让两组不同字段产生同一段字节（规范歧义） |
+| 4 | v1 的字段集合冻结 | 新增字段属兼容变更，但**必须**同时定义新前缀（`brewphase.remote.hello.v2`），否则新旧实现的签名会静默错配 |
+
+**旧写法作废**：Phase 1.0 写的「只签 `device_id + '\n' + nonce + '\n' + ts`」
+不覆盖版本与能力，已废弃。Desktop 与 Mock 现在共用同一个
+`helloSigningPayload()`；实现漂移由结构测试逐键比对
+（`tests/integration/remote-handshake.test.ts`）。
+
+#### 4.2.2 `serviceable` 与版本字段为什么同时存在
+
+两者解决的不是同一件事：
+
+- `min_version` / `max_version` 决定**这条连接能不能用**（§1.1 协商）；
+- `serviceable` 决定**能不能派活**（§4.4.1）。
+
+1.1B 的实现只带了后者、1.0 的文档只带了前者，所以两边都不完整：缺区间时
+§4.3 第 8 步无从执行，缺 `serviceable` 时 Cloud 只能按「连上了」派发。
 
 ### 4.3 Cloud 侧校验顺序（任一失败即 close）
 
@@ -421,7 +530,7 @@ wss://<gateway-host>/device-link
 **最后**才做有状态、会「消耗」nonce 的检查。
 
 ```
-1. Authorization header 存在且以 bp_dev_ 开头       → 否则 4001
+1. Authorization header 存在且匹配 `^bp_dev_[A-Za-z0-9_-]{16,}$` → 否则 4001
 2. sha256(token) 命中 mcp_devices.token_hash        → 否则 4001
 3. status = 'active'（pending→4001 / suspended→4005 / revoked→4003）
 4. mcp_devices.expires_at > now                     → 否则 4001
@@ -513,14 +622,16 @@ effective_tools(grant)  = REMOTE_TOOLS ∩ hello_ok.allowed_tools
 方向是 Desktop → Cloud，载体是 **`hello` 帧的 `serviceable` 字段**：
 
 ```jsonc
-// hello（Desktop → Cloud，§4.2）
+// hello（Desktop → Cloud，完整字段见 §4.2）
 {
   "v": 1, "type": "hello",
   "device_id": "0b7c…",
   "nonce": "…", "ts": 1763400000000,
-  "sig": "…",
+  "min_version": 1, "max_version": 1,
+  "app_version": "0.1.5", "platform": "darwin",
+  "capabilities": ["cancel", "drain", "tools.call"],
   "serviceable": true,        // ← 本连接建立时 Desktop 的自检结果
-  "client_version": "0.1.4"
+  "sig": "…"
 }
 ```
 
@@ -530,7 +641,9 @@ effective_tools(grant)  = REMOTE_TOOLS ∩ hello_ok.allowed_tools
 { "v": 1, "type": "status", "ts": 1763400100000, "serviceable": false, "reason": "remote_disabled" }
 ```
 
-- `reason` ∈ `remote_disabled` / `user_mismatch` / `db_unavailable` / `services_unavailable` / `shutting_down`。
+- `reason` ∈ `remote_disabled` / `user_mismatch` / `db_unavailable` / `services_unavailable` / `shutting_down` / `blocked`。
+  （`blocked` 是 Phase 1.1B.1 新增：设备被撤销 / 需重新配对时，本地确实不具备
+  执行条件，如实上报；新增枚举值属兼容变更，接收方应忽略未知值。）
 - 语义是**提示**：Cloud 可以据此停止派发（推荐），但**不得**据此跳过自己的
   grant/scope 校验；Desktop 也**不得**因为上报过 `true` 就跳过逐请求本地校验。
 - `hello_ok`（Cloud → Desktop）**没有** `serviceable` 字段——它是 Cloud 的帧，

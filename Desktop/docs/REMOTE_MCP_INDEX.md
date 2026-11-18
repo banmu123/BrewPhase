@@ -72,3 +72,28 @@ ST 用例 +9（ST-18~ST-26，共 26）；OQ +1（OQ-16，共 23）。
 B14 / ST-1 跨用户校验要读它；1.3 只补 `mcp_oauth_clients` / `mcp_auth_codes`。
 **未改动**：`REMOTE_SCOPES`（4）、`REMOTE_TOOLS`（8）、close code（14）、阶段划分与依赖关系
 （`READY FOR PHASE 1.1A` 不变）。
+
+---
+
+## 8. Phase 1.1B.1：协议与安全边界收口索引
+
+1.1B 交付后发现七处「文档要求了、实现没做到」，且**原有测试全绿**——因为
+Mock 与客户端两侧都不检查。逐条见 `REMOTE_MCP_PHASES.md` §1B.9。
+
+| 收口项 | 结论 | 权威位置 |
+|---|---|---|
+| device_token 认证 | 走 `net.WebSocket` 的 `Authorization` 头；**唯一**允许的载体；拿不到 `electron.net` 时 fail-closed，不退回全局 `WebSocket` | 协议 §4.1；安全 §2.3.1a |
+| 连接前唯一门禁 | `canConnect()` 七条判据；start / enable / resume / 重连 / reconcile 全走它，`connect()` 内部再查一次 | 协议 §11.5.1 |
+| 审计失败判据 | 拆 `writeAuditResult`（失败抛出，成功要求 `changes === 1`）；Local 旧入口零改动 | 安全运维 §6.5.5.1 |
+| 帧大小 | **UTF-8 字节**；上限取 `min(本机, hello_ok.max_frame_bytes)`，Cloud 只能收紧 | 协议 §2.2 |
+| deadline | epoch **只读一次**换算成 monotonic，之后只用 monotonic | 协议运行时 §7.1 |
+| `hello` 契约 | 12 字段；签名覆盖除 `sig` 外全部字段；域分隔前缀 `brewphase.remote.hello.v1` | 协议 §4.2 / §4.2.1 |
+| 连接生命周期 | 连接代际隔离；握手指令超时 10s；看门狗从 `hello_ok` 起算；`dropConnection` 统一收敛；draining 拒新请求 | 协议 §11.4.1 / §11.4.2 |
+| inflight 语义 | v1 **拒绝，不排队**（路径在同步 handler 下结构性不可达） | 协议运行时 §8.3 |
+| 设备注册 | Mock 端点跑通闭环；`RemoteService.register()` 无 registrar 时**明确抛错** | 协议 §3；阶段 §1B.9 第 28 条 |
+| 畸形帧必须回话 | `req` 形状非法但 id 可用 → `PROTOCOL_VIOLATION`；提不出 id → close `4009`；`hello_ok` 形状错 `4009` / 版本错 `4002`；畸形 `grant_update` 也要 ack `applied=false` | 协议 §2.2.1；协议运行时 §6.5.2 规则 7 |
+
+**新增验收**：§1B.7 之外 9 条（第 20–28 条）。
+**未改动**：错误码仍是 19 个（`PROTOCOL_VIOLATION` 复用，不新增）；ST 仍是 26 条
+（只补落点说明，不新增编号、不改阻断级别）；OQ 仍是 23 项。
+**Test 基线**：978 → **1188**（1.1B 的 1111 + 1.1B.1 的 77）。

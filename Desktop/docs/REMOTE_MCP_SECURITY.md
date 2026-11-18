@@ -184,6 +184,28 @@ mcp_grants (
 - **device_token 不是身份证明的唯一手段**。它只解决「这条 WSS 属于哪台设备」；
   「是不是真的那台机器」由 Ed25519 签名证明。两者同时校验，缺一不可。
 
+#### 2.3.1a device_token 的传输纪律（Phase 1.1B.1）
+
+| 载体 | 允许 | 理由 |
+|---|---|---|
+| WSS 握手 `Authorization: Bearer bp_dev_…` | ✅ **唯一**允许的地方 | 头不进 URL 日志；且 TLS 失败时服务端连头都收不到（Spike 实测 `net::ERR_INSECURE_RESPONSE`） |
+| `hello` 帧字段 | ❌ | 帧会被 Cloud 应用层看到并可能进日志；已在头里，重复传递只增加泄漏面 |
+| URL / query | ❌ | 会进反向代理 `access_log`、崩溃转储、错误上报 |
+| `Sec-WebSocket-Protocol` | ❌ | 子协议头同样会进代理日志 |
+| 渲染进程 / IPC 返回值 | ❌ | Renderer 只需要「是否已配对」，不需要凭据 |
+| 磁盘明文 | ❌ | 只以 safeStorage 密文存在于 `remote/device.json`；不落明文、不落可逆编码 |
+
+**形态判据**：`^bp_dev_[A-Za-z0-9_-]{16,}$`。它不是安全门槛（真正的判据是
+Cloud 侧 `sha256(token)` 命中 `token_hash`），作用是便宜地挡掉
+「拿错凭据域」的东西——用户 access token、`bp_mcp_*`、空串——让这类错误
+在握手第一步就失败，而不是等到业务层才暴露。
+
+**这条纪律的反面教材**：Phase 1.1B 的连接层把 `Authorization` 丢掉了，
+`hello` 里也没有 token，而 Mock Gateway 无条件返回 `101`。于是「设备认证」
+在客户端和服务端**两边都没实现**，测试却全绿——因为两侧都不检查。
+现在的防守是双边的：Mock 拒绝无 token / 伪造 token / 错误子协议，
+连接层在拿不到 `electron.net` 时**直接抛错**而不是静默退回全局 `WebSocket`。
+
 #### 2.3.2 完整流程（含每一步的校验与失败行为）
 
 ```
@@ -667,7 +689,6 @@ Cloud 必须在 ② 之后**立刻**把该 `connection_id` 标记为 `rotating`�
 「Grant 的唯一可信来源」和「不可信的 Grant 来源」。正确表述是：
 **信道可信（TLS + device_token + Ed25519）；端点可信度是假设，不是保证；
 本地校验限制的是「即使端点说谎，能造成的最大损害」。**
-
 
 ---
 

@@ -193,9 +193,10 @@
 | 1 | `grant_epoch` 按**设备**单调递增；Desktop 丢弃 `<= 当前` 的更新（幂等，抵御重复/乱序） |
 | 2 | `install`：Cloud **必须**收到 `grant_update_ack{applied:true}` 才可为该 grant 路由；未 ack 前一律 `GRANT_CONTEXT_INVALID` |
 | 3 | `revoke`：Cloud **先停路由**，再发帧；`grant_ack_timeout_ms`（建议 3000，未实测）内无 ack → 标记该设备 `grant_sync_lag` 并**暂停向它路由所有 grant**，直到重新握手 |
-| 4 | `applied=false` 必须给出 `reason`：`user_mismatch` / `stale_epoch` / `malformed`；Cloud 记安全事件并停止路由该设备 |
+| 4 | `applied=false` 必须给出 `reason`：`user_mismatch` / `stale_epoch` / `protocol_violation`；Cloud 记安全事件并停止路由该设备 |
 | 5 | 上下文**不落盘**：连接断开即全部丢弃；重连只认新的 `hello_ok` 快照 |
 | 6 | `revoke` 不要求 Desktop 中断同步 handler（不可能），但要求完成后不回传数据（§11.3） |
+| 7 | **畸形帧也要 ack**：形状非法（未知键 / 类型错 / 缺字段）但 `grant_epoch` 可读时，Desktop **必须**回 `applied=false, reason:'protocol_violation'`，且**一点不改**上下文。只有连 epoch 都读不出来才丢弃 |
 
 **两个 epoch 不要混（最容易被实现成同一个）**：
 
@@ -210,6 +211,11 @@
 **ack 超时的取舍（fail-closed）**：宁可暂停该设备的全部远程访问，也不在
 「无法确认撤销已生效」的状态下继续路由。设备会显示为「授权同步异常」，
 重新握手即可恢复——这比「撤销后仍能读」可接受得多。
+
+**但正因为它这么重，规则 7 不是可选的**：如果畸形 `grant_update` 被静默丢弃，
+Cloud 侧等不到 ack，就会走 fail-closed **暂停该设备的全部 grant**——
+一个序列化 bug 足以让整台设备停服。同步把 `applied=false` 回过去，
+代价只是一条 ack，收益是「错误被局限在这一帧」。
 
 ---
 
@@ -232,6 +238,11 @@
   3. 判断是否超时只看 `performance.now() >= expiresAtMono`
 
 这样即使执行期间系统时间被向前跳 1 小时，也不会让一个 15s 的请求变成 1 小时的请求。
+
+**实现上的硬要求（Phase 1.1B.1）**：`Date.now()` 在一次请求里**只读一次**，
+就是算 `remaining` 的那一次。之后每个判断都用 `performance.now()` 与
+`expiresAtMono` 比较。测试用可注入时钟断言「epoch 时钟恰好被读 1 次」——
+读 2 次就说明有第二个比较点用错了时钟。
 
 ### 7.2 预算分配
 
@@ -267,10 +278,14 @@ deadline_ms = min(now_epoch + tool_budget, now_epoch + 30_000, client_deadline)
 |---|---|
 | Gateway 等到 deadline | 返回 `REQUEST_TIMEOUT` + 发 `cancel` 给 Desktop（**尽力**） |
 | Desktop 收到 `req` 时 `remaining ≤ 0` | 立即 `res.ok=false, code:REQUEST_TIMEOUT`，**不执行**（不进 Zod、不碰数据库） |
-| Desktop 执行完成后发现已过 deadline | **不发送 `res`**，丢弃结果，记审计 `success=false, error_code=REQUEST_TIMEOUT` |
+| Desktop 执行完成后发现已过 deadline | **不发送 `res`**，丢弃结果**并丢弃 inflight 占位**，记审计 `success=false, error_code=REQUEST_TIMEOUT` |
 
 第三条是刻意的：如果 Cloud 已经超时返回，Desktop 再补发一个 `res` 只会让
 Cloud 收到一个「迟到的成功」，与它已经告诉 AI 的结果矛盾。**宁可丢结果，不要自相矛盾。**
+
+**「丢弃占位」不是可选的**：占位留着会让同一个 `delivery_id` 在此后一直被
+当成「正在执行」而拒绝（§8.3 第 1 条），直到断线才恢复——等于给一个永远
+不会到来的 `res` 占着一个坑。所以「丢弃结果」与「丢弃占位」必须同时发生。
 
 ### 7.5 `cancel`
 
@@ -337,23 +352,37 @@ request_hash = "sha256:" + SHA-256(UTF8(canonical_request))
 
 | # | 情况 | 处理 |
 |---|---|---|
-| 1 | 相同 `delivery_id` + 相同 `request_hash`，**第一次正在执行** | **不重复执行**。挂起该帧，等首次完成后共用同一结果（第二次 `meta.cached=true`） |
+| 1 | 相同 `delivery_id` + 相同 `request_hash`，**第一次正在执行** | **不重复执行**。v1 返回 `PROTOCOL_VIOLATION`（理由见下方「第 1 条的 v1 定稿」） |
 | 2 | 相同 `delivery_id` + 相同 `request_hash`，**已有完成结果** | 返回缓存结果（`meta.cached=true`，`duration_ms` 为首次值） |
 | 3 | 相同 `delivery_id` + **不同** `request_hash` | **拒绝**：`PROTOCOL_VIOLATION`，不执行，**不覆盖**已有缓存，记 stderr + 安全事件 |
 | 4 | **不同** `delivery_id` + 相同 tool/arguments | **视为独立请求，各执行一次**（这是最容易被写错的一条） |
 | 5 | 第一次执行中连接断开 | **不得**因为重连自动执行第二次。旧请求以 `DEVICE_OFFLINE` 结束，缓存随断线清空 |
 | 6 | 旧连接的迟到响应 | **不得**污染新连接的请求状态。新连接是新的 `connection_id` + 新缓存，旧帧丢弃 |
 
-**第 1 条的诚实说明**：当前 27 个 handler 全同步（架构 §1.4 实测），
-Node 单线程下一次执行是事件循环内的原子操作，因此「执行中再到达」**在
-现有实现里不可观测**。但仍必须实现占位逻辑，因为：
+#### 第 1 条的 v1 定稿：**拒绝，不排队**（Phase 1.1B.1 修订）
 
-- 审计写入 / 结果序列化未来可能引入异步点；
-- 未来可能引入异步工具（协议 §7.3 已声明那是一次 `v` 变更）；
-- 用例 ST-7 需要一个可断言的执行计数，占位是它成立的前提。
+Phase 1.0.2 写的是「挂起该帧，等首次完成后共用结果」。**v1 改为直接拒绝**，
+理由是那条路径在 v1 里**结构性不可达**，而为一个不可达路径写异步协调代码
+（取消、关开关、断线时都要保证不泄漏结果）比一条明确错误更危险。
+
+结构性的依据：27 个 handler 全同步（架构 §1.4 实测），`handle()` 从
+`beginInflight` 到 `put` 之间**没有 `await`**。Node 单线程下，第二次投递
+只可能在该函数**返回之后**到达——那时占位已被结果替换，走的是情况 2。
+
+因此 v1 的三条结论：
+
+| 决定 | 内容 |
+|---|---|
+| 占位表**保留** | 它是「同 id 绝不重复执行」的结构保证，也是 ST-7 可断言的前提 |
+| 命中占位 → `PROTOCOL_VIOLATION` | 明确、可观测、不静默 |
+| 不实现 waiter | 异步工具落地时（`v` 递增）再实现，届时需要 `exec_id` + waiter 计数 + 「所有 waiter 取消才中止」 |
 
 **不允许的捷径**：不得因为「同步所以不可能并发」就省掉占位、让第 1 条落到
 第 4 条去（那会变成执行两次）。占位表的存在本身就是第 1 条的实现。
+
+**为什么不影响正常重投**：Cloud 的重投发生在「没收到 `res`」之后，那时首次
+执行早已返回、占位已换成了结果，走情况 2 命中缓存。占位被命中的唯一方式是
+**同一条连接上并发投递同一个 id**，那本身就是协议违规。
 
 ### 8.4 缓存生命周期（设计建议，未实测）
 
@@ -446,8 +475,13 @@ Phase 1.0.1 **取消该设计**；Phase 1.0.2 明确：§8.3 第 1 条的「挂�
 2. handler 同步执行，Node 单线程下天然串行。
 3. 按内容合并（`intent_digest`）会重新引入「结果陈旧」的风险，见规则 2。
 
-结论：**不实现按内容合并**。若 Phase 1.5 引入异步工具，则重新评估
+结论：**不实现按内容合并**，v1 也**不实现「同 delivery_id 的 waiter」**
+（§8.3 第 1 条）。若引入异步工具，则两者一起重新评估
 （届时需要 `exec_id` + waiter 计数 + 「所有 waiter 取消才中止执行」的语义）。
+
+> 与 §8.3 的关系：§8.3 第 1 条是「同一 `delivery_id` 的重复投递」，
+> 这里说的是「不同请求按内容合并」。两者都在 v1 里选择「不做合并/不做排队」，
+> 但理由不同——前者是路径不可达，后者是会引入结果陈旧。
 
 ### 8.7 已完成后又收到 cancel
 

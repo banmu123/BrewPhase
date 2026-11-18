@@ -462,6 +462,50 @@ Desktop/tests/helpers/mock-gateway.ts       （新增：本地 WS 服务 + 协�
 19. **`jti` 不参与请求去重（P0-2，Mock 级）**：同一 token 连续 10 次 `tools/call`
     全部成功；Desktop 侧不出现「按 `jti` 拒绝」的分支（代码审查 + 断言）。
 
+### 1B.9 Phase 1.1B.1：协议与安全边界收口（1.1B 之后、1.2 之前）
+
+1.1B 交付时，以下七处「文档要求了、实现没做到」，且**原有测试全绿**——因为
+Mock 与客户端两侧都不检查。1.1B.1 只做修复与补齐，**不新增 Cloud 生产功能**。
+
+| # | 缺陷 | 为什么测试没抓到 | 收口方式 |
+|---|---|---|---|
+| 1 | WSS 握手不带 `device_token`（`headers` 参数在类型里有、实现里被丢弃） | Mock 无条件返回 `101` | 用 `net.WebSocket` 真发头；Mock 按 §4.3 前 3 步 + 子协议拒绝 |
+| 2 | 用户绑定检查只写在 `start()` 的一个分支里 | `enable()` / `resume()` / 重连定时器都没走那条分支 | 收敛成 `canConnect()`，所有入口 + `connect()` 内部各查一次 |
+| 3 | 审计失败被吞掉（`writeAudit` 内部 catch） | 只测了「注入的回调抛异常」，没测真实数据库失败 | 拆出 `writeAuditResult`（失败抛出）；测试**真删表** |
+| 4 | 帧大小用 `data.length`（字符数），中文少算 2/3 | 只用 ASCII 测过 | 改 `Buffer.byteLength`；补中文用例 |
+| 5 | `deadline` 每次比较都调 `Date.now()` | 没有注入时钟，测不出 | epoch 只读一次，之后只用 monotonic；测试断言「只读 1 次」 |
+| 6 | `hello` 字段与文档不一致（缺区间、多 `client_version`） | 没有契约测试 | 统一为 12 字段；签名覆盖全部字段；逐键比对测试 |
+| 7 | 连接尝试的 `setTimeout` 未清理、心跳从第一条 `ping` 起算、`close(code,reason)` 参数丢失、draining 不拒请求 | 时序类缺陷，功能测试的 happy path 覆盖不到 | 连接代际 + 握手指令超时 + 看门狗从 `hello_ok` 起算 + `dropConnection` 统一收敛 |
+
+**另外两处语义冲突（改文档而非改代码）**：
+
+- **inflight 重复投递**：文档 §8.3 第 1 条写「挂起并共用结果」，实现是拒绝。
+  v1 改为**拒绝**并说明为什么（该路径在同步 handler 下结构性不可达，
+  协议 §8.3 已同步修订）。
+- **`serviceable` 方向**：文档 §4.2 的 hello 示例与 §4.4.1 自相矛盾，
+  统一为「`hello` 带 `serviceable`，`hello_ok` 不带」。
+
+**验收补充（在 §1B.7 之外）**：
+
+20. Mock Gateway 对无 token / 伪造 token / revoked / 错子协议 / 错 path **全部拒绝 Upgrade**，
+    且 `device_token` 不出现在 URL、`hello` 帧、stdout/stderr。
+21. 用户不匹配时，**WebSocketFactory 调用次数 = 0**（start / enable / resume /
+    重连定时器 / reconcile 五条路径各测一次）。
+22. 真实数据库写入失败时：`res.ok` 仍为 `true`、`consecutiveFailures` 增加、
+    日志不含 `SQLITE` / `.db` / 参数。
+23. UTF-8 字节限制正确（中文用例）；Cloud 下发的更小 `max_frame_bytes` 生效且
+    **不能放宽**。
+24. **旧连接尝试不影响新连接**：A 未 open 时 disable → enable → 触发 A 的旧定时器，
+    B 不受影响、A 不发 hello、A 不关 B。
+25. 握手成功但**始终没有第一条 ping** → 到 `idle_timeout_ms` 关闭 `4008`。
+26. 本地主动 `close(code, reason)` 的参数**精确到达**底层 socket（11 个 code 各测一遍）。
+27. `draining` 期间新 `req` → `DEVICE_BUSY`，零业务调用、零审计。
+28. 设备注册闭环（Mock 端点）：密钥 → 确认码 → 轮询 pending → 确认 → 一次性领取 →
+    落盘；`claim_secret` 不入 URL、不进 IPC 返回值、不落盘。
+
+**明确未做**：真实 Cloud 联调、真实 MCP OAuth、写工具、数据库迁移。
+Phase 1.1B.1 结束时仍**不能**声称「真实 Cloud 已接通」。
+
 ### 1B.8 风险与缓解
 
 | 风险 | 缓解 |
