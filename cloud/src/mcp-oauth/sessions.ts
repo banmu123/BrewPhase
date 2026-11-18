@@ -149,8 +149,33 @@ export interface CreatedMcpSession {
  * 这样「Session 的 client/resource 与 Grant 一致」不是一条需要校验的规则，
  * 而是一个不可能被违反的结构事实——少一条能写错的路径。
  *
- * Grant 读取不加行锁：即使它在此刻被并发撤销，`/mcp` 的每次请求仍会回查
- * Grant（设计 §9.7），所以这里不需要付出锁开销。
+ * ## 为什么 Grant 必须 `FOR UPDATE`（Phase 1.3.1-C1 修复）
+ *
+ * 不加锁时存在这样一条真实路径：
+ *
+ * ```
+ * 事务 A: SELECT grant → revoked_at IS NULL
+ * 事务 B: UPDATE grant SET revoked_at = now()
+ *         UPDATE mcp_sessions SET revoked_at = now()   ← 此时 A 还没 INSERT
+ *         COMMIT
+ * 事务 A: INSERT mcp_sessions（关联一条已撤销的 grant，revoked_at IS NULL）
+ *         COMMIT
+ * ```
+ *
+ * 结果是「撤销完成之后又长出一条有效 Session」，而它永远等不到那次撤销
+ * （撤销事务已经跑完，它扫不到未来才插入的行）。
+ *
+ * 加锁后只剩两种合法结果，且都由 PostgreSQL 的行锁串行化保证：
+ *
+ * 1. **A 先拿到锁** → B 的 `UPDATE grant` 阻塞到 A 提交；B 恢复后看到
+ *    A 新插入的 Session 并一起撤销（B 的洗会话语句在 grant 锁之后执行）。
+ * 2. **B 先拿到锁** → A 的 `SELECT … FOR UPDATE` 阻塞到 B 提交；A 恢复后
+ *    重新读到 `revoked_at IS NOT NULL`（READ COMMITTED 下 `FOR UPDATE`
+ *    会重读最新版本）并拒绝创建。
+ *
+ * **锁顺序约定：grant 行永远在 session 行之前。** 撤销路径
+ * （`UPDATE mcp_grants` → `revokeMcpSessionsByGrant`）与这里一致，
+ * 因此不会出现「A 持 grant 等 session、B 持 session 等 grant」的死锁。
  */
 export async function createMcpSession(
   deps: McpOAuthDeps,
@@ -181,7 +206,7 @@ export async function createMcpSession(
       throw rejectAuthorization("user_inactive");
     }
 
-    // ---- 2. Grant 必须属于该用户、未撤销 ----
+    // ---- 2. Grant 必须属于该用户、未撤销（**行锁**，见上方长注释）----
     const grantRows = await tx
       .select({
         id: mcpGrants.id,
@@ -193,6 +218,7 @@ export async function createMcpSession(
       })
       .from(mcpGrants)
       .where(and(eq(mcpGrants.id, input.grantId), eq(mcpGrants.userId, input.userId)))
+      .for("update")
       .limit(1);
     const grant = grantRows[0];
     // 「不存在」与「不属于这个用户」返回同一个错误：分开会让 grant_id

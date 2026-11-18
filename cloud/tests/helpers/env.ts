@@ -32,6 +32,9 @@ export function makeTestEnv(overrides: TestEnvOverrides = {}): Env {
     jwtSigningKey: "test-jwt-signing-key-0123456789abcdef0123456789abcdef",
     jwtSigningKeyPrevious: undefined,
     sessionTokenPepper: "test-session-pepper-0123456789abcdef",
+    // 测试环境给一个固定值：Cookie 相关的用例需要可复现的签名，
+    // 而「未配置」这条路径由专门的用例显式传 undefined 覆盖。
+    mcpBrowserSessionKey: "test-mcp-browser-session-key-0123456789abcdef",
 
     accessTokenTtlSeconds: 900,
     refreshSessionTtlSeconds: 30 * 24 * 3600,

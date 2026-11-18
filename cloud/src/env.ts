@@ -25,6 +25,20 @@ const rawSchema = z.object({
   JWT_SIGNING_KEY_PREVIOUS: z.string().optional(),
   SESSION_TOKEN_PEPPER: z.string().optional(),
 
+  /**
+   * 浏览器授权 Cookie（`bp_mcp_bs`）的签名密钥。≥32 字节，独立于 JWT 密钥。
+   *
+   * **可选，且刻意不参与启动断言**：Cloud 目前同时服务 Desktop 登录
+   * （`/oauth/*` 与 `/auth/*`）。把这条设成必填会让「只跑 Desktop 登录的
+   * 部署」因为一个尚未启用的 MCP 能力而起不来——那是把新功能的门禁
+   * 变成了旧功能的故障。
+   *
+   * 正确纪律是：**C2 挂载 `/mcp/oauth/*` 路由时，缺这个值就不注册那些路由**
+   * （fail-closed 在能力边界上，而不是在整个进程上）。本阶段只提供
+   * `assertBrowserSessionKey()`，谁用它谁负责。
+   */
+  MCP_BROWSER_SESSION_KEY: z.string().optional(),
+
   ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().default(900),
   REFRESH_SESSION_TTL_SECONDS: z.coerce.number().int().positive().default(60 * 60 * 24 * 30),
   OAUTH_TRANSACTION_TTL_SECONDS: z.coerce.number().int().positive().default(300),
@@ -91,6 +105,13 @@ export type Env = {
   jwtSigningKey: string;
   jwtSigningKeyPrevious: string | undefined;
   sessionTokenPepper: string;
+  /**
+   * 浏览器授权 Cookie 的签名密钥。`undefined` = 该能力未配置。
+   *
+   * 与 `jwtSigningKey` 分开：共用一个密钥会让「Cookie 签名」与「token 签名」
+   * 互为伪装面（拿到其中一个就能伪造另一个的签名输入）。
+   */
+  mcpBrowserSessionKey: string | undefined;
 
   accessTokenTtlSeconds: number;
   refreshSessionTtlSeconds: number;
@@ -263,6 +284,9 @@ export function loadEnv(input: Record<string, string | undefined>): Env {
     jwtSigningKey,
     jwtSigningKeyPrevious: parsed.JWT_SIGNING_KEY_PREVIOUS,
     sessionTokenPepper,
+    // 长度不足的情况**不在这里报错**：那会在开发环境把整进程拦下。
+    // 真正使用它的地方（assertBrowserSessionKey）会 fail-closed。
+    mcpBrowserSessionKey: parsed.MCP_BROWSER_SESSION_KEY,
 
     accessTokenTtlSeconds: accessTtl,
     refreshSessionTtlSeconds: parsed.REFRESH_SESSION_TTL_SECONDS,
