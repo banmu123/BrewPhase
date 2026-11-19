@@ -3,6 +3,7 @@ import {
   CIMD_DEFAULT_TTL_MS,
   CIMD_MAX_BODY_BYTES,
   CIMD_MAX_TTL_MS,
+  classifyHttpStatus,
   fetchClientMetadataDocument,
   isJsonContentType,
   isPubliclyRoutableAddress,
@@ -57,15 +58,20 @@ function jsonResponse(overrides: ResponseOverrides = {}): CimdTransportResponse 
 interface HarnessOptions {
   addresses?: CimdAddress[];
   resolveError?: Error;
+  /** 直接给定 resolver 的 promise（用于「永不返回」「迟到」两类用例）。 */
+  resolveResult?: Promise<CimdAddress[]>;
   response?: CimdTransportResponse;
   requestError?: Error;
   /** 依次返回的单调时钟读数；默认恒为 0（剩余预算 5s）。 */
   clock?: number[];
+  /** 总预算；默认用生产值 5s。DNS 相关用例会调到几十毫秒以免拖慢测试。 */
+  totalTimeoutMs?: number;
 }
 
 function harness(options: HarnessOptions = {}) {
   let tick = 0;
   const resolve = vi.fn(async (): Promise<CimdAddress[]> => {
+    if (options.resolveResult) return await options.resolveResult;
     if (options.resolveError) throw options.resolveError;
     return options.addresses ?? [{ address: PUBLIC_V4, family: 4 }];
   });
@@ -78,6 +84,7 @@ function harness(options: HarnessOptions = {}) {
     request,
     now: () => new Date(NOW),
     monotonic: () => options.clock?.[tick++] ?? 0,
+    totalTimeoutMs: options.totalTimeoutMs,
   };
   return { deps, resolve, request };
 }
@@ -211,6 +218,14 @@ describe("SSRF：地址分类", () => {
     ["2002::1", "6to4"],
     ["64:ff9b::1", "NAT64"],
     ["3fff::1", "IPv6 文档保留（RFC 9637）"],
+    // 2000::/3 之外：未分配 / 保留段，黑名单挡不住，靠全球单播白名单。
+    ["4000::1", "不属于 2000::/3"],
+    ["6000::1", "不属于 2000::/3"],
+    ["8000::1", "不属于 2000::/3"],
+    ["a000::1", "不属于 2000::/3"],
+    ["c000::1", "不属于 2000::/3"],
+    ["e000::1", "不属于 2000::/3"],
+    ["f000::1", "不属于 2000::/3"],
   ];
 
   it.each(BLOCKED_ADDRESSES)("%s（%s）判为不可访问", (address) => {
@@ -221,6 +236,14 @@ describe("SSRF：地址分类", () => {
     expect(isPubliclyRoutableAddress("93.184.216.34")).toBe(true);
     expect(isPubliclyRoutableAddress("1.1.1.1")).toBe(true);
     expect(isPubliclyRoutableAddress("2606:4700:4700::1111")).toBe(true);
+  });
+
+  it("2000::/3 两端都在允许范围内", () => {
+    // IANA IPv6 Address Space Registry：2000::/3 是全球单播。
+    expect(isPubliclyRoutableAddress("2000::1")).toBe(true);
+    expect(isPubliclyRoutableAddress("2001:4860:4860::8888")).toBe(true);
+    // 3fff::/20 是文档保留段，边界要取在它之外但仍在 2000::/3 内。
+    expect(isPubliclyRoutableAddress("3fff:ffff::1")).toBe(true);
   });
 
   it("无法识别的形态一律拒绝", () => {
@@ -299,6 +322,153 @@ describe("SSRF：地址分类", () => {
     expect(outcome.kind).toBe("transient");
     expect(outcome.reason).toBe("timeout");
     expect(h.request).not.toHaveBeenCalled();
+  });
+});
+
+describe("DNS 总预算（R1-2）", () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  it("DNS 在预算内完成 → 继续抓取", async () => {
+    const h = harness({ totalTimeoutMs: 50 });
+    const outcome = await fetchClientMetadataDocument(CLIENT_ID, h.deps);
+    expect(outcome.ok).toBe(true);
+    expect(h.request).toHaveBeenCalledTimes(1);
+  });
+
+  it("DNS 永不返回 → 必须在预算内返回 transient timeout，且不发请求", async () => {
+    // 关键：不是「await 之后再检查耗时」——那样 DNS 不返回就永远轮不到检查。
+    const h = harness({ resolveResult: new Promise(() => {}), totalTimeoutMs: 40 });
+    const startedAt = Date.now();
+    const outcome = await fetchClientMetadataDocument(CLIENT_ID, h.deps);
+    expect(Date.now() - startedAt).toBeLessThan(2000);
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.kind).toBe("transient");
+    expect(outcome.reason).toBe("timeout");
+    expect(h.request).not.toHaveBeenCalled();
+  });
+
+  it("DNS 超时后迟到 resolve，不得接着发请求", async () => {
+    const late = deferred<CimdAddress[]>();
+    const h = harness({ resolveResult: late.promise, totalTimeoutMs: 20 });
+    const outcome = await fetchClientMetadataDocument(CLIENT_ID, h.deps);
+    expect(outcome.ok).toBe(false);
+
+    late.resolve([{ address: PUBLIC_V4, family: 4 }]);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(h.request).not.toHaveBeenCalled();
+  });
+
+  it("DNS 超时后迟到 reject，不产生 unhandled rejection", async () => {
+    const late = deferred<CimdAddress[]>();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const h = harness({ resolveResult: late.promise, totalTimeoutMs: 20 });
+      const outcome = await fetchClientMetadataDocument(CLIENT_ID, h.deps);
+      expect(outcome.ok).toBe(false);
+
+      late.reject(new Error("late DNS failure"));
+      // 让微任务/下一轮事件循环跑完，若有未处理 rejection 会在这里被抓到。
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(unhandled).toEqual([]);
+      expect(h.request).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("HTTP 阶段拿到的是扣除 DNS 之后的剩余预算", async () => {
+    const h = harness({ clock: [0, 1_200] });
+    const outcome = await fetchClientMetadataDocument(CLIENT_ID, h.deps);
+    expect(outcome.ok).toBe(true);
+    const input = h.request.mock.calls[0]?.[0];
+    expect(input?.totalTimeoutMs).toBe(3_800);
+    // 连接超时取 min(3s, 剩余)；剩余更大时仍是 3s。
+    expect(input?.connectTimeoutMs).toBe(3_000);
+  });
+
+  it("剩余预算小于连接超时时，连接超时跟着缩短", async () => {
+    const h = harness({ clock: [0, 4_600] });
+    const outcome = await fetchClientMetadataDocument(CLIENT_ID, h.deps);
+    expect(outcome.ok).toBe(true);
+    const input = h.request.mock.calls[0]?.[0];
+    expect(input?.totalTimeoutMs).toBe(400);
+    expect(input?.connectTimeoutMs).toBe(400);
+  });
+
+  it("边界：DNS 用掉的正好等于预算 → 不发请求", async () => {
+    const h = harness({ clock: [0, 5_000] });
+    const outcome = await fetchClientMetadataDocument(CLIENT_ID, h.deps);
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.kind).toBe("transient");
+    expect(outcome.reason).toBe("timeout");
+    expect(h.request).not.toHaveBeenCalled();
+  });
+});
+
+describe("HTTP 状态分类（R1-4）", () => {
+  it("只有 200 进入文档解析", () => {
+    expect(classifyHttpStatus(200)).toBe("ok");
+    expect(classifyHttpStatus(201)).toBe("terminal");
+    expect(classifyHttpStatus(204)).toBe("terminal");
+  });
+
+  it.each([408, 425, 429, 500, 501, 502, 503, 504, 599])("%i 是 transient", (status) => {
+    expect(classifyHttpStatus(status)).toBe("transient");
+  });
+
+  it.each([300, 301, 302, 303, 304, 307, 308, 400, 401, 403, 404, 410, 422, 451])(
+    "%i 是 terminal",
+    (status) => {
+      expect(classifyHttpStatus(status)).toBe("terminal");
+    },
+  );
+
+  it("503 不再被当成「客户端元数据失效」", async () => {
+    const h = harness({ response: jsonResponse({ status: 503 }) });
+    const outcome = await fetchClientMetadataDocument(CLIENT_ID, h.deps);
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.kind).toBe("transient");
+    expect(outcome.reason).toBe("http_status");
+  });
+
+  it.each([503, 429, 408])("%i 不产生缓存结果，也不会作废已有缓存的语义", async (status) => {
+    const h = harness({ response: jsonResponse({ status }) });
+    const outcome = await fetchClientMetadataDocument(CLIENT_ID, h.deps);
+    expect(outcome.ok).toBe(false);
+    expect(Object.keys(outcome)).not.toContain("cacheExpiresAt");
+  });
+
+  it("3xx 不跟随：transport 只被调用一次，Location 不被使用", async () => {
+    const h = harness({
+      response: jsonResponse({
+        status: 302,
+        headers: { "content-type": "application/json", location: "http://169.254.169.254/latest" },
+      }),
+    });
+    const outcome = await fetchClientMetadataDocument(CLIENT_ID, h.deps);
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.kind).toBe("terminal");
+    expect(outcome.reason).toBe("http_status");
+    expect(h.request).toHaveBeenCalledTimes(1);
+    // 唯一一次请求的目标仍是原始 client_id，不是 Location。
+    expect(h.request.mock.calls[0]?.[0].url.hostname).toBe("client.example.com");
   });
 });
 
@@ -723,7 +893,7 @@ describe("Transient 与 Terminal 不混淆", () => {
     ["无解析结果", { addresses: [] }, "transient"],
     ["网络错误", { requestError: Object.assign(new Error("x"), { code: "ECONNRESET" }) }, "transient"],
     ["超时", { requestError: Object.assign(new Error("x"), { code: "PINNED_REQUEST_TIMEOUT" }) }, "transient"],
-    ["非 200", { response: jsonResponse({ status: 503 }) }, "terminal"],
+    ["稳定 4xx", { response: jsonResponse({ status: 404 }) }, "terminal"],
     ["非法 JSON", { response: jsonResponse({ body: Buffer.from("<html>") }) }, "terminal"],
     ["client_id 不一致", { response: jsonResponse({ doc: { ...VALID_DOC, client_id: "x" } }) }, "terminal"],
   ];

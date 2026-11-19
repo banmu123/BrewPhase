@@ -1,4 +1,5 @@
 import dns from "node:dns/promises";
+import { performance } from "node:perf_hooks";
 import net from "node:net";
 import { requestPinnedHttps } from "../net/proxy-fetch.js";
 
@@ -96,6 +97,27 @@ export type CimdOutcome =
       detail: string;
     };
 
+export type HttpStatusClass = "ok" | "transient" | "terminal";
+
+/**
+ * HTTP 状态码分类（R1-4）。
+ *
+ * 「非 200 一律 terminal」会把 503 / 429 这类**临时**故障记成「客户端元数据
+ * 失效」，进而允许调用方作废缓存与 refresh token。临时故障必须可重试：
+ *
+ * - `transient`：408（请求超时）、425（Too Early）、429（限流）、全部 5xx。
+ * - `terminal`：3xx（不跟随重定向）、其它 4xx，以及 2xx 里除 200 之外的形态
+ *   （201/204 不是 CIMD 文档）。
+ *
+ * 只有 200 会进入 JSON 解析。
+ */
+export function classifyHttpStatus(status: number): HttpStatusClass {
+  if (status === 200) return "ok";
+  if (status === 408 || status === 425 || status === 429) return "transient";
+  if (status >= 500 && status <= 599) return "transient";
+  return "terminal";
+}
+
 function terminal(reason: CimdFailureReason, detail: string): CimdOutcome {
   return { ok: false, kind: "terminal", reason, detail };
 }
@@ -106,6 +128,38 @@ function transient(reason: CimdFailureReason, detail: string): CimdOutcome {
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+type DeadlineResult<T> =
+  | { kind: "value"; value: T }
+  | { kind: "error"; error: unknown }
+  | { kind: "timeout" };
+
+/**
+ * 给一个 Promise 加**真正的**截止时间（R1-2）。
+ *
+ * `Promise.race` 的经典陷阱是落败那一边的 rejection 没人接，变成
+ * `unhandledRejection`。这里把工作分支先 `.then(…, …)` 成**永不 reject** 的
+ * promise，再用一个只 resolve 的定时器竞速——两边都不会抛，迟到结果被安静吸收。
+ *
+ * 另一个陷阱是「await 之后再检查耗时」：DNS 如果一直 pending，检查永远轮不到。
+ * 所以截止时间必须在等待**期间**生效。
+ */
+async function withDeadline<T>(work: Promise<T>, ms: number): Promise<DeadlineResult<T>> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<DeadlineResult<T>>((resolve) => {
+    timer = setTimeout(() => resolve({ kind: "timeout" }), Math.max(0, ms));
+  });
+  const settled = work.then(
+    (value): DeadlineResult<T> => ({ kind: "value", value }),
+    (error): DeadlineResult<T> => ({ kind: "error", error }),
+  );
+
+  try {
+    return await Promise.race([settled, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /* -------------------------------------------------------------------------- *
@@ -267,6 +321,16 @@ const IPV4_MAPPED = new net.BlockList();
 IPV4_MAPPED.addSubnet("::ffff:0:0", 96, "ipv6");
 
 /**
+ * IANA IPv6 Address Space Registry 里的全球单播段 `2000::/3`。
+ *
+ * 黑名单挡不住「整段都不是公网」的地址（`4000::1`、`c000::1` 之类），所以
+ * IPv6 先用这张表做**白名单**：不属于 2000::/3 的一律拒绝，再走特殊用途排除。
+ * 这比「只排掉已知坏段」稳妥——未分配的段等于不可达，没有理由去连。
+ */
+const GLOBAL_UNICAST_V6 = new net.BlockList();
+GLOBAL_UNICAST_V6.addSubnet("2000::", 3, "ipv6");
+
+/**
  * 这个地址能不能作为抓取目标。
  *
  * 只接受「确定是公网」的地址：未知形态、IPv4-mapped IPv6、任何 RFC 6890
@@ -282,6 +346,8 @@ export function isPubliclyRoutableAddress(address: string): boolean {
     // IPv4-mapped 一律拒绝：公网域名没有理由解析到映射地址，而它是经典的
     // 「看起来像 IPv6、实际打到 127.0.0.1」绕过手段。
     if (IPV4_MAPPED.check(bare, "ipv6")) return false;
+    // 白名单：先确认属于全球单播 2000::/3，再排特殊用途段。
+    if (!GLOBAL_UNICAST_V6.check(bare, "ipv6")) return false;
     return !BLOCKED.check(bare, "ipv6");
   }
   return false;
@@ -378,7 +444,8 @@ export function createCimdDeps(env: NodeJS.ProcessEnv = process.env): CimdFetche
       };
     },
     now: () => new Date(),
-    monotonic: () => Date.now(),
+    // 单调时钟：不受系统时间回拨影响，DNS / 连接 / 读取共用一个预算。
+    monotonic: () => performance.now(),
   };
 }
 
@@ -670,14 +737,17 @@ export async function fetchClientMetadataDocument(
   const budget = deps.totalTimeoutMs ?? CIMD_TOTAL_TIMEOUT_MS;
   const startedAt = deps.monotonic();
 
-  let addresses: CimdAddress[];
-  try {
-    addresses = await deps.resolve(url.hostname);
-  } catch (error) {
-    // DNS 失败/超时：可能是临时的，也可能是永久不存在。按 transient 处理——
-    // 保守方向是「保留已有缓存」，而不是因为一次解析失败就让客户端失效。
-    return transient("dns_failure", describe(error));
+  // 预算从**开始解析 DNS 之前**起算：DNS、连接、TLS、读 body 共用它。
+  const resolved = await withDeadline(deps.resolve(url.hostname), budget);
+  if (resolved.kind === "timeout") {
+    return transient("timeout", "DNS resolution exceeded the timeout budget");
   }
+  if (resolved.kind === "error") {
+    // DNS 失败：可能是临时的，也可能是永久不存在。按 transient 处理——保守
+    // 方向是「保留已有缓存」，而不是因为一次解析失败就让客户端失效。
+    return transient("dns_failure", describe(resolved.error));
+  }
+  const addresses = resolved.value;
   if (addresses.length === 0) return transient("dns_failure", "no A/AAAA records");
 
   // 只要有一条落在特殊用途地址，就拒绝整个目标（不看第一个）。
@@ -690,6 +760,7 @@ export async function fetchClientMetadataDocument(
   const pinned = addresses[0];
   if (!pinned) return transient("dns_failure", "no A/AAAA records");
 
+  // HTTP 阶段拿到的是**扣除 DNS 之后**的剩余时间，不是重新开始计时的完整预算。
   const remaining = budget - (deps.monotonic() - startedAt);
   if (remaining <= 0) return transient("timeout", "DNS resolution consumed the timeout budget");
 
@@ -707,7 +778,13 @@ export async function fetchClientMetadataDocument(
   }
 
   // 重定向在这里就是「状态不是 200」：不跟随、不重试、不换 URL。
-  if (response.status !== 200) return terminal("http_status", `HTTP ${response.status}`);
+  const statusClass = classifyHttpStatus(response.status);
+  if (statusClass === "transient") {
+    return transient("http_status", `HTTP ${response.status}`);
+  }
+  if (statusClass === "terminal") {
+    return terminal("http_status", `HTTP ${response.status}`);
+  }
   if (response.bodyTooLarge) {
     return terminal("too_large", `response exceeds ${CIMD_MAX_BODY_BYTES} bytes`);
   }

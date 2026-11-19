@@ -1,7 +1,7 @@
 import http from "node:http";
 import https from "node:https";
 import tls from "node:tls";
-import type net from "node:net";
+import net from "node:net";
 
 /**
  * Provider 出网的可选代理通道。
@@ -58,43 +58,128 @@ export function shouldBypassProxy(hostname: string, noProxy: string | undefined)
   return false;
 }
 
-/** 建立到 target 的 CONNECT 隧道（返回裸 socket，TLS 由调用方叠加）。 */
-export function openTunnel(
-  proxy: URL,
-  target: { host: string; port: number },
-  timeoutMs = CONNECT_TIMEOUT_MS,
-): Promise<net.Socket> {
+/**
+ * 代理连接的附加选项。
+ *
+ * 刻意**只有** `ca`：没有 `rejectUnauthorized`，也没有任何关闭证书校验的通道。
+ * 它只影响「到代理那一跳」，目标服务器的证书校验不受影响。
+ */
+export interface TunnelOptions {
+  /** 附加信任锚（私有 CA / 测试证书）。 */
+  ca?: string | string[];
+}
+
+/** 代理端点：URL 的 hostname 对 IPv6 带方括号，连接前必须去掉。 */
+function proxyEndpoint(proxy: URL): { host: string; port: number } {
+  const raw = proxy.hostname;
+  const host = raw.startsWith("[") && raw.endsWith("]") ? raw.slice(1, -1) : raw;
+  return { host, port: Number(proxy.port || (proxy.protocol === "https:" ? 443 : 80)) };
+}
+
+/** 把目标写成 CONNECT 的 authority 形式；IPv6 必须保留方括号。 */
+function connectAuthority(target: { host: string; port: number }): string {
+  const host =
+    target.host.includes(":") && !target.host.startsWith("[") ? `[${target.host}]` : target.host;
+  return `${host}:${target.port}`;
+}
+
+/**
+ * 与代理建立连接。
+ *
+ * `https:` 代理**必须先完成 TLS 握手再发 CONNECT**——否则 `Proxy-Authorization`
+ * 会以明文走一跳，代理侧也只会看到一条未加密的隧道请求。证书校验保持默认开启。
+ */
+function connectToProxy(proxy: URL, timeoutMs: number, options: TunnelOptions): Promise<net.Socket> {
+  const endpoint = proxyEndpoint(proxy);
+  const secure = proxy.protocol === "https:";
+
   return new Promise<net.Socket>((resolve, reject) => {
-    const proxyPort = Number(proxy.port || (proxy.protocol === "https:" ? 443 : 80));
-    const authority = `${target.host}:${target.port}`;
+    const socket = secure
+      ? tls.connect({
+          host: endpoint.host,
+          port: endpoint.port,
+          // IP 字面量不能作为 SNI（RFC 6066），证书按 IP SAN 校验。
+          ...(net.isIP(endpoint.host) === 0 ? { servername: endpoint.host } : {}),
+          ca: options.ca,
+        })
+      : net.connect({ host: endpoint.host, port: endpoint.port });
+
+    const ready = (): void => {
+      socket.setTimeout(0);
+      resolve(socket);
+    };
+
+    socket.setTimeout(timeoutMs, () => {
+      socket.destroy(new Error(`proxy connection timed out after ${timeoutMs}ms`));
+    });
+    socket.once(secure ? "secureConnect" : "connect", ready);
+    socket.once("error", (error: Error) => reject(error));
+    // 握手前被对端关掉时既不会 connect 也不会 error（例如明文代理遇到 TLS 握手）。
+    socket.once("close", () => reject(new Error("proxy connection closed before it was ready")));
+  });
+}
+
+/** 在已建立的代理连接上发 CONNECT，并校验 200。 */
+function sendConnect(
+  socket: net.Socket,
+  authority: string,
+  proxy: URL,
+  timeoutMs: number,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
     const headers: Record<string, string> = { Host: authority };
+    // 代理凭据**只**发给代理：它是 CONNECT 请求的头，不会进入隧道。
     if (proxy.username) {
       const credentials = `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`;
       headers["Proxy-Authorization"] = `Basic ${Buffer.from(credentials, "utf8").toString("base64")}`;
     }
 
     const request = http.request({
-      host: proxy.hostname,
-      port: proxyPort,
       method: "CONNECT",
       path: authority,
       headers,
+      // 复用已经连好的 socket（https 代理时它已经是 TLS 隧道）。
+      createConnection: () => socket,
     });
 
     request.setTimeout(timeoutMs, () => {
       request.destroy(new Error(`proxy CONNECT timed out after ${timeoutMs}ms`));
     });
-    request.once("connect", (response, socket) => {
+    request.once("connect", (response, connected, head) => {
       if (response.statusCode !== 200) {
-        socket.destroy();
+        connected.destroy();
         reject(new Error(`proxy CONNECT rejected (${response.statusCode ?? 0})`));
         return;
       }
-      resolve(socket);
+      // 代理可能把目标的首批字节跟在 200 后面一起送来，必须交还给调用方。
+      if (head && head.length > 0) connected.unshift(head);
+      connected.setTimeout(0);
+      resolve();
     });
     request.once("error", (error) => reject(error));
     request.end();
   });
+}
+
+/**
+ * 建立到 target 的 CONNECT 隧道（返回裸 socket，TLS 由调用方叠加）。
+ *
+ * `target.host` 已经是调用方校验过的 IP；这里**不再解析任何域名**。
+ */
+export async function openTunnel(
+  proxy: URL,
+  target: { host: string; port: number },
+  timeoutMs = CONNECT_TIMEOUT_MS,
+  options: TunnelOptions = {},
+): Promise<net.Socket> {
+  const socket = await connectToProxy(proxy, timeoutMs, options);
+  try {
+    await sendConnect(socket, connectAuthority(target), proxy, timeoutMs);
+    return socket;
+  } catch (error) {
+    socket.destroy();
+    throw error;
+  }
 }
 
 type FetchInput = Parameters<typeof fetch>[0];
@@ -190,6 +275,13 @@ export function createProxyFetch(proxy: URL): typeof fetch {
     const signal = init?.signal ?? null;
 
     const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
+
+    // 明文目标 + HTTPS 代理：这条分支会直接往代理端口发明文请求。与其静默
+    // 把明文送到一个 TLS 端点，不如明确失败（Provider 全是 https，正常路径
+    // 不会走到这里）。
+    if (url.protocol !== "https:" && proxy.protocol === "https:") {
+      throw new Error("[net] plaintext HTTP cannot be sent through an HTTPS proxy");
+    }
 
     return await new Promise<Response>((resolve, reject) => {
       const onAbort = (): void => {
@@ -410,6 +502,106 @@ export function declaredLengthExceeds(contentLength: string | string[] | undefin
   return Number.isFinite(value) && value > maxBytes;
 }
 
+/** `readResponseBody` 需要的最小响应流形状（`http.IncomingMessage` 满足它）。 */
+export interface ResponseBodyStream {
+  on(event: "data", listener: (chunk: Buffer) => void): unknown;
+  once(event: "end", listener: () => void): unknown;
+  once(event: "error", listener: (error: Error) => void): unknown;
+  destroy(): void;
+}
+
+export interface BodyReadResult {
+  body: Buffer;
+  bodyTooLarge: boolean;
+  bytesRead: number;
+  /** 是否因为超限主动销毁了响应流（区别于正常读完）。 */
+  destroyedEarly: boolean;
+}
+
+/**
+ * 流式读取响应体，超过 `maxBodyBytes` 立刻停止。
+ *
+ * 这里是「5 KiB 上限」的**唯一执行点**：不先 `text()` 再量长度，也不把超限的
+ * 半截 body 交给上层——超限时返回空 buffer + `bodyTooLarge`，让调用方按错误
+ * 处理，而不是拿一段不完整的 JSON 去解析。
+ */
+export function readResponseBody(
+  stream: ResponseBodyStream,
+  maxBodyBytes: number,
+): Promise<BodyReadResult> {
+  return new Promise<BodyReadResult>((resolve, reject) => {
+    const limiter = new BodySizeLimiter(maxBodyBytes);
+    let settled = false;
+
+    const finish = (result: BodyReadResult): void => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    stream.on("data", (chunk: Buffer) => {
+      if (settled) return;
+      if (limiter.push(chunk)) return;
+      // 超限：立即销毁，不再消费剩余数据。
+      stream.destroy();
+      finish({
+        body: Buffer.alloc(0),
+        bodyTooLarge: true,
+        bytesRead: limiter.bytesRead,
+        destroyedEarly: true,
+      });
+    });
+    stream.once("end", () => {
+      finish({
+        body: limiter.toBuffer(),
+        bodyTooLarge: limiter.exceeded,
+        bytesRead: limiter.bytesRead,
+        destroyedEarly: false,
+      });
+    });
+    stream.once("error", (error: Error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    });
+  });
+}
+
+/** `readPinnedResponse` 需要的响应形状（`http.IncomingMessage` 满足它）。 */
+export interface ResponseHeadLike extends ResponseBodyStream {
+  statusCode?: number;
+  headers: Record<string, string | string[] | undefined>;
+}
+
+export interface HeadAndBody {
+  status: number;
+  headers: Record<string, string | string[] | undefined>;
+  body: Buffer;
+  bodyTooLarge: boolean;
+}
+
+/**
+ * 读取一次响应的头部与 body（含 `Content-Length` 预检）。
+ *
+ * 预检命中时**不建立读取循环**：直接 `destroy()` 并返回 `bodyTooLarge`，避免
+ * 明知超限还继续把数据读进内存。
+ */
+export async function readPinnedResponse(
+  response: ResponseHeadLike,
+  maxBodyBytes: number,
+): Promise<HeadAndBody> {
+  const status = response.statusCode ?? 0;
+  const headers = response.headers;
+
+  if (declaredLengthExceeds(headers["content-length"], maxBodyBytes)) {
+    response.destroy();
+    return { status, headers, body: Buffer.alloc(0), bodyTooLarge: true };
+  }
+
+  const result = await readResponseBody(response, maxBodyBytes);
+  return { status, headers, body: result.body, bodyTooLarge: result.bodyTooLarge };
+}
+
 export interface PinnedRequestOptions {
   /** 原始 URL。hostname 用于 Host 头、TLS SNI 与证书校验。 */
   url: URL;
@@ -481,33 +673,10 @@ export async function requestPinnedHttps(options: PinnedRequestOptions): Promise
     }, totalTimeoutMs);
 
     const onResponse = (response: http.IncomingMessage): void => {
-      const status = response.statusCode ?? 0;
-      const headers = response.headers;
-
-      // 声明值先挡一次：能在读 body 之前就知道超限，就不必建立读取循环。
-      if (declaredLengthExceeds(headers["content-length"], maxBodyBytes)) {
-        response.destroy();
-        finish(null, { status, headers, body: Buffer.alloc(0), bodyTooLarge: true });
-        return;
-      }
-
-      const limiter = new BodySizeLimiter(maxBodyBytes);
-      response.on("data", (chunk: Buffer) => {
-        if (!limiter.push(chunk)) {
-          // 真实字节数超限（含谎报 Content-Length / 分块流）：立即停止读取。
-          response.destroy();
-          finish(null, { status, headers, body: Buffer.alloc(0), bodyTooLarge: true });
-        }
-      });
-      response.once("end", () => {
-        finish(null, {
-          status,
-          headers,
-          body: limiter.toBuffer(),
-          bodyTooLarge: limiter.exceeded,
-        });
-      });
-      response.once("error", (error: Error) => finish(error));
+      readPinnedResponse(response, maxBodyBytes).then(
+        (result) => finish(null, result),
+        (error: Error) => finish(error),
+      );
     };
 
     const requestOptions: https.RequestOptions = {

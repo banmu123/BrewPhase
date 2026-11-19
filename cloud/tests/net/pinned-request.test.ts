@@ -1,3 +1,4 @@
+import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import {
   BodySizeLimiter,
@@ -5,7 +6,10 @@ import {
   authorityHost,
   declaredLengthExceeds,
   pinnedLookup,
+  readPinnedResponse,
+  readResponseBody,
   resolvePinnedProxy,
+  type ResponseHeadLike,
 } from "../../src/net/proxy-fetch.js";
 
 /**
@@ -62,6 +66,165 @@ describe("BodySizeLimiter（流式字节上限）", () => {
     const limiter = new BodySizeLimiter(LIMIT);
     expect(limiter.push(Buffer.alloc(6000))).toBe(false);
     expect(limiter.exceeded).toBe(true);
+  });
+});
+
+describe("readResponseBody（真实读取路径，R1-5）", () => {
+  it("恰好 5120 字节允许", async () => {
+    const stream = Readable.from([Buffer.alloc(LIMIT, 0x61)]);
+    const result = await readResponseBody(stream, LIMIT);
+    expect(result.bodyTooLarge).toBe(false);
+    expect(result.bytesRead).toBe(LIMIT);
+    expect(result.body.byteLength).toBe(LIMIT);
+    expect(result.destroyedEarly).toBe(false);
+  });
+
+  it("5121 字节失败，且不把半截 body 交给上层", async () => {
+    const stream = Readable.from([Buffer.alloc(LIMIT + 1, 0x61)]);
+    const result = await readResponseBody(stream, LIMIT);
+    expect(result.bodyTooLarge).toBe(true);
+    expect(result.destroyedEarly).toBe(true);
+    // 关键：超限时 body 必须是空的——否则上层可能拿它去 JSON.parse。
+    expect(result.body.byteLength).toBe(0);
+    expect(stream.destroyed).toBe(true);
+  });
+
+  it("超限后立即停止消费：不再向数据源请求更多字节", async () => {
+    // `Readable.from([...])` 在读完时会自己 destroy，光看 `destroyed` 分不出
+    // 「我们主动销毁」和「它自己读完了」。这里用按需生产的源：销毁后 `_read`
+    // 不再被调用，`produced` 应当立刻停止增长。
+    let produced = 0;
+    const stream = new Readable({
+      read() {
+        produced += 1;
+        if (produced > 1000) {
+          this.push(null);
+          return;
+        }
+        this.push(Buffer.alloc(1024, 0x61));
+      },
+    });
+
+    const result = await readResponseBody(stream, LIMIT);
+    expect(result.bodyTooLarge).toBe(true);
+
+    // 5 KiB 上限意味着最多读几次 _read（含预读）就该停手；没有 destroy 时
+    // 源会被一路读到 EOF（这里是 1000 次）。
+    expect(produced).toBeLessThan(50);
+    const atOverflow = produced;
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(produced).toBe(atOverflow);
+    expect(stream.destroyed).toBe(true);
+    stream.destroy();
+  });
+
+  it("分块传输逐块累计，超限后不再消费后面的块", async () => {
+    const stream = Readable.from([Buffer.alloc(3000), Buffer.alloc(3000), Buffer.alloc(3000)]);
+    const result = await readResponseBody(stream, LIMIT);
+    expect(result.bodyTooLarge).toBe(true);
+    // 6000 而不是 9000：第三块没有被读。
+    expect(result.bytesRead).toBe(6000);
+    expect(stream.destroyed).toBe(true);
+  });
+
+  it("没有 Content-Length 时同样生效（纯字节累计）", async () => {
+    const stream = Readable.from([Buffer.alloc(4096), Buffer.alloc(4096)]);
+    const result = await readResponseBody(stream, LIMIT);
+    expect(result.bodyTooLarge).toBe(true);
+    expect(result.bytesRead).toBe(8192);
+  });
+
+  it("按 byteLength 计算，不按字符串长度", async () => {
+    // 2048 个三字节 UTF-8 字符：String.length = 2048，实际 6144 字节。
+    const text = "咖".repeat(2048);
+    const body = Buffer.from(text, "utf8");
+    expect(text.length).toBe(2048);
+    expect(body.byteLength).toBe(6144);
+
+    const stream = Readable.from([body]);
+    const result = await readResponseBody(stream, LIMIT);
+    expect(result.bodyTooLarge).toBe(true);
+    expect(result.bytesRead).toBe(6144);
+  });
+
+  it("流错误向上抛，不被当成「读完了」", async () => {
+    const stream = new Readable({
+      read() {
+        this.destroy(new Error("socket reset"));
+      },
+    });
+    await expect(readResponseBody(stream, LIMIT)).rejects.toThrow(/socket reset/);
+  });
+});
+
+describe("readPinnedResponse（预检 + 读取）", () => {
+  function fakeResponse(options: {
+    status?: number;
+    headers?: Record<string, string | string[] | undefined>;
+    chunks?: Buffer[];
+  }) {
+    const state = { destroyed: false, dataListeners: 0 };
+    const stream = Readable.from(options.chunks ?? []);
+    const response: ResponseHeadLike = {
+      statusCode: options.status ?? 200,
+      headers: options.headers ?? {},
+      on: (event: "data", listener: (chunk: Buffer) => void) => {
+        if (event === "data") state.dataListeners += 1;
+        return stream.on(event, listener);
+      },
+      once: (event: "end" | "error", listener: (...args: never[]) => void) =>
+        stream.once(event, listener as never),
+      destroy: () => {
+        state.destroyed = true;
+        stream.destroy();
+      },
+    };
+    return { response, state };
+  }
+
+  it("Content-Length 预检超限：不建立读取循环，直接销毁", async () => {
+    const { response, state } = fakeResponse({
+      headers: { "content-length": String(LIMIT + 1) },
+      chunks: [Buffer.alloc(LIMIT + 1)],
+    });
+    const result = await readPinnedResponse(response, LIMIT);
+    expect(result.bodyTooLarge).toBe(true);
+    expect(result.body.byteLength).toBe(0);
+    expect(state.destroyed).toBe(true);
+    // 没有挂 data 监听：明知超限就不该开始读。
+    expect(state.dataListeners).toBe(0);
+  });
+
+  it("Content-Length 低报时仍按真实字节拒绝", async () => {
+    const { response } = fakeResponse({
+      headers: { "content-length": "10" },
+      chunks: [Buffer.alloc(6000)],
+    });
+    const result = await readPinnedResponse(response, LIMIT);
+    expect(result.bodyTooLarge).toBe(true);
+  });
+
+  it("没有 Content-Length 时走累计路径", async () => {
+    const { response } = fakeResponse({
+      headers: {},
+      chunks: [Buffer.alloc(1024), Buffer.alloc(1024)],
+    });
+    const result = await readPinnedResponse(response, LIMIT);
+    expect(result.bodyTooLarge).toBe(false);
+    expect(result.body.byteLength).toBe(2048);
+    expect(result.status).toBe(200);
+  });
+
+  it("合法响应原样带出 status / headers / body", async () => {
+    const { response } = fakeResponse({
+      status: 200,
+      headers: { "content-type": "application/json", "cache-control": "max-age=60" },
+      chunks: [Buffer.from('{"ok":true}', "utf8")],
+    });
+    const result = await readPinnedResponse(response, LIMIT);
+    expect(result.status).toBe(200);
+    expect(result.headers["content-type"]).toBe("application/json");
+    expect(result.body.toString("utf8")).toBe('{"ok":true}');
   });
 });
 
