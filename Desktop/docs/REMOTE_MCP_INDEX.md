@@ -1188,4 +1188,44 @@ Desktop `typecheck` / `test` / `build` / `mcp:build` 通过，**1265 passed / 89
 
 ### 26.7 状态
 
-C3b 完成。**C3c 未开始**（PRM、AS Metadata、CIMD、DCR）。
+C3b 完成（含 R1，见 §27）。**C3c 未开始**（PRM、AS Metadata、CIMD、DCR）。
+
+---
+
+## 27. Phase 1.3.1-C3b-R1：Query Token 拒绝（已交付）
+
+C3b 的请求面缺口：`POST /mcp/oauth/revoke?token=…` 配合 Body 里的合法值会
+**正常撤销**——因为实现只读表单，Query 被静默忽略。
+
+### 27.1 规则
+
+只要 URL Query 里出现 `token`（含空值、含重复），整个请求 `400 invalid_request`，
+**无论 Body 是否提供了有效 Token**。检查在 `parseTokenForm()` 之前，也就是在
+读 body / 算哈希 / 查库 / 验签之前。
+
+理由：URL 会留在浏览器历史、代理访问日志、`Referer`、截图与工单里，token 出现
+在那里就已经泄露。所以这是「请求形态本身不接受」，不是「优先用 Body」的容错。
+
+### 27.2 测试（+9，`revoke-route` 30 → 39）
+
+| 用例 | 判据 |
+|---|---|
+| 空 Body 的三种形态（`=abc` / `=` / 重复） | 400 |
+| Body 缺 token | 400（不回退到 Query） |
+| Body 有效 / Query 与 Body 相同 / 不同 | 400 + 零副作用 |
+| 哨兵值泄露检查 | 响应体、日志、审计都不含；哈希也不出现 |
+| 错误响应头 | `no-store` + `no-cache` |
+
+零副作用 = Session active、`consumed_at` 不变、无撤销审计、`mcp_grants`
+逐字段不变、`auth_sessions` 零写入。
+
+### 27.3 变异与门禁
+
+移除 Query 检查 → 4 条转红（1/1 被抓）。
+
+Cloud **1056 passed / 62 files**；Desktop **1265 passed / 89 files**，
+`stdio.mjs` 911.67 kB 不变。无新增迁移、未改 Desktop 生产代码。
+
+### 27.4 状态
+
+C3b（含 R1）完成。**C3c 未开始。**

@@ -988,6 +988,8 @@ JavaScript 字符单位即 `invalid_request`**，在进入业务流程之前完�
 `parseTokenForm()`：只收 urlencoded、≤ 8192 字节、单字段 ≤ 512 字符、
 任何字段重复即 `invalid_request`、不读任何 Cookie。
 
+**URL Query 里出现 `token` 一律拒绝**（C3b-R1，见 §5.12.6）。
+
 #### 5.12.1 撤销粒度：Session，不是 Grant
 
 ```
@@ -1049,6 +1051,28 @@ refresh_token → sha256(pepper, "mcp-refresh", token) → mcp_refresh_tokens
 `mcp-oauth` / `mcp-token` 互不影响。非 `AppError` 异常统一换成固定文案
 `serverError("token revocation failed")`：drizzle 的 message 带整条 SQL 与
 参数（这里就是 token 哈希），原样透出即凭据泄露。
+
+#### 5.12.6 Query 里的 `token` 一律拒绝（C3b-R1）
+
+`POST /mcp/oauth/revoke?token=…` 直接 `400 invalid_request`，**不管 Body 里
+有没有一个合法的 token**。
+
+| Query | Body | 结果 |
+|---|---|---|
+| `?token=abc` | 空 | 400 |
+| `?token=`（空值） | 空 | 400 |
+| `?token=a&token=b` | 空 | 400 |
+| `?token=secret` | 缺 token | 400 |
+| `?token=secret` | **有效 Refresh Token** | **400**，且不撤销 |
+| `?token=X` | 有效 Refresh Token `X`（相同） | **400**，且不撤销 |
+
+这不是「优先用 Body、忽略 Query」的容错：URL 会留在浏览器历史、代理访问日志、
+`Referer`、截图与工单里，token 出现在那里就已经等于泄露，所以这种**请求形态
+本身**不接受。
+
+检查位置在 `parseTokenForm()` **之前**——拒绝发生在读 body、算哈希、查库与
+验签之前。`c.req.queries("token")` 对空值与重复出现都返回非 `undefined`，
+三种形态一并挡掉；错误文案固定，不回显 Query 值，也不写任何审计。
 
 ## 6. Discovery 设计
 

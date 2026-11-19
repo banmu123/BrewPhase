@@ -1211,6 +1211,40 @@ exactly once` 改成固定文案 `a parameter appears more than once`——字�
 
 **C3c 未开始**（discovery / PRM / AS Metadata / CIMD / DCR）。
 
+### 3.16 1.3.1-C3b-R1 已交付（Query Token 拒绝）
+
+C3b 的一个请求面缺口：原实现只从表单取 `token`，于是
+`POST /mcp/oauth/revoke?token=…` + Body 里再放一个合法值**会正常撤销**。
+
+**修法**：路由最前面（`parseTokenForm()` 之前）判 `c.req.queries("token")`，
+出现即 `400 invalid_request`——不看 Body 有没有合法值，也不把 Query 值当成
+「备用输入」。理由：URL 会留在浏览器历史、代理日志、`Referer`、截图与工单里，
+token 出现在那里就已经泄露，这种**请求形态本身**不接受。
+
+`queries()` 对 `?token=`（空值）与 `?token=a&token=b`（重复）都返回非
+`undefined`，三种形态一并挡掉；错误文案固定、不回显、不写审计。
+
+**新增测试 9 条（`revoke-route` 30 → 39，Cloud 1047 → 1056 / 62 files）**：
+
+| 用例 | 判据 |
+|---|---|
+| `?token=abc` / `?token=` / `?token=a&token=b` + 空 Body | 400 |
+| `?token=secret` + Body 缺 token | 400（不回退到 Query） |
+| `?token=secret` + Body 有效 | 400 + 零副作用 |
+| Query 与 Body 相同 / 不同 | 400 + 零副作用 |
+| 哨兵值 `QUERY-TOKEN-SENTINEL-2026` | 响应体、应用日志、审计都不含；连哈希都不出现（说明没算过） |
+| 错误响应 | 仍带 `no-store` + `no-cache` |
+
+「零副作用」= Session 仍 active、`consumed_at` 不变、无 `mcp_session_revoked`
+审计、`mcp_grants` 前后逐字段相等、Desktop `auth_sessions` 零写入。
+
+**变异 1/1 被抓**：移除 Query 检查后 4 条转红（三条「Body 有合法值」+ 哨兵用例）。
+
+**门禁**：Cloud `typecheck` / `lint` / `build` 通过，`pnpm test`
+**1056 passed / 62 files**；Desktop `typecheck` / `test` / `build` / `mcp:build`
+通过，**1265 passed / 89 files**，`stdio.mjs` 911.67 kB 不变。
+**无新增迁移、未改 Desktop 生产代码。**
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、
