@@ -1482,6 +1482,76 @@ Discovery（`discovery.test.ts`）与 Desktop OAuth 全部用例在原位通过�
 
 **C3c-2 未开始**（CIMD / DCR）。
 
+### 3.21 1.3.1-C3c-2 已交付（严格 CIMD Fetcher，未接入授权流程）
+
+依据 `draft-ietf-oauth-client-id-metadata-document-03`（Internet-Draft，不是 RFC）。
+本阶段只交付「抓取 + 解析 + 校验 + 缓存判定」，**不接入** `/mcp/oauth/authorize`，
+元数据里也**不声明** `client_id_metadata_document_supported`。
+
+| 项 | 落点 |
+|---|---|
+| 实现 | `cloud/src/mcp-oauth/cimd.ts` |
+| 网络 | `cloud/src/net/proxy-fetch.ts`：`requestPinnedHttps()` / `pinnedLookup()` / `BodySizeLimiter` / `resolvePinnedProxy()` |
+| 测试 | `cimd.test.ts` 132 条、`pinned-request.test.ts` 17 条（Cloud 1115 → **1264 / 65 files**） |
+| 迁移 / 依赖 | **无 / 无**（复用 `metadata_fetched_at`、`metadata_cache_expires_at`、`registration_source`） |
+
+**Client Identifier URL** 在**原始字符串**上判断（`/a/..`、`/%2e%2e` 解析后
+`pathname` 都是 `/`）：https only、非根路径、无 userinfo（含空 userinfo）、
+无点段（含百分号编码）、无 fragment（含空）、无 query、端口只允许 443、
+无反斜杠。`client_id` 逐字符比较——`https://h/x` ≠ `https://h:443/x`。
+其中「拒绝 query」与「只允许 443」是**项目自己的更严格策略**，不是草案要求。
+
+**SSRF**：`resolve4` + `resolve6` 取**全部**记录；任意一条落在 RFC 6890
+特殊用途段就拒绝整个目标。地址表用 `net.BlockList`（IPv4：私有 / 回环 /
+link-local / CGNAT / 未指定 / 组播 / 广播 / 文档保留 / benchmark；IPv6：ULA /
+回环 / link-local / 组播 / 未指定 / 文档保留 / 6to4 / NAT64 / SRv6）。
+**坑**：BlockList 内部把 IPv4 存成 `::ffff:a.b.c.d`，把 `::ffff:0:0/96` 加进
+同一张表会把 `8.8.8.8` 也判成私有——映射地址用第二张表单独识别并一律拒绝。
+
+**DNS Pinning**：解析一次 → 全部校验 → 取第一个地址 → 连接只用它。
+
+```
+直连：https.request({ hostname: 原域名, lookup: () => 已校验 IP })
+代理：CONNECT 到该 IP，隧道之上 tls.connect({ servername: 原域名 })
+```
+
+Host 头与 SNI 都是原域名，证书校验保持开启；`lookup` 同时处理 `{all:true}`
+与三参形态（否则会回落真实 DNS）。`socks5://` 这类代理**必须抛错**，不能
+像 Provider 通道那样「告警后直连」——那等于 pinning 静默失效。
+
+**响应**：只有 200（3xx 不跟随）；`application/json` 或 `application/*+json`；
+**5 KiB 流式上限**（`Content-Length` 预检 + 实际字节累计，超限立即 destroy）；
+UTF-8 严格解码；只带 `Accept`。
+
+**文档**：`client_id` 逐字符相等、`client_name` 非空、`redirect_uris` 1–5 条
+（对齐 DB CHECK）、不重复、无通配符；`client_secret` / `client_secret_expires_at`
+出现即拒绝；只接受 `token_endpoint_auth_method=none`；`jwks` 不允许私钥成员、
+不能与 `jwks_uri` 同时出现；`grant_types` / `response_types` 必须与支持集有交集。
+`logo_uri` / `client_uri` / `jwks_uri` **只读，从不抓取**。
+
+**缓存**：默认 1 h、上限 24 h；`s-maxage` 优先于 `max-age`；`no-store` 不可
+缓存（不被默认 TTL 覆盖）；`no-cache` 立刻过期；`Expires` 不读；错误与非法
+文档永不缓存。
+
+**失败分类**：`transient` = DNS 失败 / 无结果 / 网络错误 / 超时；
+`terminal` = URL 形态 / SSRF / 重定向 / 非 200 / Content-Type / 超限 / JSON /
+文档字段 / `client_id` 不一致 / 不支持的客户端 / TLS 证书失败。两类**不共用**
+处理逻辑——transient 不得作废已缓存的合法文档。本模块只返回判定，不动
+Session / Grant / Refresh Token。
+
+**变异 10/10 被抓**：去掉 SSRF 全量检查（30 红）、去掉点段检查、
+去掉 Content-Type、去掉超限、忽略 no-store、`max-age` 抢在 `s-maxage` 前、
+TLS 失败降级为 transient、比较前规范化 `client_id`、只信 Content-Length、
+声明长度永不判超限。
+
+**门禁**：Cloud `typecheck` / `lint` / `build` 通过，`pnpm test`
+**1264 passed / 65 files**；Desktop `typecheck` / `test` / `build` / `mcp:build`
+通过，**1265 passed / 89 files**，`stdio.mjs` 911.67 kB 不变。
+Discovery 与 Desktop OAuth 用例全部原位通过。
+
+**未做**：接入 authorize、DCR、`registration_endpoint`、
+`client_id_metadata_document_supported`、抓取 Logo/JWKS。
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、

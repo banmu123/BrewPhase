@@ -1449,4 +1449,73 @@ Cloud **1115 passed / 63 files**；Desktop **1265 passed / 89 files**，
 
 ### 31.5 状态
 
-C3c-1（含 R1）完成。**C3c-2 未开始**（CIMD / DCR）。
+C3c-1（含 R1）完成。C3c-2 见 §32。
+
+---
+
+## 32. Phase 1.3.1-C3c-2：严格 CIMD Fetcher（已交付，未接入授权）
+
+依据 `draft-ietf-oauth-client-id-metadata-document-03`（**Internet-Draft**，
+2025 年版，不是 RFC）。本阶段只交付抓取器本体，`/mcp/oauth/authorize` 未接入，
+AS 元数据也不声明 `client_id_metadata_document_supported`。
+
+### 32.1 落点
+
+| 项 | 文件 |
+|---|---|
+| 抓取器 | `cloud/src/mcp-oauth/cimd.ts` |
+| 网络 | `cloud/src/net/proxy-fetch.ts`（`requestPinnedHttps` / `pinnedLookup` / `BodySizeLimiter` / `resolvePinnedProxy` / `PINNED_REQUEST_HEADERS`） |
+| 测试 | `cloud/tests/mcp-oauth/cimd.test.ts`（132）、`cloud/tests/net/pinned-request.test.ts`（17） |
+
+无迁移、无新依赖；复用 `mcp_oauth_clients` 的 `metadata_fetched_at` /
+`metadata_cache_expires_at` / `registration_source`。
+
+### 32.2 URL 规则（原始字符串）
+
+https only；非根路径；无 userinfo（含空 userinfo）；无 `.`/`..` 段（含
+`%2e%2e`）；无 fragment（含空）；无 query；端口只 443；无反斜杠。
+`client_id` 逐字符比较，`https://h/x` ≠ `https://h:443/x`。
+
+「拒绝 query」与「只允许 443」是**项目更严格的本地策略**，不是草案要求
+（草案对 query 是 SHOULD NOT，对端口是 MAY）。
+
+### 32.3 SSRF + DNS Pinning
+
+`resolve4` + `resolve6` 取全部记录，**任意一条**特殊用途即拒绝整个目标。
+地址分类用 `net.BlockList`，覆盖 IPv4 私有/回环/link-local/CGNAT/未指定/
+组播/广播/文档保留/benchmark，IPv6 ULA/回环/link-local/组播/未指定/文档保留/
+6to4/NAT64/SRv6。IPv4-mapped IPv6 用**第二张** BlockList 识别并一律拒绝
+——把它加进同一张表会把 `8.8.8.8` 也判成私有（BlockList 内部以映射形式存 v4）。
+
+连接只用校验过的第一个地址：直连用 `lookup` 钉死、代理用 CONNECT 到该 IP，
+隧道之上按原域名做 TLS；Host 与 SNI 都是原域名，证书校验保持开启。
+`socks5://` 等不支持的代理**抛错**，不静默直连。
+
+### 32.4 响应与文档
+
+只有 200（3xx 不跟随）；`application/json` 或 `application/*+json`；
+**5 KiB 流式上限**（Content-Length 预检 + 实际字节累计）；UTF-8 严格解码；
+只带 `Accept`。文档要求 `client_id` 逐字符相等、`client_name` 非空、
+`redirect_uris` 1–5 条不重复无通配符；拒绝 `client_secret(_expires_at)`、
+非 `none` 认证方式、私钥材料；`grant_types`/`response_types` 必须有交集。
+`logo_uri` / `client_uri` / `jwks_uri` 只读，从不抓取。
+
+### 32.5 缓存与失败分类
+
+默认 1 h、上限 24 h；`s-maxage` > `max-age`；`no-store` 不可缓存（不被默认
+TTL 覆盖）；`no-cache` 立刻过期；`Expires` 不读；错误与非法文档永不缓存。
+
+`transient` = DNS 失败/无结果/网络错误/超时；`terminal` = URL 形态/SSRF/
+重定向/非 200/Content-Type/超限/JSON/文档字段/client_id 不一致/不支持的客户端/
+TLS 证书失败。本模块只返回分类，不动 Session / Grant / Refresh Token。
+
+### 32.6 测试与变异
+
+149 条新测试（132 + 17），Cloud 1115 → **1264 / 65 files**。
+变异 10/10 被抓：SSRF 全量检查（30 红）、点段、Content-Type、超限、no-store、
+s-maxage 优先级、TLS 分类、client_id 规范化、字节累计、声明长度。
+
+### 32.7 状态
+
+C3c-2 完成（**未接入授权流程**）。下一步是接入 `/mcp/oauth/authorize` 与
+DB 缓存写入，属后续阶段。

@@ -1334,6 +1334,9 @@ authority 含 @        → userinfo（空 userinfo 也能抓到）
 
 ### 7.3 CIMD 抓取器（防 SSRF，硬要求）
 
+依据：`draft-ietf-oauth-client-id-metadata-document-03`（**Internet-Draft，
+2025 年版；不是正式 RFC**）。本项目的实现见 §7.3.1。
+
 | 约束 | 值 | 为什么 |
 |---|---|---|
 | scheme | **只允许 `https`** | 明文可被中间人替换元数据 |
@@ -1342,7 +1345,7 @@ authority 含 @        → userinfo（空 userinfo 也能抓到）
 | 目标 IP | 解析后必须**非私有/非回环/非链路本地/非元数据地址**（`169.254.169.254` 等） | SSRF 的核心 |
 | 端口 | 只允许 443 | 减少内网服务命中面 |
 | 超时 | 3 s 连接 + 5 s 总计 | 防慢速拖死 |
-| 响应大小 | ≤ 64 KiB | 防内存放大 |
+| 响应大小 | ≤ **5 KiB**（草案 §10.11 的建议值；原设计写 64 KiB，C3c-2 收紧） | 防内存放大 |
 | `Content-Type` | 必须是 `application/json`（或 `+json`） | 防 HTML 注入 |
 | 结构校验 | `client_id` 必须**逐字符等于**请求 URL；必须有 `client_name`、`redirect_uris` | 规范 MUST |
 | 缓存 | 遵循 `Cache-Control`；默认 TTL 1 h；上限 24 h | 规范 SHOULD |
@@ -1352,6 +1355,113 @@ authority 含 @        → userinfo（空 userinfo 也能抓到）
 **DNS rebinding 补充**：解析→校验→连接必须用**同一份**解析结果
 （不允许「校验用一次解析、连接再解析一次」）。实现上通过
 `lookup` 钩子固定 IP。
+
+#### 7.3.1 已落地（C3c-2，尚未接入授权流程）
+
+| 项 | 落点 |
+|---|---|
+| 实现 | `cloud/src/mcp-oauth/cimd.ts`（URL 校验 / 地址分类 / 抓取编排 / 文档校验 / 缓存） |
+| 网络 | `cloud/src/net/proxy-fetch.ts` 新增 `requestPinnedHttps()`、`pinnedLookup()`、`BodySizeLimiter` |
+| 测试 | `cloud/tests/mcp-oauth/cimd.test.ts`（132）、`cloud/tests/net/pinned-request.test.ts`（17） |
+| 迁移 | **无**（复用 `mcp_oauth_clients.metadata_fetched_at` / `metadata_cache_expires_at` / `registration_source`） |
+| 接入 | **未接入** `/mcp/oauth/authorize`，元数据也**不声明** `client_id_metadata_document_supported` |
+
+**Client Identifier URL（草案 §3 + 本项目更严格策略）**
+
+在**原始字符串**上判断，不看 `new URL()` 的结果——`/a/..`、`/%2e%2e` 的
+`pathname` 解析后都是 `/`。
+
+| 规则 | 强度 |
+|---|---|
+| 必须 `https` | 草案 MUST |
+| 禁止 userinfo（含空 userinfo `https://@host/x`） | 草案 MUST NOT |
+| 路径不能是 `/` | 草案 MUST |
+| 禁止 `.` / `..` 段，含百分号编码（`%2e%2e`） | 草案 MUST NOT |
+| 禁止 fragment（含空 fragment） | 草案 MUST NOT |
+| 禁止 query | 草案是 SHOULD NOT，**本项目直接拒绝** |
+| 端口只能是 443 | **项目自己的安全限制**，草案允许带端口 |
+| 禁止反斜杠 | 项目限制（WHATWG 把 `\` 当 `/`，先拒绝再解析） |
+
+`client_id` 比较用**逐字符**：`https://h/x` 与 `https://h:443/x` 不是同一个
+（草案 §3 明确要求简单字符串比较，AS 不得规范化）。
+
+**SSRF（草案 §10.7）**
+
+解析 A + AAAA **全部**记录，结果是数组而不是「第一个地址」：
+
+- 没有解析结果、或解析抛错 → `transient`（`dns_failure`）。
+- **任意一条**落在 RFC 6890 特殊用途段 → `terminal`（`ssrf_address`），整个目标拒绝。
+- 地址表用 `net.BlockList`：IPv4 覆盖私有 / 回环 / link-local（含
+  `169.254.169.254`）/ CGNAT / 未指定 / 组播 / 广播 / 文档保留 / benchmark /
+  IETF 协议分配；IPv6 覆盖 ULA / 回环 / link-local / 组播 / 未指定 /
+  文档保留（含 `3fff::/20`）/ 6to4 / NAT64 / SRv6 / IPv4-compatible。
+- **IPv4-mapped IPv6 一律拒绝**。注意 `net.BlockList` 内部把 IPv4 表示成
+  `::ffff:a.b.c.d`，所以 `::ffff:0:0/96` **不能**和 IPv4 规则放在同一张表里
+  ——那会把 `8.8.8.8` 也判成私有。这里用第二张表单独识别。
+- IP 字面量（`https://127.0.0.1/x`）不走 DNS，直接按地址本身分类。
+
+**DNS Pinning**
+
+```
+resolve4/resolve6 → 全部结果 → 全部必须是公网 → 取第一个地址
+  ↓
+直连：https.request({ hostname: 原始域名, lookup: () => 该 IP })
+代理：CONNECT 目标是该 IP，隧道之上 tls.connect({ servername: 原始域名 })
+  ↓
+Host 头 = 原始域名；SNI = 原始域名；证书校验保持开启（没有关闭开关）
+```
+
+`lookup` 同时支持 `{ all: true }`（Node 默认的 autoSelectFamily 会这么调）与
+三参形态；两种都要处理，否则请求会在其中一种形态下**回落真实 DNS**——那正是
+DNS Rebinding 的入口。校验与连接之间不再解析第二次。
+
+**代理纪律**：与 Provider 通道相反，`socks5://` 这类不支持的代理**必须抛错**。
+Provider 通道「告警后直连」是可接受的，这里不行——那等于 DNS Pinning 静默失效。
+
+**响应处理**
+
+| 项 | 规则 |
+|---|---|
+| 状态码 | 只有 200；3xx 一律不跟随（`terminal`） |
+| Content-Type | `application/json` 或 `application/<subtype>+json`；参数忽略；缺失拒绝 |
+| 大小 | 5 KiB。**流式累计**：`Content-Length` 预检 + 实际字节计数双保险，超限立即 `destroy()` |
+| 编码 | UTF-8 严格解码（非法字节 → `terminal`） |
+| 请求头 | 只有 `Accept: application/json`，无 Cookie / Authorization / 用户标识 |
+
+**文档校验**
+
+| 字段 | 规则 |
+|---|---|
+| `client_id` | 逐字符等于请求 URL（`terminal` / `client_id_mismatch`） |
+| `client_name` | 非空字符串（项目策略；草案未列为 MUST） |
+| `redirect_uris` | 1–5 条（对齐 DB CHECK）、不重复、无通配符；https，或回环 http |
+| `client_secret` / `client_secret_expires_at` | 出现即拒绝（草案 §4.1 MUST NOT） |
+| `token_endpoint_auth_method(_methods_supported)` | 只支持 `none`；出现共享密钥方式即拒绝 |
+| `jwks` / `jwks_uri` | 不能同时出现；`jwks` 里出现私钥成员（`d`/`p`/`q`/`dp`/`dq`/`qi`/`k`）即拒绝 |
+| `grant_types` / `response_types` | 与支持集求交集，空交集拒绝（草案 §6 MUST） |
+| `logo_uri` / `client_uri` / `jwks_uri` | **只读字段，从不二次抓取** |
+
+**缓存（草案 §6.2）**
+
+| 情况 | 结果 |
+|---|---|
+| 无 Cache-Control | 1 h（`default`） |
+| `max-age=N` | N 秒，上限 24 h |
+| `s-maxage=N` | 优先于 `max-age`（共享缓存语义），上限 24 h |
+| `no-store` | **不可缓存**，`cacheExpiresAt = null`（不被默认 TTL 覆盖） |
+| `no-cache` | 可存但立刻过期（`ttlMs = 0`），下次必须重抓 |
+| `Expires` | 不读（Cache-Control 优先） |
+| 错误响应 / 非法文档 | **永不缓存** |
+
+**失败分类（草案 §6.1）**
+
+| kind | 情形 | 对已有缓存的影响 |
+|---|---|---|
+| `transient` | DNS 失败 / 无解析结果 / 网络错误 / 连接或总超时 | 保留已缓存的合法文档（本模块只返回分类，不动 Session / Grant） |
+| `terminal` | URL 形态 / SSRF / 重定向 / 非 200 / Content-Type / 超限 / JSON / 文档字段 / `client_id` 不一致 / 不支持的客户端 / TLS 证书失败 | 允许调用方作废 |
+
+两类**不共用处理逻辑**：Transient 也走 `terminal` 分支就等于「一次网络抖动
+把用户踢下线」。
 
 ### 7.4 DCR 加固（若启用）
 
