@@ -1277,4 +1277,56 @@ Cloud **1074 passed / 62 files**；Desktop **1265 passed / 89 files**，
 
 ### 28.5 状态
 
-C3b（含 R1 / R2）完成。**C3c 未开始**（PRM、AS Metadata、CIMD、DCR）。
+C3b（含 R1 / R2 / R2-R1）完成。**C3c 未开始**（PRM、AS Metadata、CIMD、DCR）。
+
+---
+
+## 29. Phase 1.3.1-C3b-R2-R1：Access JWT 的 Session 状态校验（已交付）
+
+R2 的漏判：Access 分支只比 `claims.clientId` 与请求值。于是一枚「签名完好、
+未过 exp、但 Session 已被撤销」的 JWT 仍被答成 `unsupported_token_type` ——
+撤销端点因此宣称「这枚 token 还活着」。
+
+### 29.1 判定顺序
+
+```
+verifyMcpAccessToken()  → 失败 → not_found(200)
+读 mcp_sessions（一次查询取 clientId / revokedAt / absoluteExpiresAt）
+  → 不存在 / 已撤销 / 已过期 → not_found(200)
+claims.clientId ≠ session.clientId → not_found(200)      ← claims 不能自证
+请求 client_id ≠ session.clientId → client_mismatch(401)
+→ unsupported_token_type(400)
+```
+
+| 情况 | 结果 |
+|---|---|
+| 签名无效 / 已过期 / Desktop token | 200 空 |
+| Session 不存在 / 已撤销 / 已过期 | 200 空 |
+| JWT 的 `client_id` 与 Session 不符 | 200 空 |
+| Session active，请求 `client_id` 不符 | 401 `invalid_client` |
+| Session active，一切相符 | 400 `unsupported_token_type` |
+
+三个判据互不替代：**密码学有效性**、**Session 当前状态**、**请求方身份声明**。
+前三种「无效」对外同一个 200——区分它们就是存在性探针。
+
+Access 分支全程只读：不调 `revokeMcpSession()`，四张表零写入、无审计。
+
+### 29.2 测试（+7，`revoke-route` 57 → 64）
+
+active 正确/错误 client、已撤销、已过期、不存在（随机 sid）、claim 与 Session
+不符（即使请求值 = claim 值）、三种「无效」不可区分。
+
+零副作用由 `expectInvalidAccessToken()` 统一断言：`mcp_sessions` 全表快照、
+`revoked_reason`、Refresh 历史数组、`mcp_grants`、撤销审计、`auth_sessions`。
+
+### 29.3 变异与门禁
+
+变异 3/3：删 Session 状态检查（3 红）、删 claim↔Session 一致性（1 红）、
+已撤销误映射为 `unsupported_token_type`（2 红）。
+
+Cloud **1081 passed / 62 files**；Desktop **1265 passed / 89 files**，
+`stdio.mjs` 911.67 kB 不变。无新增迁移、无新增路由、未改 Desktop 生产代码。
+
+### 29.4 状态
+
+C3b（含 R1 / R2 / R2-R1）完成。**C3c 未开始。**

@@ -1019,7 +1019,8 @@ refresh_token → sha256(pepper, "mcp-refresh", token) → mcp_refresh_tokens
 | 随机值 / 不存在 / 已消费的历史代 / 已过期 | 200 | 空 |
 | Session 已撤销 / 已过期 | 200 | 空 |
 | Token 归属的 client 与请求的 `client_id` 不符 | **401** `invalid_client` | OAuth JSON 错误 |
-| 有效 **MCP Access JWT**（`client_id` 相符） | **400** `unsupported_token_type` | OAuth JSON 错误 |
+| 有效 **MCP Access JWT**（Session active、claim 与请求均相符） | **400** `unsupported_token_type` | OAuth JSON 错误 |
+| Access JWT 的 Session 不存在 / 已撤销 / 已过期，或 claim 与 Session 不符 | 200 | 空 |
 | 缺 `token` / 重复字段 / 媒体类型不对 / 超限 | 400 `invalid_request` | OAuth JSON 错误 |
 
 无效 Token 一律 200（RFC 7009 §2.2）：区分「不存在 / 过期 / 曾有效」会把端点
@@ -1108,6 +1109,49 @@ access JWT    → verifyMcpAccessToken() → claims.client_id（验签后）
 `/mcp` 靠 `sid` 回查就够）。撤销端点需要回答「这枚 token 属于哪个客户端」，
 所以 C3b-R2 按设计补回该 claim——`verifyMcpAccessToken()` 现在强制要求它，
 缺失即视为无效 Token。
+
+#### 5.12.8 Access JWT 的有效性 = 签名 + Session 当前状态（C3b-R2-R1）
+
+`verifyMcpAccessToken()` 只回答「这串字节是不是我们签的、有没有过期」。
+资源服务器（`/mcp`）每次请求还会按 `sid` 回查 Session —— 所以一枚签名完好的
+JWT，在 Session 被撤销或越过 90 天绝对期限后**已经不是有效凭据**。
+
+C3b-R2 的第一版只比了 `claims.clientId` 与请求值，于是「已撤销 Session 的
+JWT」会被答成 `unsupported_token_type`（400）——等于在撤销端点上凭空给出
+「这枚 token 仍然活着」的信号。
+
+**现在的判定顺序**（Access 分支）：
+
+```
+verifyMcpAccessToken()          ← 签名 / iss / aud / exp / claims 形状
+  ↓ 失败 → not_found（200）
+读 mcp_sessions（一次查询取 clientId / revokedAt / absoluteExpiresAt）
+  ↓ 不存在 / 已撤销 / 已过期 → not_found（200）
+claims.clientId ≠ session.clientId → not_found（200）   ← claims 不能自证
+请求 client_id ≠ session.clientId → client_mismatch（401）
+  ↓
+unsupported_token_type（400）
+```
+
+| 情况 | 结果 |
+|---|---|
+| 签名无效 / 已过期 / 不是 JWT / Desktop token | 200 空 |
+| Session 不存在 | 200 空 |
+| Session 已撤销 | 200 空 |
+| Session 已过期 | 200 空 |
+| JWT 的 `client_id` 与 Session 记录不符 | 200 空 |
+| Session active，请求 `client_id` 不符 | 401 `invalid_client` |
+| Session active，一切相符 | 400 `unsupported_token_type` |
+
+三个判据**不能合并成一次字符串比较**：签名声明是否可信（密码学）、Session 是否
+仍然有效（数据库当前状态）、请求方是否为该客户端（协议声明）——任一条不成立，
+结论就不同。
+
+前三类「无效」对任何人都返回同一个 200：区分它们会把端点变成「这枚 token 是否
+存在/是否曾经有效」的探针。401 只留给「凭据确实有效、但你说自己不是它的主人」。
+
+Access 分支全程**只读**：不调用 `revokeMcpSession()`，不写 `mcp_sessions` /
+`mcp_refresh_tokens` / `mcp_grants` / `auth_sessions`，不写撤销审计。
 
 ## 6. Discovery 设计
 

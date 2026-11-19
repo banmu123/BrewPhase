@@ -1304,6 +1304,61 @@ hash → 查 refresh 行（JOIN session 取 client_id）→ 比对 client_id
 通过，**1265 passed / 89 files**，`stdio.mjs` 911.67 kB 不变。
 **无新增迁移、无新增路由、未改 Desktop 生产代码。**
 
+### 3.18 1.3.1-C3b-R2-R1 已交付（Access JWT 的 Session 状态校验）
+
+R2 的漏判：Access 分支只比了 `claims.clientId` 与请求值，于是「Session 已撤销
+的 JWT」被答成 `unsupported_token_type`（400）——在撤销端点上凭空给出「这枚
+token 仍然活着」的信号。
+
+**判定顺序**：
+
+```
+verifyMcpAccessToken()  → 失败则 not_found(200)
+读 mcp_sessions（一次查询：clientId / revokedAt / absoluteExpiresAt）
+  → 不存在 / 已撤销 / 已过期 → not_found(200)
+claims.clientId ≠ session.clientId → not_found(200)
+请求 client_id ≠ session.clientId → client_mismatch(401)
+→ unsupported_token_type(400)
+```
+
+| 情况 | 结果 |
+|---|---|
+| 签名无效 / 已过期 / 不是 JWT / Desktop token | 200 空 |
+| Session 不存在 / 已撤销 / 已过期 | 200 空 |
+| JWT 的 `client_id` 与 Session 记录不符 | 200 空 |
+| Session active，请求 `client_id` 不符 | 401 `invalid_client` |
+| Session active，一切相符 | 400 `unsupported_token_type` |
+
+三个判据不合并：**签名声明是否可信**（密码学）、**Session 是否仍然有效**
+（数据库当前状态）、**请求方是否为该客户端**（协议声明）。前三类「无效」对外
+必须同一个 200，否则端点变成存在性探针；401 只留给「凭据有效、但你说自己
+不是它的主人」。
+
+Access 分支全程只读：不调用 `revokeMcpSession()`，四个表零写入，无撤销审计。
+
+**测试（+7，`revoke-route` 57 → 64，Cloud 1074 → 1081 / 62 files）**：
+
+| 用例 | 判据 |
+|---|---|
+| Session active + 正确 client | 400 unsupported，Session 不变、无审计 |
+| Session active + 错误 client | 401，Session 不变、无审计 |
+| Session 已撤销 | 200 空体；`revoked_at` 不被覆盖、审计不新增 |
+| Session 已过期 | 200 空体；不写 `revoked_at` |
+| Session 不存在（sid 是随机 UUID） | 200 空体；两个 `mcp_sessions` 快照相等 |
+| JWT claim 与 Session 归属不符 | 200 空体（**即使请求值 = claim 值**） |
+| 三种「无效」不可区分 | 都是同一个 200 空体、无 JSON 错误体 |
+
+零副作用通过 `expectInvalidAccessToken()` 统一断言：`mcp_sessions` 全表快照、
+`revoked_reason`、Refresh 历史数组、`mcp_grants`、撤销审计数、`auth_sessions`。
+
+**变异 3/3 被抓**：删 Session 状态检查（3 条转红）、删 claim↔Session 一致性
+检查（1 条）、把已撤销映射成 `unsupported_token_type`（2 条）。
+
+**门禁**：Cloud `typecheck` / `lint` / `build` 通过，`pnpm test`
+**1081 passed / 62 files**；Desktop `typecheck` / `test` / `build` / `mcp:build`
+通过，**1265 passed / 89 files**，`stdio.mjs` 911.67 kB 不变。
+**无新增迁移、无新增路由、未改 Desktop 生产代码。**
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、
