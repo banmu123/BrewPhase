@@ -40,15 +40,17 @@ afterAll(async () => {
 });
 
 /** 一次「授权码 → token」的完整兑换，返回 token 与 Session id。 */
-async function issueTokens(): Promise<{ tokens: TokenResponse; sessionId: string; grantId: string }> {
-  const code = await obtainAuthCode(h);
+async function issueTokens(
+  clientId = "test-client",
+): Promise<{ tokens: TokenResponse; sessionId: string; grantId: string; clientId: string }> {
+  const code = await obtainAuthCode(h, { clientId });
   const tokens = await readTokenResponse(await exchangeCode(h, code));
   const claims = decodeJwtPayload(tokens.access_token);
   const sessionId = claims.sid as string;
 
   const rows = await handle.sql<{ grant_id: string }[]>`
     select grant_id from mcp_sessions where id = ${sessionId}`;
-  return { tokens, sessionId, grantId: rows[0]!.grant_id };
+  return { tokens, sessionId, grantId: rows[0]!.grant_id, clientId };
 }
 
 /** 发一次撤销请求（标准 urlencoded）。 */
@@ -57,7 +59,9 @@ async function revoke(
   contentType = "application/x-www-form-urlencoded",
 ): Promise<Response> {
   const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(body)) {
+  // 默认带上 `test-client`（harness 里的默认注册客户端）；要测「缺 client_id」
+  // 时显式传 `client_id: undefined`。
+  for (const [key, value] of Object.entries({ client_id: "test-client", ...body })) {
     if (value !== undefined) params.set(key, value);
   }
   return h.app.request("/mcp/oauth/revoke", {
@@ -193,11 +197,23 @@ describe("协议面", () => {
         "content-type": "application/x-www-form-urlencoded",
         cookie: "bp_mcp_bs=forged.value",
       },
-      body: new URLSearchParams({ token: tokens.refresh_token }).toString(),
+      body: new URLSearchParams({ token: tokens.refresh_token, client_id: "test-client" }).toString(),
     });
     expect(res.status).toBe(200);
   });
 });
+
+async function consumedAtOf(sessionId: string): Promise<Array<string | null>> {
+  const rows = await handle.sql<{ consumed_at: string | null }[]>`
+    select consumed_at::text from mcp_refresh_tokens
+     where session_id = ${sessionId} order by generation`;
+  return rows.map((row) => row.consumed_at);
+}
+
+async function grantsSnapshot() {
+  return handle.sql<{ id: string; scopes: string[]; epoch: number; revoked_at: string | null }[]>`
+    select id, scopes, epoch, revoked_at::text from mcp_grants order by id`;
+}
 
 describe("Query 中的 token 一律拒绝（C3b-R1）", () => {
   /** 打到带 query 的 revoke 端点。 */
@@ -214,18 +230,6 @@ describe("Query 中的 token 一律拒绝（C3b-R1）", () => {
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: params.toString(),
     });
-  }
-
-  async function consumedAtOf(sessionId: string): Promise<Array<string | null>> {
-    const rows = await handle.sql<{ consumed_at: string | null }[]>`
-      select consumed_at::text from mcp_refresh_tokens
-       where session_id = ${sessionId} order by generation`;
-    return rows.map((row) => row.consumed_at);
-  }
-
-  async function grantsSnapshot() {
-    return handle.sql<{ id: string; scopes: string[]; epoch: number; revoked_at: string | null }[]>`
-      select id, scopes, epoch, revoked_at::text from mcp_grants order by id`;
   }
 
   /**
@@ -354,6 +358,188 @@ describe("Query 中的 token 一律拒绝（C3b-R1）", () => {
     expect(res.status).toBe(400);
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(res.headers.get("pragma")).toBe("no-cache");
+  });
+});
+
+describe("client_id 必填（C3b-R2）", () => {
+  it("缺少 client_id → 400 invalid_request", async () => {
+    const { tokens } = await issueTokens();
+    const res = await revoke({ token: tokens.refresh_token, client_id: undefined });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_request");
+  });
+
+  it("client_id 为空 → 400 invalid_request", async () => {
+    const { tokens } = await issueTokens();
+    const res = await revoke({ token: tokens.refresh_token, client_id: "" });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_request");
+  });
+
+  it("重复 client_id → 400 invalid_request（不挑一个）", async () => {
+    const { tokens } = await issueTokens();
+    const body = `token=${encodeURIComponent(tokens.refresh_token)}&client_id=test-client&client_id=other-client`;
+    const res = await h.app.request("/mcp/oauth/revoke", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_request");
+  });
+
+  it("client_id 超过 512 字符 → 400（复用统一字段限长）", async () => {
+    const { tokens } = await issueTokens();
+    const res = await revoke({ token: tokens.refresh_token, client_id: "c".repeat(513) });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_request");
+  });
+
+  it("合法 client_id → 正常撤销", async () => {
+    const { tokens, sessionId } = await issueTokens();
+    const res = await revoke({ token: tokens.refresh_token, client_id: "test-client" });
+    expect(res.status).toBe(200);
+    expect((await sessionOf(sessionId)).revoked_at).not.toBeNull();
+  });
+});
+
+describe("Refresh Token 的客户端归属（C3b-R2）", () => {
+  /**
+   * 「错误 client 不能撤销别人的 Session」的统一验收。
+   *
+   * 只断言 401 不够：一个「先撤销、再报 401」的实现同样返回 401。
+   */
+  async function expectClientMismatch(
+    claimedClientId: string,
+    token: string,
+    sessionId: string,
+  ): Promise<void> {
+    const grantsBefore = await grantsSnapshot();
+    const consumedBefore = await consumedAtOf(sessionId);
+    const sessionBefore = await sessionOf(sessionId);
+
+    const res = await revoke({ token, client_id: claimedClientId });
+    expect(res.status, claimedClientId).toBe(401);
+    expect(((await res.json()) as { error: string }).error, claimedClientId).toBe(
+      "invalid_client",
+    );
+
+    const sessionAfter = await sessionOf(sessionId);
+    expect(sessionAfter.revoked_at).toBeNull();
+    expect(sessionAfter.revoked_reason).toBe(sessionBefore.revoked_reason);
+    expect(await consumedAtOf(sessionId)).toEqual(consumedBefore);
+    expect(await auditCount("mcp_session_revoked")).toBe(0);
+    expect(await grantsSnapshot()).toEqual(grantsBefore);
+    expect(await desktopTableCount()).toBe(0);
+  }
+
+  it("客户端 A 用自己的 client_id 撤销自己的 Token → 200", async () => {
+    const a = await issueTokens("test-client");
+    const res = await revoke({ token: a.tokens.refresh_token, client_id: a.clientId });
+    expect(res.status).toBe(200);
+    expect((await sessionOf(a.sessionId)).revoked_at).not.toBeNull();
+  });
+
+  it("客户端 B 拿 A 的 Refresh Token → 401，A 的 Session 与 Token 都不动", async () => {
+    await seedAuthorizeClient(handle, { clientId: "other-client", clientName: "Other" });
+    const a = await issueTokens("test-client");
+
+    await expectClientMismatch("other-client", a.tokens.refresh_token, a.sessionId);
+  });
+
+  it("client_id 仅大小写不同 → 401（逐字符比较，不做大小写归一）", async () => {
+    const a = await issueTokens("test-client");
+    await expectClientMismatch("TEST-CLIENT", a.tokens.refresh_token, a.sessionId);
+  });
+
+  it("client_id 仅前后空格不同 → 401（不 trim）", async () => {
+    const a = await issueTokens("test-client");
+    await expectClientMismatch(" test-client ", a.tokens.refresh_token, a.sessionId);
+  });
+
+  it("不存在的 client_id → 401", async () => {
+    const a = await issueTokens("test-client");
+    await expectClientMismatch("no-such-client", a.tokens.refresh_token, a.sessionId);
+  });
+
+  it("已消费的旧代 + 错误 client → 401（归属判定早于状态判定）", async () => {
+    const a = await issueTokens("test-client");
+    const rotated = await readTokenResponse(
+      await h.app.request("/mcp/oauth/token", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: a.tokens.refresh_token,
+          client_id: "test-client",
+          resource: "https://gateway.example/mcp",
+        }).toString(),
+      }),
+    );
+    expect(rotated.refresh_token).not.toBe(a.tokens.refresh_token);
+
+    // 旧代已消费；但先用**错误** client 提交它 → 401，而不是 200。
+    await expectClientMismatch("other-client", a.tokens.refresh_token, a.sessionId);
+    // 用正确 client 提交旧代 → 仍是 200（无效 Token），且不撤销。
+    const ok = await revoke({ token: a.tokens.refresh_token, client_id: "test-client" });
+    expect(ok.status).toBe(200);
+    expect((await sessionOf(a.sessionId)).revoked_at).toBeNull();
+  });
+
+  it("同一 Grant 下两个 Session 的客户端隔离", async () => {
+    const first = await issueTokens("test-client");
+    const second = await issueTokens("test-client");
+    expect(second.grantId).toBe(first.grantId);
+
+    await expectClientMismatch("other-client", second.tokens.refresh_token, second.sessionId);
+
+    // 两个 Session 都没被碰过。
+    expect((await sessionOf(first.sessionId)).revoked_at).toBeNull();
+    expect((await sessionOf(second.sessionId)).revoked_at).toBeNull();
+  });
+});
+
+describe("Access JWT 的客户端归属（C3b-R2）", () => {
+  it("正确 client_id → 400 unsupported_token_type", async () => {
+    const a = await issueTokens("test-client");
+    const res = await revoke({ token: a.tokens.access_token, client_id: "test-client" });
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("unsupported_token_type");
+    expect((await sessionOf(a.sessionId)).revoked_at).toBeNull();
+  });
+
+  it("错误 client_id → 401 invalid_client（且不撤销）", async () => {
+    const a = await issueTokens("test-client");
+    const res = await revoke({ token: a.tokens.access_token, client_id: "other-client" });
+
+    expect(res.status).toBe(401);
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_client");
+    expect((await sessionOf(a.sessionId)).revoked_at).toBeNull();
+    expect(await auditCount("mcp_session_revoked")).toBe(0);
+  });
+
+  it("签名被篡改的 JWT → 200（当无效 Token，不做归属判定）", async () => {
+    const a = await issueTokens("test-client");
+    const [header, payload] = a.tokens.access_token.split(".");
+    const tampered = `${header}.${payload}.${"A".repeat(43)}`;
+
+    const res = await revoke({ token: tampered, client_id: "test-client" });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("");
+    expect((await sessionOf(a.sessionId)).revoked_at).toBeNull();
+  });
+
+  it("JWT 的 client_id claim 与实际 Session 归属一致（签发侧不撒谎）", async () => {
+    // 这条不是撤销用例，而是钉住「claim 来自 Session」：签发时若写错，
+    // 上面的归属校验就会变成「两个错误互相印证」。
+    const a = await issueTokens("test-client");
+    const claims = decodeJwtPayload(a.tokens.access_token);
+    expect(claims.client_id).toBe(a.clientId);
+
+    const rows = await handle.sql<{ client_id: string }[]>`
+      select client_id from mcp_sessions where id = ${a.sessionId}`;
+    expect(rows[0]!.client_id).toBe(claims.client_id);
   });
 });
 
@@ -565,7 +751,7 @@ describe("token_type_hint 只是提示", () => {
     const { tokens, sessionId } = await issueTokens();
     const expired = await signMcpAccessToken(
       h.ctx.keyRing,
-      { userId: "u", sessionId, scope: ["records:read"] },
+      { userId: "u", sessionId, clientId: "test-client", scope: ["records:read"] },
       {
         issuer: h.ctx.env.baseUrl,
         resource: mcpResourceFor(h.ctx.env.baseUrl),

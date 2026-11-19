@@ -48,6 +48,7 @@ function options(overrides: Partial<Parameters<typeof signMcpAccessToken>[2]> = 
 const VALID_INPUT = {
   userId: "11111111-1111-1111-1111-111111111111",
   sessionId: "22222222-2222-2222-2222-222222222222",
+  clientId: "test-client",
   scope: ["records:read", "coffee:read"],
 };
 
@@ -90,7 +91,7 @@ describe("签发与验证", () => {
     const token = await signMcpAccessToken(ring(), VALID_INPUT, options());
     const payload = decodePayload(token);
     expect(Object.keys(payload).sort()).toEqual(
-      ["aud", "exp", "iat", "iss", "jti", "scope", "sid", "sub"].sort(),
+      ["aud", "client_id", "exp", "iat", "iss", "jti", "scope", "sid", "sub"].sort(),
     );
   });
 
@@ -210,7 +211,11 @@ describe("claim 与算法校验", () => {
     const nowSec = Math.floor(FIXED_NOW.getTime() / 1000);
 
     const build = async (iat: number, exp: number, jti: string) =>
-      new SignJWT({ sid: VALID_INPUT.sessionId, scope: "records:read" })
+      new SignJWT({
+        sid: VALID_INPUT.sessionId,
+        client_id: VALID_INPUT.clientId,
+        scope: "records:read",
+      })
         .setProtectedHeader({ alg: "HS256", typ: "JWT", kid: ring().current.kid })
         .setSubject(VALID_INPUT.userId)
         .setIssuer(ISSUER)
@@ -262,14 +267,15 @@ describe("claim 与算法校验", () => {
     }
   });
 
-  it("缺少 sub / sid / jti / iat / exp / scope 都拒绝", async () => {
+  it("缺少 sub / sid / client_id / jti / iat / exp / scope 都拒绝", async () => {
     const base = {
       sub: VALID_INPUT.userId,
       sid: VALID_INPUT.sessionId,
+      client_id: VALID_INPUT.clientId,
       scope: "records:read",
       jti: "jti-1",
     };
-    for (const missing of ["sub", "sid", "scope", "jti"]) {
+    for (const missing of ["sub", "sid", "client_id", "scope", "jti"]) {
       const claims: Record<string, unknown> = { ...base };
       delete claims[missing];
       const token = await new SignJWT(claims)
@@ -288,7 +294,11 @@ describe("claim 与算法校验", () => {
   });
 
   it("sid 为空串时拒绝（空串不等于「没有 session」）", async () => {
-    const token = await new SignJWT({ sid: "", scope: "records:read" })
+    const token = await new SignJWT({
+      sid: "",
+      client_id: VALID_INPUT.clientId,
+      scope: "records:read",
+    })
       .setProtectedHeader({ alg: "HS256", typ: "JWT", kid: ring().current.kid })
       .setSubject(VALID_INPUT.userId)
       .setIssuer(ISSUER)
@@ -306,7 +316,7 @@ describe("claim 与算法校验", () => {
 
 describe("scope 校验", () => {
   const makeToken = async (scope: unknown) =>
-    new SignJWT({ sid: VALID_INPUT.sessionId, scope })
+    new SignJWT({ sid: VALID_INPUT.sessionId, client_id: VALID_INPUT.clientId, scope })
       .setProtectedHeader({ alg: "HS256", typ: "JWT", kid: ring().current.kid })
       .setSubject(VALID_INPUT.userId)
       .setIssuer(ISSUER)

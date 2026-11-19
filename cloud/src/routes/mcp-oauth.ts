@@ -5,6 +5,7 @@ import type { AppContext, AppHono } from "../context.js";
 import { recordAuthEvent, type AuthEventInput } from "../db/audit.js";
 import { mcpAuthRequests } from "../db/schema.js";
 import {
+  invalidClient,
   invalidRequest,
   invalidScope,
   providerNotConfigured,
@@ -971,6 +972,15 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
       if (token === undefined || token.length === 0) {
         throw invalidRequest("token is required");
       }
+      /**
+       * `client_id` 必填（Phase 1.3.1-C3b-R2）。
+       *
+       * Public Client 没有 secret，`client_id` 不是认证凭据，但它仍然表达
+       * 「我是谁」。撤销端点要求它，是为了让「拿着别人的 Refresh Token 来
+       * 撤销」这条路径**在协议层就写不成立**——归属校验见 `revokeToken()`。
+       * 长度与重复字段由 `parseTokenForm()` / `requireField()` 统一处理。
+       */
+      const clientId = requireField(form, "client_id");
 
       const meta = sessionMetaFromRequest(c, ctx.env);
       const outcome = await revokeToken(
@@ -982,9 +992,12 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
           resource: mcpResourceFor(ctx.env.baseUrl),
           logger: ctx.logger,
         },
-        { token, ipHash: meta.ipHash, now: new Date() },
+        { token, clientId, ipHash: meta.ipHash, now: new Date() },
       );
 
+      if (outcome.kind === "client_mismatch") {
+        throw invalidClient("client does not match this token");
+      }
       if (outcome.kind === "unsupported_token_type") throw unsupportedTokenType();
 
       // 200 + 空体。`c.body(null, 200)` 保留上面设好的响应头。

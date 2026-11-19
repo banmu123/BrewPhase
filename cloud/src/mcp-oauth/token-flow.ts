@@ -192,7 +192,7 @@ export async function exchangeAuthorizationCode(
     // （理论上只会因为 scope 非法）会让授权码消费一起回滚。
     const accessToken = await signMcpAccessToken(
       deps.keyRing,
-      { userId: session.userId, sessionId: session.sessionId, scope },
+      { userId: session.userId, sessionId: session.sessionId, clientId: session.clientId, scope },
       {
         issuer: deps.issuer,
         resource: deps.resource,
@@ -262,6 +262,7 @@ export async function exchangeRefreshToken(
     {
       userId: rotated.userId,
       sessionId: rotated.sessionId,
+      clientId: rotated.clientId,
       scope: rotated.effectiveScope,
     },
     {

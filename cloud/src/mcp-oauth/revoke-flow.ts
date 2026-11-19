@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { Database } from "../db/client.js";
-import { mcpRefreshTokens } from "../db/schema.js";
+import { mcpRefreshTokens, mcpSessions } from "../db/schema.js";
 import type { Logger } from "../logger.js";
 import type { JwtKeyRing } from "../sessions/jwt.js";
 import { getMcpSessionState, mcpRefreshTokenHash, revokeMcpSession } from "./sessions.js";
@@ -53,6 +53,8 @@ export interface McpRevokeDeps {
 export type RevokeOutcome =
   /** 成功撤销（或并发下已被别人撤销——对外一致）。 */
   | { kind: "revoked" }
+  /** Token 是真的，但归属的 client 与请求里的 `client_id` 不一致。 */
+  | { kind: "client_mismatch" }
   /** 无效 Token：不存在 / 已消费 / 已过期 / Session 非 active。 */
   | { kind: "not_found" }
   /** 是一个有效的 MCP Access JWT，但本阶段不支持按 Access Token 撤销。 */
@@ -61,6 +63,8 @@ export type RevokeOutcome =
 export interface RevokeTokenInput {
   /** 表单里的 `token` 原值。**不落库、不进日志**。 */
   token: string;
+  /** 请求方声称的公开客户端标识（`client_id`，非 Secret）。 */
+  clientId: string;
   /** 请求来源的 IP 哈希（与 Session 创建/轮换同一种算法）。 */
   ipHash?: string | undefined;
   now: Date;
@@ -90,13 +94,30 @@ export async function revokeToken(
       sessionId: mcpRefreshTokens.sessionId,
       consumedAt: mcpRefreshTokens.consumedAt,
       expiresAt: mcpRefreshTokens.expiresAt,
+      // 归属以**已签发 Token 关联的 Session** 为准，而不是 `mcp_oauth_clients`
+      // 这张注册/元数据缓存表——后者记录的是「客户端长什么样」，不是
+      // 「这枚凭据是谁的」。
+      ownerClientId: mcpSessions.clientId,
     })
     .from(mcpRefreshTokens)
+    // INNER JOIN：Session 不存在（FK 级联后理论不可能）按「无效 Token」处理。
+    .innerJoin(mcpSessions, eq(mcpRefreshTokens.sessionId, mcpSessions.id))
     .where(eq(mcpRefreshTokens.tokenHash, tokenHash))
     .limit(1);
   const row = rows[0];
 
   if (row) {
+    /**
+     * 客户端绑定必须排在**所有状态判定与写操作之前**。
+     *
+     * 排在 `consumed_at` / `expires_at` 之后会泄露状态（「这枚 token 存在但
+     * 已过期」与「它不属于你」返回不同结果），排在撤销之后则会让错误客户端
+     * 拿到一个破坏性原语。
+     *
+     * 比较是**逐字符**的：不 trim、不改大小写、不做 URL 归一化。
+     */
+    if (row.ownerClientId !== input.clientId) return { kind: "client_mismatch" };
+
     // 已是历史代（被轮换过）：它对应的 Session 可能仍然活着，但**这一枚**
     // 早就不是凭据了。撤销它等于让「捡到旧 token 的人」拥有踢掉合法会话的
     // 能力——那不是 RFC 7009 想要的语义。
@@ -124,15 +145,22 @@ export async function revokeToken(
   }
 
   // 不是 Refresh Token：判断它是不是一枚**有效**的 MCP Access JWT。
+  let claims;
   try {
-    await verifyMcpAccessToken(deps.keyRing, input.token, {
+    claims = await verifyMcpAccessToken(deps.keyRing, input.token, {
       issuer: deps.issuer,
       resource: deps.resource,
     });
-    return { kind: "unsupported_token_type" };
   } catch {
     // 签名不对 / 过期 / 不是 JWT / 是 Desktop 的 token（`aud` 不符）——
     // 对外一律「无效 Token」，200。
     return { kind: "not_found" };
   }
+
+  // 归属只认**验签通过后**的 `client_id` claim：不解析未验证的 payload。
+  if (claims.clientId !== input.clientId) return { kind: "client_mismatch" };
+
+  // 到这里才承认「这是一枚有效的 MCP Access Token」——本阶段仍不支持按
+  // Access Token 撤销（撤销单位是 Session，需要对应的 Refresh Token）。
+  return { kind: "unsupported_token_type" };
 }

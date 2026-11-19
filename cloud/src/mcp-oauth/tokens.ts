@@ -27,16 +27,21 @@ import { formatScopeClaim, parseScopeClaim, type McpScope } from "./constants.js
  * | `aud` | `MCP_RESOURCE`（= `BASE_URL + "/mcp"`） |
  * | `iat` / `exp` | 15 分钟窗口（沿用 `ACCESS_TOKEN_TTL_SECONDS`） |
  * | `jti` | 16 字节随机值。**token 级标识，不是请求去重键** |
+ * | `client_id` | 签发它的 OAuth 客户端（= Session 的 `client_id`） |
  * | `scope` | 空格分隔，= `issued_scope ∩ grant.scopes` |
  *
- * **没有** `client_id`：客户端身份由 `grant_id`（在库里按 `sid` 反查）确定，
- * 放进 JWT 只会多一处可能与 Grant 不一致的副本。
+ * **有** `client_id`（设计 §8.1）：它不参与 `/mcp` 的授权判定（那里的归属靠
+ * `sid` 回查 Session），但撤销端点必须能回答「这枚 token 属于哪个客户端」——
+ * 否则任何拿到别人 Access Token 的调用方都能试出它是否有效。C1 实现时曾把
+ * 这一条省掉，C3b-R2 按设计补回。
  */
 
 export interface McpAccessTokenInput {
   userId: string;
   /** `mcp_sessions.id`。 */
   sessionId: string;
+  /** `mcp_sessions.client_id`：签发这枚 token 的公开客户端标识。 */
+  clientId: string;
   /** 必须是 `issued_scope ∩ grant.scopes`；调用方负责求交集。 */
   scope: readonly string[];
 }
@@ -55,6 +60,8 @@ export interface McpAccessTokenOptions {
 export interface McpAccessClaims {
   userId: string;
   sessionId: string;
+  /** 已校验的客户端归属（`client_id` claim）。 */
+  clientId: string;
   jti: string;
   /** 已校验过的 scope 列表（保序、去重、全部在 `MCP_SCOPES` 内）。 */
   scope: McpScope[];
@@ -88,8 +95,16 @@ export async function signMcpAccessToken(
     throw new McpTokenError("refusing to sign a token with an empty or unknown scope");
   }
 
+  if (input.clientId.length === 0) {
+    throw new McpTokenError("refusing to sign a token without a client id");
+  }
+
   const issuedAt = Math.floor((options.now ? options.now() : new Date()).getTime() / 1000);
-  return await new SignJWT({ sid: input.sessionId, scope: formatScopeClaim(scopes) })
+  return await new SignJWT({
+    sid: input.sessionId,
+    client_id: input.clientId,
+    scope: formatScopeClaim(scopes),
+  })
     .setProtectedHeader({ alg: "HS256", typ: "JWT", kid: ring.current.kid })
     .setSubject(input.userId)
     .setIssuer(options.issuer)
@@ -161,6 +176,7 @@ export async function verifyMcpAccessToken(
 
       const userId = assertNonEmptyString(payload.sub, "sub");
       const sessionId = assertNonEmptyString(payload.sid, "sid");
+      const clientId = assertNonEmptyString(payload.client_id, "client_id");
       const jti = assertNonEmptyString(payload.jti, "jti");
       if (typeof payload.iat !== "number" || typeof payload.exp !== "number") {
         throw new McpTokenError("missing or invalid iat/exp claim");
@@ -176,6 +192,7 @@ export async function verifyMcpAccessToken(
       return {
         userId,
         sessionId,
+        clientId,
         jti,
         scope,
         issuedAt: payload.iat,
