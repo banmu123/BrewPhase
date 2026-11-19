@@ -404,6 +404,9 @@ describe("目标侧 TLS 与 SNI / Host（R2-1 端到端）", () => {
         maxBodyBytes: 5 * 1024,
         ca: TEST_CERT,
         totalTimeoutMs: 4000,
+        // 显式清空代理环境：env 缺省是 process.env，任何配了 HTTPS_PROXY 的
+        // 机器都会把「直连」测试偷换成「经系统代理」，直连分支从此无人测到。
+        env: {},
       });
       expect(response.status).toBe(200);
       expect(response.body.toString("utf8")).toBe('{"ok":true}');
@@ -425,6 +428,7 @@ describe("目标侧 TLS 与 SNI / Host（R2-1 端到端）", () => {
           addressFamily: 4,
           maxBodyBytes: 5 * 1024,
           totalTimeoutMs: 4000,
+          env: {},
           // 不传 ca：自签名证书必须被拒。
         }),
       ).rejects.toMatchObject({ code: expect.stringMatching(/CERT|VERIFY/) });
@@ -475,6 +479,36 @@ describe("目标侧 TLS 与 SNI / Host（R2-1 端到端）", () => {
       expect(proxy.seen).toEqual([]);
     } finally {
       await proxy.close();
+    }
+  });
+
+  it("HTTPS 代理路径上，隧道内目标证书校验独立生效（altname 不匹配也拒绝）", async () => {
+    // 两跳的证书主体必须能分离，才能单独钉住「目标那一跳的校验没被丢掉」：
+    // 代理跳按 IP 直连（不发 SNI），测试证书的 SAN 含 IP:127.0.0.1 → 信任锚下成功；
+    // 目标跳按域名校验，证书 SAN 不含 other.example.com → 必须失败。
+    // 若有人把隧道内 TLS 的校验关掉或丢掉 ca，这条测试就会转红。
+    const target = await startTlsTarget();
+    const proxy = await startTunnelingTlsProxy();
+    try {
+      await expect(
+        requestPinnedHttps({
+          url: new URL(`https://other.example.com:${target.port}/oauth/client.json`),
+          pinnedAddress: "127.0.0.1",
+          addressFamily: 4,
+          maxBodyBytes: 5 * 1024,
+          ca: TEST_CERT,
+          totalTimeoutMs: 4000,
+          env: { HTTPS_PROXY: proxy.url },
+        }),
+      ).rejects.toMatchObject({
+        code: expect.stringMatching(/CERT|ALTNAME|VERIFY|TLS/),
+      });
+      // 代理跳成功（CONNECT 已发出），失败必须发生在隧道内的目标 TLS。
+      expect(proxy.seen).toEqual([`127.0.0.1:${target.port}`]);
+      expect(target.seen.host).toBeUndefined();
+    } finally {
+      await proxy.close();
+      await target.close();
     }
   });
 
@@ -591,11 +625,70 @@ describe("各阶段超时（R2-2）", () => {
           ca: TEST_CERT,
           connectTimeoutMs: 1_000,
           totalTimeoutMs: 300,
+          env: {}, // 直连路径：必须与环境代理隔离（理由见上文）。
         }),
       ).rejects.toThrow(/timed out \(total\)/);
     } finally {
       server.closeAllConnections?.();
       await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("总超时会销毁仍在 TLS 握手中的代理隧道（目标侧吞掉 ClientHello 也不泄漏）", async () => {
+    // 这条测试针对的窗口：CONNECT 已经拿到 200、隧道 socket 已交还给
+    // createConnection，但目标 TLS 握手尚未完成。此时 socket 既不属于
+    // request（callback 还没回调），openTunnel 的 abort 监听也已移除——
+    // 总预算在这里耗尽的话，必须有人收掉这条连接。
+    const accepted: net.Socket[] = [];
+    const hole = net.createServer((socket) => {
+      accepted.push(socket);
+      socket.resume(); // 吞掉 ClientHello，永不回应
+      socket.on("error", () => {});
+    });
+    await new Promise<void>((resolve) => hole.listen(0, "127.0.0.1", () => resolve()));
+    const holePort = (hole.address() as AddressInfo).port;
+
+    const tunnels: net.Socket[] = [];
+    const proxy = http.createServer((_req, res) => res.writeHead(405).end());
+    proxy.on("connect", (_req, socket, _head) => {
+      tunnels.push(socket as net.Socket);
+      const upstream = net.connect(holePort, "127.0.0.1", () => {
+        (socket as net.Socket).write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        socket.pipe(upstream);
+        upstream.pipe(socket);
+      });
+      upstream.on("error", () => (socket as net.Socket).destroy());
+      (socket as net.Socket).on("error", () => upstream.destroy());
+    });
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", () => resolve()));
+    const proxyPort = (proxy.address() as AddressInfo).port;
+
+    try {
+      await expect(
+        requestPinnedHttps({
+          url: new URL("https://localhost/oauth/client.json"),
+          pinnedAddress: "127.0.0.1",
+          addressFamily: 4,
+          maxBodyBytes: 5 * 1024,
+          // 连接超时故意远大于总预算：由总定时器先触发，且触发点落在 TLS 握手窗口。
+          connectTimeoutMs: 10_000,
+          totalTimeoutMs: 300,
+          env: { HTTPS_PROXY: `http://127.0.0.1:${proxyPort}` },
+        }),
+      ).rejects.toThrow(/timed out \(total\)/);
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const open = await new Promise<number>((resolve) => {
+        hole.getConnections((_error, count) => resolve(count));
+      });
+      expect(open).toBe(0);
+      expect(accepted.every((socket) => socket.destroyed)).toBe(true);
+      expect(tunnels.every((socket) => socket.destroyed)).toBe(true);
+    } finally {
+      for (const socket of accepted) socket.destroy();
+      for (const socket of tunnels) socket.destroy();
+      await new Promise<void>((resolve) => hole.close(() => resolve()));
+      await new Promise<void>((resolve) => proxy.close(() => resolve()));
     }
   });
 });

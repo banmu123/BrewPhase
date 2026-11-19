@@ -777,11 +777,27 @@ export async function requestPinnedHttps(options: PinnedRequestOptions): Promise
           .then((socket) => {
             // 隧道之上按**目标域名**做 TLS：SNI、证书校验、信任锚都按目标来。
             const secure = tls.connect({ socket, servername: url.hostname, ca });
+            let handshaking = true;
+            // R2 复审（F9）：隧道交出之后、TLS 握手完成之前，socket 既不属于
+            // request（callback 还没回调），abort 监听也已被 openTunnel 的
+            // finally 移除。总超时在这里触发的话，没人销毁这条连接——它会一直
+            // 挂到对端回应或内核 TCP 超时。abort 必须覆盖这最后一个窗口。
+            const onAbort = (): void => {
+              secure.destroy();
+              socket.destroy();
+              settle(new Error("pinned request aborted during target TLS handshake"));
+            };
             const settle = (error: Error | null): void => {
-              if (connected) return;
-              connected = true;
+              controller.signal.removeEventListener("abort", onAbort);
+              if (!handshaking) return;
+              handshaking = false;
               callback(error, error ? undefined : secure);
             };
+            if (controller.signal.aborted) {
+              onAbort();
+              return;
+            }
+            controller.signal.addEventListener("abort", onAbort, { once: true });
             secure.once("error", settle);
             secure.once("secureConnect", () => settle(null));
           })
