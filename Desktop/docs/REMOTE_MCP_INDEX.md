@@ -1206,24 +1206,26 @@ C3b 的请求面缺口：`POST /mcp/oauth/revoke?token=…` 配合 Body 里的�
 理由：URL 会留在浏览器历史、代理访问日志、`Referer`、截图与工单里，token 出现
 在那里就已经泄露。所以这是「请求形态本身不接受」，不是「优先用 Body」的容错。
 
-### 27.2 测试（+9，`revoke-route` 30 → 39）
+### 27.2 测试（+11，`revoke-route` 30 → 41）
 
 | 用例 | 判据 |
 |---|---|
 | 空 Body 的三种形态（`=abc` / `=` / 重复） | 400 |
 | Body 缺 token | 400（不回退到 Query） |
 | Body 有效 / Query 与 Body 相同 / 不同 | 400 + 零副作用 |
+| 空值 Query + Body 有效 / 重复 Query + Body 有效 | 400 + 零副作用 |
 | 哨兵值泄露检查 | 响应体、日志、审计都不含；哈希也不出现 |
 | 错误响应头 | `no-store` + `no-cache` |
 
-零副作用 = Session active、`consumed_at` 不变、无撤销审计、`mcp_grants`
-逐字段不变、`auth_sessions` 零写入。
+零副作用 = Session active、`revoked_reason` 不变、Refresh 历史数组
+（消费状态 + 行数）不变、无撤销审计、`mcp_grants` 逐字段不变、
+`auth_sessions` 零写入。
 
 ### 27.3 变异与门禁
 
-移除 Query 检查 → 4 条转红（1/1 被抓）。
+移除 Query 检查 → 6 条转红（1/1 被抓）。
 
-Cloud **1056 passed / 62 files**；Desktop **1265 passed / 89 files**，
+Cloud **1058 passed / 62 files**；Desktop **1265 passed / 89 files**，
 `stdio.mjs` 911.67 kB 不变。无新增迁移、未改 Desktop 生产代码。
 
 ### 27.4 状态

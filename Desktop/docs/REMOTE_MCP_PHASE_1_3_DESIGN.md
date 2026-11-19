@@ -1062,6 +1062,8 @@ refresh_token → sha256(pepper, "mcp-refresh", token) → mcp_refresh_tokens
 | `?token=abc` | 空 | 400 |
 | `?token=`（空值） | 空 | 400 |
 | `?token=a&token=b` | 空 | 400 |
+| `?token=`（空值） | **有效 Refresh Token** | **400**，且不撤销 |
+| `?token=a&token=b` | **有效 Refresh Token** | **400**，且不撤销 |
 | `?token=secret` | 缺 token | 400 |
 | `?token=secret` | **有效 Refresh Token** | **400**，且不撤销 |
 | `?token=X` | 有效 Refresh Token `X`（相同） | **400**，且不撤销 |

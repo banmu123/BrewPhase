@@ -1224,7 +1224,7 @@ token 出现在那里就已经泄露，这种**请求形态本身**不接受。
 `queries()` 对 `?token=`（空值）与 `?token=a&token=b`（重复）都返回非
 `undefined`，三种形态一并挡掉；错误文案固定、不回显、不写审计。
 
-**新增测试 9 条（`revoke-route` 30 → 39，Cloud 1047 → 1056 / 62 files）**：
+**新增测试 11 条（`revoke-route` 30 → 41，Cloud 1047 → 1058 / 62 files）**：
 
 | 用例 | 判据 |
 |---|---|
@@ -1232,16 +1232,18 @@ token 出现在那里就已经泄露，这种**请求形态本身**不接受。
 | `?token=secret` + Body 缺 token | 400（不回退到 Query） |
 | `?token=secret` + Body 有效 | 400 + 零副作用 |
 | Query 与 Body 相同 / 不同 | 400 + 零副作用 |
+| `?token=`（空值）+ Body 有效 | 400 + 零副作用（「空值等于没传」不成立） |
+| `?token=a&token=b`（重复）+ Body 有效 | 400 + 零副作用（不做「取第一个」） |
 | 哨兵值 `QUERY-TOKEN-SENTINEL-2026` | 响应体、应用日志、审计都不含；连哈希都不出现（说明没算过） |
 | 错误响应 | 仍带 `no-store` + `no-cache` |
 
 「零副作用」= Session 仍 active、`consumed_at` 不变、无 `mcp_session_revoked`
 审计、`mcp_grants` 前后逐字段相等、Desktop `auth_sessions` 零写入。
 
-**变异 1/1 被抓**：移除 Query 检查后 4 条转红（三条「Body 有合法值」+ 哨兵用例）。
+**变异 1/1 被抓**：移除 Query 检查后 6 条转红（五条「Body 有合法值」+ 哨兵用例）。
 
 **门禁**：Cloud `typecheck` / `lint` / `build` 通过，`pnpm test`
-**1056 passed / 62 files**；Desktop `typecheck` / `test` / `build` / `mcp:build`
+**1058 passed / 62 files**；Desktop `typecheck` / `test` / `build` / `mcp:build`
 通过，**1265 passed / 89 files**，`stdio.mjs` 911.67 kB 不变。
 **无新增迁移、未改 Desktop 生产代码。**
 
