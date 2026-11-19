@@ -88,6 +88,18 @@ describe("表单格式", () => {
     expect(await errorOf(res)).toBe("invalid_request");
   });
 
+  it("重复字段的错误文案不回显字段名（也不带换行）", async () => {
+    // 字段名是请求方可控的（这里塞了 %0A），拼进 description 就是日志注入面。
+    const res = await postTokenRaw(h, "x-evil%0Ainjected=1&x-evil%0Ainjected=2");
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; error_description?: string };
+    expect(body.error).toBe("invalid_request");
+    expect(body.error_description).toBe("a parameter appears more than once");
+    expect(JSON.stringify(body)).not.toContain("x-evil");
+    expect(JSON.stringify(body)).not.toContain("\\n");
+    expect(await codeConsumed()).toBe(false);
+  });
+
   it("请求体超限 → invalid_request", async () => {
     const res = await postTokenRaw(h, `grant_type=${"x".repeat(9000)}`);
     expect(res.status).toBe(400);

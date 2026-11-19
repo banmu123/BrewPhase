@@ -13,6 +13,7 @@ export type ErrorCode =
   | "invalid_client"
   | "invalid_scope"
   | "unsupported_grant_type"
+  | "unsupported_token_type"
   | "invalid_token"
   | "unsupported_provider"
   | "provider_not_configured"
@@ -95,6 +96,21 @@ export const unsupportedGrantType = () =>
     "unsupported_grant_type",
     400,
     "grant_type must be authorization_code or refresh_token",
+  );
+
+/**
+ * Token 是真的，但本端点不支持按这个类型撤销（Phase 1.3.1-C3b）。
+ *
+ * RFC 7009 §2.2.1 为这种情况定义了 `unsupported_token_type`，HTTP 400。
+ * 它与「无效 Token」是两回事：后者必须回 200（否则端点变成存在性探针），
+ * 而这里客户端需要知道「换一种凭据再试」——本项目的撤销单位是 Session，
+ * 对应的凭据是 Refresh Token。
+ */
+export const unsupportedTokenType = () =>
+  new AppError(
+    "unsupported_token_type",
+    400,
+    "only refresh tokens can be revoked at this endpoint",
   );
 
 export const invalidToken = (description = "Invalid or expired access token") =>

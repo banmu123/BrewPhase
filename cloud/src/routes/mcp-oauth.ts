@@ -11,11 +11,13 @@ import {
   respondError,
   serverError,
   unsupportedGrantType,
+  unsupportedTokenType,
   AppError,
 } from "../security/errors.js";
 import { constantTimeEqual } from "../security/crypto.js";
 import { formatScopeClaim, isMcpScope, mcpResourceFor } from "../mcp-oauth/constants.js";
 import { exchangeAuthorizationCode, exchangeRefreshToken } from "../mcp-oauth/token-flow.js";
+import { revokeToken } from "../mcp-oauth/revoke-flow.js";
 import { sessionMetaFromRequest } from "./body.js";
 import { rateLimit } from "../security/rate-limit.js";
 import { isProviderName, type ProviderName } from "../oauth/providers.js";
@@ -256,6 +258,21 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
    */
   const tokenLimiter = rateLimit({
     name: "mcp-token",
+    max: ctx.env.rateLimit.maxToken,
+    windowMs: ctx.env.rateLimit.windowMs,
+    trustProxy: ctx.env.trustProxy,
+    trustedHops: ctx.env.trustProxyHops,
+    maxBuckets: ctx.env.rateLimit.maxBuckets,
+  });
+
+  /**
+   * Revocation 的独立限流桶（Phase 1.3.1-C3b）。
+   *
+   * 与 `mcp-token` 分开：撤销是「用户点了登出」，刷新是「客户端按节奏续期」，
+   * 两者的正常频率与突发形态都不一样。共用桶会让一次登出把后续刷新挤掉。
+   */
+  const revokeLimiter = rateLimit({
+    name: "mcp-revoke",
     max: ctx.env.rateLimit.maxToken,
     windowMs: ctx.env.rateLimit.windowMs,
     trustProxy: ctx.env.trustProxy,
@@ -903,6 +920,71 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
       return respondError(c, serverError("token issuance failed"), ctx.env.isProduction);
     }
   });
+
+  // -------------------------------------------------------------------------
+  // POST /mcp/oauth/revoke
+  // -------------------------------------------------------------------------
+
+  /**
+   * Token Revocation（RFC 7009，Phase 1.3.1-C3b）。
+   *
+   * ## 为什么绝大多数失败也是 200
+   *
+   * RFC 7009 §2.2：**无效 Token 不产生错误**。随机串、已消费的历史代、已过期、
+   * Session 已撤销/已过期，对外必须是同一个 200 空响应——否则这个端点就是
+   * 一台「token 是否存在 / 是否曾经有效」的探测机。
+   *
+   * 唯一返回 4xx 的两种情况：
+   * - 请求本身畸形（缺 `token`、重复字段、Content-Type 不对、超限）→ `invalid_request`；
+   * - 拿了一枚**有效**的 MCP Access JWT 来撤销 → `unsupported_token_type`。
+   *
+   * ## `token_type_hint` 只当提示
+   *
+   * 不按 Hint 分流：先按 Refresh Token 的哈希查一次（唯一索引，O(1)），
+   * 没命中才把它当 Access JWT 验一次。于是「Hint 说 access_token、实际给的是
+   * refresh_token」照样能撤掉——RFC 7009 §2.1 明确要求不要只信 Hint。
+   * 未知 Hint 值直接忽略。
+   */
+  app.post("/mcp/oauth/revoke", revokeLimiter, async (c) => {
+    // 成功与失败都不许缓存：响应形态本身（200 vs 400）就是信息。
+    c.header("Cache-Control", "no-store");
+    c.header("Pragma", "no-cache");
+    try {
+      const form = await parseTokenForm(c);
+      const token = form.get("token");
+      if (token === undefined || token.length === 0) {
+        throw invalidRequest("token is required");
+      }
+
+      const meta = sessionMetaFromRequest(c, ctx.env);
+      const outcome = await revokeToken(
+        {
+          db: ctx.db.db,
+          pepper: ctx.env.sessionTokenPepper,
+          keyRing: ctx.keyRing,
+          issuer: ctx.env.baseUrl,
+          resource: mcpResourceFor(ctx.env.baseUrl),
+          logger: ctx.logger,
+        },
+        { token, ipHash: meta.ipHash, now: new Date() },
+      );
+
+      if (outcome.kind === "unsupported_token_type") throw unsupportedTokenType();
+
+      // 200 + 空体。`c.body(null, 200)` 保留上面设好的响应头。
+      return c.body(null, 200);
+    } catch (err) {
+      if (err instanceof AppError) {
+        return respondError(c, err, ctx.env.isProduction);
+      }
+      /**
+       * 非 AppError 一律换成固定文案：drizzle 的 message 带整条 SQL 与全部
+       * 参数（这里就是 token 哈希），原样透出即凭据泄露。
+       */
+      ctx.logger.error("mcp_revoke_failed", {});
+      return respondError(c, serverError("token revocation failed"), ctx.env.isProduction);
+    }
+  });
 }
 
 const MAX_TOKEN_BODY_BYTES = 8 * 1024;
@@ -1061,7 +1143,9 @@ async function parseTokenForm(c: Context): Promise<Map<string, string>> {
   for (const key of new Set(params.keys())) {
     const all = params.getAll(key);
     if (all.length !== 1) {
-      throw invalidRequest(`parameter ${key} must appear exactly once`);
+      // **不回显字段名**：名字完全由请求方控制（可含换行、可超长），
+      // 拼进 description 既是日志注入面，也把一条安全错误变成了回显槽。
+      throw invalidRequest("a parameter appears more than once");
     }
 
     const value = all[0] ?? "";
