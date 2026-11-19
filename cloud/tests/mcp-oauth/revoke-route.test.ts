@@ -543,6 +543,141 @@ describe("Access JWT 的客户端归属（C3b-R2）", () => {
   });
 });
 
+describe("Access JWT Session 状态（C3b-R2-R1）", () => {
+  /** 用测试密钥签一枚 MCP Access JWT（可指定 sid / client_id）。 */
+  async function signAccess(sessionId: string, clientId: string): Promise<string> {
+    return await signMcpAccessToken(
+      h.ctx.keyRing,
+      { userId: "00000000-0000-4000-8000-00000000000a", sessionId, clientId, scope: ["records:read"] },
+      {
+        issuer: h.ctx.env.baseUrl,
+        resource: mcpResourceFor(h.ctx.env.baseUrl),
+        ttlSeconds: 900,
+      },
+    );
+  }
+
+  /**
+   * 「无效 Access JWT」的统一验收：200 空体 + 零写入。
+   *
+   * 只断言状态码不够：一个把已撤销 Session 的 token 当成「有效但不支持撤销」
+   * 的实现同样可能返回 400，或者更糟——顺手写一次撤销。
+   */
+  async function expectInvalidAccessToken(
+    token: string,
+    clientId: string,
+    sessionId: string | null,
+  ): Promise<void> {
+    const grantsBefore = await grantsSnapshot();
+    const auditBefore = await auditCount("mcp_session_revoked");
+    const desktopBefore = await desktopTableCount();
+    const sessionsBefore = await sessions();
+    const sessionBefore = sessionId ? await sessionOf(sessionId) : null;
+    const consumedBefore = sessionId ? await consumedAtOf(sessionId) : null;
+
+    const res = await revoke({ token, client_id: clientId });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("");
+
+    if (sessionId && sessionBefore) {
+      const after = await sessionOf(sessionId);
+      expect(after.revoked_at).toBe(sessionBefore.revoked_at);
+      expect(after.revoked_reason).toBe(sessionBefore.revoked_reason);
+      expect(await consumedAtOf(sessionId)).toEqual(consumedBefore);
+    }
+    expect(await sessions()).toEqual(sessionsBefore);
+    expect(await grantsSnapshot()).toEqual(grantsBefore);
+    expect(await auditCount("mcp_session_revoked")).toBe(auditBefore);
+    expect(await desktopTableCount()).toBe(desktopBefore);
+  }
+
+  it("Session active + 正确 client_id → 400 unsupported_token_type，且不撤销", async () => {
+    const a = await issueTokens("test-client");
+
+    const res = await revoke({ token: a.tokens.access_token, client_id: "test-client" });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("unsupported_token_type");
+
+    expect((await sessionOf(a.sessionId)).revoked_at).toBeNull();
+    expect(await auditCount("mcp_session_revoked")).toBe(0);
+  });
+
+  it("Session active + 错误 client_id → 401 invalid_client，且不撤销", async () => {
+    const a = await issueTokens("test-client");
+
+    const res = await revoke({ token: a.tokens.access_token, client_id: "other-client" });
+    expect(res.status).toBe(401);
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_client");
+    expect((await sessionOf(a.sessionId)).revoked_at).toBeNull();
+    expect(await auditCount("mcp_session_revoked")).toBe(0);
+  });
+
+  it("Session 已撤销 → 200 空体（不再是「有效但不支持撤销」）", async () => {
+    const a = await issueTokens("test-client");
+    // 用 Refresh Token 正常撤销这条 Session；JWT 本身仍在 exp 内。
+    expect((await revoke({ token: a.tokens.refresh_token, client_id: "test-client" })).status).toBe(200);
+    const revokedAt = (await sessionOf(a.sessionId)).revoked_at;
+    expect(revokedAt).not.toBeNull();
+    expect(await auditCount("mcp_session_revoked")).toBe(1);
+
+    await expectInvalidAccessToken(a.tokens.access_token, "test-client", a.sessionId);
+
+    // revoked_at 不被覆盖，审计也不新增。
+    expect((await sessionOf(a.sessionId)).revoked_at).toBe(revokedAt);
+    expect(await auditCount("mcp_session_revoked")).toBe(1);
+  });
+
+  it("Session 已过期 → 200 空体，且不写 revoked_at（过期不是撤销）", async () => {
+    const a = await issueTokens("test-client");
+    // CHECK 要求 absolute_expires_at > created_at，两个时间一起前移。
+    await handle.sql`
+      update mcp_sessions
+         set created_at = now() - interval '91 days',
+             absolute_expires_at = now() - interval '1 day'
+       where id = ${a.sessionId}`;
+
+    await expectInvalidAccessToken(a.tokens.access_token, "test-client", a.sessionId);
+    expect((await sessionOf(a.sessionId)).revoked_at).toBeNull();
+  });
+
+  it("Session 不存在 → 200 空体，不产生任何写入", async () => {
+    const ghostSid = "99999999-9999-4999-8999-999999999999";
+    const token = await signAccess(ghostSid, "test-client");
+
+    const sessionsBefore = await sessions();
+    await expectInvalidAccessToken(token, "test-client", null);
+    expect(await sessions()).toEqual(sessionsBefore);
+  });
+
+  it("JWT 的 client_id 与 Session 归属不一致 → 200（claims 不能自证）", async () => {
+    const a = await issueTokens("test-client");
+    // 签名合法、sid 真实，但 claim 里的 client_id 不是这条 Session 的主人。
+    const forgedClaim = await signAccess(a.sessionId, "ghost-client");
+
+    // 即使请求的 client_id 与 **claim** 完全一致，也不能被当成有效 Access Token。
+    await expectInvalidAccessToken(forgedClaim, "ghost-client", a.sessionId);
+    expect((await sessionOf(a.sessionId)).revoked_at).toBeNull();
+  });
+
+  it("三种「无效」对外不可区分：撤销 / 过期 / 不存在都是同一个 200 空体", async () => {
+    const a = await issueTokens("test-client");
+    expect((await revoke({ token: a.tokens.refresh_token, client_id: "test-client" })).status).toBe(200);
+
+    const revokedRes = await revoke({ token: a.tokens.access_token, client_id: "test-client" });
+    const missingRes = await revoke({
+      token: await signAccess("88888888-8888-4888-8888-888888888888", "test-client"),
+      client_id: "test-client",
+    });
+
+    expect(revokedRes.status).toBe(200);
+    expect(missingRes.status).toBe(200);
+    expect(await revokedRes.text()).toBe("");
+    expect(await missingRes.text()).toBe("");
+    // 响应体也不带错误码——完全空。
+    expect(revokedRes.headers.get("content-type") ?? "").not.toContain("application/json");
+  });
+});
+
 describe("Session 级撤销（本阶段核心）", () => {
   it("只撤当前 Session：同 Grant 的另一个 Session、Grant 本身都不动", async () => {
     // 同一个 client、同一个 Grant 下的两条独立 Session。

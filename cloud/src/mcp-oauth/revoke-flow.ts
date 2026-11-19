@@ -157,10 +157,52 @@ export async function revokeToken(
     return { kind: "not_found" };
   }
 
-  // 归属只认**验签通过后**的 `client_id` claim：不解析未验证的 payload。
-  if (claims.clientId !== input.clientId) return { kind: "client_mismatch" };
+  /**
+   * 验签通过**不等于**这枚 token 现在还能用（Phase 1.3.1-C3b-R2-R1）。
+   *
+   * `verifyMcpAccessToken()` 只回答「这串字节是不是我们签的、有没有过期」。
+   * 资源服务器（`/mcp`）在每次请求时还会按 `sid` 回查 Session 状态——所以
+   * 一枚签名完好的 JWT，在 Session 被撤销或越过 90 天绝对期限之后，**已经
+   * 不是有效凭据**了。继续把它当成「有效但不支持撤销」会在撤销端点上凭空
+   * 造出一个「这枚 token 仍然活着」的假信号。
+   *
+   * 一次查询把需要的三列一起读出来，不为了「先查存在、再查状态」跑两遍。
+   */
+  const sessions = await deps.db
+    .select({
+      clientId: mcpSessions.clientId,
+      revokedAt: mcpSessions.revokedAt,
+      absoluteExpiresAt: mcpSessions.absoluteExpiresAt,
+    })
+    .from(mcpSessions)
+    .where(eq(mcpSessions.id, claims.sessionId))
+    .limit(1);
+  const session = sessions[0];
 
-  // 到这里才承认「这是一枚有效的 MCP Access Token」——本阶段仍不支持按
-  // Access Token 撤销（撤销单位是 Session，需要对应的 Refresh Token）。
+  // 三个「无效」彼此不可区分：Session 不存在 / 已撤销 / 已过期。
+  if (!session) return { kind: "not_found" };
+  if (session.revokedAt !== null) return { kind: "not_found" };
+  if (session.absoluteExpiresAt.getTime() <= input.now.getTime()) return { kind: "not_found" };
+
+  /**
+   * JWT 的声明与 Session 记录必须一致。
+   *
+   * 这一条挡的是「claims 自证」：如果一个实现只比 `claims.clientId` 与请求值，
+   * 那么一枚把 `client_id` 写成任意值的伪造 claim（只要签名合法——比如密钥
+   * 轮换期的旧签名）就能自称属于任何客户端。**归属的权威是 Session 行**，
+   * JWT 只是它的一个快照。
+   */
+  if (claims.clientId !== session.clientId) return { kind: "not_found" };
+
+  /**
+   * 到这里：Token 有效、Session 活着、两者归属一致。
+   *
+   * 只剩最后一个判据——**发请求的是不是这个客户端**。它排在最后，因为
+   * 前三种「无效」对任何人都必须返回同一个 200；而这一条是 401，语义是
+   * 「你的身份声明与这枚凭据对不上」，只有在凭据确实有效时才有意义。
+   */
+  if (input.clientId !== session.clientId) return { kind: "client_mismatch" };
+
+  // 有效但不支持按 Access Token 撤销（撤销单位是 Session，凭据是 Refresh Token）。
   return { kind: "unsupported_token_type" };
 }
