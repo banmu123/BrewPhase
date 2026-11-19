@@ -159,23 +159,56 @@ function formFor(target: AuthCodeFixture): string {
   }).toString();
 }
 
-/** 一条「本来能成功」的表单，附上任意 padding。 */
-function paddedForm(padding: string): string {
-  return `${formFor(fixture)}&pad=${padding}`;
+/**
+ * 一条「本来能成功」的表单，填充到**恰好** `targetBytes` 个 UTF-8 字节。
+ *
+ * 填充被拆成每段 ≤500 字符的独立字段：单字段有 512 字符上限（C3a-R2），
+ * 用一个 7000 字符的 `pad` 去撑 body 会先撞上字段上限，测不到「请求体字节
+ * 上限」这条判据。最后的零头用 `&` 补齐（空键、空值，不影响解析）。
+ */
+function formWithPaddingBytes(targetBytes: number): string {
+  const base = formFor(fixture);
+  let body = base;
+  let index = 0;
+  const size = () => Buffer.byteLength(body, "utf8");
+  while (size() < targetBytes) {
+    const remaining = targetBytes - size();
+    const prefix = `&pad${index}=`;
+    if (remaining <= prefix.length + 1) {
+      body += "&".repeat(remaining);
+      break;
+    }
+    const chunk = "p".repeat(Math.min(500, remaining - prefix.length));
+    body += prefix + chunk;
+    index += 1;
+  }
+  return body;
+}
+
+/**
+ * 用多字节字符把 body 撑到「字节超限、字符数远小于 8192」。
+ *
+ * 每个字段 500 个汉字（1500 字节、500 字符），仍在单字段上限内。
+ */
+function formWithMultibytePadding(fieldCount: number, charsPerField: number): string {
+  const parts = [formFor(fixture)];
+  for (let i = 0; i < fieldCount; i += 1) {
+    parts.push(`pad${i}=${"汉".repeat(charsPerField)}`);
+  }
+  return parts.join("&");
 }
 
 describe("请求体字节上限", () => {
   it("小于 8 KiB 的请求仍然可以兑换（上限没有被改小）", async () => {
     // 8 KiB 减去表单本身的长度，留一点余量，确保仍在限内。
-    const res = await postRawRequest(h, { body: paddedForm("p".repeat(7000)) });
+    const res = await postRawRequest(h, { body: formWithPaddingBytes(7000) });
     expect(res.status).toBe(200);
     expect(await codeConsumed()).toBe(true);
   });
 
   it("UTF-8 实际字节数超限、但字符串长度没超 → 拒绝（.length 不能当字节）", async () => {
-    // 3000 个汉字：JS 字符串长度 3000（< 8192），实际 UTF-8 9000 字节（> 8192）。
-    const padding = "汉".repeat(3000);
-    const body = paddedForm(padding);
+    // 3000 个汉字：JS 字符串长度约 3050（< 8192），实际 UTF-8 9000 字节（> 8192）。
+    const body = formWithMultibytePadding(6, 500);
     expect(body.length).toBeLessThan(8192);
     expect(Buffer.byteLength(body, "utf8")).toBeGreaterThan(8192);
 
@@ -191,7 +224,7 @@ describe("请求体字节上限", () => {
 
   it("没有 Content-Length 时按实际流累计截断", async () => {
     // `app.request` 不会自动带 content-length，所以这条走的就是流累计路径。
-    const body = paddedForm("p".repeat(9000));
+    const body = formWithPaddingBytes(9000);
     const res = await postRawRequest(h, { body });
     expect(res.status).toBe(400);
     expect(await errorOf(res)).toBe("invalid_request");
@@ -210,7 +243,7 @@ describe("请求体字节上限", () => {
   });
 
   it("Content-Length 撒谎（声称 10，实际超限）→ 仍按实际字节拒绝", async () => {
-    const body = paddedForm("p".repeat(9000));
+    const body = formWithPaddingBytes(9000);
     const res = await postRawRequest(h, { body, contentLength: "10" });
     expect(res.status).toBe(400);
     expect(await errorOf(res)).toBe("invalid_request");
@@ -266,10 +299,7 @@ describe("请求体字节上限", () => {
   });
 
   it("恰好 8192 字节仍然接受（上限是「大于」才拒）", async () => {
-    const base = paddedForm("");
-    const padLength = 8192 - Buffer.byteLength(base, "utf8");
-    expect(padLength).toBeGreaterThan(0);
-    const body = paddedForm("p".repeat(padLength));
+    const body = formWithPaddingBytes(8192);
     expect(Buffer.byteLength(body, "utf8")).toBe(8192);
 
     const res = await postRawRequest(h, { body });
@@ -277,10 +307,62 @@ describe("请求体字节上限", () => {
   });
 
   it("8193 字节被拒绝（边界只差一个字节）", async () => {
-    const base = paddedForm("");
-    const padLength = 8193 - Buffer.byteLength(base, "utf8");
-    const res = await postRawRequest(h, { body: paddedForm("p".repeat(padLength)) });
+    const res = await postRawRequest(h, { body: formWithPaddingBytes(8193) });
     expect(res.status).toBe(400);
+    expect(await codeConsumed()).toBe(false);
+  });
+});
+
+describe("字段值统一限长（C3a-R2）", () => {
+  /** 512 字符、语义仍是单个合法 scope（尾部空格不产生 token）。 */
+  function scopeOfLength(length: number): string {
+    return "records:read".padEnd(length, " ");
+  }
+
+  it("scope 恰好 512 字符 → 正常兑换（上限是 512，不是 511）", async () => {
+    const scope = scopeOfLength(512);
+    expect(scope.length).toBe(512);
+
+    const res = await exchangeCode(h, fixture, { scope });
+    expect(res.status).toBe(200);
+    // 兑换真的发生了：授权码被消费，Session 与初代 Refresh 都建了。
+    expect(await codeConsumed()).toBe(true);
+    expect(await sessionCount(handle, fixture.userId)).toBe(1);
+    expect(await refreshRows(handle, fixture.userId)).toHaveLength(1);
+  });
+
+  it("scope 513 字符 → 400 invalid_request，且不消费授权码", async () => {
+    const res = await exchangeCode(h, fixture, { scope: scopeOfLength(513) });
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toBe("invalid_request");
+
+    expect(await codeConsumed()).toBe(false);
+    expect(await sessionCount(handle, fixture.userId)).toBe(0);
+    expect(await refreshRows(handle, fixture.userId)).toHaveLength(0);
+  });
+
+  it("未知扩展字段 513 字符 → 400（扩展字段可以忽略，但不能无限长）", async () => {
+    const body = `${formFor(fixture)}&extension=${"x".repeat(513)}`;
+    const res = await postRawRequest(h, { body });
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toBe("invalid_request");
+
+    expect(await codeConsumed()).toBe(false);
+    expect(await sessionCount(handle, fixture.userId)).toBe(0);
+    expect(await refreshRows(handle, fixture.userId)).toHaveLength(0);
+  });
+
+  it("未知扩展字段 512 字符 → 照旧忽略，兑换正常", async () => {
+    const body = `${formFor(fixture)}&extension=${"x".repeat(512)}`;
+    const res = await postRawRequest(h, { body });
+    expect(res.status).toBe(200);
+    expect(await codeConsumed()).toBe(true);
+  });
+
+  it("必填字段超长同样拒绝（code 700 字符）", async () => {
+    const res = await exchangeCode(h, fixture, { code: "c".repeat(700) });
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toBe("invalid_request");
     expect(await codeConsumed()).toBe(false);
   });
 });
@@ -319,6 +401,30 @@ describe("Content-Type 严格解析", () => {
     expect(res.status).toBe(200);
     const tokens = await readTokenResponse(res);
     expect(tokens.token_type).toBe("Bearer");
+  });
+
+  it("同一个参数重复出现 → 拒绝（即使值完全相同）", async () => {
+    for (const contentType of [
+      "application/x-www-form-urlencoded; charset=utf-8; charset=utf-8",
+      "application/x-www-form-urlencoded; Charset=UTF-8; charset=utf-8",
+      "application/x-www-form-urlencoded; charset=utf-8; CHARSET=utf-8",
+      "application/x-www-form-urlencoded; charset=utf-8; charset=UTF-8",
+    ]) {
+      const res = await postTokenRaw(h, formFor(fixture), contentType);
+      expect(res.status, contentType).toBe(400);
+      expect(await errorOf(res), contentType).toBe("invalid_request");
+    }
+    // 四种写法都被拒绝，授权码不能被消费。
+    expect(await codeConsumed()).toBe(false);
+  });
+
+  it("单个 charset 参数仍然接受（与重复声明区分开）", async () => {
+    const fresh = await obtainAuthCode(h);
+    const res = await postRawRequest(h, {
+      body: formFor(fresh),
+      contentType: "application/x-www-form-urlencoded; charset=utf-8",
+    });
+    expect(res.status).toBe(200);
   });
 
   it("非法媒体类型后缀 → 拒绝（不是 startsWith 就放行）", async () => {
@@ -379,7 +485,7 @@ describe("UTF-8 严格解码", () => {
 
   it("合法 UTF-8（含中文值）不会因为严格解码被误拒", async () => {
     // 中文出现在一个未知字段里：解析要成功，兑换也要成功（未知参数被忽略）。
-    const body = `${paddedForm("值")}&note=烘焙`;
+    const body = `${formFor(fixture)}&pad=值&note=烘焙`;
     const res = await postRawRequest(h, { body });
     expect(res.status).toBe(200);
   });

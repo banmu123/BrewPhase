@@ -936,6 +936,10 @@ function isFormContentType(raw: string | undefined): boolean {
   const segments = raw.split(";");
   if ((segments[0] ?? "").trim().toLowerCase() !== FORM_CONTENT_TYPE) return false;
 
+  // 参数名**不能重复**：`charset=utf-8; charset=UTF-8` 不是一个能确定含义的
+  // 头——两个解析器各取一个就是两种行为。即使两处值相同也拒绝，因为「值恰好
+  // 一样」只是这一次的巧合，不构成规则。
+  const seen = new Set<string>();
   for (const segment of segments.slice(1)) {
     const param = segment.trim();
     // 空参数说明头本身有语法错误（`…;` / `…;;charset=utf-8`）。
@@ -943,6 +947,9 @@ function isFormContentType(raw: string | undefined): boolean {
     const eq = param.indexOf("=");
     if (eq <= 0) return false;
     const name = param.slice(0, eq).trim().toLowerCase();
+    if (seen.has(name)) return false;
+    seen.add(name);
+
     let value = param.slice(eq + 1).trim();
     if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
       value = value.slice(1, -1);
@@ -1056,7 +1063,23 @@ async function parseTokenForm(c: Context): Promise<Map<string, string>> {
     if (all.length !== 1) {
       throw invalidRequest(`parameter ${key} must appear exactly once`);
     }
-    values.set(key, all[0] ?? "");
+
+    const value = all[0] ?? "";
+    /**
+     * **统一限长**（Phase 1.3.1-C3a-R2）。
+     *
+     * 放在这里而不是 `requireField()` 里：必填字段、可选字段（`scope`）与
+     * 未知扩展字段必须走同一条判据。只在 `requireField()` 里查会漏掉
+     * `form.get("scope")` 与所有被忽略的扩展参数——「已知字段有上限、
+     * 未知字段没有」不是一条能讲清楚的规则。
+     *
+     * 错误文案**不回显字段名**：参数名是攻击者可控的（可以带换行或超长
+     * 内容），拼进错误里既是日志注入面，也会让「超长」这条错误本身变得不可读。
+     */
+    if (value.length > MAX_TOKEN_FIELD_LENGTH) {
+      throw invalidRequest("parameter value exceeds the maximum length");
+    }
+    values.set(key, value);
   }
   return values;
 }
