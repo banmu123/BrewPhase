@@ -1064,5 +1064,57 @@ Cloud `typecheck` / `lint` / `build` 通过，`pnpm test` **1009 passed / 61 fil
 
 ### 24.5 状态
 
-**C3a 已完成并经 R1 修订**。C3b（`/revoke`、PRM、AS Metadata、CIMD、DCR）
+**C3a 已完成并经 R1 / R2 修订**。C3b（`/revoke`、PRM、AS Metadata、CIMD、DCR）
 未开始。
+
+---
+
+## 25. Phase 1.3.1-C3a-R2：字段限长与 Content-Type 参数唯一性（已交付）
+
+R1 之后仍有两处不对称：
+
+| 问题 | 说明 |
+|---|---|
+| `scope` 无长度上限 | 走 `form.get("scope")`，绕过 `requireField()`；600 字符也能到达 `parseScopeParam` |
+| 未知扩展字段无长度上限 | 只要整个 body ≤ 8 KiB，单个扩展字段可以任意长 |
+| Content-Type 参数可重复 | `charset=utf-8; charset=UTF-8` 被接受；两个解析器各取一个就是两种行为 |
+
+### 25.1 修法
+
+- `parseTokenForm()` 建 Map 的循环里统一判 `value.length > 512` → `invalid_request`。
+  必填、可选（`scope`）、未知扩展一视同仁，且在业务层之前完成。
+- `requireField()` 的长度检查**保留**（第二道，防未来绕过 `parseTokenForm()` 的调用路径）。
+- 未知扩展字段仍**忽略语义**，但不忽略长度。
+- 错误文案**不回显字段名**（参数名由请求方控制，拼进去是日志注入面）。
+- `isFormContentType()` 增加 `seen` 集合：同名参数第二次出现即拒，
+  大小写不敏感，**值相同也拒**。
+
+### 25.2 测试（+7，`token-route` 34 → 41）
+
+| 用例 | 判据 |
+|---|---|
+| scope 512 → 200 | 边界 512；码被消费、Session/Refresh 各 1 行 |
+| scope 513 → 400 | 码未消费、Session/Refresh 零行 |
+| 未知扩展 513 → 400 / 512 → 200 | 忽略语义但限长 |
+| code 700 → 400 | 必填字段同判据 |
+| 重复 charset（4 种写法）→ 400 | 值相同、仅大小写不同都拒 |
+| 单个 charset → 200 | 排除误伤 |
+
+> 测试里的填充构造器也一并重构：原 `paddedForm` 用一个 7000 字符的 `pad`
+> 撑 body，现在会先撞字段上限。改成按目标字节数拼多个 ≤500 字符的字段，
+> 「8 KiB 边界」那几条才继续测字节维度。
+
+### 25.3 变异（3/3 被抓）
+
+删除统一限长（2 条转红）、允许参数重复（1 条）、边界放宽到 513（2 条）。
+
+### 25.4 门禁
+
+Cloud `typecheck` / `lint` / `build` 通过，`pnpm test` **1016 passed / 61 files**
+（1009 → **+7**，文件数不变）；Desktop `typecheck` / `test` / `build` / `mcp:build`
+通过，**1265 passed / 89 files**，`stdio.mjs` 911.67 kB 不变。
+**无新增迁移、无新增路由、未改 Desktop 生产代码。**
+
+### 25.5 状态
+
+C3a（含 R1 / R2）完成。**C3b 未开始。**

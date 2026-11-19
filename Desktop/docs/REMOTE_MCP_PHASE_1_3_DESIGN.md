@@ -796,7 +796,7 @@ Provider / 已消费 / 已过期 / 换绑定）。此时**不删、不写审计�
 | 项 | 规则 |
 |---|---|
 | Content-Type | 严格解析媒体类型：类型逐字符等于 `application/x-www-form-urlencoded`（大小写不敏感），参数只允许 `charset=utf-8`；`…-evil` 后缀、JSON、multipart、空参数一律 `invalid_request`（§5.11.9） |
-| 请求体 | ≤ **8192 字节**（按 UTF-8 实际字节累计，读的过程中截断，§5.11.9）；单个字段 ≤ 512 字符 |
+| 请求体 | ≤ **8192 字节**（按 UTF-8 实际字节累计，读的过程中截断，§5.11.9）；**任一字段值 ≤ 512 字符**（含 `scope` 与未知扩展字段，§5.11.10） |
 | 重复字段 | **任何字段重复即 `invalid_request`**（`URLSearchParams.getAll().length !== 1`） |
 | `grant_type` | 只认两个值，其余 `unsupported_grant_type` |
 | `client_id` | 必须是已注册且与凭据归属一致的客户端 |
@@ -955,6 +955,32 @@ Content-Length 存在？
 `Content-Length` **缺失**时走流累计；**存在但非法**（空值、负数、`1.5`、`1e3`、
 `0x10`）一律拒绝——`Number("")` 是 `0`，用 `Number()` 判会把空头当成「零字节」
 放行，所以判据是 `/^\\d+$/` 而不是 `Number.isInteger()`。
+
+#### 5.11.10 字段限长与 Content-Type 参数唯一性（C3a-R2）
+
+R1 只把「请求体总量」和「媒体类型」收紧了，单字段 512 字符的限制仍只落在
+`requireField()` 上——**可选字段与未知扩展字段从来没被查过**：
+
+| 位置 | R1 的行为 |
+|---|---|
+| `requireField("code"/"client_id"/…)` | 有 512 上限 |
+| `form.get("scope")` | **无**上限（600 字符的 scope 能走到 `parseScopeParam`） |
+| 未知扩展参数 | **无**上限（只要整个 body ≤ 8 KiB） |
+
+现在统一在 `parseTokenForm()` 的建 Map 循环里判定：**任何字段值超过 512 个
+JavaScript 字符单位即 `invalid_request`**，在进入业务流程之前完成。未知扩展
+字段仍然「忽略」，但忽略的是语义，不是长度——一条「已知字段有上限、未知字段
+没有」的规则没法对客户端讲清楚，也挡不住用扩展字段灌垃圾。
+
+`requireField()` 里的检查**保留**：它是第二道，防止未来别的调用路径绕过
+`parseTokenForm()`。
+
+**错误文案不回显字段名**：参数名完全由请求方控制（可以带换行、可以超长），
+拼进错误描述既是日志注入面，也会让错误本身不可读。
+
+**Content-Type 参数不能重复**（`charset=utf-8; charset=UTF-8` 一律拒绝，即使
+两处值完全相同）：两个解析器各取一个就是两种行为，重复声明意味着这个头没有
+确定含义。`Charset` 与 `charset` 视为同名（大小写不敏感）。
 
 ## 6. Discovery 设计
 
@@ -1731,6 +1757,8 @@ CREATE UNIQUE INDEX "mcp_refresh_tokens_session_active_uq"
 > 单事务兑换、Refresh 绑定校验与轮换），实现要点见 §5.11。
 > **1.3.1-C3a-R1 硬化了请求面**：按 UTF-8 实际字节限额、读的过程中截断、
 > 严格媒体类型解析与严格 UTF-8 解码（§5.11.9）。
+> **1.3.1-C3a-R2 补齐字段面**：所有字段值（含 `scope` 与未知扩展）≤ 512 字符，
+> Content-Type 参数不得重复（§5.11.10）。
 > 余下第 10–15 条（revoke、discovery、CIMD、DCR）属 **C3b**，尚未实现。
 > 详见路线图 §3.8–§3.12 与索引 §19–§23。
 

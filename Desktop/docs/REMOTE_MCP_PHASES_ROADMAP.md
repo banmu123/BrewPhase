@@ -1103,6 +1103,52 @@ C3a 的请求面收口，不动业务判据。三处边界问题都在**授权�
 **C3a 状态**：已完成，并经 R1 完成请求边界修订。C3b（revoke / discovery /
 CIMD / DCR）仍未开始。
 
+### 3.14 1.3.1-C3a-R2 已交付（字段限长与 Content-Type 参数唯一性）
+
+R1 收口了「请求体总量」和「媒体类型」，但单字段 512 字符的限制只落在
+`requireField()` 上：`scope` 通过 `form.get()` 读取、未知扩展字段直接进 Map，
+两条路径都没有长度检查。另外一个头里可以写两次 `charset`。
+
+| 问题 | 修法 |
+|---|---|
+| `scope` 600 字符能走到 `parseScopeParam` | 在 `parseTokenForm()` 建 Map 的循环里统一判定 `value.length > 512` |
+| 未知扩展字段无上限（只受 body 8 KiB 约束） | 同上，一视同仁 |
+| `charset=utf-8; charset=UTF-8` 被接受 | `isFormContentType()` 记录 `seen` 参数名，重复即拒（大小写不敏感、值相同也拒） |
+
+要点：
+
+- **保留 `requireField()` 的检查**作为第二道，防未来别的调用路径绕过 `parseTokenForm()`。
+- 未知扩展字段仍然**忽略**，但只忽略语义，不忽略长度。
+- 错误文案**不回显字段名**：参数名由请求方控制，拼进描述是日志注入面。
+- 上限语义是 **512 个 JavaScript 字符单位**（与既有 `MAX_TOKEN_FIELD_LENGTH` 一致），
+  不是字节——字节维度的约束由 8 KiB body 上限承担。
+
+**新增测试 7 条（`token-route` 34 → 41，Cloud 1009 → 1016 / 61 files）**：
+
+| 用例 | 判据 |
+|---|---|
+| scope 恰好 512 → 200 | 边界是 512 不是 511；授权码被消费、Session 与初代 Refresh 各 1 行 |
+| scope 513 → 400 | `invalid_request`；码未消费、Session/Refresh 零行 |
+| 未知扩展字段 513 → 400 | 同上 |
+| 未知扩展字段 512 → 200 | 仍被忽略，兑换不受影响 |
+| 必填字段超长（code 700）→ 400 | 必填路径同样走统一判据 |
+| 重复 charset（4 种写法）→ 400 | 值相同 / 仅大小写不同都拒 |
+| 单个 charset → 200 | 与重复声明区分开 |
+
+顺带重构了测试里的填充构造器：原 `paddedForm` 用一个 7000 字符的 `pad` 撑
+body，现在会先撞字段上限——改成按目标字节数精确拼多个 ≤500 字符的字段，
+「8 KiB 边界」那几条用例才继续测的是字节维度。
+
+**变异 3/3 被抓**：删除统一限长（2 条转红）、允许参数重复（1 条）、
+边界放宽到 513（2 条，512 与 513 两侧同时失守）。
+
+**门禁**：Cloud `typecheck` / `lint` / `build` 通过，`pnpm test`
+**1016 passed / 61 files**；Desktop `typecheck` / `test` / `build` / `mcp:build`
+通过，**1265 passed / 89 files**，`stdio.mjs` 911.67 kB 不变。
+**无新增迁移、无新增路由、未改 Desktop 生产代码。**
+
+**C3b 未开始**（`/revoke`、PRM、AS Metadata、CIMD、DCR）。
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、
