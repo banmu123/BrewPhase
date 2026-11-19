@@ -795,8 +795,8 @@ Provider / 已消费 / 已过期 / 换绑定）。此时**不删、不写审计�
 
 | 项 | 规则 |
 |---|---|
-| Content-Type | 只接受 `application/x-www-form-urlencoded`；JSON / multipart 一律 `invalid_request` |
-| 请求体 | ≤ 8 KiB；单个字段 ≤ 512 字符 |
+| Content-Type | 严格解析媒体类型：类型逐字符等于 `application/x-www-form-urlencoded`（大小写不敏感），参数只允许 `charset=utf-8`；`…-evil` 后缀、JSON、multipart、空参数一律 `invalid_request`（§5.11.9） |
+| 请求体 | ≤ **8192 字节**（按 UTF-8 实际字节累计，读的过程中截断，§5.11.9）；单个字段 ≤ 512 字符 |
 | 重复字段 | **任何字段重复即 `invalid_request`**（`URLSearchParams.getAll().length !== 1`） |
 | `grant_type` | 只认两个值，其余 `unsupported_grant_type` |
 | `client_id` | 必须是已注册且与凭据归属一致的客户端 |
@@ -901,6 +901,60 @@ COMMIT
 `mcp_session_created` / `mcp_refresh_rotated` / `mcp_refresh_reuse_detected`
 等事件在**事务提交之后**写；写失败只记 `mcp_audit_failed` 告警，
 **不回滚已经签发的凭据**。否则会出现「token 已在库里、客户端却拿到 500」。
+
+#### 5.11.9 请求体与媒体类型解析（C3a-R1 硬化）
+
+C3a 的第一版有三处边界问题，全部在**业务判据之前**，因此不影响兑换逻辑，
+但都是「请求面」的漏洞：
+
+| # | 原实现 | 问题 |
+|---|---|---|
+| 1 | `body.length > 8192` | `.length` 是 UTF-16 码元数。3000 个汉字长度 3000、实际 9000 字节 —— 配额被放大三倍 |
+| 2 | `await c.req.text()` 之后再比大小 | 上限只在**事后**生效：任意大的请求先被读进内存 |
+| 3 | `startsWith("application/x-www-form-urlencoded")` | `application/x-www-form-urlencoded-evil` 只因前缀相同就被当成表单 |
+
+**现在的读法**（`readBoundedBody`）：
+
+```
+Content-Length 存在？
+  └─ 必须匹配 /^\d+$/（RFC 9110 的 1*DIGIT），否则 invalid_request
+  └─ > 8192 → 立即 400（不读 body）
+读 raw body stream：
+  └─ 每个 chunk 累加 byteLength
+  └─ 一旦 total > 8192 → cancel() reader → 400
+  └─ 正常读完 → 合并 → TextDecoder("utf-8", { fatal: true })
+```
+
+三条约束各自的理由：
+
+- **字节不是字符**：`.length` 与 `byteLength` 在多字节字符上差 3 倍。
+- **读的过程中截断**：先读后判等于把上限变成「事后审计」。`cancel()` 让剩余
+  字节不再被消费（测试用 1 MiB 的流验证只拉取了 ≈9 KiB）。
+- **`Content-Length` 只是早退优化**：它可以缺失、可以撒谎。真正的判据是累计
+  字节数；声称 10 而实际 9000 仍然会被拒。
+
+**Content-Type 严格解析**（`isFormContentType`）：按 RFC 9110 的结构拆
+`type/subtype *( ";" parameter )`。
+
+| 输入 | 结果 |
+|---|---|
+| `application/x-www-form-urlencoded` | 接受 |
+| `…; charset=UTF-8` / `;charset=utf-8` / `; charset="UTF-8"` | 接受（大小写、空格、引号都不敏感） |
+| `application/x-www-form-urlencoded-evil` | 拒绝（类型不逐字符相等） |
+| `…; charset=iso-8859-1` | 拒绝（解码器就是 UTF-8，接受别的 charset 等于对同一段字节给两种解释） |
+| `…; boundary=x` / `…;` / `…; charset` | 拒绝（未知参数 / 空参数 / 缺 `=`） |
+| `application/json` / `multipart/form-data` | 拒绝 |
+
+**UTF-8 严格解码**：`TextDecoder("utf-8", { fatal: true })`。宽松解码会把垃圾
+字节变成一串被悄悄改过（但看起来正常）的参数值——那比 400 更糟：请求被接受，
+内容却不是客户端发的。非法字节 → `invalid_request`。
+
+> 顺序是刻意的：**先按字节截断，再解码**。反过来两条拒绝理由会互相掩盖
+> （超限的 body 里恰好有非法字节时，就说不清是哪一个原因）。
+
+`Content-Length` **缺失**时走流累计；**存在但非法**（空值、负数、`1.5`、`1e3`、
+`0x10`）一律拒绝——`Number("")` 是 `0`，用 `Number()` 判会把空头当成「零字节」
+放行，所以判据是 `/^\\d+$/` 而不是 `Number.isInteger()`。
 
 ## 6. Discovery 设计
 
@@ -1675,6 +1729,8 @@ CREATE UNIQUE INDEX "mcp_refresh_tokens_session_active_uq"
 > （§5.10.7），不再按 rid 直接删。
 > **1.3.1-C3a 已交付第 9 条**（`POST /mcp/oauth/token`：两个 Grant、授权码
 > 单事务兑换、Refresh 绑定校验与轮换），实现要点见 §5.11。
+> **1.3.1-C3a-R1 硬化了请求面**：按 UTF-8 实际字节限额、读的过程中截断、
+> 严格媒体类型解析与严格 UTF-8 解码（§5.11.9）。
 > 余下第 10–15 条（revoke、discovery、CIMD、DCR）属 **C3b**，尚未实现。
 > 详见路线图 §3.8–§3.12 与索引 §19–§23。
 

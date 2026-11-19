@@ -1001,3 +1001,68 @@ Cloud `typecheck` / `lint` / `build` 通过，`pnpm test` **993 passed / 61 file
 
 `POST /mcp/oauth/revoke`、PRM、AS Metadata、CIMD、DCR、`POST /mcp`、8 个只读
 工具、Streamable HTTP、真实 ChatGPT / Grok 联调。**未进入 C3b。**
+
+---
+
+## 24. Phase 1.3.1-C3a-R1：Token 请求面硬化（已交付）
+
+C3a 的请求边界收口。**不动**兑换事务、轮换顺序、锁序、JWT claims、错误映射，
+也不碰 Desktop。三处问题都在业务判据之前：
+
+| # | 原实现 | 后果 |
+|---|---|---|
+| 1 | `body.length > 8192` | `.length` 是 UTF-16 码元数；3000 汉字（9000 字节）只算 3000 |
+| 2 | `await c.req.text()` 之后再比大小 | 上限事后生效，任意大的请求先读进内存 |
+| 3 | `startsWith("application/x-www-form-urlencoded")` | `…-evil` 只因前缀相同被当成表单 |
+
+### 24.1 现在的请求面
+
+```
+Content-Length 存在？
+  ├─ 不匹配 /^\d+$/ → 400 invalid_request（空值/负数/小数/科学计数/0x10）
+  └─ > 8192 → 400（不读 body）
+读 raw stream：逐 chunk 累加 byteLength
+  ├─ total > 8192 → reader.cancel() → 400
+  └─ 读完 → 合并 → TextDecoder("utf-8", { fatal: true }) → URLSearchParams
+```
+
+- **字节不是字符**：`.length` 与 `byteLength` 在多字节字符上差 3 倍。
+- **边读边截断**：1 MiB 的流只拉取 ≈9 KiB（测试直接计数 `pulled`）。
+- **Content-Length 只是早退优化**：缺失走流累计、撒谎仍被累计值拒。
+- **严格媒体类型**：类型逐字符相等 + 只允许 `charset=utf-8`；
+  `-evil`、`boundary=x`、空参数、`charset=iso-8859-1`、JSON、multipart 全拒。
+- **严格 UTF-8**：非法字节 fail-closed，不替换 U+FFFD。
+- **顺序**：先截断再解码——否则两条拒绝理由互相掩盖。
+
+### 24.2 测试（+16，`token-route` 18 → 34）
+
+| 组 | 条数 |
+|---|---:|
+| 请求体字节上限 | 9（含 8192 恰好通过 / 8193 拒绝 / 1 MiB 流计数） |
+| Content-Type 严格解析 | 4 |
+| UTF-8 严格解码 | 3 |
+
+全部断言数据库状态：`mcp_auth_codes.consumed_at` 为 NULL、`mcp_sessions` 与
+`mcp_refresh_tokens` 零行——超限不得留下半张授权。
+
+### 24.3 变异（7/7 被抓）
+
+`.length` 代替字节、读完整再判、`startsWith`、不校验 CL 合法性、非 fatal 解码、
+只信 CL、接受任意 charset。
+
+> 三条第一版存活，全是**测试**的问题：媒体类型用例传对象而非字符串正文
+> （400 来自「grant_type is required」）、非法 UTF-8 与 CL 非法值用例只发了
+> 半截表单（宽松解码后同样死在缺字段，错误码相同）。改成「完整合法表单 +
+> 只破坏一个维度」后全部转红。
+
+### 24.4 门禁
+
+Cloud `typecheck` / `lint` / `build` 通过，`pnpm test` **1009 passed / 61 files**
+（993 → **+16**，文件数不变）；Desktop `typecheck` / `test` / `build` / `mcp:build`
+通过，**1265 passed / 89 files**，`stdio.mjs` 911.67 kB 不变。
+**无新增迁移、无新增路由、未改 Desktop 生产代码。**
+
+### 24.5 状态
+
+**C3a 已完成并经 R1 修订**。C3b（`/revoke`、PRM、AS Metadata、CIMD、DCR）
+未开始。

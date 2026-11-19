@@ -1042,6 +1042,67 @@ Refresh 客户端绑定校验、去掉重放保护、把 `effectiveScope` 换成
 `POST /mcp/oauth/revoke`、PRM、AS Metadata、CIMD、DCR、`POST /mcp`、8 个只读工具、
 Streamable HTTP、真实客户端联调。**C3a 到此为止，未进入 C3b。**
 
+### 3.13 1.3.1-C3a-R1 已交付（Token 请求体与媒体类型硬化）
+
+C3a 的请求面收口，不动业务判据。三处边界问题都在**授权码兑换之前**，所以
+兑换、轮换、错误映射与 Desktop OAuth 全部零改动。
+
+| # | 原实现 | 问题 | 修法 |
+|---|---|---|---|
+| 1 | `body.length > 8192` | `.length` 是 UTF-16 码元数：3000 汉字 = 3000 长度 / 9000 字节，配额被放大三倍 | 累计 `Uint8Array.byteLength` |
+| 2 | 先 `c.req.text()` 再判大小 | 上限事后生效，任意大的请求先读进内存 | 边读边累计，超限 `cancel()` reader |
+| 3 | `contentType.startsWith(…)` | `…-evil` 后缀只因前缀相同被当成表单 | 按 RFC 9110 结构解析 type/subtype/参数 |
+
+**读取顺序**：`Content-Length` 合法性与早退 → 流式累计（>8192 立即 cancel）
+→ 合并字节 → `TextDecoder("utf-8", { fatal: true })` → `URLSearchParams`。
+
+- `Content-Length` 只作早退优化：缺失走流累计，撒谎（声称 10 实际 9000）仍被累计值拒掉；
+  存在但非法（空值 / 负数 / `1.5` / `1e3` / `0x10`）直接 400。
+  **判据是 `/^\d+$/`**——`Number("")` 是 0，用 `Number.isInteger()` 会把空头当零字节放行。
+- Content-Type：只接受 `application/x-www-form-urlencoded`（大小写不敏感）+
+  可选 `charset=utf-8`（大小写、空格、引号不敏感）；`-evil`、未知参数、空参数、
+  缺 `=`、`charset=iso-8859-1`、JSON、multipart 一律 400。
+- 非法 UTF-8 **fail-closed**（不替换 U+FFFD）：宽松解码会把垃圾字节变成一串
+  看起来正常但已被改过的参数值。
+- 顺序固定「先截断再解码」，避免两条拒绝理由互相掩盖。
+
+**新增测试 16 条（`token-route` 18 → 34，Cloud 993 → 1009 / 61 files）**：
+
+| 组 | 条数 | 覆盖 |
+|---|---:|---|
+| 请求体字节上限 | 9 | 小于上限可兑换、多字节超限、无 Content-Length 累计、CL 提前拒绝、CL 撒谎、CL 非法值、8192 恰好通过、8193 拒绝、1 MiB 流只读 ≈9 KiB |
+| Content-Type 严格解析 | 4 | charset 各种写法接受、非法后缀/未知参数/未知 charset 拒绝、缺头拒绝、重复字段仍拒绝 |
+| UTF-8 严格解码 | 3 | 非法字节、截断的多字节序列、合法中文不误拒 |
+
+全部用例都断言数据库状态（`mcp_auth_codes.consumed_at` / `mcp_sessions` /
+`mcp_refresh_tokens`），不只看 HTTP 状态码。
+
+**变异 7/7 被抓**：
+
+| 变异 | 抓住它的用例 |
+|---|---|
+| 用 `.length` 代替字节（读完后判） | 多字节超限（2 条转红） |
+| 读完整 body 再判大小 | 1 MiB 流式计数（上界失败） |
+| `startsWith` 前缀匹配 | `-evil` 后缀（2 条转红） |
+| 不校验 Content-Length 合法性 | 合法表单 + 非法 CL（返回 200） |
+| 非 fatal UTF-8 解码 | 非法字节（返回 200 并消费授权码） |
+| 只信 Content-Length、不做流累计 | CL 撒谎 / 无 CL 超限（5 条转红） |
+| 接受任意 charset 与未知参数 | `charset=iso-8859-1`（返回 200） |
+
+> **三条变异第一版存活**，暴露的都是**测试自身**的问题，不是实现：
+> ①媒体类型用例传了对象而不是字符串正文，400 来自「grant_type is required」；
+> ②非法 UTF-8 用例只发了半截表单，宽松解码后仍死在「缺 client_id」而错误码相同；
+> ③Content-Length 非法值用例同样缺字段。把用例改成「完整合法表单 + 只破坏一个维度」
+> 之后 7/7 转红。
+
+**门禁**：Cloud `typecheck` / `lint` / `build` 通过，`pnpm test`
+**1009 passed / 61 files**；Desktop `typecheck` / `test` / `build` / `mcp:build`
+通过，**1265 passed / 89 files**，`stdio.mjs` 911.67 kB 不变。
+**无新增迁移、无新增路由、未改 Desktop 生产代码。**
+
+**C3a 状态**：已完成，并经 R1 完成请求边界修订。C3b（revoke / discovery /
+CIMD / DCR）仍未开始。
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、
