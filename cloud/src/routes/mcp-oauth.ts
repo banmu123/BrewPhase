@@ -950,6 +950,22 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
     c.header("Cache-Control", "no-store");
     c.header("Pragma", "no-cache");
     try {
+      /**
+       * Query 里出现 `token` 就拒绝整个请求（Phase 1.3.1-C3b-R1）。
+       *
+       * URL 会留在浏览器历史、代理访问日志、`Referer`、截图和工单里——token
+       * 出现在那里就已经等于泄露，**无论 Body 里是否另外提供了一个合法值**。
+       * 所以这不是「优先用 Body、忽略 Query」的容错，而是「这种请求形态本身
+       * 不接受」。
+       *
+       * 检查放在 `parseTokenForm()` 之前：拒绝必须发生在读 body、算哈希、查库
+       * 与验签之前。`queries()` 对 `?token=`（空值）与重复出现都返回非
+       * `undefined`，三种形态一并挡掉。
+       */
+      if (c.req.queries("token") !== undefined) {
+        throw invalidRequest("token must be sent in the request body, not the query string");
+      }
+
       const form = await parseTokenForm(c);
       const token = form.get("token");
       if (token === undefined || token.length === 0) {

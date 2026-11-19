@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeTestDb, ensureDatabaseOrThrow, getTestDb, resetDb } from "../helpers/db.js";
 import {
   createMcpOAuthHarness,
@@ -9,7 +9,7 @@ import { resetRateLimiter } from "../../src/security/rate-limit.js";
 import { decodeJwtPayload, exchangeCode, obtainAuthCode, readTokenResponse, type TokenResponse } from "../helpers/mcp-token.js";
 import { signAccessToken } from "../../src/sessions/jwt.js";
 import { signMcpAccessToken } from "../../src/mcp-oauth/tokens.js";
-import { revokeMcpSession } from "../../src/mcp-oauth/sessions.js";
+import { mcpRefreshTokenHash, revokeMcpSession } from "../../src/mcp-oauth/sessions.js";
 import { mcpResourceFor } from "../../src/mcp-oauth/constants.js";
 
 /**
@@ -196,6 +196,147 @@ describe("协议面", () => {
       body: new URLSearchParams({ token: tokens.refresh_token }).toString(),
     });
     expect(res.status).toBe(200);
+  });
+});
+
+describe("Query 中的 token 一律拒绝（C3b-R1）", () => {
+  /** 打到带 query 的 revoke 端点。 */
+  async function revokeVia(
+    query: string,
+    body: Record<string, string | undefined>,
+  ): Promise<Response> {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(body)) {
+      if (value !== undefined) params.set(key, value);
+    }
+    return h.app.request(`/mcp/oauth/revoke${query}`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+    });
+  }
+
+  async function consumedAtOf(sessionId: string): Promise<Array<string | null>> {
+    const rows = await handle.sql<{ consumed_at: string | null }[]>`
+      select consumed_at::text from mcp_refresh_tokens
+       where session_id = ${sessionId} order by generation`;
+    return rows.map((row) => row.consumed_at);
+  }
+
+  async function grantsSnapshot() {
+    return handle.sql<{ id: string; scopes: string[]; epoch: number; revoked_at: string | null }[]>`
+      select id, scopes, epoch, revoked_at::text from mcp_grants order by id`;
+  }
+
+  /**
+   * 「Body 里有合法 Token 也不行」的统一验收：400 + 零副作用。
+   *
+   * 只断言状态码是不够的——一个「先撤销、再报错」的实现同样返回 400。
+   */
+  async function expectRejectedWithoutSideEffects(
+    query: string,
+    bodyToken: string,
+    sessionId: string,
+  ): Promise<void> {
+    const grantsBefore = await grantsSnapshot();
+    const consumedBefore = await consumedAtOf(sessionId);
+
+    const res = await revokeVia(query, { token: bodyToken });
+    expect(res.status, query).toBe(400);
+    expect(((await res.json()) as { error: string }).error, query).toBe("invalid_request");
+
+    expect((await sessionOf(sessionId)).revoked_at).toBeNull();
+    expect(await consumedAtOf(sessionId)).toEqual(consumedBefore);
+    expect(await auditCount("mcp_session_revoked")).toBe(0);
+    expect(await grantsSnapshot()).toEqual(grantsBefore);
+    expect(await desktopTableCount()).toBe(0);
+  }
+
+  it("?token=abc + 空 Body → 400", async () => {
+    const res = await revokeVia("?token=abc", {});
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_request");
+  });
+
+  it("?token=（空值）+ 空 Body → 400（空值也算「出现了」）", async () => {
+    const res = await revokeVia("?token=", {});
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_request");
+  });
+
+  it("?token=a&token=b（重复）→ 400", async () => {
+    const res = await revokeVia("?token=a&token=b", {});
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_request");
+  });
+
+  it("Query 带 token、Body 缺 token → 400（仍然拒绝，不回退到 Query）", async () => {
+    const res = await revokeVia("?token=secret-in-url", {});
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_request");
+  });
+
+  it("Query 带 token + Body 是有效 Refresh Token → 400，且 Session 不受影响", async () => {
+    const { tokens, sessionId } = await issueTokens();
+    await expectRejectedWithoutSideEffects(
+      "?token=secret-in-url",
+      tokens.refresh_token,
+      sessionId,
+    );
+  });
+
+  it("Query 与 Body 的 token 相同 → 400，且不撤销", async () => {
+    const { tokens, sessionId } = await issueTokens();
+    await expectRejectedWithoutSideEffects(
+      `?token=${encodeURIComponent(tokens.refresh_token)}`,
+      tokens.refresh_token,
+      sessionId,
+    );
+  });
+
+  it("Query 与 Body 的 token 不同 → 400，且不撤销（Body 的合法值也不被采用）", async () => {
+    const { tokens, sessionId } = await issueTokens();
+    await expectRejectedWithoutSideEffects("?token=another-value", tokens.refresh_token, sessionId);
+  });
+
+  it("拒绝发生在解析之前：错误体 / 日志 / 审计都不含哨兵值", async () => {
+    const SENTINEL = "QUERY-TOKEN-SENTINEL-2026";
+    const { tokens, sessionId } = await issueTokens();
+
+    const captured: string[] = [];
+    const spies = (["log", "warn", "error"] as const).map((level) =>
+      vi.spyOn(console, level).mockImplementation((...args: unknown[]) => {
+        captured.push(args.map((arg) => String(arg)).join(" "));
+      }),
+    );
+
+    let bodyText = "";
+    try {
+      const res = await revokeVia(`?token=${SENTINEL}`, { token: tokens.refresh_token });
+      expect(res.status).toBe(400);
+      bodyText = await res.text();
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+
+    expect(bodyText).not.toContain(SENTINEL);
+    // 连哈希都不该出现（说明根本没走到哈希计算这一步）。
+    expect(bodyText).not.toContain(mcpRefreshTokenHash(h.env.sessionTokenPepper, SENTINEL));
+    expect(bodyText).not.toContain(tokens.refresh_token);
+
+    const logs = captured.join("\n");
+    expect(logs).not.toContain(SENTINEL);
+    expect(logs).not.toContain(tokens.refresh_token);
+
+    expect(await auditCount("mcp_session_revoked")).toBe(0);
+    expect((await sessionOf(sessionId)).revoked_at).toBeNull();
+  });
+
+  it("错误响应仍然带 no-store / no-cache", async () => {
+    const res = await revokeVia("?token=abc", {});
+    expect(res.status).toBe(400);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("pragma")).toBe("no-cache");
   });
 });
 
