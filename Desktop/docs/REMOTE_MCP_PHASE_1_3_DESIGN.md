@@ -1018,7 +1018,8 @@ refresh_token → sha256(pepper, "mcp-refresh", token) → mcp_refresh_tokens
 | 有效且未消费、未过期、Session active 的 Refresh Token | 200 | 空 |
 | 随机值 / 不存在 / 已消费的历史代 / 已过期 | 200 | 空 |
 | Session 已撤销 / 已过期 | 200 | 空 |
-| 有效 **MCP Access JWT** | **400** `unsupported_token_type` | OAuth JSON 错误 |
+| Token 归属的 client 与请求的 `client_id` 不符 | **401** `invalid_client` | OAuth JSON 错误 |
+| 有效 **MCP Access JWT**（`client_id` 相符） | **400** `unsupported_token_type` | OAuth JSON 错误 |
 | 缺 `token` / 重复字段 / 媒体类型不对 / 超限 | 400 `invalid_request` | OAuth JSON 错误 |
 
 无效 Token 一律 200（RFC 7009 §2.2）：区分「不存在 / 过期 / 曾有效」会把端点
@@ -1075,6 +1076,38 @@ refresh_token → sha256(pepper, "mcp-refresh", token) → mcp_refresh_tokens
 检查位置在 `parseTokenForm()` **之前**——拒绝发生在读 body、算哈希、查库与
 验签之前。`c.req.queries("token")` 对空值与重复出现都返回非 `undefined`，
 三种形态一并挡掉；错误文案固定，不回显 Query 值，也不写任何审计。
+
+#### 5.12.7 `client_id` 绑定（C3b-R2）
+
+撤销请求必须带 `client_id`（Public Client，无 secret）。它不是认证凭据，而是
+「我是谁」的声明；归属判定以**已签发 Token 关联的 Session** 为准：
+
+```
+refresh_token → hash → mcp_refresh_tokens ⨝ mcp_sessions → mcp_sessions.client_id
+access JWT    → verifyMcpAccessToken() → claims.client_id（验签后）
+```
+
+- **不查** `mcp_oauth_clients`：那张表是注册/元数据缓存，回答「客户端长什么样」，
+  不回答「这枚凭据是谁的」。用历史注册表判归属，会在客户端被删除/改名后失效。
+- 比较**逐字符**：不 trim、不改大小写、不做 URL 归一化。
+- 判定顺序在**所有状态判定与写操作之前**（`consumed_at` / `expires_at` / Session
+  active 都在其后）。这样「已消费的旧代 + 错误 client」返回 401 而不是 200，
+  与 Token Endpoint 的 `invalid_client` 语义一致。
+
+| 请求 | 结果 |
+|---|---|
+| 缺 `client_id` / 空值 / 重复 / 超 512 字符 | 400 `invalid_request` |
+| Refresh Token 归属 ≠ `client_id` | 401 `invalid_client`，零副作用 |
+| Access JWT 的 `client_id` ≠ 请求值 | 401 `invalid_client` |
+| Access JWT 的 `client_id` = 请求值 | 400 `unsupported_token_type`（本阶段仍不支持按 Access Token 撤销） |
+
+**代价与取舍**：`client_id` 是公开值，因此它挡不住「知道 client_id 的人」——
+它挡的是「拿别人的 Token 当自己的用」。真正的凭据仍然是那枚 32 字节随机值。
+
+**JWT 的 `client_id` claim**：设计 §8.1 早已要求，但 C1 实现时省略了（当时认为
+`/mcp` 靠 `sid` 回查就够）。撤销端点需要回答「这枚 token 属于哪个客户端」，
+所以 C3b-R2 按设计补回该 claim——`verifyMcpAccessToken()` 现在强制要求它，
+缺失即视为无效 Token。
 
 ## 6. Discovery 设计
 

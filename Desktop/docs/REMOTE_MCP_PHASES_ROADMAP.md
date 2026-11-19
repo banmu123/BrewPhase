@@ -1247,6 +1247,63 @@ token 出现在那里就已经泄露，这种**请求形态本身**不接受。
 通过，**1265 passed / 89 files**，`stdio.mjs` 911.67 kB 不变。
 **无新增迁移、未改 Desktop 生产代码。**
 
+### 3.17 1.3.1-C3b-R2 已交付（撤销的 client_id 绑定）
+
+C3b 的协议缺口：撤销请求不要求 `client_id`，于是「拿着别人的 Refresh Token
+来撤销」在协议层是成立的。本阶段把它补上。
+
+| 项 | 落点 |
+|---|---|
+| 路由 | `POST /mcp/oauth/revoke` 用 `requireField(form, "client_id")` |
+| 业务层 | `revoke-flow.ts`：refresh 查询改成 `⨝ mcp_sessions` 带出归属；Access JWT 用验签后的 claim |
+| JWT | `signMcpAccessToken` / `verifyMcpAccessToken` 补回设计 §8.1 要求的 `client_id` claim（C1 时省略） |
+| 迁移 | **无** |
+
+**归属判定的顺序**（这是本阶段的核心）：
+
+```
+hash → 查 refresh 行（JOIN session 取 client_id）→ 比对 client_id
+     → consumed_at → expires_at → Session active → revokeMcpSession()
+```
+
+比对必须排在**所有状态判定与写操作之前**：排在后面既泄露状态，又给错误客户端
+留下破坏性原语。
+
+| 请求 | 结果 |
+|---|---|
+| 缺 / 空 / 重复 / 超 512 字符的 `client_id` | 400 `invalid_request` |
+| Refresh 归属 ≠ `client_id` | 401 `invalid_client`，零副作用 |
+| Access JWT 的 `client_id` ≠ 请求值 | 401 `invalid_client` |
+| Access JWT 的 `client_id` = 请求值 | 400 `unsupported_token_type` |
+
+比较是**逐字符**的（不 trim、不改大小写）；归属以 `mcp_sessions.client_id` 为准，
+**不查** `mcp_oauth_clients`（那是注册/元数据缓存，不回答「这枚凭据是谁的」）。
+
+**JWT claim 的补回**：设计 §8.1 早就列了 `client_id`，C1 实现时以「`/mcp` 靠
+`sid` 回查就够」为由省掉。撤销端点需要回答「这枚 token 属于哪个客户端」，
+所以按设计补回；`verifyMcpAccessToken()` 现在强制要求该 claim，缺失即无效。
+代价是三个手工签 JWT 的测试夹具（以及 claim 全集断言）需要同步——它们此前
+一直在断言一个偏离设计的形状。
+
+**测试（+16，`revoke-route` 41 → 57，Cloud 1058 → 1074 / 62 files）**：
+
+| 组 | 条数 | 关键项 |
+|---|---:|---|
+| `client_id` 必填 | 5 | 缺 / 空 / 重复 / 超长 → 400；合法 → 200 |
+| Refresh 归属 | 7 | A 撤自己 200；B 拿 A 的 → 401；大小写不同、带空格、不存在客户端 → 401；已消费旧代 + 错误 client → 401（证明归属早于状态）；同 Grant 两个 Session 互不影响 |
+| Access JWT 归属 | 4 | 正确 → 400 unsupported；错误 → 401；签名篡改 → 200；claim 与 Session 归属一致 |
+
+「零副作用」= Session active、`revoked_reason` 不变、Refresh 历史数组不变、
+无撤销审计、`mcp_grants` 逐字段不变、Desktop `auth_sessions` 零写入。
+
+**变异 3/3 被抓**：删 Refresh 比较（6 条转红）、删 Access 比较（1 条）、
+不匹配时仍调用 `revokeMcpSession()`（6 条转红——这条证明「只断言 401」不够）。
+
+**门禁**：Cloud `typecheck` / `lint` / `build` 通过，`pnpm test`
+**1074 passed / 62 files**；Desktop `typecheck` / `test` / `build` / `mcp:build`
+通过，**1265 passed / 89 files**，`stdio.mjs` 911.67 kB 不变。
+**无新增迁移、无新增路由、未改 Desktop 生产代码。**
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、

@@ -1230,4 +1230,51 @@ Cloud **1058 passed / 62 files**；Desktop **1265 passed / 89 files**，
 
 ### 27.4 状态
 
-C3b（含 R1）完成。**C3c 未开始。**
+C3b（含 R1 / R2）完成。**C3c 未开始。**
+
+---
+
+## 28. Phase 1.3.1-C3b-R2：撤销的 client_id 绑定（已交付）
+
+C3b 的协议缺口：撤销不要求 `client_id`，「拿别人的 Refresh Token 来撤销」
+在协议层成立。
+
+### 28.1 规则
+
+| 请求 | 结果 |
+|---|---|
+| 缺 / 空 / 重复 / 超 512 字符的 `client_id` | 400 `invalid_request` |
+| Refresh 归属 ≠ `client_id` | 401 `invalid_client`，零副作用 |
+| Access JWT 的 `client_id` ≠ 请求值 | 401 `invalid_client` |
+| Access JWT 的 `client_id` = 请求值 | 400 `unsupported_token_type` |
+
+归属取自 **`mcp_sessions.client_id`**（凭据真正的归属），不查
+`mcp_oauth_clients`（注册/元数据缓存）。比较逐字符：不 trim、不改大小写。
+
+判定顺序：`hash → 查 refresh（JOIN session）→ 比 client_id → consumed_at
+→ expires_at → Session active → revokeMcpSession()`。绑定必须最先，否则既
+泄露状态又给错误客户端留下破坏性原语。
+
+### 28.2 JWT 补回 `client_id` claim
+
+设计 §8.1 早已要求，C1 实现时省略。撤销端点需要回答「这枚 token 属于哪个
+客户端」，本阶段按设计补回；`verifyMcpAccessToken()` 强制要求该 claim，
+缺失即无效 Token。三个手工签 JWT 的测试夹具与 claim 全集断言同步更新。
+
+### 28.3 测试与变异
+
++16 条（`revoke-route` 41 → 57，Cloud 1058 → 1074 / 62 files）：`client_id`
+必填 5、Refresh 归属 7（含大小写、空格、不存在客户端、已消费旧代、同 Grant
+双 Session）、Access JWT 归属 4。
+
+变异 3/3：删 Refresh 比较（6 条转红）、删 Access 比较（1 条）、不匹配仍撤销
+（6 条转红——证明「只断言 401」不够，必须断言数据库状态）。
+
+### 28.4 门禁
+
+Cloud **1074 passed / 62 files**；Desktop **1265 passed / 89 files**，
+`stdio.mjs` 911.67 kB 不变。无新增迁移、无新增路由、未改 Desktop 生产代码。
+
+### 28.5 状态
+
+C3b（含 R1 / R2）完成。**C3c 未开始**（PRM、AS Metadata、CIMD、DCR）。
