@@ -910,5 +910,94 @@ Desktop `typecheck` / `test` / `build` / `mcp:build` 通过，**1265 passed / 89
 
 ### 22.6 状态
 
-C2b 至此完成（授权到「302 带 code」）；`/mcp/oauth/token`、`/revoke`、PRM、
-AS metadata、CIMD、DCR、`POST /mcp` 仍属 **C3 / 1.3.2（未实现）**。
+C2b 至此完成（授权到「302 带 code」）；`/mcp/oauth/token` 已由 §23 补齐，
+`/revoke`、PRM、AS metadata、CIMD、DCR、`POST /mcp` 仍属 **C3b / 1.3.2（未实现）**。
+
+---
+
+## 23. Phase 1.3.1-C3a：Token Endpoint（已交付）
+
+授权链路闭环到「客户端拿到可用的 Access Token」。`mcp_sessions` 与
+`mcp_refresh_tokens` 从本阶段开始真正被写入（C2b 里是零写入）。
+
+### 23.1 交付物
+
+| 项 | 落点 |
+|---|---|
+| 路由 | `cloud/src/routes/mcp-oauth.ts`：`POST /mcp/oauth/token` + 独立限流桶 `mcp-token` |
+| 业务层 | `cloud/src/mcp-oauth/token-flow.ts`（`exchangeAuthorizationCode` / `exchangeRefreshToken`） |
+| Session 服务 | `sessions.ts` 拆出 `createMcpSessionInTransaction(tx, …)`，`createMcpSession()` 变成事务包装 |
+| 授权码哈希 | `mcpAuthCodeHash` 移到 `authorize-flow.ts`（签发与兑换共用） |
+| 错误码 | `invalid_client`(401) / `invalid_scope`(400) / `unsupported_grant_type`(400) |
+| 测试 | 5 个新文件 **70 条** |
+| 迁移 | **无** |
+
+### 23.2 单事务（本阶段唯一真正的新结构）
+
+```
+BEGIN
+  ① SELECT mcp_auth_codes … FOR UPDATE
+  ② 校验未消费 / 未过期 / client_id / redirect_uri / resource / PKCE S256
+  ③ 条件 UPDATE 消费（consumed_at IS NULL + expires_at > now）→ RETURNING
+  ④ createMcpSessionInTransaction(tx, …)      ← 同一个 tx
+  ⑤ COMMIT
+→ 事务外：签 JWT、写审计、在线 Grant 同步
+```
+
+`createMcpSessionInTransaction()` 内部对 Grant 取 `FOR UPDATE`，锁序
+**grant → session**。并发兑换同一个 code 只有一个命中条件 UPDATE，另一个拿
+`invalid_grant`——不会出现两条 Session 或两条初代 Refresh Token。
+
+### 23.3 Refresh 绑定（补的缺口）
+
+`rotateMcpRefreshToken()` 新增可选 `clientId` / `resource` / `requestedScope`，
+**全部在改动任何状态之前判定**：
+
+| 入参 | 失败 |
+|---|---|
+| `clientId` ≠ Session 的 | `invalid_client` 401 |
+| `resource` ≠ Session 的 | `invalid_grant` |
+| scope ⊄ `issued ∩ grant` | `invalid_scope` 400 |
+
+顺序是安全要求：绑定校验必须排在「宽限外重放 → 撤销 Session」之前，否则
+错误 `client_id` 反而能触发合法 Session 的破坏性撤销。`effectiveScope` 先算
+后写，交集为空时拒绝且**不消费旧代**。
+
+### 23.4 请求面
+
+只接受 urlencoded（≤ 8 KiB，单字段 ≤ 512），**任何字段重复即 `invalid_request`**
+（`Object.fromEntries` 的后者覆盖前者会制造校验绕过面）。`resource` 必须逐字符
+等于 `mcpResourceFor(baseUrl)`。**完全不读 `bp_mcp_bs`**。
+
+响应固定 `Cache-Control: no-store` + `Pragma: no-cache`；`expires_in` 取配置值。
+
+### 23.5 测试（70 条）
+
+| 文件 | 条数 | 覆盖 |
+|---|---:|---|
+| `token-code.test.ts` | 19 | 兑换成功、JWT claims、码消费、重放、过期、PKCE、client/redirect/resource 不符、Grant 撤销、用户非 active |
+| `token-refresh.test.ts` | 20 | 轮换、generation、sid 稳定、绝对期限不变、宽限内/外重放、并发、client/resource 绑定、scope 收窄 |
+| `token-atomicity.test.ts` | 6 | 事故注入证明「码消费 + Session + 初代 Refresh」同一事务；三种中途失败均整体回滚 |
+| `token-route.test.ts` | 18 | 协议面：Content-Type、重复字段、未知 grant、错误码、响应头、Desktop 隔离 |
+| `token-invariants.test.ts` | 7 | 静态不变量：无硬编码 TTL、无明文哈希、JWT 走 `signMcpAccessToken` |
+
+### 23.6 变异（8/8 被抓）
+
+去掉 `consumed_at IS NULL`、去掉码的 `FOR UPDATE`、去掉 PKCE、Session 创建
+移出事务、初代 Refresh 明文存储、去掉 Refresh 客户端绑定、去掉重放保护、
+`effectiveScope` 换成 Grant 全量。
+
+> **M6 第一版存活**：锚点先命中同形代码（`bindingRejection` 出现两次），等于
+> 只删了一半。修正锚点后 `token-route` 2 条转红。
+
+### 23.7 门禁
+
+Cloud `typecheck` / `lint` / `build` 通过，`pnpm test` **993 passed / 61 files**
+（923 / 56 → **+70 / +5**）；Desktop `typecheck` / `test` / `build` / `mcp:build`
+通过，**1265 passed / 89 files**，`stdio.mjs` 911.67 kB 不变。
+**无新增迁移**、新增 **1 条** 路由、未改 Desktop 生产代码。
+
+### 23.8 未做（C3b / 1.3.2 / 1.3.3）
+
+`POST /mcp/oauth/revoke`、PRM、AS Metadata、CIMD、DCR、`POST /mcp`、8 个只读
+工具、Streamable HTTP、真实 ChatGPT / Grok 联调。**未进入 C3b。**

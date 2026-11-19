@@ -935,6 +935,113 @@ state 判据、两处把预期绑定换成请求绑定——各自都有具体�
 **C2b 整体状态**：授权流程到「302 带 code」为止完整可用；`/mcp/oauth/token`
 兑换与之后的一切仍属 C3（未实现）。
 
+### 3.12 1.3.1-C3a 已交付（Token Endpoint：授权码兑换与 Refresh 轮换）
+
+授权链路现在闭环到「客户端拿到可用的 Access Token」。C2b 签出的 60 秒授权码
+终于可兑换；`mcp_sessions` / `mcp_refresh_tokens` 从本阶段开始**真正被写入**。
+
+| 项 | 落点 |
+|---|---|
+| 路由 | `cloud/src/routes/mcp-oauth.ts`：`POST /mcp/oauth/token` + 独立限流桶 `mcp-token` |
+| 业务层 | `cloud/src/mcp-oauth/token-flow.ts`：`exchangeAuthorizationCode` / `exchangeRefreshToken` |
+| Session 服务 | `sessions.ts` 拆出 `createMcpSessionInTransaction(tx, …)`；`createMcpSession()` 变成「事务包装 + 审计」 |
+| 授权码哈希 | `mcpAuthCodeHash` 从 `consent-flow.ts` 移到 `authorize-flow.ts`（签发与兑换共用一份） |
+| 错误码 | `errors.ts` 新增 `invalid_client`(401) / `invalid_scope`(400) / `unsupported_grant_type`(400) |
+| 测试 | 5 个新文件 **70 条**（token-code 19 / token-refresh 20 / token-atomicity 6 / token-route 18 / token-invariants 7） |
+| 迁移 | **无** |
+
+#### 事务边界（这是本阶段的核心）
+
+```
+BEGIN
+  ① SELECT mcp_auth_codes … FOR UPDATE
+  ② 校验：未消费 / 未过期 / client_id / redirect_uri / resource / PKCE S256
+  ③ 条件 UPDATE 消费（consumed_at IS NULL + expires_at > now）→ RETURNING
+  ④ createMcpSessionInTransaction(tx, …)   ← 同一个 tx
+  ⑤ COMMIT
+→ 事务外：签 JWT、写审计、在线 Grant 同步
+```
+
+不允许「先消费授权码、再调 `createMcpSession()`」：那会出现「码被烧掉、Session
+没建起来」的窗口，用户只能重新走浏览器授权。`createMcpSessionInTransaction()` 内部
+对 Grant 取 `FOR UPDATE`，锁序 **grant → session**，与撤销路径一致。
+
+并发兑换同一个 code：只有一个命中条件 UPDATE，另一个拿 `invalid_grant`，
+因此不会出现第二条 Session 或第二条初代 Refresh Token（有 3 条用例钉住）。
+
+#### Refresh 的客户端绑定（本阶段补的安全缺口）
+
+`rotateMcpRefreshToken()` 新增三个**可选**入参 `clientId` / `resource` /
+`requestedScope`，全部在**改动任何状态之前**判定：
+
+| 入参 | 判据 | 失败 |
+|---|---|---|
+| `clientId` | = `mcp_sessions.client_id` | `invalid_client` 401 |
+| `resource` | = `mcp_sessions.resource` | `invalid_grant` |
+| `requestedScope` | ⊆ `issued_scope ∩ grant.scopes`（逐项严格校验） | `invalid_scope` 400 |
+
+**顺序是安全要求**：绑定校验必须排在「宽限外重放 → 撤销整个 Session」之前。
+否则一个拿着别人 Refresh Token、`client_id` 写错的请求就能触发破坏性撤销 ——
+错误客户端反而拿到了一个原语。锁序仍是 **refresh 行 → session 行**。
+
+`effectiveScope` 也是先算后写：交集为空时 `no_scope` 拒绝且**不消费旧代**
+（消费了客户端就彻底没凭据了）。
+
+#### Access Token
+
+复用 `signMcpAccessToken()`：`iss = baseUrl`、`aud = mcpResourceFor(baseUrl)`、
+`sub = session.userId`、`sid = mcp_sessions.id`、`jti` 随机、`scope = 本次实际签发`。
+`expires_in` 取 `ctx.env.accessTokenTtlSeconds`，不硬编码。与 Desktop Access
+Token 靠 `aud` + `iss` 双向隔离。
+
+#### 请求面与错误
+
+只接受 `application/x-www-form-urlencoded`（≤ 8 KiB，单字段 ≤ 512）；
+**任何字段重复即 `invalid_request`** —— `Object.fromEntries` 的「后者覆盖前者」
+会让「校验值」与「使用值」不是同一个。`/mcp/oauth/token` 完全不读 `bp_mcp_bs`。
+
+| 错误 | 状态 |
+|---|---:|
+| `invalid_request` | 400 |
+| `invalid_client` | 401 |
+| `invalid_grant` | 400 |
+| `invalid_scope` | 400 |
+| `unsupported_grant_type` | 400 |
+| `server_error` | 500（固定文案） |
+
+非 `AppError` 的异常在路由层换成 `serverError("token issuance failed")`：drizzle 的
+message 带整条 SQL 与全部参数（code_hash、refresh hash 都在里面），原样透出即凭据泄露。
+
+#### 审计非阻断
+
+Session 与 Refresh 的审计在提交之后写，失败只记 `mcp_audit_failed`，
+**不回滚已经签发的凭据**。否则会出现「token 已在库里、客户端却拿到 500」。
+
+#### 门禁（实际执行）
+
+| 项 | 结果 |
+|---|---|
+| Cloud `typecheck` / `lint` / `build` | 通过 |
+| Cloud `pnpm test` | **993 passed / 61 files**（C2b-R1 基线 923 / 56，**+70 / +5**） |
+| Desktop `typecheck` / `test` / `build` / `mcp:build` | 通过；**1265 passed / 89 files**；`stdio.mjs` 911.67 kB 不变 |
+| 新增迁移 / 新增路由 | **无 / 1 条**（`POST /mcp/oauth/token`） |
+| 既有 Session / Refresh 测试 | 44 条全绿（未放宽任何旧断言） |
+
+#### 变异（8/8 被抓）
+
+去掉消费的 `consumed_at IS NULL`、去掉授权码并发保护（`FOR UPDATE`）、去掉
+PKCE 校验、把 Session 创建移出授权码事务、初代 Refresh 改明文存储、去掉
+Refresh 客户端绑定校验、去掉重放保护、把 `effectiveScope` 换成 Grant 全量 scope。
+
+**M6 第一版存活**：变异脚本的锚点先命中了另一处同形代码（`bindingRejection`
+在正常分支与 consumed 分支各出现一次），等于只删了一半。修正锚点后转红
+（`token-route` 2 条失败）。
+
+#### 未做（C3b / 1.3.2 / 1.3.3）
+
+`POST /mcp/oauth/revoke`、PRM、AS Metadata、CIMD、DCR、`POST /mcp`、8 个只读工具、
+Streamable HTTP、真实客户端联调。**C3a 到此为止，未进入 C3b。**
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、

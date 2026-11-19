@@ -380,7 +380,7 @@ SSE 而解析失败；若只说「返回 SSE」，modern 客户端会等不到�
 | `GET` | `/mcp/oauth/callback/:provider` | MCP 专用 Provider 回调：换身份 → 建/取用户 → 写 `user_id` | Provider `state` |
 | `GET` | `/mcp/oauth/consent` | 渲染同意页（HTML）；每次渲染轮换 CSRF（C2b 已实现） | 浏览器 Cookie（绑定）+ 行内 `user_id` |
 | `POST` | `/mcp/oauth/consent` | 批准 / 拒绝 → upsert grant + 签 60s code + 删行（**同一事务**）→ 302 回 `redirect_uri`（C2b 已实现） | 浏览器 Cookie + CSRF |
-| `POST` | `/mcp/oauth/token` | `authorization_code` / `refresh_token`（**C3 未实现**） | 无（PKCE / refresh 本身就是凭据） |
+| `POST` | `/mcp/oauth/token` | `authorization_code` 兑换（单事务：消费码 + 建 Session + 初代 Refresh）、`refresh_token` 轮换（C3a 已实现，见 §5.11） | 无（PKCE / refresh 本身就是凭据） |
 | `POST` | `/mcp/oauth/revoke` | RFC 7009；只撤 refresh 所属 **session**，不撤 grant | 无（token 即凭据） |
 | `GET` | `.well-known/oauth-protected-resource` | PRM | 无 |
 | `GET` | `.well-known/oauth-authorization-server` | AS 元数据 | 无 |
@@ -785,6 +785,122 @@ Provider / 已消费 / 已过期 / 换绑定）。此时**不删、不写审计�
 一次完整的同意流程不写 `oauth_codes` / `oauth_transactions` / `auth_sessions`；
 `bp_mcp_bs` 发给 `/auth/me` 仍 401、发给 `/oauth/token` 仍 400；
 `/oauth/authorize` 仍只认 `127.0.0.1` 回调。
+
+### 5.11 Token Endpoint（1.3.1-C3a 已落地）
+
+`POST /mcp/oauth/token`，两个 Grant：`authorization_code` 与 `refresh_token`。
+只支持公共客户端（`token_endpoint_auth_method = none`），没有 client secret。
+
+#### 5.11.1 请求面
+
+| 项 | 规则 |
+|---|---|
+| Content-Type | 只接受 `application/x-www-form-urlencoded`；JSON / multipart 一律 `invalid_request` |
+| 请求体 | ≤ 8 KiB；单个字段 ≤ 512 字符 |
+| 重复字段 | **任何字段重复即 `invalid_request`**（`URLSearchParams.getAll().length !== 1`） |
+| `grant_type` | 只认两个值，其余 `unsupported_grant_type` |
+| `client_id` | 必须是已注册且与凭据归属一致的客户端 |
+| `resource` | 逐字符等于 `mcpResourceFor(baseUrl)`，否则 `invalid_request` |
+| `scope` | 可选，只能**收窄**（`authorization_code` 流程里不生效） |
+| Cookie | **完全不读** `bp_mcp_bs`（它的 Path 是 `/mcp/oauth`，浏览器可能带上） |
+
+为什么重复字段要直接拒：`Object.fromEntries` 是「后者覆盖前者」，于是
+「校验用的值」与「实际使用的值」可能不是同一个 —— 那是一个校验绕过面。
+
+#### 5.11.2 authorization_code 的事务边界
+
+```
+BEGIN
+  ① SELECT … FROM mcp_auth_codes WHERE code_hash = $1 FOR UPDATE
+  ② 校验 consumed_at IS NULL / expires_at > now / client_id / redirect_uri
+     / resource / PKCE S256
+  ③ 条件 UPDATE 消费授权码（consumed_at IS NULL + expires_at > now）→ RETURNING
+  ④ createMcpSessionInTransaction(tx, …)   ← 与 ③ 同一个 tx
+  ⑤ 提交
+COMMIT
+→ 事务外：签 Access Token、写审计、在线 Grant 同步（都不回滚凭据）
+```
+
+- `createMcpSession()` 被拆成「事务体 `createMcpSessionInTransaction(tx, …)`」
+  与「事务包装 + 审计」。对外行为不变，既有 44 条 Session/Refresh 测试全绿。
+- **不允许**先单独消费授权码再调用 `createMcpSession()`：那会出现「码已被烧掉、
+  Session 没建起来」的窗口，客户端只能重新走一遍浏览器授权。
+- ④ 内部对 Grant 取 `FOR UPDATE`，锁序 **grant → session**，与撤销路径一致。
+
+#### 5.11.3 授权码兑换的判据
+
+| 判据 | 失败表现 |
+|---|---|
+| 码不存在 / 已消费 / 已过期 | `invalid_grant`（三者**不可区分**，否则成为存在性探针） |
+| `client_id` 与码记录不符 | `invalid_grant`（码层面的绑定，不是 `invalid_client`） |
+| `redirect_uri` 不逐字符相等 | `invalid_grant` |
+| `resource` 不符 | `invalid_request`（在进入业务流程前就挡掉） |
+| PKCE：`BASE64URL(SHA256(verifier)) ≠ code_challenge` | `invalid_grant` |
+| verifier 形态非法（长度 ∉ [43,128] 或字符集越界） | `invalid_grant`（D5：与「值不对」同一出口） |
+| Grant 已撤销 / 不属于该用户 | `invalid_grant`（`grant_revoked`） |
+| User 非 `active` | `invalid_grant`（`user_inactive`） |
+| 码的 scope ⊄ Grant scope | `invalid_grant` |
+
+兑换成功后 `mcp_auth_codes.consumed_at` 被写上；并发兑换同一个码只有一个
+命中条件 UPDATE，另一个拿 `invalid_grant`，因此**不会**出现第二条 Session
+或第二条初代 Refresh Token。
+
+#### 5.11.4 第一代 Refresh Token
+
+哈希域 `mcp-refresh`（`pepperedSha256Hex(pepper, "mcp-refresh", raw)`），
+`generation = 1`，`expires_at = min(now + 30d, absolute_expires_at)`。
+明文只出现在响应体，**永不落库、永不进审计**。
+
+#### 5.11.5 refresh_token 的绑定校验（C3a 新增）
+
+`rotateMcpRefreshToken()` 增加三个可选入参，全部在**改动任何状态之前**判定：
+
+| 入参 | 判据 | 失败 |
+|---|---|---|
+| `clientId` | 与 `mcp_sessions.client_id` 相等 | `invalid_client`（401） |
+| `resource` | 与 `mcp_sessions.resource` 相等 | `invalid_grant`（`resource_mismatch`） |
+| `requestedScope` | ⊆ `issued_scope ∩ grant.scopes`，逐项严格校验 | `invalid_scope`（400） |
+
+**顺序是安全要求**：绑定校验必须排在「宽限外重放 → 撤销整个 Session」之前。
+否则一个拿着别人 Refresh Token、把 `client_id` 写错的请求，就能触发破坏性
+撤销 —— 错误客户端反而获得了一个原语。锁序仍是 **refresh 行 → session 行**。
+
+`effectiveScope = issued_scope ∩ grant.scopes` 先算出来再动状态：交集为空时
+`no_scope` 拒绝，且**不消费旧代**（消费了客户端就彻底没凭据了）。
+
+#### 5.11.6 响应
+
+```json
+{
+  "access_token": "…", "token_type": "Bearer", "expires_in": 900,
+  "refresh_token": "…", "scope": "records:read coffee:read"
+}
+```
+
+`expires_in` 取 `ctx.env.accessTokenTtlSeconds`（不是硬编码 900）；
+`scope` 是本次**实际签发**的范围（可能被 Grant 收窄、再被请求收窄）。
+响应头固定 `Cache-Control: no-store` + `Pragma: no-cache`（成功与失败都设）。
+
+#### 5.11.7 错误码
+
+| 错误 | 状态 | 场景 |
+|---|---:|---|
+| `invalid_request` | 400 | 参数缺失 / 重复 / `resource` 不符 / 格式不是 urlencoded |
+| `invalid_client` | 401 | refresh 的 `client_id` 与 Session 不符 |
+| `invalid_grant` | 400 | 码无效、过期、已用、PKCE 不符、refresh 无效、Grant 撤销、用户非 active |
+| `invalid_scope` | 400 | 请求 scope 超出授权 |
+| `unsupported_grant_type` | 400 | 未支持的 `grant_type` |
+| `server_error` | 500 | 内部错误；**固定文案**，不带 SQL / 参数 / 哈希 |
+
+非 `AppError` 的异常（drizzle / 加密栈）在路由层统一换成
+`serverError("token issuance failed")`：drizzle 的 message 会带整条 SQL 与
+全部参数（授权码哈希、refresh 哈希都在里面），原样透出就是凭据泄露。
+
+#### 5.11.8 审计是非阻断的
+
+`mcp_session_created` / `mcp_refresh_rotated` / `mcp_refresh_reuse_detected`
+等事件在**事务提交之后**写；写失败只记 `mcp_audit_failed` 告警，
+**不回滚已经签发的凭据**。否则会出现「token 已在库里、客户端却拿到 500」。
 
 ## 6. Discovery 设计
 
@@ -1557,8 +1673,10 @@ CREATE UNIQUE INDEX "mcp_refresh_tokens_session_active_uq"
 > Grant upsert、授权码签发、在线 Grant 同步），实现要点见 §5.10。
 > **1.3.1-C2b-R1 补齐两处回调状态清理竞态**：绑定失败分支改为条件删除
 > （§5.10.7），不再按 rid 直接删。
-> 余下第 9–15 条（token endpoint、revoke、discovery、CIMD、DCR）属 **C3**，
-> 尚未实现。详见路线图 §3.8–§3.10 与索引 §19–§21。
+> **1.3.1-C3a 已交付第 9 条**（`POST /mcp/oauth/token`：两个 Grant、授权码
+> 单事务兑换、Refresh 绑定校验与轮换），实现要点见 §5.11。
+> 余下第 10–15 条（revoke、discovery、CIMD、DCR）属 **C3b**，尚未实现。
+> 详见路线图 §3.8–§3.12 与索引 §19–§23。
 
 | # | 范围 | 验收 |
 |---|---|---|
@@ -1570,7 +1688,7 @@ CREATE UNIQUE INDEX "mcp_refresh_tokens_session_active_uq"
 | 6 | `/mcp/oauth/authorize`：校验 + 建 `mcp_auth_requests` + 签发 Cookie | `redirect_uri` 精确匹配；PKCE 强制 S256；`resource` 逐字符 |
 | 7 | `/mcp/oauth/login` + `/mcp/oauth/callback/:provider` | **MCP 专用回调**；TOFU 绑定；`findOrCreateUserWithIdentity` 建新用户；`provider_consumed_at` 一次性 |
 | 8 | `GET/POST /mcp/oauth/consent`（HTML，无前端框架） | 4 个 scope 逐项 + 可取消；显示 `client_name` 与 `redirect_uri` host；CSRF；拒绝走 `access_denied` |
-| 9 | `/mcp/oauth/token` 两分支 | code 一次性 + 60s；refresh 轮换；§9.10 矩阵 |
+| 9 | `/mcp/oauth/token` 两分支（**C3a 已交付**） | code 一次性 + 60s；refresh 轮换；§9.10 矩阵 |
 | 10 | `/mcp/oauth/revoke` | 只撤 session，不撤 grant（§9.11 第 1 行） |
 | 11 | CIMD 严格抓取器 | SSRF 用例全绿（私网/回环/重定向/超大/超时/非 JSON） |
 | 12 | PRM（root + path-inserted）与 AS 元数据 | `issuer` 与 URL 逐字符一致；`code_challenge_methods_supported` 存在；`authorization_response_iss_parameter_supported: true`；401 challenge **不带** `scope` |
