@@ -13,7 +13,7 @@ import { seedConsentRow } from "../helpers/mcp-consent.js";
 import { mcpResourceFor } from "../../src/mcp-oauth/constants.js";
 import { resetRateLimiter } from "../../src/security/rate-limit.js";
 import { REMOTE_GRANT_ACK_TIMEOUT_MS } from "../../src/link/schemas.js";
-import { mcpAuthCodeHash } from "../../src/mcp-oauth/consent-flow.js";
+import { mcpAuthCodeHash } from "../../src/mcp-oauth/authorize-flow.js";
 
 /**
  * 同意之后：Grant 同步到在线设备（Phase 1.3.1-C2b / 协议运行时 §6.5.2）。

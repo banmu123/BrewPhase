@@ -10,7 +10,7 @@ import {
   tableCount,
 } from "../helpers/mcp-consent.js";
 import { resetRateLimiter } from "../../src/security/rate-limit.js";
-import { mcpAuthCodeHash } from "../../src/mcp-oauth/consent-flow.js";
+import { mcpAuthCodeHash } from "../../src/mcp-oauth/authorize-flow.js";
 
 /**
  * Authorization Code 的签发语义（Phase 1.3.1-C2b）。

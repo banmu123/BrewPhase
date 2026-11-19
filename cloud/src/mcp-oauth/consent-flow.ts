@@ -1,8 +1,8 @@
 import { and, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { mcpAuthCodes, mcpAuthRequests, mcpGrants, mcpOauthClients } from "../db/schema.js";
-import { constantTimeEqual, randomToken, sha256Hex } from "../security/crypto.js";
-import { hashCsrf, isAuthRequestId } from "./authorize-flow.js";
+import { constantTimeEqual, randomToken } from "../security/crypto.js";
+import { hashCsrf, isAuthRequestId, mcpAuthCodeHash } from "./authorize-flow.js";
 import {
   MCP_AUTH_CODE_TTL_MS,
   MCP_CSRF_BYTES,
@@ -285,11 +285,6 @@ export type ConsentDecisionOutcome =
       userId?: string;
       clientId?: string;
     };
-
-/** 授权码哈希：`sha256("mcp-code:" ‖ code)`。明文永不落库。 */
-export function mcpAuthCodeHash(code: string): string {
-  return sha256Hex(`mcp-code:${code}`);
-}
 
 /**
  * 用户拒绝（显式 `deny`，或允许但一个 scope 都没选）。

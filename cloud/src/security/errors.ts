@@ -10,6 +10,9 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 export type ErrorCode =
   | "invalid_request"
   | "invalid_grant"
+  | "invalid_client"
+  | "invalid_scope"
+  | "unsupported_grant_type"
   | "invalid_token"
   | "unsupported_provider"
   | "provider_not_configured"
@@ -65,6 +68,34 @@ export const invalidRequest = (description: string, meta?: Record<string, unknow
 
 export const invalidGrant = (description: string, meta?: Record<string, unknown>) =>
   new AppError("invalid_grant", 400, description, { meta });
+
+/**
+ * 客户端身份不成立（Phase 1.3.1-C3a）。
+ *
+ * 本服务只有公共客户端（`token_endpoint_auth_method = none`），所以这里
+ * **不是**「client_secret 错了」，而是「这次请求声称的 client 与凭据归属
+ * 的 client 不是同一个」。401 而不是 400：语义上属于认证/绑定失败，
+ * 且 OAuth 2.1 的 `invalid_client` 就是 401。
+ */
+export const invalidClient = (description = "client is not valid") =>
+  new AppError("invalid_client", 401, description);
+
+/**
+ * 请求的 scope 超出已有授权（Phase 1.3.1-C3a）。
+ *
+ * 与 `invalid_request` 分开：它能让客户端知道「参数语法没问题，是权限范围
+ * 越界了」，从而正确地降级重试，而不是去改请求格式。
+ */
+export const invalidScope = (description = "requested scope exceeds the authorization") =>
+  new AppError("invalid_scope", 400, description);
+
+/** 未实现的 Grant（Phase 1.3.1-C3a）。文案只列已支持的两个取值。 */
+export const unsupportedGrantType = () =>
+  new AppError(
+    "unsupported_grant_type",
+    400,
+    "grant_type must be authorization_code or refresh_token",
+  );
 
 export const invalidToken = (description = "Invalid or expired access token") =>
   new AppError("invalid_token", 401, description);

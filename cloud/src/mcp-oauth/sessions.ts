@@ -1,10 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Database } from "../db/client.js";
-import { recordAuthEvent } from "../db/audit.js";
+import type { Logger } from "../logger.js";
+import { recordAuthEvent, type AuthEventInput } from "../db/audit.js";
 import { mcpGrants, mcpRefreshTokens, mcpSessions, users } from "../db/schema.js";
 import { pepperedSha256Hex, randomToken } from "../security/crypto.js";
-import { type AppError, invalidGrant, invalidRequest } from "../security/errors.js";
+import {
+  type AppError,
+  invalidClient,
+  invalidGrant,
+  invalidRequest,
+  invalidScope,
+} from "../security/errors.js";
+import { isMcpScope, orderMcpScopes, type McpScope } from "./constants.js";
 
 /**
  * MCP OAuth 会话与 Refresh Token 服务（Phase 1.3.1-B）。
@@ -82,7 +90,15 @@ type RejectReason =
   | "session_revoked"
   | "session_expired"
   | "user_inactive"
-  | "grant_revoked";
+  | "grant_revoked"
+  // ---- C3a：Token Endpoint 的绑定与 scope 校验 ----
+  //
+  // 这四个都在**写任何状态之前**判定：错误客户端不能消费真正客户端的
+  // Refresh Token，错误 scope 也不能把旧代消费掉之后才报错。
+  | "client_mismatch"
+  | "resource_mismatch"
+  | "invalid_scope"
+  | "no_scope";
 /** 仅用于事务内结论 → 服务端 meta；对外文案恒为 `INVALID_GRANT_MESSAGE`。 */
 type RotationRejectReason = RejectReason | "grace_reuse" | "reuse_detected";
 
@@ -98,6 +114,8 @@ export interface McpOAuthDeps {
   db: Database;
   /** 与 Desktop 登录共用同一个值；哈希域不同（见上）。 */
   pepper: string;
+  /** 可选：审计失败时记一条固定诊断（不含任何 token / 凭据）。 */
+  logger?: Pick<Logger, "warn"> | undefined;
   /**
    * 可注入时钟。
    *
@@ -106,6 +124,21 @@ export interface McpOAuthDeps {
    * 用例就只能靠 sleep，而 sleep 既慢又不确定。
    */
   now?: (() => Date) | undefined;
+}
+
+/**
+ * 事务外的审计：**失败不影响已经落库的凭据**（C3a）。
+ *
+ * 审计是记账，不是授权的前置条件。把它做成阻断式，会出现「Session 已提交、
+ * token 已生成，但审计插入失败 → 500 → 客户端拿不到 token」——凭据还在库里，
+ * 客户端却永远丢了它。失败只记一条不含上下文的告警。
+ */
+async function auditOrIgnore(deps: McpOAuthDeps, input: AuthEventInput): Promise<void> {
+  try {
+    await recordAuthEvent(deps.db, input);
+  } catch {
+    deps.logger?.warn("mcp_audit_failed", { eventType: input.eventType });
+  }
 }
 
 function readClock(deps: McpOAuthDeps): Date {
@@ -177,7 +210,30 @@ export interface CreatedMcpSession {
  * （`UPDATE mcp_grants` → `revokeMcpSessionsByGrant`）与这里一致，
  * 因此不会出现「A 持 grant 等 session、B 持 session 等 grant」的死锁。
  */
-export async function createMcpSession(
+/**
+ * Drizzle 事务句柄。
+ *
+ * 抽出来是为了让「授权码兑换」能在**自己的**事务里复用 Session 创建逻辑：
+ * 消费授权码、建 Session、写第一代 Refresh Token 必须是一次提交（C3a）。
+ * 用 `Parameters<...>` 而不是手写一份结构：Drizzle 的事务对象类型随版本变化，
+ * 手抄一份会在升级时静默漂移。
+ */
+export type McpOAuthTransaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+
+/**
+ * 在调用方的事务里创建 Session 与第一代 Refresh Token。
+ *
+ * **不写审计、不开事务**：审计必须在提交之后（否则授权已成立、审计失败却
+ * 回滚凭据），事务由调用方决定边界（授权码兑换要求与 `mcp_auth_codes`
+ * 的消费同一个事务）。
+ *
+ * 三条校验与独立调用时完全一致：
+ * 1. 用户必须 `active`；
+ * 2. Grant 必须属于该用户、未撤销（`FOR UPDATE`，锁序 grant → session）；
+ * 3. `issued_scope` 必须是 Grant scope 的子集。
+ */
+export async function createMcpSessionInTransaction(
+  tx: McpOAuthTransaction,
   deps: McpOAuthDeps,
   input: CreateMcpSessionInput,
 ): Promise<CreatedMcpSession> {
@@ -194,96 +250,106 @@ export async function createMcpSession(
   );
   const rawToken = generateMcpRefreshToken();
 
-  const created = await deps.db.transaction(async (tx) => {
-    // ---- 1. 用户必须存在且处于 active ----
-    const userRows = await tx
-      .select({ status: users.status })
-      .from(users)
-      .where(eq(users.id, input.userId))
-      .limit(1);
-    const user = userRows[0];
-    if (!user || user.status !== "active") {
-      throw rejectAuthorization("user_inactive");
-    }
+  // ---- 1. 用户必须存在且处于 active ----
+  const userRows = await tx
+    .select({ status: users.status })
+    .from(users)
+    .where(eq(users.id, input.userId))
+    .limit(1);
+  const user = userRows[0];
+  if (!user || user.status !== "active") {
+    throw rejectAuthorization("user_inactive");
+  }
 
-    // ---- 2. Grant 必须属于该用户、未撤销（**行锁**，见上方长注释）----
-    const grantRows = await tx
-      .select({
-        id: mcpGrants.id,
-        userId: mcpGrants.userId,
-        clientId: mcpGrants.clientId,
-        scopes: mcpGrants.scopes,
-        resource: mcpGrants.resource,
-        revokedAt: mcpGrants.revokedAt,
-      })
-      .from(mcpGrants)
-      .where(and(eq(mcpGrants.id, input.grantId), eq(mcpGrants.userId, input.userId)))
-      .for("update")
-      .limit(1);
-    const grant = grantRows[0];
-    // 「不存在」与「不属于这个用户」返回同一个错误：分开会让 grant_id
-    // 变成一条归属探针。
-    if (!grant) throw rejectAuthorization("grant_revoked");
-    if (grant.revokedAt !== null) throw rejectAuthorization("grant_revoked");
+  // ---- 2. Grant 必须属于该用户、未撤销（**行锁**，见上方长注释）----
+  const grantRows = await tx
+    .select({
+      id: mcpGrants.id,
+      userId: mcpGrants.userId,
+      clientId: mcpGrants.clientId,
+      scopes: mcpGrants.scopes,
+      resource: mcpGrants.resource,
+      revokedAt: mcpGrants.revokedAt,
+    })
+    .from(mcpGrants)
+    .where(and(eq(mcpGrants.id, input.grantId), eq(mcpGrants.userId, input.userId)))
+    .for("update")
+    .limit(1);
+  const grant = grantRows[0];
+  // 「不存在」与「不属于这个用户」返回同一个错误：分开会让 grant_id
+  // 变成一条归属探针。
+  if (!grant) throw rejectAuthorization("grant_revoked");
+  if (grant.revokedAt !== null) throw rejectAuthorization("grant_revoked");
 
-    // ---- 3. 授予的 scope 必须是 Grant 的子集 ----
-    const grantScopes = new Set(grant.scopes);
-    const extra = issuedScope.filter((scope) => !grantScopes.has(scope));
-    if (extra.length > 0) {
-      // 不回显 scope 列表：它是授权内容，不该出现在错误里。
-      throw invalidRequest("granted scope exceeds the authorization");
-    }
+  // ---- 3. 授予的 scope 必须是 Grant 的子集 ----
+  const grantScopes = new Set(grant.scopes);
+  const extra = issuedScope.filter((scope) => !grantScopes.has(scope));
+  if (extra.length > 0) {
+    // 不回显 scope 列表：它是授权内容，不该出现在错误里。
+    throw invalidRequest("granted scope exceeds the authorization");
+  }
 
-    // ---- 4. Session（身份）----
-    const sessionRows = await tx
-      .insert(mcpSessions)
-      .values({
-        userId: input.userId,
-        grantId: grant.id,
-        clientId: grant.clientId,
-        issuedScope,
-        resource: grant.resource,
-        // 显式写入而不是依赖列默认值：绝对期限必须能由注入时钟推出，
-        // 否则「跨 90 天」的测试只能靠真实等待。
-        createdAt: now,
-        absoluteExpiresAt,
-        lastUsedAt: now,
-        ipHash: input.ipHash ?? "",
-        userAgent: input.userAgent ?? "",
-      })
-      .returning({ id: mcpSessions.id });
-    const session = sessionRows[0];
-    if (!session) throw new Error("failed to create mcp session");
-
-    // ---- 5. 第一代 Refresh Token ----
-    await tx.insert(mcpRefreshTokens).values({
-      sessionId: session.id,
-      tokenHash: mcpRefreshTokenHash(deps.pepper, rawToken),
-      generation: 1,
-      createdAt: now,
-      expiresAt: refreshExpiresAt,
-      ipHash: input.ipHash ?? "",
-      userAgent: input.userAgent ?? "",
-    });
-
-    return {
-      sessionId: session.id,
+  // ---- 4. Session（身份）----
+  const sessionRows = await tx
+    .insert(mcpSessions)
+    .values({
       userId: input.userId,
       grantId: grant.id,
       clientId: grant.clientId,
-      resource: grant.resource,
       issuedScope,
+      resource: grant.resource,
+      // 显式写入而不是依赖列默认值：绝对期限必须能由注入时钟推出，
+      // 否则「跨 90 天」的测试只能靠真实等待。
+      createdAt: now,
       absoluteExpiresAt,
-    };
+      lastUsedAt: now,
+      ipHash: input.ipHash ?? "",
+      userAgent: input.userAgent ?? "",
+    })
+    .returning({ id: mcpSessions.id });
+  const session = sessionRows[0];
+  if (!session) throw new Error("failed to create mcp session");
+
+  // ---- 5. 第一代 Refresh Token ----
+  await tx.insert(mcpRefreshTokens).values({
+    sessionId: session.id,
+    tokenHash: mcpRefreshTokenHash(deps.pepper, rawToken),
+    generation: 1,
+    createdAt: now,
+    expiresAt: refreshExpiresAt,
+    ipHash: input.ipHash ?? "",
+    userAgent: input.userAgent ?? "",
   });
 
-  // 审计在事务外写（与 auth_sessions 的做法一致：撤销/创建已落库，
-  // 审计写入失败不该回滚业务事实）。detail 里没有 token、没有明文。
-  await recordAuthEvent(deps.db, {
+  return {
+    sessionId: session.id,
+    userId: input.userId,
+    grantId: grant.id,
+    clientId: grant.clientId,
+    resource: grant.resource,
+    issuedScope,
+    absoluteExpiresAt,
+    refreshToken: rawToken,
+  };
+}
+
+/**
+ * Session 创建的审计（事务外）。
+ *
+ * 单独导出是因为授权码兑换走的是 `createMcpSessionInTransaction()`，它自己
+ * 提交之后也要写同一条事件——两处共用一份 detail，才不会出现「同一种事件
+ * 两种字段」。
+ */
+export async function recordMcpSessionCreated(
+  deps: McpOAuthDeps,
+  created: CreatedMcpSession,
+  ipHash: string,
+): Promise<void> {
+  await auditOrIgnore(deps, {
     eventType: "mcp_session_created",
     userId: created.userId,
     sessionId: created.sessionId,
-    ipHash: input.ipHash ?? "",
+    ipHash,
     detail: {
       grantId: created.grantId,
       clientId: created.clientId,
@@ -291,8 +357,27 @@ export async function createMcpSession(
       absoluteExpiresAt: created.absoluteExpiresAt.toISOString(),
     },
   });
+}
 
-  return { ...created, refreshToken: rawToken };
+/**
+ * 创建 Session 与第一代 Refresh Token（独立事务）。
+ *
+ * 行为与 C1 完全一致：事务内写两行，事务外写审计。唯一的变化是事务体被抽到
+ * `createMcpSessionInTransaction()`，好让授权码兑换复用同一份规则。
+ */
+export async function createMcpSession(
+  deps: McpOAuthDeps,
+  input: CreateMcpSessionInput,
+): Promise<CreatedMcpSession> {
+  const created = await deps.db.transaction((tx) =>
+    createMcpSessionInTransaction(tx, deps, input),
+  );
+
+  // 审计在事务外写（与 auth_sessions 的做法一致：撤销/创建已落库，
+  // 审计写入失败不该回滚业务事实）。detail 里没有 token、没有明文。
+  await recordMcpSessionCreated(deps, created, input.ipHash ?? "");
+
+  return created;
 }
 
 // ---------------------------------------------------------------------------
@@ -301,6 +386,22 @@ export async function createMcpSession(
 
 export interface RotateMcpRefreshTokenInput {
   refreshToken: string;
+  /**
+   * 请求声称的客户端（Phase 1.3.1-C3a）。
+   *
+   * 传入时会在**改动任何 Refresh Token 状态之前**校验：它与 Session 的
+   * `client_id` 必须一致。不传 = 不做这项校验（旧的内部调用与既有测试）。
+   */
+  clientId?: string | undefined;
+  /** 请求的 `resource`。传入时与 Session 的 `resource` 逐字符比较。 */
+  resource?: string | undefined;
+  /**
+   * 请求的 `scope`（可选，只能**收窄**）。
+   *
+   * 必须是 `issued_scope ∩ grant.scopes` 的子集。传空数组等价于
+   * `invalid_scope`——「刷新但什么都不要」不是一个合法请求。
+   */
+  requestedScope?: readonly string[] | undefined;
   ipHash?: string | undefined;
   userAgent?: string | undefined;
 }
@@ -350,6 +451,50 @@ type RotationOutcome =
   | { kind: "rejected"; reason: RejectReason };
 
 /**
+ * 客户端 / 资源的绑定判据（Phase 1.3.1-C3a）。
+ *
+ * 只在调用方显式传入时才校验：不传 = 旧行为（内部调用与既有测试）。
+ * 返回 null 表示通过；否则给出拒绝原因。
+ */
+function bindingRejection(
+  session: { clientId: string; resource: string },
+  input: { clientId?: string | undefined; resource?: string | undefined },
+): "client_mismatch" | "resource_mismatch" | null {
+  if (input.clientId !== undefined && session.clientId !== input.clientId) {
+    return "client_mismatch";
+  }
+  if (input.resource !== undefined && session.resource !== input.resource) {
+    return "resource_mismatch";
+  }
+  return null;
+}
+
+/**
+ * 把请求的 `scope` 收窄到已有授权之内。
+ *
+ * **逐项严格校验**，不做「过滤掉非法值」：过滤会让一次越权请求看起来像一次
+ * 正常的收窄，客户端永远不知道自己的请求被改过。
+ *
+ * 返回 null 表示越界（或空结果），调用方据此在**写任何状态之前**拒绝。
+ */
+function narrowScope(
+  requested: readonly string[],
+  effective: readonly McpScope[],
+): McpScope[] | null {
+  const allowed = new Set<string>(effective);
+  const seen = new Set<string>();
+  const out: McpScope[] = [];
+  for (const raw of requested) {
+    if (!isMcpScope(raw) || !allowed.has(raw)) return null;
+    if (seen.has(raw)) continue;
+    seen.add(raw);
+    out.push(raw);
+  }
+  if (out.length === 0) return null;
+  return orderMcpScopes(out);
+}
+
+/**
  * 用旧 Refresh Token 换下一代。
  *
  * 成功时**旧行保留**（只标 `consumed_at` 与 `replaced_by`）——重放检测依赖
@@ -391,7 +536,13 @@ export async function rotateMcpRefreshToken(
       // 无论宽限内外都要读 session（拿 userId 做审计），锁序仍是
       // 「先 refresh 后 session」，与正常轮换一致，不会互相死锁。
       const sessionRows = await tx
-        .select({ id: mcpSessions.id, userId: mcpSessions.userId, revokedAt: mcpSessions.revokedAt })
+        .select({
+          id: mcpSessions.id,
+          userId: mcpSessions.userId,
+          clientId: mcpSessions.clientId,
+          resource: mcpSessions.resource,
+          revokedAt: mcpSessions.revokedAt,
+        })
         .from(mcpSessions)
         .where(eq(mcpSessions.id, old.sessionId))
         .for("update")
@@ -401,6 +552,16 @@ export async function rotateMcpRefreshToken(
         // FK 是 CASCADE，理论上不会走到这里；真走到了也只当普通拒绝。
         return { kind: "rejected", reason: "session_missing" };
       }
+
+      /**
+       * **必须在任何重放处置之前**（C3a）。
+       *
+       * 否则一个拿着别人的 Refresh Token、但 `client_id` 写错的请求，
+       * 就能触发「宽限外重放」把真正客户端的 Session 撤掉——错误客户端
+       * 反而拿到了一个破坏性原语。
+       */
+      const bound = bindingRejection(session, input);
+      if (bound) return { kind: "rejected", reason: bound };
 
       if (sinceConsumedMs <= MCP_REFRESH_REUSE_GRACE_MS) {
         return {
@@ -452,6 +613,9 @@ export async function rotateMcpRefreshToken(
       .limit(1);
     const session = sessionRows[0];
     if (!session) return { kind: "rejected", reason: "session_missing" };
+    // 绑定不成立时连「会话已撤销 / 已过期」都不告诉它：那是别人的状态。
+    const bound = bindingRejection(session, input);
+    if (bound) return { kind: "rejected", reason: bound };
     if (session.revokedAt !== null) return { kind: "rejected", reason: "session_revoked" };
     if (session.absoluteExpiresAt.getTime() <= now.getTime()) {
       // 过期不写 revoke：它是时间的函数，不是一次事件。写进去会让
@@ -484,6 +648,25 @@ export async function rotateMcpRefreshToken(
     if (!grant || grant.revokedAt !== null) {
       return { kind: "rejected", reason: "grant_revoked" };
     }
+
+    // ---- 6.5 本次签发的 scope：必须先算出来，再动任何状态 ----
+    //
+    // `effective = issued_scope ∩ grant.scopes`（设计 §9.7）。Grant 被收窄后
+    // 这里的交集自然变小，历史 Session 不会因为「当初授得多」继续拿着大权限。
+    const grantScopes = new Set(grant.scopes);
+    const effectiveScope = orderMcpScopes(
+      session.issuedScope.filter((scope) => grantScopes.has(scope)),
+    );
+    if (effectiveScope.length === 0) {
+      // 交集为空：签发一个空 scope 的 token 没有意义，更不能为此把旧代
+      // Refresh Token 消费掉（那会让客户端彻底失去凭证）。
+      return { kind: "rejected", reason: "no_scope" };
+    }
+    const tokenScope =
+      input.requestedScope === undefined
+        ? effectiveScope
+        : narrowScope(input.requestedScope, effectiveScope);
+    if (tokenScope === null) return { kind: "rejected", reason: "invalid_scope" };
 
     // ---- 7. 下一代 ----
     const rawToken = generateMcpRefreshToken();
@@ -526,7 +709,6 @@ export async function rotateMcpRefreshToken(
       .set({ lastUsedAt: now })
       .where(eq(mcpSessions.id, session.id));
 
-    const grantScopes = new Set(grant.scopes);
     return {
       kind: "rotated",
       sessionId: session.id,
@@ -535,7 +717,8 @@ export async function rotateMcpRefreshToken(
       clientId: session.clientId,
       resource: session.resource,
       issuedScope: session.issuedScope,
-      effectiveScope: session.issuedScope.filter((scope) => grantScopes.has(scope)),
+      // 本次**实际签发**的 scope：Grant 收窄后的交集，可能再被请求收窄。
+      effectiveScope: tokenScope,
       absoluteExpiresAt: session.absoluteExpiresAt,
       refreshToken: rawToken,
       generation,
@@ -548,7 +731,7 @@ export async function rotateMcpRefreshToken(
   // 撤销必须**提交之后**才返回失败：如果在事务内抛异常，撤销会被一起回滚，
   // 于是「检测到盗用」变成了一句没有后果的日志。
   if (outcome.kind === "grace") {
-    await recordAuthEvent(deps.db, {
+    await auditOrIgnore(deps, {
       eventType: "mcp_refresh_grace_reuse",
       sessionId: outcome.sessionId,
       ipHash: outcome.ipHash,
@@ -558,7 +741,7 @@ export async function rotateMcpRefreshToken(
   }
 
   if (outcome.kind === "reuse") {
-    await recordAuthEvent(deps.db, {
+    await auditOrIgnore(deps, {
       eventType: "mcp_refresh_reuse_detected",
       userId: outcome.userId,
       sessionId: outcome.sessionId,
@@ -566,7 +749,7 @@ export async function rotateMcpRefreshToken(
       detail: { revokedNow: outcome.revokedNow },
     });
     if (outcome.revokedNow) {
-      await recordAuthEvent(deps.db, {
+      await auditOrIgnore(deps, {
         eventType: "mcp_session_revoked",
         userId: outcome.userId,
         sessionId: outcome.sessionId,
@@ -578,10 +761,19 @@ export async function rotateMcpRefreshToken(
   }
 
   if (outcome.kind === "rejected") {
+    // 客户端绑定失败是 `invalid_client`（401），scope 越界是 `invalid_scope`
+    // （400），其余一律收敛到固定的 `invalid_grant` 文案。三者的区分只对
+    // 合法客户端有用（知道该换 client_id 还是该收窄 scope），不构成探针。
+    if (outcome.reason === "client_mismatch") {
+      throw invalidClient("client does not match this refresh token");
+    }
+    if (outcome.reason === "invalid_scope") {
+      throw invalidScope();
+    }
     throw rejectRefresh(outcome.reason);
   }
 
-  await recordAuthEvent(deps.db, {
+  await auditOrIgnore(deps, {
     eventType: "mcp_refresh_success",
     userId: outcome.userId,
     sessionId: outcome.sessionId,
@@ -664,7 +856,7 @@ export async function revokeMcpSession(
   const row = rows[0];
   if (!row) return { revoked: false };
 
-  await recordAuthEvent(deps.db, {
+  await auditOrIgnore(deps, {
     eventType: "mcp_session_revoked",
     userId: row.userId,
     sessionId: row.id,
@@ -704,7 +896,7 @@ export async function revokeMcpSessionsByGrant(
 
   // 一条事件而不是每条一个：撤销 grant 是一个动作，`revokedCount` 就是
   // 「影响了几条会话」的答案。逐条写会让一次批量撤销刷满审计表。
-  await recordAuthEvent(deps.db, {
+  await auditOrIgnore(deps, {
     eventType: "mcp_session_revoked",
     userId: rows[0]?.userId,
     ipHash: input.ipHash ?? "",

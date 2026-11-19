@@ -44,7 +44,9 @@ describe("CSRF 的实现性质", () => {
 
 describe("授权码的实现性质", () => {
   it("哈希带域分隔（`mcp-code:`）", () => {
-    const src = read("src/mcp-oauth/consent-flow.ts");
+    // 签发（consent-flow）与兑换（token-flow）共用同一个函数，定义在
+    // authorize-flow 里，两边都只经过它。
+    const src = read("src/mcp-oauth/authorize-flow.ts");
     expect(src).toContain("sha256Hex(`mcp-code:${code}`)");
   });
 

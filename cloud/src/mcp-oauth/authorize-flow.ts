@@ -59,6 +59,19 @@ export function hashCsrf(csrf: string): string {
   return sha256Hex(`mcp-csrf:${csrf}`);
 }
 
+/**
+ * 授权码哈希：`sha256("mcp-code:" ‖ code)`。
+ *
+ * 与 CSRF / Provider State 一样**只落哈希**：授权码是兑换 token 的唯一凭据，
+ * 明文只在签发那一次的 302 `Location` 里出现。
+ *
+ * 放在这里（而不是签发它的 consent-flow）是因为兑换侧也要用它——两个方向
+ * 共用同一个域分隔常量，才不会出现「签的时候带前缀、查的时候忘带」。
+ */
+export function mcpAuthCodeHash(code: string): string {
+  return sha256Hex(`mcp-code:${code}`);
+}
+
 // ---------------------------------------------------------------------------
 // authorize
 // ---------------------------------------------------------------------------

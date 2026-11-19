@@ -4,8 +4,19 @@ import { eq } from "drizzle-orm";
 import type { AppContext, AppHono } from "../context.js";
 import { recordAuthEvent, type AuthEventInput } from "../db/audit.js";
 import { mcpAuthRequests } from "../db/schema.js";
-import { providerNotConfigured, serverError, type AppError } from "../security/errors.js";
+import {
+  invalidRequest,
+  invalidScope,
+  providerNotConfigured,
+  respondError,
+  serverError,
+  unsupportedGrantType,
+  AppError,
+} from "../security/errors.js";
 import { constantTimeEqual } from "../security/crypto.js";
+import { formatScopeClaim, isMcpScope, mcpResourceFor } from "../mcp-oauth/constants.js";
+import { exchangeAuthorizationCode, exchangeRefreshToken } from "../mcp-oauth/token-flow.js";
+import { sessionMetaFromRequest } from "./body.js";
 import { rateLimit } from "../security/rate-limit.js";
 import { isProviderName, type ProviderName } from "../oauth/providers.js";
 import { findOrCreateUserWithIdentity } from "../users/user-service.js";
@@ -230,6 +241,22 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
   const limiter = rateLimit({
     name: "mcp-oauth",
     max: ctx.env.rateLimit.maxAuthorize,
+    windowMs: ctx.env.rateLimit.windowMs,
+    trustProxy: ctx.env.trustProxy,
+    trustedHops: ctx.env.trustProxyHops,
+    maxBuckets: ctx.env.rateLimit.maxBuckets,
+  });
+
+  /**
+   * Token Endpoint 的**独立**限流桶（Phase 1.3.1-C3a）。
+   *
+   * 与浏览器授权流程分开：`/authorize`/`/login` 是「一个人点几下」，token 是
+   * 「客户端按需刷新」，两者的正常频率差一个量级。共用一个桶会让一次浏览器
+   * 授权的浏览行为把客户端的刷新额度吃掉。
+   */
+  const tokenLimiter = rateLimit({
+    name: "mcp-token",
+    max: ctx.env.rateLimit.maxToken,
     windowMs: ctx.env.rateLimit.windowMs,
     trustProxy: ctx.env.trustProxy,
     trustedHops: ctx.env.trustProxyHops,
@@ -840,6 +867,180 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
       302,
     );
   });
+
+  // -------------------------------------------------------------------------
+  // POST /mcp/oauth/token
+  // -------------------------------------------------------------------------
+
+  /**
+   * MCP Token Endpoint（Phase 1.3.1-C3a）。
+   *
+   * 只接受 `application/x-www-form-urlencoded`；不接受 JSON / multipart，
+   * 也不使用任何 Cookie 作为认证（`bp_mcp_bs` 因为 Path 是 `/mcp/oauth`
+   * 可能被浏览器带上，但这里**完全不读**它）。
+   *
+   * 错误一律走 `respondError`：它只序列化 `code` 与（非生产环境的）描述，
+   * 不会带出 SQL、参数或任何凭据。
+   */
+  app.post("/mcp/oauth/token", tokenLimiter, async (c) => {
+    // 成功与失败都 `no-store`：响应体里就是凭据。
+    c.header("Cache-Control", "no-store");
+    c.header("Pragma", "no-cache");
+    try {
+      return await issueTokens(c, ctx);
+    } catch (err) {
+      if (err instanceof AppError) {
+        return respondError(c, err, ctx.env.isProduction);
+      }
+      /**
+       * 非 AppError = 数据库/加密栈抛出的异常。
+       *
+       * **绝不能原样交给 `respondError` 或 `onError`**：drizzle 的 message
+       * 会带上整条 SQL 与全部参数（授权码哈希、refresh token 哈希都在里面），
+       * 非生产环境还会把它序列化进响应体。日志也只记一个固定事件。
+       */
+      ctx.logger.error("mcp_token_failed", {});
+      return respondError(c, serverError("token issuance failed"), ctx.env.isProduction);
+    }
+  });
+}
+
+const MAX_TOKEN_BODY_BYTES = 8 * 1024;
+/** 表单字段的长度上限（授权码 / refresh token 都是 43 字符，512 足够）。 */
+const MAX_TOKEN_FIELD_LENGTH = 512;
+
+/**
+ * 解析 token 请求的表单。
+ *
+ * **要求每个字段恰好出现一次**：`URLSearchParams` 在 `Object.fromEntries` 下
+ * 会「后者覆盖前者」，于是校验用的值与实际使用的值可能不是同一个。这里显式
+ * 拒绝重复字段，而不是挑一个。
+ */
+async function parseTokenForm(c: Context): Promise<Map<string, string>> {
+  const contentType = (c.req.header("content-type") ?? "").toLowerCase();
+  if (!contentType.startsWith("application/x-www-form-urlencoded")) {
+    throw invalidRequest("content-type must be application/x-www-form-urlencoded");
+  }
+
+  const body = await c.req.text();
+  if (body.length > MAX_TOKEN_BODY_BYTES) {
+    throw invalidRequest("request body is too large");
+  }
+
+  const params = new URLSearchParams(body);
+  const values = new Map<string, string>();
+  for (const key of new Set(params.keys())) {
+    const all = params.getAll(key);
+    if (all.length !== 1) {
+      throw invalidRequest(`parameter ${key} must appear exactly once`);
+    }
+    values.set(key, all[0] ?? "");
+  }
+  return values;
+}
+
+function requireField(form: Map<string, string>, name: string): string {
+  const value = form.get(name);
+  if (value === undefined || value.length === 0) {
+    throw invalidRequest(`${name} is required`);
+  }
+  if (value.length > MAX_TOKEN_FIELD_LENGTH) {
+    throw invalidRequest(`${name} is too long`);
+  }
+  return value;
+}
+
+/**
+ * 解析请求的 `scope`（空格分隔）。
+ *
+ * 只校验「是已知 scope」；「是否超出已有授权」由 `rotateMcpRefreshToken` 在
+ * 写入之前判定（那里才拿得到 `issued ∩ grant`）。
+ */
+function parseScopeParam(raw: string): string[] {
+  const parts = raw.split(" ").filter((part) => part.length > 0);
+  if (parts.length === 0) throw invalidScope("scope must not be empty");
+  for (const part of parts) {
+    if (!isMcpScope(part)) throw invalidScope("unknown scope requested");
+  }
+  return parts;
+}
+
+function tokenResponse(
+  c: Context,
+  issued: { accessToken: string; refreshToken: string; expiresIn: number; scope: readonly string[] },
+): Response {
+  return c.json({
+    access_token: issued.accessToken,
+    token_type: "Bearer",
+    // 必须是配置值，不是硬编码 900：客户端按它安排刷新节奏。
+    expires_in: issued.expiresIn,
+    refresh_token: issued.refreshToken,
+    scope: formatScopeClaim(issued.scope),
+  });
+}
+
+async function issueTokens(c: Context, ctx: AppContext): Promise<Response> {
+  const form = await parseTokenForm(c);
+  const grantType = requireField(form, "grant_type");
+  const clientId = requireField(form, "client_id");
+  const resource = requireField(form, "resource");
+
+  const expectedResource = mcpResourceFor(ctx.env.baseUrl);
+  if (resource !== expectedResource) {
+    throw invalidRequest("resource does not match this MCP server");
+  }
+
+  const scopeParam = form.get("scope");
+  const requestedScope = scopeParam === undefined ? undefined : parseScopeParam(scopeParam);
+
+  const meta = sessionMetaFromRequest(c, ctx.env);
+  const deps = {
+    db: ctx.db.db,
+    pepper: ctx.env.sessionTokenPepper,
+    keyRing: ctx.keyRing,
+    issuer: ctx.env.baseUrl,
+    resource: expectedResource,
+    accessTokenTtlSeconds: ctx.env.accessTokenTtlSeconds,
+    logger: ctx.logger,
+  };
+  // 一次请求内只有一个「现在」：授权码有效期、会话 created_at、JWT 的
+  // iat/exp 都从它推导，避免同一次兑换里出现两个相差几毫秒的时间点。
+  const currentTime = new Date();
+
+  if (grantType === "authorization_code") {
+    // `scope` 在授权码流程里**不生效**：授权码已经承载了用户勾选的最终
+    // scope，客户端不能借兑换时再要一次。这里既不校验也不扩大。
+    return tokenResponse(
+      c,
+      await exchangeAuthorizationCode(deps, {
+        code: requireField(form, "code"),
+        clientId,
+        redirectUri: requireField(form, "redirect_uri"),
+        resource,
+        codeVerifier: requireField(form, "code_verifier"),
+        now: currentTime,
+        ipHash: meta.ipHash,
+        userAgent: meta.userAgent,
+      }),
+    );
+  }
+
+  if (grantType === "refresh_token") {
+    return tokenResponse(
+      c,
+      await exchangeRefreshToken(deps, {
+        refreshToken: requireField(form, "refresh_token"),
+        clientId,
+        resource,
+        ...(requestedScope === undefined ? {} : { requestedScope }),
+        now: currentTime,
+        ipHash: meta.ipHash,
+        userAgent: meta.userAgent,
+      }),
+    );
+  }
+
+  throw unsupportedGrantType();
 }
 
 /**
