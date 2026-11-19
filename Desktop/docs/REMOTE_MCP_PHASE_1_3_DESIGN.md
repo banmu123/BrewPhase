@@ -1229,6 +1229,52 @@ AS Metadata: https://<host>/.well-known/oauth-authorization-server
 `BASE_URL`——一旦允许，三处 issuer（JWT `iss`、授权响应 `iss`、metadata
 `issuer`）就只能靠元数据层归一化对齐，而那正是分歧的来源。
 
+#### 6.1.2 校验落在原始字符串上（C3c-1-R1）
+
+第一版校验读的是 `url.pathname` / `url.search` / `url.hash`，那是**解析之后**的
+视图。WHATWG 会先做路径规范化，于是这些输入的 `pathname` 全是 `/`：
+
+```
+https://cloud.example.com/api/..
+https://cloud.example.com/a/..
+https://cloud.example.com/..
+https://cloud.example.com/.
+https://cloud.example.com/%2e%2e
+https://cloud.example.com/a/%2E%2E
+```
+
+它们因此被当成纯 origin 放行，而 `loadEnv()` 保留的是**原始字符串**——它原样
+成了 JWT 的 `iss`、授权响应的 `iss` 和 metadata 的 `issuer`。三处仍然逐字符
+一致，但都不是一个 origin，客户端按 issuer 做匹配时会拿到一个带路径的值。
+
+同一类问题还有三处：
+
+| 输入 | 解析结果 | 为什么要单独查原始串 |
+|---|---|---|
+| `https:///api` | host = `api` | 原始串里没有 authority，解析结果却有一个 host |
+| `https://@host` | username = `""` | 空 userinfo：`url.username` / `url.password` 都看不出 `@` |
+| `https://host\api` | path = `//api` 或 `/api` | WHATWG 把 `\` 当路径分隔符 |
+
+**现在的做法**：先在原始串上切 `scheme://` 与 authority，再交给 `URL` 做合法性
+与字段校验。
+
+```
+^([A-Za-z][A-Za-z0-9+.-]*):\/\/(.*)$        ← scheme + 剩余部分
+authority = 剩余部分中第一个 / \ ? # 之前的内容
+rest      = 之后的内容
+rest === ""           → 合格（调用方已去掉尾部斜杠）
+rest 以 / ? # 开头     → path / query / fragment / 反斜杠路径
+authority === ""      → 空 authority
+authority 含 @        → userinfo（空 userinfo 也能抓到）
+```
+
+不用 `split(":")` 切 authority：IPv6 字面量（`https://[::1]:8443`）的 authority
+里本来就有冒号。也不做归一化——`baseUrl` 仍然是原始字符串，校验只负责拒绝。
+
+**一条被删掉的检查**：曾加过「原始串里不许有空白/控制字符」，但实际上
+`z.string().url()`（Zod 4）在返回前就会 `trim()`，首尾空白根本到不了这里；
+串内空白如果落在路径里，也已经被路径检查挡住。分支不可达，删掉比留着更诚实。
+
 ### 6.2 路径规则（含 issuer 带路径的情形）
 
 | issuer | PRM 位置 | AS Metadata 位置 |

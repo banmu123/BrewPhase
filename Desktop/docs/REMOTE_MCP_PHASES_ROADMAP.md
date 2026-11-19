@@ -1417,6 +1417,71 @@ AS 元数据提前声明 DCR、成功响应去掉 `iss`、Discovery 脱离启用
 
 **C3c-2 未开始**（CIMD / DCR）。
 
+### 3.20 1.3.1-C3c-1-R1 已交付（BASE_URL Origin 校验加固）
+
+C3c-1 的形态校验读的是**解析之后**的视图（`url.pathname` / `search` / `hash`）。
+WHATWG 会先做路径规范化，所以这些输入的 `pathname` 全是 `/`：
+
+```
+https://cloud.example.com/api/..      → "/"
+https://cloud.example.com/a/..        → "/"
+https://cloud.example.com/..          → "/"
+https://cloud.example.com/%2e%2e      → "/"
+https://cloud.example.com/a/%2E%2E    → "/"
+https://cloud.example.com/a\..        → "/"
+```
+
+于是「带路径的 BASE_URL」被当成纯 origin 放行，而 `loadEnv()` 保留的是**原始
+字符串**——它原样变成了 JWT 的 `iss`、授权响应的 `iss`、metadata 的 `issuer`。
+三处仍然一致，但没有一处是 origin。
+
+同族的三处漏判：
+
+| 输入 | 解析结果 | 只查 URL 字段为什么漏 |
+|---|---|---|
+| `https:///api` | host = `api` | 原始串里没有 authority，解析后却有一个 host |
+| `https://@host` | username = `""` | 空 userinfo：两个字段都看不出 `@` |
+| `https://host\api` | path 以 `/` 开头 | WHATWG 把 `\` 当路径分隔符 |
+
+**修法**：在解析**之前**手工切出 scheme 与 authority，再交给 `URL` 做合法性与
+字段校验。
+
+```
+^([A-Za-z][A-Za-z0-9+.-]*):\/\/(.*)$        scheme + 剩余部分
+authority = 剩余部分中第一个 / \ ? # 之前的内容；rest = 之后的内容
+rest !== ""        → path / query / fragment / 反斜杠路径（调用方已去掉尾斜杠）
+authority === ""   → 空 authority
+authority 含 @     → userinfo（空 userinfo 也能抓到）
+```
+
+不用 `split(":")`：IPv6 字面量的 authority 里本来就有冒号（`https://[::1]:8443`
+有专门的正向用例）。不归一化、不替换成 `origin`——`baseUrl` 仍是原始字符串，
+校验只负责拒绝。
+
+**测试（+5，`env-production` 11 → 16，Cloud 1110 → 1115 / 63 files）**：
+
+| 用例 | 覆盖 |
+|---|---|
+| 点段 / 百分号编码点段 6 例 | 规范化绕过（`/api/..`、`/..`、`/..`、`/%2e%2e`、`/a/%2E%2E`） |
+| 反斜杠路径 2 例 | `host\api`、`/a\..` |
+| 空 authority | `https:///api` |
+| `https://@host` | 空 userinfo 只存在于原始串 |
+| IPv6 origin | `https://[::1]:8443` 不被手工切分误伤 |
+| 开发环境 localhost HTTP | `http://127.0.0.1:3000` 仍可启动 |
+
+`https://cloud.example.com/` 照旧允许并去掉尾部斜杠（原用例保留）。
+
+**变异 4/4 被抓**：退回 `URL.pathname` 判断（5 条转红）、反斜杠按普通路径处理
+（1 条）、不检查空 authority（1 条）、userinfo 只看解析结果（1 条）。
+
+**门禁**：Cloud `typecheck` / `lint` / `build` 通过，`pnpm test`
+**1115 passed / 63 files**；Desktop `typecheck` / `test` / `build` / `mcp:build`
+通过，**1265 passed / 89 files**，`stdio.mjs` 911.67 kB 不变。
+**无新增依赖、无新增迁移、未改 Desktop 生产代码、未动 Discovery 与 OAuth 业务。**
+Discovery（`discovery.test.ts`）与 Desktop OAuth 全部用例在原位通过。
+
+**C3c-2 未开始**（CIMD / DCR）。
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、

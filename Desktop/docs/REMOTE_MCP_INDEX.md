@@ -1387,4 +1387,66 @@ Cloud **1110 passed / 63 files**；Desktop **1265 passed / 89 files**，
 
 ### 30.6 状态
 
-C3c-1 完成。**C3c-2 未开始**（CIMD / DCR）。
+C3c-1 完成，R1 加固见 §31。**C3c-2 未开始**（CIMD / DCR）。
+
+---
+
+## 31. Phase 1.3.1-C3c-1-R1：BASE_URL Origin 校验加固（已交付）
+
+### 31.1 根因
+
+`assertIssuerBaseUrl()` 第一版读的是 `url.pathname` / `url.search` / `url.hash`
+——**解析之后**的视图。WHATWG 会先做路径规范化：
+
+| 原始 BASE_URL | `new URL().pathname` |
+|---|---|
+| `https://h/api/..` | `/` |
+| `https://h/..` | `/` |
+| `https://h/.` | `/` |
+| `https://h/%2e%2e` | `/` |
+| `https://h/a/%2E%2E` | `/` |
+| `https://h/a\..` | `/` |
+
+于是这些输入被当成纯 origin 放行。但 `loadEnv()` 保留的是**原始字符串**：它
+原样成了 JWT 的 `iss`、授权响应的 `iss`、metadata 的 `issuer`。三处仍然逐字符
+一致（所以没有任何一致性测试会红），但没有一处是 origin。
+
+同族漏判两处：`https:///api` 会被解析成 host `api`（原始串里没有 authority），
+`https://@host` 的 `username` / `password` 都是空串（`@` 只存在于原始串）。
+
+### 31.2 加固后的校验
+
+先在原始串上切 `scheme://` 与 authority，再交给 `URL` 做合法性与字段校验：
+
+```
+^([A-Za-z][A-Za-z0-9+.-]*):\/\/(.*)$
+authority = 剩余部分中第一个 / \ ? # 之前的内容；rest = 之后的内容
+rest !== ""        → path / query / fragment / 反斜杠路径
+authority === ""   → 空 authority
+authority 含 @     → userinfo
+```
+
+- 不用 `split(":")` 切 authority：IPv6 字面量里本来就有冒号。
+- 不做归一化、不替换成 `origin`：`baseUrl` 保持原始字符串，校验只负责拒绝。
+- `BASE_URL` 的类型校验（Zod 4 `.url()`）会先 `trim()`，所以曾写过的「不许有
+  空白」分支不可达，已删除。
+
+### 31.3 测试与变异
+
+`env-production.test.ts` 11 → **16 条**（Cloud 1110 → **1115 / 63 files**）：
+点段与百分号编码点段 6 例、反斜杠路径 2 例、空 authority、`https://@host`、
+IPv6 `https://[::1]:8443` 正向、开发环境 `http://127.0.0.1:3000` 正向。
+原有「纯 origin / 尾斜杠」与「非生产同样拒绝」用例原样通过。
+
+变异 4/4：退回 `URL.pathname`（5 红）、反斜杠按普通路径（1 红）、不查空
+authority（1 红）、userinfo 只看解析结果（1 红）。
+
+### 31.4 门禁与范围
+
+Cloud **1115 passed / 63 files**；Desktop **1265 passed / 89 files**，
+`stdio.mjs` 911.67 kB 不变。Discovery 与 Desktop OAuth 用例全部原位通过。
+无新增依赖、无新增迁移、未改 Desktop 生产代码。
+
+### 31.5 状态
+
+C3c-1（含 R1）完成。**C3c-2 未开始**（CIMD / DCR）。
