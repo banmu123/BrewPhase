@@ -1,7 +1,7 @@
 import http from "node:http";
 import https from "node:https";
 import tls from "node:tls";
-import type { Socket } from "node:net";
+import type net from "node:net";
 
 /**
  * Provider 出网的可选代理通道。
@@ -63,8 +63,8 @@ export function openTunnel(
   proxy: URL,
   target: { host: string; port: number },
   timeoutMs = CONNECT_TIMEOUT_MS,
-): Promise<Socket> {
-  return new Promise<Socket>((resolve, reject) => {
+): Promise<net.Socket> {
+  return new Promise<net.Socket>((resolve, reject) => {
     const proxyPort = Number(proxy.port || (proxy.protocol === "https:" ? 443 : 80));
     const authority = `${target.host}:${target.port}`;
     const headers: Record<string, string> = { Host: authority };
@@ -285,4 +285,295 @@ export function resolveProviderFetch(
     return proxied(input, init);
   };
   return routed;
+}
+
+/* ------------------------------------------------------------------------- *
+ * 固定目标请求（Phase 1.3.1-C3c-2，CIMD 专用）
+ *
+ * 与上面的 Provider 通道**刻意分开**：那条路要的是「能出网」，这条路要的是
+ * 「只能到达刚才校验过的那个 IP」。两者的失败语义也不同——Provider 通道在
+ * 代理不可用时回退直连，这条路必须硬失败（见 `resolvePinnedProxy`）。
+ * ------------------------------------------------------------------------- */
+
+/** 固定目标请求的超时 / 字节预算错误。`code` 供上层分类。 */
+export class PinnedRequestTimeoutError extends Error {
+  readonly code = "PINNED_REQUEST_TIMEOUT";
+
+  constructor(readonly phase: "connect" | "total") {
+    super(`pinned request timed out (${phase})`);
+    this.name = "PinnedRequestTimeoutError";
+  }
+}
+
+/**
+ * 让 `net.connect` 永远只拿到一个地址：不查 DNS、不重试别的地址。
+ *
+ * `autoSelectFamily` 默认开启，Node 会用 `{ all: true }` 调这个函数并期待数组；
+ * 关掉时又是 `(err, address, family)` 的三参形式。两种都要支持，否则请求会在
+ * 某一种形态下**回落到真实 DNS**——那正是 DNS Rebinding 的入口。
+ */
+export function pinnedLookup(
+  address: string,
+  family: 4 | 6,
+): (
+  hostname: string,
+  options: { all?: boolean } | undefined,
+  callback: (...args: unknown[]) => void,
+) => void {
+  return (_hostname, options, callback) => {
+    if (options?.all) {
+      callback(null, [{ address, family }]);
+      return;
+    }
+    callback(null, address, family);
+  };
+}
+
+/**
+ * CIMD 的代理选择。
+ *
+ * 与 `resolveProviderFetch` 的关键差别：**不支持的类型必须抛错**。那里可以先
+ * 告警再直连，因为「直连 Google」并不会把请求送到一个本该被拦住的地方；而
+ * CIMD 的 client_id 由对端提供，一旦「代理配错了就直连」，DNS Pinning 就在
+ * 无人察觉的情况下失效了。
+ */
+export function resolvePinnedProxy(
+  hostname: string,
+  env: NodeJS.ProcessEnv = process.env,
+): URL | null {
+  const raw = env.HTTPS_PROXY ?? env.https_proxy ?? env.HTTP_PROXY ?? env.http_proxy ?? "";
+  if (!raw.trim()) return null;
+
+  const proxy = parseProxyUrl(raw);
+  if (!proxy) {
+    throw new Error(
+      "[net] unsupported proxy URL for pinned request; refusing to bypass the proxy",
+    );
+  }
+  if (shouldBypassProxy(hostname, env.NO_PROXY ?? env.no_proxy)) return null;
+  return proxy;
+}
+
+/**
+ * 响应体的字节上限。
+ *
+ * 只靠 `Content-Length` 不够（可以谎报、也可以缺失），所以既做**声明值预检**
+ * 也做**实际字节累计**。分块传输下每来一块就判一次，超了立刻停——不是先
+ * `text()` 再量长度。
+ */
+export class BodySizeLimiter {
+  private readonly chunks: Buffer[] = [];
+  private read = 0;
+  private tooLarge = false;
+
+  constructor(readonly maxBytes: number) {}
+
+  /** 返回 false 表示已超限，调用方必须停止读取并销毁请求。 */
+  push(chunk: Buffer): boolean {
+    this.read += chunk.byteLength;
+    if (this.read > this.maxBytes) {
+      this.tooLarge = true;
+      return false;
+    }
+    this.chunks.push(chunk);
+    return true;
+  }
+
+  get exceeded(): boolean {
+    return this.tooLarge;
+  }
+
+  get bytesRead(): number {
+    return this.read;
+  }
+
+  toBuffer(): Buffer {
+    return Buffer.concat(this.chunks);
+  }
+}
+
+/**
+ * CONNECT 的 authority 形式。
+ *
+ * IPv6 必须加方括号：`CONNECT 2606:4700::1:443` 会被代理当成端口语法错误，
+ * 而 `CONNECT [2606:4700::1]:443` 才是合法的 authority。
+ */
+export function authorityHost(host: string, family: 4 | 6): string {
+  return family === 6 && !host.startsWith("[") ? `[${host}]` : host;
+}
+
+/** 声明的 `Content-Length` 是否已经超限。非数字（含分块传输）一律视为「未知」。 */
+export function declaredLengthExceeds(contentLength: string | string[] | undefined, maxBytes: number): boolean {
+  const raw = Array.isArray(contentLength) ? contentLength[0] : contentLength;
+  if (raw === undefined) return false;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > maxBytes;
+}
+
+export interface PinnedRequestOptions {
+  /** 原始 URL。hostname 用于 Host 头、TLS SNI 与证书校验。 */
+  url: URL;
+  /** 已经过 SSRF 校验的地址；连接**只**会到这个地址。 */
+  pinnedAddress: string;
+  addressFamily: 4 | 6;
+  maxBodyBytes: number;
+  connectTimeoutMs?: number;
+  totalTimeoutMs?: number;
+  env?: NodeJS.ProcessEnv;
+}
+
+export interface PinnedResponse {
+  status: number;
+  headers: Record<string, string | string[] | undefined>;
+  body: Buffer;
+  /** 超过字节上限：上层必须当作错误，不能拿半截 body 去解析。 */
+  bodyTooLarge: boolean;
+}
+
+/** 固定目标请求只带这一个头：不带 Cookie / Authorization / 任何用户标识。 */
+export const PINNED_REQUEST_HEADERS = { accept: "application/json" } as const;
+
+const PINNED_CONNECT_TIMEOUT_MS = 3_000;
+const PINNED_TOTAL_TIMEOUT_MS = 5_000;
+
+/**
+ * 对**固定 IP** 发一次 GET，返回原始响应（不跟随重定向）。
+ *
+ * 三条纪律：
+ * - 直连时用 `lookup` 钉死 IP，`hostname` 仍是原始域名 → SNI 与证书校验对的
+ *   是域名而不是 IP，`Host` 头也是域名。
+ * - 走代理时 CONNECT 的目标是**IP**，隧道之上再按域名做 TLS。
+ * - 证书校验保持默认开启；本函数没有任何关闭它的开关。
+ */
+export async function requestPinnedHttps(options: PinnedRequestOptions): Promise<PinnedResponse> {
+  const {
+    url,
+    pinnedAddress,
+    addressFamily,
+    maxBodyBytes,
+    connectTimeoutMs = PINNED_CONNECT_TIMEOUT_MS,
+    totalTimeoutMs = PINNED_TOTAL_TIMEOUT_MS,
+    env = process.env,
+  } = options;
+
+  const port = Number(url.port || 443);
+  const proxy = resolvePinnedProxy(url.hostname, env);
+
+  return await new Promise<PinnedResponse>((resolve, reject) => {
+    let settled = false;
+    let request: http.ClientRequest | null = null;
+    let totalTimer: NodeJS.Timeout | null = null;
+
+    function finish(error: Error | null, response?: PinnedResponse): void {
+      if (settled) return;
+      settled = true;
+      if (totalTimer) clearTimeout(totalTimer);
+      if (error) {
+        request?.destroy();
+        reject(error);
+      } else {
+        resolve(response as PinnedResponse);
+      }
+    }
+
+    totalTimer = setTimeout(() => {
+      finish(new PinnedRequestTimeoutError("total"));
+    }, totalTimeoutMs);
+
+    const onResponse = (response: http.IncomingMessage): void => {
+      const status = response.statusCode ?? 0;
+      const headers = response.headers;
+
+      // 声明值先挡一次：能在读 body 之前就知道超限，就不必建立读取循环。
+      if (declaredLengthExceeds(headers["content-length"], maxBodyBytes)) {
+        response.destroy();
+        finish(null, { status, headers, body: Buffer.alloc(0), bodyTooLarge: true });
+        return;
+      }
+
+      const limiter = new BodySizeLimiter(maxBodyBytes);
+      response.on("data", (chunk: Buffer) => {
+        if (!limiter.push(chunk)) {
+          // 真实字节数超限（含谎报 Content-Length / 分块流）：立即停止读取。
+          response.destroy();
+          finish(null, { status, headers, body: Buffer.alloc(0), bodyTooLarge: true });
+        }
+      });
+      response.once("end", () => {
+        finish(null, {
+          status,
+          headers,
+          body: limiter.toBuffer(),
+          bodyTooLarge: limiter.exceeded,
+        });
+      });
+      response.once("error", (error: Error) => finish(error));
+    };
+
+    const requestOptions: https.RequestOptions = {
+      protocol: "https:",
+      hostname: url.hostname,
+      port,
+      path: `${url.pathname}${url.search}`,
+      method: "GET",
+      headers: PINNED_REQUEST_HEADERS,
+      // 证书校验与 SNI 都按原始域名做，绝不改成 IP。
+      servername: url.hostname,
+      rejectUnauthorized: true,
+    };
+
+    if (proxy) {
+      const agent = new https.Agent({ keepAlive: false });
+      let connected = false;
+      // 必须挂在**实例**上（原型上的 createConnection 是 tls.connect 本身，
+      // 构造参数会被忽略），否则请求会绕过代理直连目标。
+      (agent as unknown as {
+        createConnection: (
+          opts: { servername?: string },
+          callback: (error: Error | null, socket?: tls.TLSSocket) => void,
+        ) => void;
+      }).createConnection = (_opts, callback) => {
+        openTunnel(proxy, { host: authorityHost(pinnedAddress, addressFamily), port }, connectTimeoutMs)
+          .then((socket) => {
+            const secure = tls.connect({ socket, servername: url.hostname });
+            const settle = (error: Error | null): void => {
+              if (connected) return;
+              connected = true;
+              callback(error, error ? undefined : secure);
+            };
+            secure.once("error", settle);
+            secure.once("secureConnect", () => settle(null));
+          })
+          .catch((error: Error) => {
+            if (connected) return;
+            connected = true;
+            callback(error);
+          });
+      };
+      request = https.request({ ...requestOptions, agent }, onResponse);
+    } else {
+      request = https.request(
+        { ...requestOptions, lookup: pinnedLookup(pinnedAddress, addressFamily) as unknown as net.LookupFunction, agent: false },
+        onResponse,
+      );
+    }
+
+    // 连接阶段的 3 秒上限：socket 尚未连上时不产生任何数据，空闲超时正好等于
+    // 「连不上」；连上之后立刻解除，避免把读取阶段也套上 3 秒。
+    request.once("socket", (socket: net.Socket) => {
+      const clear = (): void => {
+        socket.setTimeout(0);
+      };
+      if (socket.connecting) {
+        socket.setTimeout(connectTimeoutMs, () => {
+          finish(new PinnedRequestTimeoutError("connect"));
+        });
+        socket.once("connect", clear);
+        socket.once("secureConnect", clear);
+      }
+    });
+
+    request.once("error", (error: Error) => finish(error));
+    request.end();
+  });
 }
