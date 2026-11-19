@@ -157,8 +157,56 @@ function warn(message: string): void {
  *
  * 不吞掉错误、不做归一化：形态不合规意味着部署配置与设计不符，改配置比让
  * 三处 issuer 各自解释同一个字符串安全得多。
+ *
+ * **校验必须落在原始字符串上**（Phase 1.3.1-C3c-1-R1）。`new URL()` 会先做
+ * 路径规范化，于是 `/api/..`、`/..`、`/%2e%2e`、`/a/%2E%2E` 的 `pathname`
+ * 全都是 `/` ——只查 `pathname` 会把「带路径的 BASE_URL」当成纯 origin 放行。
+ * 而 `loadEnv()` 保留的是**原始字符串**，它会原样变成 JWT 的 `iss`、授权响应
+ * 的 `iss` 和 metadata 的 `issuer`：三处仍然一致，但都不是一个 origin。
  */
 function assertIssuerBaseUrl(baseUrl: string): void {
+  const found: string[] = [];
+
+  /**
+   * scheme 与 authority 在**解析之前**手工切出来。
+   *
+   * 不用 `split(":")`：IPv6 字面量（`[::1]`）的 authority 里本来就有冒号。
+   * 也不靠 `pathname` 反推：`https:///api` 会被解析成 host `api`（authority
+   * 其实是空的），规范化已经把原始形态抹掉了。
+   */
+  const parts = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([\s\S]*)$/.exec(baseUrl);
+  if (!parts) {
+    throw new Error(
+      "[env] BASE_URL must be an absolute URL (scheme://host[:port], nothing else)",
+    );
+  }
+  // 第二组必然参与匹配（`([\s\S]*)` 可以是空串），`?? ""` 只是为了满足
+  // noUncheckedIndexedAccess 而不引入非空断言。
+  const afterScheme = parts[2] ?? "";
+
+  const authorityEnd = afterScheme.search(/[/\\?#]/);
+  const authority = authorityEnd === -1 ? afterScheme : afterScheme.slice(0, authorityEnd);
+  const rest = authorityEnd === -1 ? "" : afterScheme.slice(authorityEnd);
+
+  // authority 之后只允许什么都没有：调用方已经去掉尾部斜杠，所以此刻出现的内容
+  // 一定是真路径 / 查询 / 片段，而不是「合法的根路径」。点段（`.` / `..`）和
+  // 百分号编码的点段都活在这一段里，一并被挡掉。
+  if (authority === "") found.push("an empty authority");
+  if (rest !== "") {
+    const queryAt = rest.indexOf("?");
+    const fragmentAt = rest.indexOf("#");
+    const pathEnd = [queryAt, fragmentAt].filter((i) => i !== -1).sort((a, b) => a - b)[0] ?? rest.length;
+    const path = rest.slice(0, pathEnd);
+
+    // 反斜杠单独点名：WHATWG 把它当路径分隔符，`https://host\api` 等价于
+    // `https://host/api`，但原始 issuer 里留着的是一个反斜杠。
+    if (path !== "" && path !== "/") {
+      found.push(path.includes("\\") ? `a backslash path "${path}"` : `path "${path}"`);
+    }
+    if (queryAt !== -1) found.push("a query string");
+    if (fragmentAt !== -1) found.push("a fragment");
+  }
+
   let url: URL;
   try {
     url = new URL(baseUrl);
@@ -166,11 +214,11 @@ function assertIssuerBaseUrl(baseUrl: string): void {
     throw new Error("[env] BASE_URL must be an absolute URL");
   }
 
-  const found: string[] = [];
-  if (url.pathname !== "/") found.push(`path "${url.pathname}"`);
-  if (url.search !== "") found.push("a query string");
-  if (url.hash !== "") found.push("a fragment");
-  if (url.username !== "" || url.password !== "") found.push("userinfo");
+  // `https://@host` 的 username / password 都是空串，只看 URL 字段会漏掉它；
+  // 原始 authority 里有 `@` 就已经是 userinfo 语法了。
+  if (authority.includes("@") || url.username !== "" || url.password !== "") {
+    found.push("userinfo");
+  }
   if (found.length === 0) return;
 
   throw new Error(

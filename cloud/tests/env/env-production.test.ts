@@ -52,6 +52,8 @@ describe("BASE_URL 形态（issuer）校验", () => {
     expectIssuerRefusal("https://cloud.example.com/?a=1", "a query string");
     expectIssuerRefusal("https://cloud.example.com/#frag", "a fragment");
     expectIssuerRefusal("https://user:pass@cloud.example.com", "userinfo");
+    // 空 userinfo 的 `username` / `password` 都是空串，只有原始串里有 `@`。
+    expectIssuerRefusal("https://@cloud.example.com", "userinfo");
   });
 
   it("纯 origin 接受（尾斜杠会被去掉，不算路径）", () => {
@@ -68,6 +70,51 @@ describe("BASE_URL 形态（issuer）校验", () => {
       message = error instanceof Error ? error.message : String(error);
     }
     expect(message).toContain("[env] BASE_URL must be an origin only");
+  });
+
+  /**
+   * C3c-1-R1：路径规范化绕过。
+   *
+   * `new URL()` 会在校验之前完成路径规范化，下面这些输入的 `pathname` 全是
+   * `/`：只查 `pathname` 的实现会放行，而 `loadEnv()` 保留的原始字符串会原样
+   * 变成 JWT 的 `iss`、授权响应的 `iss` 和 metadata 的 `issuer`。
+   */
+  it("点段与百分号编码的点段不能把带路径的 BASE_URL 洗成 origin", () => {
+    expectIssuerRefusal("https://cloud.example.com/api/..", 'path "/api/.."');
+    expectIssuerRefusal("https://cloud.example.com/a/..", 'path "/a/.."');
+    expectIssuerRefusal("https://cloud.example.com/..", 'path "/.."');
+    expectIssuerRefusal("https://cloud.example.com/.", 'path "/."');
+    expectIssuerRefusal("https://cloud.example.com/%2e%2e", 'path "/%2e%2e"');
+    expectIssuerRefusal("https://cloud.example.com/a/%2E%2E", 'path "/a/%2E%2E"');
+  });
+
+  it("反斜杠路径同样拒绝（WHATWG 把 `\\` 当路径分隔符）", () => {
+    // `https://host\api` 在解析后等价于 `https://host/api`，但原始 issuer
+    // 里留着的是反斜杠——它不是一个 origin，也不能被归一化。
+    expectIssuerRefusal("https://cloud.example.com\\api", "a backslash path");
+    expectIssuerRefusal("https://cloud.example.com/a\\..", "a backslash path");
+  });
+
+  it("空 authority 拒绝（`https:///api` 会被解析成 host=api）", () => {
+    // 这是同一类问题的另一端：原始串里没有 authority，解析结果却有一个
+    // host。按 `url.host` 判断会把它当成合法的 `https://api`。
+    expectIssuerRefusal("https:///api", "an empty authority");
+  });
+
+  it("IPv6 origin 不被手工切分 authority 误伤", () => {
+    // authority 里本来就有冒号，所以不能按 `:` 切。
+    expect(loadEnv({ ...validProduction, BASE_URL: "https://[::1]:8443" }).baseUrl).toBe(
+      "https://[::1]:8443",
+    );
+  });
+
+  it("开发环境仍可用 localhost HTTP", () => {
+    const env = loadEnv({
+      NODE_ENV: "development",
+      DATABASE_URL: "postgres://user:pass@127.0.0.1:5432/brewphase_cloud",
+      BASE_URL: "http://127.0.0.1:3000",
+    });
+    expect(env.baseUrl).toBe("http://127.0.0.1:3000");
   });
 });
 
