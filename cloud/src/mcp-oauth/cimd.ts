@@ -36,6 +36,12 @@ export const CIMD_DEFAULT_TTL_MS = 60 * 60 * 1000;
 /** 无论响应头怎么写都不超过 24 小时。 */
 export const CIMD_MAX_TTL_MS = 24 * 60 * 60 * 1000;
 
+/** 单个 URL 字段的长度上限（项目策略）。 */
+export const MAX_URL_LENGTH = 2048;
+
+/** client_name 的长度上限（项目策略）：5 KiB 的展示名只会拖垮同意页。 */
+export const MAX_CLIENT_NAME_LENGTH = 256;
+
 /**
  * redirect_uris 上限。与 `mcp_oauth_clients` 的 CHECK
  * （`cardinality(redirect_uris) between 1 and 5`）保持一致——多一条就落不了库，
@@ -220,6 +226,8 @@ function decodeSegment(segment: string): string | null {
  */
 export function validateClientIdentifierUrl(raw: string): UrlCheck {
   if (raw.length === 0) return urlFail("empty client_id");
+  // 长度上限是**项目策略**（草案没有长度要求）：2048 已远高于任何真实 client_id。
+  if (raw.length > MAX_URL_LENGTH) return urlFail(`client_id is longer than ${MAX_URL_LENGTH}`);
   if (raw !== raw.trim()) return urlFail("client_id has surrounding whitespace");
 
   const parts = ABSOLUTE_URL.exec(raw);
@@ -286,8 +294,11 @@ for (const [network, prefix] of [
   ["172.16.0.0", 12], // 私有
   ["192.0.0.0", 24], // IETF Protocol Assignments
   ["192.0.2.0", 24], // TEST-NET-1
+  ["192.31.196.0", 24], // AS112-v4
+  ["192.52.193.0", 24], // AMT
   ["192.88.99.0", 24], // 6to4 relay anycast
   ["192.168.0.0", 16], // 私有
+  ["192.175.48.0", 24], // AS112 direct delegation
   ["198.18.0.0", 15], // Benchmark
   ["198.51.100.0", 24], // TEST-NET-2
   ["203.0.113.0", 24], // TEST-NET-3
@@ -307,6 +318,7 @@ for (const [network, prefix] of [
   ["2001::", 23], // IETF Protocol Assignments（含 Teredo）
   ["2001:db8::", 32], // 文档保留
   ["2002::", 16], // 6to4
+  ["2620:4f:8000::", 48], // AS112-v6
   ["3fff::", 20], // 文档保留（RFC 9637）
   ["5f00::", 16], // SRv6 SIDs（RFC 9602）
   ["fc00::", 7], // ULA
@@ -506,7 +518,7 @@ const SHARED_SECRET_METHODS = new Set([
   "client_secret_basic",
   "client_secret_jwt",
 ]);
-const PRIVATE_JWK_MEMBERS = ["d", "p", "q", "dp", "dq", "qi", "k"] as const;
+const PRIVATE_JWK_MEMBERS = ["d", "p", "q", "dp", "dq", "qi", "oth", "k"] as const;
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "[::1]", "::1", "localhost"]);
 
@@ -553,6 +565,38 @@ export function validateRedirectUri(raw: string): UrlCheck {
   return { ok: true };
 }
 
+/**
+ * `client_uri` / `logo_uri` 这类**只展示、从不抓取**的 URL。
+ *
+ * 草案不限制它们的 scheme，但项目会在同意页把它们渲染成链接/图片，所以按
+ * 「可安全渲染」的标准收紧：https、无 userinfo、长度受限。这是**项目策略**，
+ * 不是 RFC 要求。校验失败按文档非法处理（fail-closed）——悄悄丢弃会让一个被
+ * 篡改的文档看起来仍然正常。
+ */
+export function validateInformationalUri(raw: string): UrlCheck {
+  if (raw.length === 0) return urlFail("empty");
+  if (raw.length > MAX_URL_LENGTH) return urlFail(`longer than ${MAX_URL_LENGTH}`);
+  if (raw !== raw.trim()) return urlFail("surrounding whitespace");
+
+  const parts = ABSOLUTE_URL.exec(raw);
+  if (!parts) return urlFail("must be an absolute URL");
+  const scheme = (parts[1] ?? "").toLowerCase();
+  if (scheme !== "https") return urlFail(`scheme "${scheme}" is not https`);
+
+  const afterScheme = parts[2] ?? "";
+  const authorityEnd = afterScheme.search(/[/\\?#]/);
+  const authority = authorityEnd === -1 ? afterScheme : afterScheme.slice(0, authorityEnd);
+  if (authority === "") return urlFail("empty authority");
+  if (authority.includes("@")) return urlFail("userinfo is not allowed");
+
+  try {
+    new URL(raw);
+  } catch {
+    return urlFail("not a valid URL");
+  }
+  return { ok: true };
+}
+
 type DocumentCheck =
   | { ok: true; metadata: CimdClientMetadata }
   | { ok: false; reason: CimdFailureReason; detail: string };
@@ -588,6 +632,9 @@ export function validateCimdDocument(doc: Record<string, unknown>, clientId: str
   const clientName = doc.client_name;
   if (typeof clientName !== "string" || clientName.trim() === "") {
     return docFail("document", "client_name must be a non-empty string");
+  }
+  if (clientName.length > MAX_CLIENT_NAME_LENGTH) {
+    return docFail("document", `client_name is longer than ${MAX_CLIENT_NAME_LENGTH}`);
   }
 
   // 草案 §4.1：共享对称密钥相关字段一律不得出现。
@@ -631,6 +678,15 @@ export function validateCimdDocument(doc: Record<string, unknown>, clientId: str
         }
       }
     }
+  }
+
+  // 只展示、不抓取的两个 URL：仍然要能安全地渲染成链接/图片。
+  for (const field of ["client_uri", "logo_uri"] as const) {
+    const value = doc[field];
+    if (value === undefined) continue;
+    if (typeof value !== "string") return docFail("document", `${field} must be a string`);
+    const check = validateInformationalUri(value);
+    if (!check.ok) return docFail("document", `${field}: ${check.detail}`);
   }
 
   const redirectUris = readStringArray(doc.redirect_uris);
@@ -738,7 +794,14 @@ export async function fetchClientMetadataDocument(
   const startedAt = deps.monotonic();
 
   // 预算从**开始解析 DNS 之前**起算：DNS、连接、TLS、读 body 共用它。
-  const resolved = await withDeadline(deps.resolve(url.hostname), budget);
+  let resolving: Promise<CimdAddress[]>;
+  try {
+    resolving = deps.resolve(url.hostname);
+  } catch (error) {
+    // 同步抛错（注入的实现可能这样）不能逃出「本函数只返回结果、不抛异常」的契约。
+    return transient("dns_failure", describe(error));
+  }
+  const resolved = await withDeadline(resolving, budget);
   if (resolved.kind === "timeout") {
     return transient("timeout", "DNS resolution exceeded the timeout budget");
   }

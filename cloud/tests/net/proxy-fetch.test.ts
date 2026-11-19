@@ -8,6 +8,7 @@ import {
   createProxyFetch,
   openTunnel,
   parseProxyUrl,
+  requestPinnedHttps,
   resolveProviderFetch,
   shouldBypassProxy,
 } from "../../src/net/proxy-fetch.js";
@@ -316,6 +317,285 @@ describe("openTunnel 的 HTTPS 代理（R1-1）", () => {
     } finally {
       await proxy.close();
       await new Promise<void>((resolve) => target.close(() => resolve()));
+    }
+  });
+});
+
+/**
+ * 目标侧 TLS 的端到端证据（R2-1）。
+ *
+ * 证书是 `tests/fixtures/` 里的自签名证书（SAN 含 `DNS:localhost` 与
+ * `IP:127.0.0.1`）。客户端只有在显式传入 `ca` 时才信任它——这正好用来证明
+ * 「验证是开的」：同样的连接，传 ca 成功、不传必须失败。
+ */
+async function startTlsTarget(): Promise<{
+  port: number;
+  seen: { sni?: string; host?: string };
+  close: () => Promise<void>;
+}> {
+  const seen: { sni?: string; host?: string } = {};
+  const server = https.createServer({ key: TEST_KEY, cert: TEST_CERT }, (req, res) => {
+    seen.host = req.headers.host;
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end('{"ok":true}');
+  });
+  // 证书验证失败时客户端会中断握手，服务端会抛 tlsClientError；测试里忽略即可。
+  server.on("tlsClientError", () => {});
+  server.on("secureConnection", (socket) => {
+    seen.sni = (socket as unknown as { servername?: string }).servername;
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  return {
+    port: (server.address() as AddressInfo).port,
+    seen,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections?.();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+/** 真把 CONNECT 打到 authority 上的 HTTPS 代理（TLS 隧道 + 透传）。 */
+async function startTunnelingTlsProxy(): Promise<{
+  url: string;
+  seen: string[];
+  close: () => Promise<void>;
+}> {
+  const seen: string[] = [];
+  const server = https.createServer({ key: TEST_KEY, cert: TEST_CERT });
+  const tunnels = trackTunnelSockets();
+  server.on("connect", (req, socket, head) => {
+    const authority = String(req.url);
+    seen.push(authority);
+    tunnels.track(socket as net.Socket);
+    const split = authority.lastIndexOf(":");
+    const host = authority.slice(0, split);
+    const port = Number(authority.slice(split + 1));
+    const upstream = net.connect({ host, port }, () => {
+      if (head && head.length > 0) upstream.write(head);
+      socket.pipe(upstream).pipe(socket as net.Socket);
+    });
+    socket.once("close", () => upstream.destroy());
+    upstream.on("error", () => (socket as net.Socket).destroy());
+    socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  return {
+    url: `https://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    seen,
+    close: () =>
+      new Promise<void>((resolve) => {
+        tunnels.destroyAll();
+        server.closeAllConnections?.();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+describe("目标侧 TLS 与 SNI / Host（R2-1 端到端）", () => {
+  it("直连 pinned IP：SNI 与 Host 用原始域名，证书按域名验证", async () => {
+    const target = await startTlsTarget();
+    try {
+      const response = await requestPinnedHttps({
+        url: new URL(`https://localhost:${target.port}/oauth/client.json`),
+        pinnedAddress: "127.0.0.1",
+        addressFamily: 4,
+        maxBodyBytes: 5 * 1024,
+        ca: TEST_CERT,
+        totalTimeoutMs: 4000,
+      });
+      expect(response.status).toBe(200);
+      expect(response.body.toString("utf8")).toBe('{"ok":true}');
+      // 连接打到 127.0.0.1，但 SNI 与 Host 都是原始域名。
+      expect(target.seen.sni).toBe("localhost");
+      expect(target.seen.host).toBe(`localhost:${target.port}`);
+    } finally {
+      await target.close();
+    }
+  });
+
+  it("目标证书不受信任时拒绝（没有「宽松模式」可用）", async () => {
+    const target = await startTlsTarget();
+    try {
+      await expect(
+        requestPinnedHttps({
+          url: new URL(`https://localhost:${target.port}/oauth/client.json`),
+          pinnedAddress: "127.0.0.1",
+          addressFamily: 4,
+          maxBodyBytes: 5 * 1024,
+          totalTimeoutMs: 4000,
+          // 不传 ca：自签名证书必须被拒。
+        }),
+      ).rejects.toMatchObject({ code: expect.stringMatching(/CERT|VERIFY/) });
+      expect(target.seen.host).toBeUndefined();
+    } finally {
+      await target.close();
+    }
+  });
+
+  it("HTTPS 代理 + pinned IP CONNECT + 原始域名 TLS 全链路", async () => {
+    const target = await startTlsTarget();
+    const proxy = await startTunnelingTlsProxy();
+    try {
+      const response = await requestPinnedHttps({
+        url: new URL(`https://localhost:${target.port}/oauth/client.json`),
+        pinnedAddress: "127.0.0.1",
+        addressFamily: 4,
+        maxBodyBytes: 5 * 1024,
+        ca: TEST_CERT,
+        totalTimeoutMs: 4000,
+        env: { HTTPS_PROXY: proxy.url },
+      });
+      expect(response.status).toBe(200);
+      // CONNECT 的目标是 pinned IP，不是域名。
+      expect(proxy.seen).toEqual([`127.0.0.1:${target.port}`]);
+      // 隧道内的 TLS 仍按原始域名做 SNI / 证书校验。
+      expect(target.seen.sni).toBe("localhost");
+      expect(target.seen.host).toBe(`localhost:${target.port}`);
+    } finally {
+      await proxy.close();
+      await target.close();
+    }
+  });
+
+  it("代理证书不受信任时在握手阶段失败，不会发出 CONNECT", async () => {
+    const proxy = await startTunnelingTlsProxy();
+    try {
+      await expect(
+        requestPinnedHttps({
+          url: new URL("https://localhost:443/oauth/client.json"),
+          pinnedAddress: "127.0.0.1",
+          addressFamily: 4,
+          maxBodyBytes: 5 * 1024,
+          totalTimeoutMs: 2000,
+          env: { HTTPS_PROXY: proxy.url },
+        }),
+      ).rejects.toMatchObject({ code: expect.stringMatching(/CERT|VERIFY/) });
+      expect(proxy.seen).toEqual([]);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it("总超时会销毁仍在建连的代理 socket（不会挂在后台）", async () => {
+    // 黑洞代理：接受 TCP，永不回应 CONNECT，也永不发数据。
+    const accepted: net.Socket[] = [];
+    const proxy = net.createServer((socket) => {
+      accepted.push(socket);
+      socket.resume();
+      socket.on("error", () => {});
+    });
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", () => resolve()));
+    const proxyPort = (proxy.address() as AddressInfo).port;
+
+    try {
+      await expect(
+        requestPinnedHttps({
+          url: new URL("https://localhost/oauth/client.json"),
+          pinnedAddress: "93.184.216.34",
+          addressFamily: 4,
+          maxBodyBytes: 5 * 1024,
+          // 连接超时故意长于总预算：由总定时器先触发。
+          connectTimeoutMs: 5_000,
+          totalTimeoutMs: 150,
+          env: { HTTPS_PROXY: `http://127.0.0.1:${proxyPort}` },
+        }),
+      ).rejects.toThrow(/timed out \(total\)/);
+
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const open = await new Promise<number>((resolve) => {
+        proxy.getConnections((_error, count) => resolve(count));
+      });
+      expect(open).toBe(0);
+      expect(accepted.every((socket) => socket.destroyed)).toBe(true);
+    } finally {
+      for (const socket of accepted) socket.destroy();
+      await new Promise<void>((resolve) => proxy.close(() => resolve()));
+    }
+  });
+});
+
+describe("各阶段超时（R2-2）", () => {
+  it("CONNECT 阶段超时：黑洞代理不回 200 时必须报错并断开", async () => {
+    const accepted: net.Socket[] = [];
+    const proxy = net.createServer((socket) => {
+      accepted.push(socket);
+      socket.resume(); // 读走 CONNECT 请求，但永不回应
+      socket.on("error", () => {});
+    });
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", () => resolve()));
+    const proxyPort = (proxy.address() as AddressInfo).port;
+
+    try {
+      await expect(
+        requestPinnedHttps({
+          url: new URL("https://localhost/oauth/client.json"),
+          pinnedAddress: "93.184.216.34",
+          addressFamily: 4,
+          maxBodyBytes: 5 * 1024,
+          connectTimeoutMs: 120,
+          // 总预算远大于连接超时，确保是 CONNECT 阶段先超时。
+          totalTimeoutMs: 4_000,
+          env: { HTTPS_PROXY: `http://127.0.0.1:${proxyPort}` },
+        }),
+      ).rejects.toThrow(/proxy CONNECT timed out after 120ms/);
+
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      const open = await new Promise<number>((resolve) => {
+        proxy.getConnections((_error, count) => resolve(count));
+      });
+      expect(open).toBe(0);
+    } finally {
+      for (const socket of accepted) socket.destroy();
+      await new Promise<void>((resolve) => proxy.close(() => resolve()));
+    }
+  });
+
+  it("代理 TCP 连接超时：不可达地址按连接超时结束", async () => {
+    // RFC 5737 TEST-NET-1：文档保留、不应被路由。连接会一直停在 SYN 阶段，
+    // 正好用来验证 `connectToProxy` 的连接超时（而不是总超时兜底）。
+    await expect(
+      requestPinnedHttps({
+        url: new URL("https://localhost/oauth/client.json"),
+        pinnedAddress: "93.184.216.34",
+        addressFamily: 4,
+        maxBodyBytes: 5 * 1024,
+        connectTimeoutMs: 150,
+        // 总预算远大于连接超时：若不是连接超时生效，会报 timed out (total)。
+        totalTimeoutMs: 5_000,
+        env: { HTTPS_PROXY: "http://192.0.2.1:81" },
+      }),
+    ).rejects.toThrow(/proxy connection timed out after 150ms/);
+  });
+
+  it("慢速响应体：总预算耗尽时按 timeout 结束，不会无限等下去", async () => {
+    const server = https.createServer({ key: TEST_KEY, cert: TEST_CERT }, (_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.write("{");
+      // 每 100ms 吐一个字节：永远读不完那个 JSON。
+      const timer = setInterval(() => res.write(" "), 100);
+      res.on("close", () => clearInterval(timer));
+    });
+    server.on("tlsClientError", () => {});
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const port = (server.address() as AddressInfo).port;
+
+    try {
+      await expect(
+        requestPinnedHttps({
+          url: new URL(`https://localhost:${port}/oauth/client.json`),
+          pinnedAddress: "127.0.0.1",
+          addressFamily: 4,
+          maxBodyBytes: 5 * 1024,
+          ca: TEST_CERT,
+          connectTimeoutMs: 1_000,
+          totalTimeoutMs: 300,
+        }),
+      ).rejects.toThrow(/timed out \(total\)/);
+    } finally {
+      server.closeAllConnections?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 });

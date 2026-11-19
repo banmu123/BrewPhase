@@ -206,6 +206,9 @@ describe("SSRF：地址分类", () => {
     ["203.0.113.9", "文档保留"],
     ["198.18.0.1", "Benchmark"],
     ["192.0.0.8", "IETF Protocol Assignments"],
+    ["192.31.196.5", "AS112-v4（RFC 7534）"],
+    ["192.52.193.5", "AMT（RFC 7450）"],
+    ["192.175.48.5", "AS112 direct delegation（RFC 7535）"],
     ["fc00::1", "IPv6 ULA"],
     ["fd12:3456::1", "IPv6 ULA"],
     ["::1", "IPv6 Loopback"],
@@ -216,6 +219,7 @@ describe("SSRF：地址分类", () => {
     ["::ffff:10.1.2.3", "IPv4-mapped IPv6（私有）"],
     ["2001:db8::1", "IPv6 文档保留"],
     ["2002::1", "6to4"],
+    ["2620:4f:8000::1", "AS112-v6（RFC 7534）"],
     ["64:ff9b::1", "NAT64"],
     ["3fff::1", "IPv6 文档保留（RFC 9637）"],
     // 2000::/3 之外：未分配 / 保留段，黑名单挡不住，靠全球单播白名单。
@@ -768,6 +772,89 @@ describe("Document 校验", () => {
     expect(h.request).toHaveBeenCalledTimes(1);
     if (!outcome.ok) return;
     expect(outcome.metadata.logoUri).toBe("https://cdn.example.com/logo.png");
+  });
+});
+
+describe("文档字段的边界（R2-4）", () => {
+  async function expectRejected(doc: unknown, detail: string): Promise<void> {
+    await expectFailure(CLIENT_ID, { response: jsonResponse({ doc }) }, {
+      kind: "terminal",
+      reason: "document",
+      detail,
+    });
+  }
+
+  it("每个 JWK 私钥成员都被拒绝（RFC 7518 §6.2.2 含 oth）", async () => {
+    for (const member of ["d", "p", "q", "dp", "dq", "qi", "oth", "k"]) {
+      await expectFailure(
+        CLIENT_ID,
+        {
+          response: jsonResponse({
+            doc: { ...VALID_DOC, jwks: { keys: [{ kty: "RSA", n: "pub", e: "AQAB", [member]: "x" }] } },
+          }),
+        },
+        { kind: "terminal", reason: "unsupported_client", detail: "private key material" },
+      );
+    }
+  });
+
+  it("只有公钥字段的 jwks 允许", async () => {
+    const h = harness({
+      response: jsonResponse({
+        doc: { ...VALID_DOC, jwks: { keys: [{ kty: "RSA", n: "pub", e: "AQAB" }] } },
+      }),
+    });
+    expect((await fetchClientMetadataDocument(CLIENT_ID, h.deps)).ok).toBe(true);
+  });
+
+  it("client_uri / logo_uri 必须是 https、无 userinfo、有长度上限", async () => {
+    await expectRejected({ ...VALID_DOC, client_uri: "javascript:alert(1)" }, "client_uri");
+    await expectRejected({ ...VALID_DOC, client_uri: "http://client.example.com" }, "client_uri");
+    await expectRejected({ ...VALID_DOC, logo_uri: "https://user@cdn.example.com/x.png" }, "logo_uri");
+    await expectRejected({ ...VALID_DOC, logo_uri: `https://cdn.example.com/${"a".repeat(2100)}` }, "logo_uri");
+    await expectRejected({ ...VALID_DOC, logo_uri: 42 }, "logo_uri");
+  });
+
+  it("合法的 client_uri / logo_uri 被保留", async () => {
+    const h = harness({
+      response: jsonResponse({
+        doc: {
+          ...VALID_DOC,
+          client_uri: "https://client.example.com",
+          logo_uri: "https://cdn.example.com/logo.png",
+        },
+      }),
+    });
+    const outcome = await fetchClientMetadataDocument(CLIENT_ID, h.deps);
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.metadata.clientUri).toBe("https://client.example.com");
+    expect(outcome.metadata.logoUri).toBe("https://cdn.example.com/logo.png");
+  });
+
+  it("client_name 与 client_id 有长度上限", async () => {
+    await expectRejected({ ...VALID_DOC, client_name: "名".repeat(300) }, "client_name");
+    await expectFailure(
+      `https://client.example.com/${"a".repeat(2048)}`,
+      {},
+      { kind: "terminal", reason: "client_id_url", detail: "longer than" },
+    );
+  });
+
+  it("resolver 同步抛错也不会让抓取器抛出", async () => {
+    const deps: CimdFetcherDeps = {
+      resolve: () => {
+        throw new Error("sync resolver failure");
+      },
+      request: vi.fn(),
+      now: () => new Date(NOW),
+      monotonic: () => 0,
+    };
+    const outcome = await fetchClientMetadataDocument(CLIENT_ID, deps);
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.kind).toBe("transient");
+    expect(outcome.reason).toBe("dns_failure");
   });
 });
 

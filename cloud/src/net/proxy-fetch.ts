@@ -67,6 +67,11 @@ export function shouldBypassProxy(hostname: string, noProxy: string | undefined)
 export interface TunnelOptions {
   /** 附加信任锚（私有 CA / 测试证书）。 */
   ca?: string | string[];
+  /**
+   * 中止信号。总预算耗尽时由调用方触发：**建连阶段的 socket 不属于任何
+   * request**，只 destroy request 管不到它，必须自己收。
+   */
+  signal?: AbortSignal;
 }
 
 /** 代理端点：URL 的 hostname 对 IPv6 带方括号，连接前必须去掉。 */
@@ -104,18 +109,38 @@ function connectToProxy(proxy: URL, timeoutMs: number, options: TunnelOptions): 
         })
       : net.connect({ host: endpoint.host, port: endpoint.port });
 
-    const ready = (): void => {
+    let settled = false;
+    const onAbort = (): void => {
+      done(new Error("proxy connection aborted"));
+    };
+    // 单次 settle：error / close / abort 可能同时发生，重复 resolve/reject 会把
+    // 「已交出去的 socket」再销毁一次，也会掩盖真正的首个错误。
+    function done(error?: Error): void {
+      if (settled) return;
+      settled = true;
+      options.signal?.removeEventListener("abort", onAbort);
+      if (error) {
+        socket.destroy();
+        reject(error);
+        return;
+      }
       socket.setTimeout(0);
       resolve(socket);
-    };
+    }
+
+    if (options.signal?.aborted) {
+      done(new Error("proxy connection aborted"));
+      return;
+    }
+    options.signal?.addEventListener("abort", onAbort, { once: true });
 
     socket.setTimeout(timeoutMs, () => {
-      socket.destroy(new Error(`proxy connection timed out after ${timeoutMs}ms`));
+      done(new Error(`proxy connection timed out after ${timeoutMs}ms`));
     });
-    socket.once(secure ? "secureConnect" : "connect", ready);
-    socket.once("error", (error: Error) => reject(error));
+    socket.once(secure ? "secureConnect" : "connect", () => done());
+    socket.once("error", (error: Error) => done(error));
     // 握手前被对端关掉时既不会 connect 也不会 error（例如明文代理遇到 TLS 握手）。
-    socket.once("close", () => reject(new Error("proxy connection closed before it was ready")));
+    socket.once("close", () => done(new Error("proxy connection closed before it was ready")));
   });
 }
 
@@ -134,12 +159,18 @@ function sendConnect(
       headers["Proxy-Authorization"] = `Basic ${Buffer.from(credentials, "utf8").toString("base64")}`;
     }
 
+    // 专用 agent，**不用** `http.globalAgent`：不指定 agent 时 Node 会用全局池，
+    // 而 CONNECT 的池名来自 options 的 host/port（这里是默认的 localhost:80）。
+    // 一旦池里恰有同名的空闲 keep-alive socket，请求就会写到那条无关连接上。
+    // 实例级 `createConnection` 保证只用我们手里这条 socket。
+    const agent = new http.Agent({ keepAlive: false });
+    (agent as unknown as { createConnection: () => net.Socket }).createConnection = () => socket;
+
     const request = http.request({
       method: "CONNECT",
       path: authority,
       headers,
-      // 复用已经连好的 socket（https 代理时它已经是 TLS 隧道）。
-      createConnection: () => socket,
+      agent,
     });
 
     request.setTimeout(timeoutMs, () => {
@@ -156,7 +187,10 @@ function sendConnect(
       connected.setTimeout(0);
       resolve();
     });
-    request.once("error", (error) => reject(error));
+    request.once("error", (error) => {
+      agent.destroy();
+      reject(error);
+    });
     request.end();
   });
 }
@@ -173,13 +207,31 @@ export async function openTunnel(
   options: TunnelOptions = {},
 ): Promise<net.Socket> {
   const socket = await connectToProxy(proxy, timeoutMs, options);
+
+  /**
+   * 建连成功之后、隧道交出去之前，socket 仍然不属于任何 request：
+   * `sendConnect` 还没拿到 200 时总预算就可能耗尽。只 destroy 外层 request
+   * 管不到它，所以这一段也要挂中止监听。
+   */
+  const onAbort = (): void => {
+    socket.destroy(new Error("proxy tunnel aborted"));
+  };
+  if (options.signal?.aborted) {
+    socket.destroy();
+    throw new Error("proxy tunnel aborted");
+  }
+  options.signal?.addEventListener("abort", onAbort, { once: true });
+
   try {
     await sendConnect(socket, connectAuthority(target), proxy, timeoutMs);
-    return socket;
   } catch (error) {
     socket.destroy();
     throw error;
+  } finally {
+    // 交出去之后由 request 负责；这里只覆盖「还在建隧道」的窗口。
+    options.signal?.removeEventListener("abort", onAbort);
   }
+  return socket;
 }
 
 type FetchInput = Parameters<typeof fetch>[0];
@@ -612,6 +664,13 @@ export interface PinnedRequestOptions {
   connectTimeoutMs?: number;
   totalTimeoutMs?: number;
   env?: NodeJS.ProcessEnv;
+  /**
+   * 附加信任锚（私有 CA / 测试证书），对**代理那一跳与目标那一跳**都生效。
+   *
+   * 语义等同于 `NODE_EXTRA_CA_CERTS`：只增加可信任的锚，不改变「必须验证」
+   * 这件事本身——没有 `rejectUnauthorized` 字段，也没有任何关闭校验的入口。
+   */
+  ca?: string | string[];
 }
 
 export interface PinnedResponse {
@@ -646,6 +705,7 @@ export async function requestPinnedHttps(options: PinnedRequestOptions): Promise
     connectTimeoutMs = PINNED_CONNECT_TIMEOUT_MS,
     totalTimeoutMs = PINNED_TOTAL_TIMEOUT_MS,
     env = process.env,
+    ca,
   } = options;
 
   const port = Number(url.port || 443);
@@ -668,7 +728,12 @@ export async function requestPinnedHttps(options: PinnedRequestOptions): Promise
       }
     }
 
+    // 总预算耗尽时，除了 request 本身，还要中止**尚未交出 socket** 的建连阶段
+    // （代理 TCP / 代理 TLS）。否则那条 socket 会一直挂着直到对端超时。
+    const controller = new AbortController();
+
     totalTimer = setTimeout(() => {
+      controller.abort();
       finish(new PinnedRequestTimeoutError("total"));
     }, totalTimeoutMs);
 
@@ -689,6 +754,7 @@ export async function requestPinnedHttps(options: PinnedRequestOptions): Promise
       // 证书校验与 SNI 都按原始域名做，绝不改成 IP。
       servername: url.hostname,
       rejectUnauthorized: true,
+      ca,
     };
 
     if (proxy) {
@@ -702,9 +768,15 @@ export async function requestPinnedHttps(options: PinnedRequestOptions): Promise
           callback: (error: Error | null, socket?: tls.TLSSocket) => void,
         ) => void;
       }).createConnection = (_opts, callback) => {
-        openTunnel(proxy, { host: authorityHost(pinnedAddress, addressFamily), port }, connectTimeoutMs)
+        openTunnel(
+          proxy,
+          { host: authorityHost(pinnedAddress, addressFamily), port },
+          connectTimeoutMs,
+          { ca, signal: controller.signal },
+        )
           .then((socket) => {
-            const secure = tls.connect({ socket, servername: url.hostname });
+            // 隧道之上按**目标域名**做 TLS：SNI、证书校验、信任锚都按目标来。
+            const secure = tls.connect({ socket, servername: url.hostname, ca });
             const settle = (error: Error | null): void => {
               if (connected) return;
               connected = true;
