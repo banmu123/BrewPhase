@@ -240,12 +240,17 @@ describe("Query 中的 token 一律拒绝（C3b-R1）", () => {
   ): Promise<void> {
     const grantsBefore = await grantsSnapshot();
     const consumedBefore = await consumedAtOf(sessionId);
+    const sessionBefore = await sessionOf(sessionId);
 
     const res = await revokeVia(query, { token: bodyToken });
     expect(res.status, query).toBe(400);
     expect(((await res.json()) as { error: string }).error, query).toBe("invalid_request");
 
-    expect((await sessionOf(sessionId)).revoked_at).toBeNull();
+    const sessionAfter = await sessionOf(sessionId);
+    expect(sessionAfter.revoked_at).toBeNull();
+    // `revoked_reason` 也不能被改（有些实现只改 reason 不改 revoked_at）。
+    expect(sessionAfter.revoked_reason).toBe(sessionBefore.revoked_reason);
+    // 数组相等同时覆盖「消费状态」与「历史行数」。
     expect(await consumedAtOf(sessionId)).toEqual(consumedBefore);
     expect(await auditCount("mcp_session_revoked")).toBe(0);
     expect(await grantsSnapshot()).toEqual(grantsBefore);
@@ -297,6 +302,18 @@ describe("Query 中的 token 一律拒绝（C3b-R1）", () => {
   it("Query 与 Body 的 token 不同 → 400，且不撤销（Body 的合法值也不被采用）", async () => {
     const { tokens, sessionId } = await issueTokens();
     await expectRejectedWithoutSideEffects("?token=another-value", tokens.refresh_token, sessionId);
+  });
+
+  it("Query 的 token 为空值、Body 有效 → 400，且不撤销", async () => {
+    const { tokens, sessionId } = await issueTokens();
+    // 「空值就等于没传」是常见的放行借口：这里钉死它不成立。
+    await expectRejectedWithoutSideEffects("?token=", tokens.refresh_token, sessionId);
+  });
+
+  it("Query 的 token 重复、Body 有效 → 400，且不撤销", async () => {
+    const { tokens, sessionId } = await issueTokens();
+    // 重复出现往往被解析器「取第一个/最后一个」消化掉；这里要求整单拒绝。
+    await expectRejectedWithoutSideEffects("?token=a&token=b", tokens.refresh_token, sessionId);
   });
 
   it("拒绝发生在解析之前：错误体 / 日志 / 审计都不含哨兵值", async () => {
