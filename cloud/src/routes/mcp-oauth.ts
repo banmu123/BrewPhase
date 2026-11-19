@@ -26,6 +26,7 @@ import {
   createAuthorizeRequest,
   deleteAuthRequest,
   deleteDeniedProviderRequest,
+  deleteMismatchedProviderRequest,
   hashProviderSecret,
   isAuthRequestId,
   loadAuthRequest,
@@ -505,11 +506,28 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
 
     if (!consumed.ok) {
       if (consumed.reason === "binding_mismatch") {
-        if (consumed.rid) await deleteAuthRequest(ctx.db.db, consumed.rid);
-        await audit(ctx, {
-          eventType: "mcp_browser_binding_mismatch",
-          detail: { rid: consumed.rid, stage: "callback", provider },
+        /**
+         * **条件删除**（C2b-R1）：预期值全部来自刚才那次 SELECT。
+         *
+         * 只按 `rid` 删会踩到这条交错：用户重新发起登录把同一 rid 换成 S2，
+         * 旧 State 的失配回调随后抵达，把 S2 删掉。命中 0 行说明这一行已经
+         * 不是「刚才读到的那个授权」了——此时不删、不审计、不重定向。
+         */
+        const removed = await deleteMismatchedProviderRequest(ctx.db.db, {
+          rid: consumed.rid,
+          provider,
+          stateHash: consumed.stateHash,
+          storedBindingHash: consumed.storedBindingHash,
+          now: now(),
         });
+        // 只有确实删掉了那一行，才把它记成一次「绑定不匹配」；否则留下的
+        // 审计会指向一个已经被新流程取代的 rid，排障时会误导。
+        if (removed) {
+          await audit(ctx, {
+            eventType: "mcp_browser_binding_mismatch",
+            detail: { rid: consumed.rid, stage: "callback", provider },
+          });
+        }
         return htmlError(
           c,
           400,
@@ -518,7 +536,7 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
         );
       }
       if (consumed.reason === "expired") {
-        if (consumed.rid) await deleteAuthRequest(ctx.db.db, consumed.rid);
+        await deleteAuthRequest(ctx.db.db, consumed.rid);
         await audit(ctx, {
           eventType: "mcp_provider_callback_failed",
           detail: { rid: consumed.rid, provider, reason: "expired" },
@@ -973,11 +991,24 @@ async function handleProviderDenied(
     return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
   }
   if (!row.browserBindingHash || !constantTimeEqual(row.browserBindingHash, input.binding)) {
-    await deleteAuthRequest(ctx.db.db, row.id);
-    await audit(ctx, {
-      eventType: "mcp_browser_binding_mismatch",
-      detail: { rid: row.id, stage: "denied", provider: input.provider },
+    /**
+     * 与正常回调同一个条件删除（C2b-R1）：预期绑定取**行内读到的那个**，
+     * 绝不取请求携带的那个。旧 State 的失配拒绝回调因此不会删掉同一 rid
+     * 上新发起的授权。
+     */
+    const removed = await deleteMismatchedProviderRequest(ctx.db.db, {
+      rid: row.id,
+      provider: input.provider,
+      stateHash: input.stateHash,
+      storedBindingHash: row.browserBindingHash,
+      now: input.now,
     });
+    if (removed) {
+      await audit(ctx, {
+        eventType: "mcp_browser_binding_mismatch",
+        detail: { rid: row.id, stage: "denied", provider: input.provider },
+      });
+    }
     return htmlError(
       c,
       400,

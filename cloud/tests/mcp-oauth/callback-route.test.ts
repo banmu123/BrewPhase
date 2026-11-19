@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { sql as drizzleSql } from "drizzle-orm";
 import { closeTestDb, ensureDatabaseOrThrow, getTestDb, resetDb } from "../helpers/db.js";
 import {
   authorizeQuery,
@@ -13,6 +14,7 @@ import {
 import { resetRateLimiter } from "../../src/security/rate-limit.js";
 import { serverError } from "../../src/security/errors.js";
 import { mcpAuthRequests } from "../../src/db/schema.js";
+import { hashProviderSecret } from "../../src/mcp-oauth/authorize-flow.js";
 
 /**
  * `GET /mcp/oauth/callback/:provider`（Phase 1.3.1-C2a）。
@@ -87,6 +89,39 @@ async function callback(
 
 async function rows() {
   return handle.db.select().from(mcpAuthRequests);
+}
+
+/**
+ * 等到有 N 个后端**确实**在等锁。
+ *
+ * 用 `wait_event_type = 'Lock'` 而不是 `pg_blocking_pids()`：行锁队列里第二个
+ * 等待者的直接阻塞者可能是前一个等待者，按阻塞者计数会少数一个。
+ */
+async function waitForLockWaiters(n: number): Promise<number> {
+  const deadline = Date.now() + 5000;
+  let seen = 0;
+  while (Date.now() < deadline) {
+    const rows = await handle.sql<{ count: string }[]>`
+      select count(*)::text as count
+        from pg_stat_activity
+       where datname = current_database()
+         and pid <> pg_backend_pid()
+         and wait_event_type = 'Lock'`;
+    seen = Number(rows[0]?.count ?? "0");
+    if (seen >= n) return seen;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return seen;
+}
+
+/** 一个「另一个浏览器」的合法 Cookie（签名正确，只是 sid 不同）。 */
+async function otherBrowserCookie(): Promise<string> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  return signBrowserCookie(h.env, {
+    sid: "m".repeat(43),
+    iat: nowSec,
+    exp: nowSec + 1800,
+  });
 }
 
 async function userCount(): Promise<number> {
@@ -251,18 +286,16 @@ describe("一次性消费", () => {
 });
 
 describe("浏览器绑定", () => {
-  it("另一个浏览器的 Cookie 回调 → 400，行被删除", async () => {
+  it("另一个浏览器的 Cookie 回调 → 400，行被删除（状态未变时）", async () => {
     const started = await startProvider("google");
-    const nowSec = Math.floor(Date.now() / 1000);
-    const otherBrowser = await signBrowserCookie(h.env, {
-      sid: "d".repeat(43),
-      iat: nowSec,
-      exp: nowSec + 1800,
-    });
+    const otherBrowser = await otherBrowserCookie();
 
     const res = await callback("google", { code: "c", state: started.state }, otherBrowser);
     expect(res.status).toBe(400);
+    expect(res.headers.get("location")).toBeNull();
     expect(await rows()).toHaveLength(0);
+    // 绑定不匹配绝不进入身份交换。
+    expect(h.providers.google.state.exchangeCount).toBe(0);
 
     const audit = await handle.sql<{ count: string }[]>`
       select count(*)::text as count from auth_events
@@ -275,6 +308,147 @@ describe("浏览器绑定", () => {
     const res = await callback("google", { code: "c", state: started.state }, "");
     expect(res.status).toBe(400);
     expect((await rows())[0]!.providerConsumedAt).toBeNull();
+  });
+});
+
+/**
+ * C2b-R1：绑定失败的清理必须是**条件删除**。
+ *
+ * 同一个 `rid` 允许在同一 Provider 下重新发起登录（换一把新的
+ * `provider_state_hash`）。旧 State 的失配回调如果只按 id 删，就会把新发起的
+ * 授权一起带走。这一组用行锁把「读完之后、删除之前」这段窗口**构造出来**，
+ * 而不是靠 sleep 碰运气。
+ */
+describe("绑定失败的条件删除（C2b-R1）", () => {
+  /**
+   * 在回调「已经读完行、DELETE 正阻塞」的那一刻，把同一 rid 换成 S2。
+   *
+   * 普通 SELECT 在 MVCC 下不加锁，所以回调仍会读到 S1；它的 DELETE 需要行锁，
+   * 于是停在我们手里。`pg_stat_activity` 确认「确实有人在等锁」之后才更新并
+   * 提交，交错是被构造出来的。
+   */
+  async function callbackWhileStateReplaced(
+    rid: string,
+    run: () => Promise<Response>,
+  ): Promise<Response> {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let signal!: () => void;
+    const locked = new Promise<void>((resolve) => {
+      signal = resolve;
+    });
+
+    const holding = handle.db.transaction(async (tx) => {
+      await tx.execute(
+        drizzleSql`select 1 from mcp_auth_requests where id = ${rid} for update`,
+      );
+      signal();
+      await held;
+      // 模拟「用户重新点了 Provider 登录」：同一 rid 换一把新 State。
+      await tx.execute(drizzleSql`
+        update mcp_auth_requests
+           set provider_state_hash = ${hashProviderSecret("state-s2")}
+         where id = ${rid}`);
+    });
+    await locked;
+
+    const pending = run();
+    try {
+      const seen = await waitForLockWaiters(1);
+      expect(seen, "回调的 DELETE 必须已经进入等锁状态").toBeGreaterThanOrEqual(1);
+    } finally {
+      release();
+      await holding;
+    }
+    return await pending;
+  }
+
+  it("正常回调：旧 State 的失配回调不能删除新发起的授权", async () => {
+    const started = await startProvider("google");
+    const otherBrowser = await otherBrowserCookie();
+
+    const res = await callbackWhileStateReplaced(started.rid, () =>
+      callback("google", { code: "c", state: started.state }, otherBrowser),
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.headers.get("location")).toBeNull();
+
+    // S2 完好无损：行还在、State 是新的、未被消费。
+    const all = await rows();
+    expect(all).toHaveLength(1);
+    expect(all[0]!.id).toBe(started.rid);
+    expect(all[0]!.providerStateHash).toBe(hashProviderSecret("state-s2"));
+    expect(all[0]!.providerConsumedAt).toBeNull();
+    // 旧回调没有走身份交换。
+    expect(h.providers.google.state.exchangeCount).toBe(0);
+    // 命中 0 行 = 不是一次真正的绑定不匹配清理，不该留审计。
+    const audit = await handle.sql<{ count: string }[]>`
+      select count(*)::text as count from auth_events
+       where event_type = 'mcp_browser_binding_mismatch'`;
+    expect(audit[0]?.count).toBe("0");
+  });
+
+  it("Provider 拒绝：旧 State 的失配拒绝回调不能删除新发起的授权", async () => {
+    const started = await startProvider("google");
+    const otherBrowser = await otherBrowserCookie();
+
+    const res = await callbackWhileStateReplaced(started.rid, () =>
+      callback("google", { error: "access_denied", state: started.state }, otherBrowser),
+    );
+
+    expect(res.status).toBe(400);
+    // 没有 Location：命中 0 行时不存在「可信的 redirect_uri 可回跳」。
+    expect(res.headers.get("location")).toBeNull();
+
+    const all = await rows();
+    expect(all).toHaveLength(1);
+    expect(all[0]!.providerStateHash).toBe(hashProviderSecret("state-s2"));
+    expect(all[0]!.providerConsumedAt).toBeNull();
+
+    // 既不写「绑定不匹配」，也不写「用户拒绝」——两者都会误导排障。
+    const audit = await handle.sql<{ count: string }[]>`
+      select count(*)::text as count from auth_events
+       where event_type in ('mcp_browser_binding_mismatch', 'mcp_provider_denied')`;
+    expect(audit[0]?.count).toBe("0");
+  });
+
+  it("正常拒绝：旧 State 的拒绝回调也不能删除新发起的授权", async () => {
+    const started = await startProvider("google");
+
+    // 这次用**正确的**浏览器，所以它走的是「正常拒绝」而不是失配分支；
+    // 条件删除里的 State 判据是唯一挡住它的东西。
+    const res = await callbackWhileStateReplaced(started.rid, () =>
+      callback("google", { error: "access_denied", state: started.state }, started.cookie),
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.headers.get("location")).toBeNull();
+
+    const all = await rows();
+    expect(all).toHaveLength(1);
+    expect(all[0]!.providerStateHash).toBe(hashProviderSecret("state-s2"));
+    // 既没被删，也没被记成一次「用户拒绝」。
+    const audit = await handle.sql<{ count: string }[]>`
+      select count(*)::text as count from auth_events where event_type = 'mcp_provider_denied'`;
+    expect(audit[0]?.count).toBe("0");
+  });
+
+  it("拒绝路径在状态未变时仍然清理并审计（fail-closed 未被削弱）", async () => {
+    const started = await startProvider("google");
+    const otherBrowser = await otherBrowserCookie();
+
+    const res = await callback("google", { error: "access_denied", state: started.state }, otherBrowser);
+    expect(res.status).toBe(400);
+    expect(res.headers.get("location")).toBeNull();
+    expect(await rows()).toHaveLength(0);
+
+    const audit = await handle.sql<{ count: string }[]>`
+      select count(*)::text as count from auth_events
+       where event_type = 'mcp_browser_binding_mismatch' and detail->>'stage' = 'denied'`;
+    expect(audit[0]?.count).toBe("1");
   });
 });
 

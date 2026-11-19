@@ -341,6 +341,70 @@ export async function deleteDeniedProviderRequest(
   return { rid: hit.id, redirectUri: hit.redirectUri, state: hit.state };
 }
 
+export interface MismatchedProviderRequest {
+  rid: string;
+  provider: "google" | "github";
+  /** 最初 SELECT 读到的那把 State 的哈希（不是重新计算的）。 */
+  stateHash: string;
+  /** 最初 SELECT 读到的**行内**绑定哈希（可能为 NULL）。 */
+  storedBindingHash: string | null;
+  now: Date;
+}
+
+/**
+ * 清理一次「绑定不匹配」的 Provider 授权请求（Phase 1.3.1-C2b-R1）。
+ *
+ * ## 为什么不能只按 rid 删
+ *
+ * 同一个 `rid` 允许在同一 Provider 下重新发起登录（换一把新的
+ * `provider_state_hash`，见 `claimProvider`）。于是存在这条真实交错：
+ *
+ * ```
+ * 请求 A：旧 State S1 的回调
+ *   ├─ SELECT 成功，读到 S1 对应的行
+ *   │        ← 用户重新点了「用 Google 登录」，同一 rid 换成 S2
+ *   └─ 判定绑定不匹配 → DELETE WHERE id = rid
+ *        └─ 删掉的是 S2 那一行（新流程被旧回调带走）
+ * ```
+ *
+ * 条件是「那一行仍然是我刚才读到的行」，逐项对应：
+ *
+ * | 条件 | 防什么 |
+ * |---|---|
+ * | `id` | 别的授权请求 |
+ * | `provider_state_hash` | 同一 rid 被重新发起（旧 State 的清理不能碰新 State） |
+ * | `provider` | 同一 rid 被切到另一个 Provider |
+ * | `browser_binding_hash`（**行内值**） | 换浏览器重新绑定（预期值绝不能取请求携带的那个） |
+ * | `provider_consumed_at IS NULL` | 已被正常回调消费 |
+ * | `expires_at > now` | 已过期 |
+ *
+ * 命中 0 行 = 状态已经变了，**什么都不做**：不删、不审计、不重定向。
+ * 返回 `true` 表示确实删掉了「当时读到的那一行」。
+ */
+export async function deleteMismatchedProviderRequest(
+  db: Database,
+  input: MismatchedProviderRequest,
+): Promise<boolean> {
+  const deleted = await db
+    .delete(mcpAuthRequests)
+    .where(
+      and(
+        eq(mcpAuthRequests.id, input.rid),
+        eq(mcpAuthRequests.providerStateHash, input.stateHash),
+        eq(mcpAuthRequests.provider, input.provider),
+        // `browser_binding_hash` 可为 NULL。Drizzle 里用两个分支表达
+        // `IS NOT DISTINCT FROM`：NULL 匹配 NULL，非 NULL 用等值。
+        input.storedBindingHash === null
+          ? isNull(mcpAuthRequests.browserBindingHash)
+          : eq(mcpAuthRequests.browserBindingHash, input.storedBindingHash),
+        isNull(mcpAuthRequests.providerConsumedAt),
+        gt(mcpAuthRequests.expiresAt, input.now),
+      ),
+    )
+    .returning({ id: mcpAuthRequests.id });
+  return deleted.length === 1;
+}
+
 export type BindOutcome =
   | { ok: true; alreadyBound: boolean }
   | { ok: false; reason: "not_found" | "expired" | "consumed" | "binding_mismatch" };
@@ -477,12 +541,25 @@ export interface ConsumedCallback {
 
 export type ConsumeOutcome =
   | { ok: true; request: ConsumedCallback }
+  /**
+   * 绑定不匹配：**除了 rid，还要把「刚才读到的那一行」的身份带出去**。
+   *
+   * 只给 `rid` 是不够的——调用方随后的清理如果只按 id 删，就会在「同一 rid
+   * 已被重新发起一个新 State」时删掉新流程（见 `deleteMismatchedProviderRequest`）。
+   * 这四个字段就是那条条件 DELETE 的全部预期值。
+   */
   | {
       ok: false;
-      reason: "unknown_state" | "provider_mismatch" | "consumed" | "expired" | "binding_mismatch";
-      /** 绑定不匹配时要把行删掉（有劫持嫌疑），其余原因由调用方决定。 */
-      rid?: string;
-    };
+      reason: "binding_mismatch";
+      rid: string;
+      provider: "google" | "github";
+      /** 本次回调携带的 state 的哈希（= 行内当时的那把）。 */
+      stateHash: string;
+      /** 行内读到的绑定哈希。可能为 NULL（从未绑定）。 */
+      storedBindingHash: string | null;
+    }
+  | { ok: false; reason: "unknown_state" | "provider_mismatch" | "consumed" }
+  | { ok: false; reason: "expired"; rid: string };
 
 /**
  * 原子消费 Provider State。
@@ -546,7 +623,16 @@ export async function consumeProviderCallback(
     return { ok: false, reason: "expired", rid: row.id };
   }
   if (!row.browserBindingHash || !constantTimeEqual(row.browserBindingHash, input.bindingHash)) {
-    return { ok: false, reason: "binding_mismatch", rid: row.id };
+    // 把「刚才读到的那一行」的完整身份返回给调用方。清理必须基于它做条件
+    // 删除，而不是只凭 rid —— 同一个 rid 允许重新发起登录并换一把新 State。
+    return {
+      ok: false,
+      reason: "binding_mismatch",
+      rid: row.id,
+      provider: input.provider,
+      stateHash,
+      storedBindingHash: row.browserBindingHash,
+    };
   }
 
   const consumed = await db

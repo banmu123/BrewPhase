@@ -12,6 +12,7 @@ import {
   bindBrowser,
   claimProvider,
   consumeProviderCallback,
+  deleteMismatchedProviderRequest,
   hashProviderSecret,
   loadAuthRequest,
   validateAuthorizeParams,
@@ -352,6 +353,111 @@ describe("并发消费：条件 UPDATE 是唯一判据", () => {
     expect(out.ok).toBe(false);
     expect((out as { reason: string }).reason).toBe("consumed");
     expect((await loadAuthRequest(handle.db, started.rid))!.providerConsumedAt).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deleteMismatchedProviderRequest：六个条件逐一
+// ---------------------------------------------------------------------------
+
+/**
+ * 绑定失败后的清理必须是**条件删除**（Phase 1.3.1-C2b-R1）。
+ *
+ * 这一组把每个条件单独破坏一次，断言删除命中 0 行。路由层只能观察到 400，
+ * 看不出是哪一个条件挡住了它——所以判据必须在这一层逐项钉死。
+ */
+describe("deleteMismatchedProviderRequest 的条件判据", () => {
+  /** 传入「刚才读到」的值；调用方可以覆盖任意一项来模拟状态变化。 */
+  async function cleanup(
+    started: { rid: string; state: string; binding: string },
+    overrides: Partial<{
+      provider: "google" | "github";
+      stateHash: string;
+      storedBindingHash: string | null;
+      now: Date;
+    }> = {},
+  ): Promise<boolean> {
+    return deleteMismatchedProviderRequest(handle.db, {
+      rid: started.rid,
+      provider: overrides.provider ?? "google",
+      stateHash: overrides.stateHash ?? hashProviderSecret(started.state),
+      // `??` 会把显式传入的 null 当成「没传」而回退——这里必须区分。
+      storedBindingHash: "storedBindingHash" in overrides
+        ? (overrides.storedBindingHash ?? null)
+        : started.binding,
+      now: overrides.now ?? new Date(),
+    });
+  }
+
+  it("全部条件都成立 → 删除一行", async () => {
+    const h = await createMcpOAuthHarness();
+    const started = await seedClaimedRequest(h);
+
+    expect(await cleanup(started)).toBe(true);
+    expect(await loadAuthRequest(handle.db, started.rid)).toBeUndefined();
+  });
+
+  it("Provider State 已被替换 → 不删除", async () => {
+    const h = await createMcpOAuthHarness();
+    const started = await seedClaimedRequest(h);
+    await handle.sql`
+      update mcp_auth_requests set provider_state_hash = ${hashProviderSecret("state-s2")}
+       where id = ${started.rid}`;
+
+    expect(await cleanup(started)).toBe(false);
+    const row = await loadAuthRequest(handle.db, started.rid);
+    expect(row).toBeTruthy();
+    expect(row!.providerConsumedAt).toBeNull();
+  });
+
+  it("Provider 不一致 → 不删除", async () => {
+    const h = await createMcpOAuthHarness();
+    const started = await seedClaimedRequest(h, { provider: "google" });
+
+    expect(await cleanup(started, { provider: "github" })).toBe(false);
+    expect(await loadAuthRequest(handle.db, started.rid)).toBeTruthy();
+  });
+
+  it("已经被正常回调消费 → 不删除", async () => {
+    const h = await createMcpOAuthHarness();
+    const started = await seedClaimedRequest(h);
+    await handle.sql`
+      update mcp_auth_requests set provider_consumed_at = now() where id = ${started.rid}`;
+
+    expect(await cleanup(started)).toBe(false);
+    expect(await loadAuthRequest(handle.db, started.rid)).toBeTruthy();
+  });
+
+  it("已经过期 → 不删除", async () => {
+    const h = await createMcpOAuthHarness();
+    const started = await seedClaimedRequest(h);
+    await handle.sql`
+      update mcp_auth_requests set expires_at = now() - interval '1 second' where id = ${started.rid}`;
+
+    expect(await cleanup(started)).toBe(false);
+    expect(await loadAuthRequest(handle.db, started.rid)).toBeTruthy();
+  });
+
+  it("浏览器绑定已经变化（预期值取的是旧的那个）→ 不删除", async () => {
+    const h = await createMcpOAuthHarness();
+    const started = await seedClaimedRequest(h);
+    await handle.sql`
+      update mcp_auth_requests set browser_binding_hash = ${"f".repeat(64)}
+       where id = ${started.rid}`;
+
+    // 预期绑定仍是「刚才读到的那个」——正是它挡住了这次删除。
+    expect(await cleanup(started)).toBe(false);
+    expect(await loadAuthRequest(handle.db, started.rid)).toBeTruthy();
+  });
+
+  it("行内绑定为 NULL 时按 NULL 匹配（可删除）", async () => {
+    const h = await createMcpOAuthHarness();
+    const started = await seedClaimedRequest(h);
+    await handle.sql`
+      update mcp_auth_requests set browser_binding_hash = null where id = ${started.rid}`;
+
+    expect(await cleanup(started, { storedBindingHash: null })).toBe(true);
+    expect(await loadAuthRequest(handle.db, started.rid)).toBeUndefined();
   });
 });
 
