@@ -1552,6 +1552,29 @@ Discovery 与 Desktop OAuth 用例全部原位通过。
 **未做**：接入 authorize、DCR、`registration_endpoint`、
 `client_id_metadata_document_supported`、抓取 Logo/JWKS。
 
+### 3.22 1.3.1-C3c-2-R1 已交付（CIMD Fetcher 安全加固）
+
+五项修复，全部属于「已有实现的安全边界」而非新功能：
+
+| 项 | 根因 | 修法 |
+|---|---|---|
+| R1-1 HTTPS 代理 | `openTunnel` 一律 `http.request` 连代理 → `https://` 代理被明文访问，`Proxy-Authorization` 明文出网 | `connectToProxy` 按协议分支：`https:` 先 `tls.connect`（默认校验证书）再 CONNECT；`TunnelOptions` 只有 `ca` |
+| R1-2 DNS 预算 | 只在 `await resolve()` 后检查耗时，DNS 挂起即永不返回 | `withDeadline()` 让截止时间在等待期间生效；迟到结果被吸收；HTTP 拿到扣除 DNS 的剩余时间 |
+| R1-3 IPv6 白名单 | 只靠黑名单，`4000::1`/`c000::1` 等未分配段被放行 | 先要求 `2000::/3`（IANA 全球单播），再排特殊用途；IPv4-mapped 仍走独立表 |
+| R1-4 状态分类 | 非 200 一律 terminal，503/429 被当成元数据失效 | 408/425/429/5xx → `transient`；3xx/其它 4xx → `terminal`；只有 200 进解析 |
+| R1-5 5 KiB 可证明 | 只有计数器单测，没证明真实读取会停手 | 抽出 `readPinnedResponse` / `readResponseBody`；超限返回空 body + 立即 destroy；用按需生产的源证明「停手」 |
+
+**测试（+69，Cloud 1264 → 1333 / 65 files）**：`cimd` 132 → 183、`pinned-request`
+17 → 28、`proxy-fetch` 13 → 20；新增 `tests/fixtures/` 自签名证书（仅测试）。
+
+**变异 5/5 被抓**：删 DNS 截止时间（3 条超时）、HTTPS 代理改明文（2 条）、删 IPv6
+白名单（14 条）、5xx 判 terminal（7 条）、删超限即时 destroy（1 条）。
+
+**门禁**：Cloud `typecheck` / `lint` / `build` / `test` 全绿；Desktop 1265 / 89 不变、
+`stdio.mjs` 911.67 kB 不变。无迁移、无新依赖、未接入 authorize。
+
+**未证明**：目标侧 TLS 握手仍只有代码审查（需要受信任证书 + 443，未放宽端口）。
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、

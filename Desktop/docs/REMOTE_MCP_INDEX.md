@@ -1517,5 +1517,21 @@ s-maxage 优先级、TLS 分类、client_id 规范化、字节累计、声明长
 
 ### 32.7 状态
 
-C3c-2 完成（**未接入授权流程**）。下一步是接入 `/mcp/oauth/authorize` 与
-DB 缓存写入，属后续阶段。
+C3c-2 完成（**未接入授权流程**），安全加固见 §33。
+
+---
+
+## 33. Phase 1.3.1-C3c-2-R1：CIMD Fetcher 安全加固（已交付）
+
+| 项 | 根因 | 修法 |
+|---|---|---|
+| HTTPS 代理 | `openTunnel` 一律用 `http.request` 连代理 → `https://` 代理被明文访问 | `https:` 先 `tls.connect`（默认校验）再 CONNECT；`TunnelOptions` 只有 `ca` |
+| DNS 预算 | 只在 `await` 后检查耗时，DNS 挂起即永久等待 | `withDeadline()` 期间生效；迟到结果被吸收；HTTP 用剩余时间 |
+| IPv6 白名单 | 只靠黑名单，未分配段被放行 | 先要求 `2000::/3`，再排特殊用途 |
+| 状态分类 | 非 200 一律 terminal | 408/425/429/5xx → transient；3xx/其它 4xx → terminal |
+| 5 KiB 可证明 | 只测了计数器 | 抽 `readPinnedResponse`/`readResponseBody`；超限返回空 body + 立即 destroy |
+
+测试 +69（Cloud 1264 → **1333 / 65 files**；cimd 183 / pinned 28 / proxy 20）。
+变异 5/5。无迁移、无新依赖、未接入 authorize。
+实施报告：`cloud/docs/implementation/phase-1.3.1-c3c-2-r1-cimd-hardening-report.md`；
+自审：`cloud/docs/reviews/phase-1.3.1-c3c-2-r1-security-self-review.md`。

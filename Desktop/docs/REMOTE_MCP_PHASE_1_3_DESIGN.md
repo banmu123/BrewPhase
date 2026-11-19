@@ -1422,7 +1422,7 @@ Provider 通道「告警后直连」是可接受的，这里不行——那等�
 
 | 项 | 规则 |
 |---|---|
-| 状态码 | 只有 200；3xx 一律不跟随（`terminal`） |
+| 状态码 | 只有 200 进入解析；3xx 不跟随（`terminal`）；408/425/429 与 5xx 是 `transient` |
 | Content-Type | `application/json` 或 `application/<subtype>+json`；参数忽略；缺失拒绝 |
 | 大小 | 5 KiB。**流式累计**：`Content-Length` 预检 + 实际字节计数双保险，超限立即 `destroy()` |
 | 编码 | UTF-8 严格解码（非法字节 → `terminal`） |
@@ -1452,6 +1452,16 @@ Provider 通道「告警后直连」是可接受的，这里不行——那等�
 | `no-cache` | 可存但立刻过期（`ttlMs = 0`），下次必须重抓 |
 | `Expires` | 不读（Cache-Control 优先） |
 | 错误响应 / 非法文档 | **永不缓存** |
+
+**R1 加固（C3c-2-R1）**
+
+| 项 | 变更 |
+|---|---|
+| HTTPS 代理 | 原实现一律用 `http.request` 连代理，`https://` 代理会被**明文**访问（凭据同行走明文）。现在 `https:` 代理先 `tls.connect` 完成握手（证书校验默认开启）再发 CONNECT；`TunnelOptions` 只有 `ca`，没有关闭校验的开关 |
+| DNS 预算 | 原来只在 `await resolve()` 之后检查耗时，DNS 挂起即永久等待。现在 `withDeadline()` 让截止时间在等待**期间**生效；迟到的 resolve/reject 被吞掉（不产生 unhandledRejection）；HTTP 阶段拿到的是扣除 DNS 后的剩余时间 |
+| IPv6 白名单 | 原实现只靠 RFC 6890 黑名单，`4000::1` / `c000::1` 这类未分配段会被放行。现在先要求属于 IANA 全球单播 `2000::/3`，再排特殊用途 |
+| 状态分类 | 原实现「非 200 一律 terminal」，把 503/429 记成「客户端元数据失效」。现在 408/425/429/5xx 为 `transient`，3xx 与其它 4xx 为 `terminal` |
+| 5 KiB 可证明性 | 响应处理抽成 `readPinnedResponse` / `readResponseBody`，超限时**返回空 body** 并立即 `destroy()`；测试用按需生产的源证明「停手」，而不是只看 `destroyed` |
 
 **失败分类（草案 §6.1）**
 
