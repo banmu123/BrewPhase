@@ -152,6 +152,34 @@ function warn(message: string): void {
   console.warn(`[env] ${message}`);
 }
 
+/**
+ * `BASE_URL` 只能是一个 origin。
+ *
+ * 不吞掉错误、不做归一化：形态不合规意味着部署配置与设计不符，改配置比让
+ * 三处 issuer 各自解释同一个字符串安全得多。
+ */
+function assertIssuerBaseUrl(baseUrl: string): void {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    throw new Error("[env] BASE_URL must be an absolute URL");
+  }
+
+  const found: string[] = [];
+  if (url.pathname !== "/") found.push(`path "${url.pathname}"`);
+  if (url.search !== "") found.push("a query string");
+  if (url.hash !== "") found.push("a fragment");
+  if (url.username !== "" || url.password !== "") found.push("userinfo");
+  if (found.length === 0) return;
+
+  throw new Error(
+    `[env] BASE_URL must be an origin only (no path, query or fragment): found ${found.join(", ")}.\n` +
+      `  It is used verbatim as the JWT iss, the OAuth "iss" response parameter and the\n` +
+      `  Authorization Server Metadata issuer; normalising it would make those three disagree.`,
+  );
+}
+
 function enforceProductionSecrets(
   input: Record<string, string | undefined>,
   baseUrl: string,
@@ -239,6 +267,20 @@ export function loadEnv(input: Record<string, string | undefined>): Env {
     .filter((s) => s.length > 0);
 
   const baseUrl = parsed.BASE_URL.replace(/\/+$/, "");
+
+  /**
+   * Issuer 形态校验（Phase 1.3.1-C3c-1）。
+   *
+   * `baseUrl` 同时充当三处**必须逐字符相同**的值：JWT 的 `iss`、OAuth 授权
+   * 响应里的 `iss` 参数、以及 Discovery 元数据的 `issuer`。RFC 8414 还要求
+   * `issuer` 不带 path / query / fragment。
+   *
+   * 所以不合规的形态在启动时就拒掉，而不是在元数据层用
+   * `new URL(baseUrl).origin` 归一化——那会让「元数据声明的 issuer」与
+   * 「JWT 里签的 iss」变成两个不同的字符串，而客户端正是靠它们相等来决定
+   * 要不要信任这次授权。
+   */
+  assertIssuerBaseUrl(baseUrl);
 
   /**
    * 单实例启动断言（协议 §12.2）。

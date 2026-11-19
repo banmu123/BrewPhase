@@ -32,6 +32,45 @@ function expectRefusal(input: Record<string, string | undefined>, needle: string
   expect(message).toContain(needle);
 }
 
+describe("BASE_URL 形态（issuer）校验", () => {
+  /** 形态问题在「生产拒绝」之前就抛，文案也独立。 */
+  function expectIssuerRefusal(baseUrl: string, needle: string): void {
+    let message = "";
+    try {
+      loadEnv({ ...validProduction, BASE_URL: baseUrl });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain("[env] BASE_URL must be an origin only");
+    expect(message).toContain(needle);
+  }
+
+  it("带 path / query / fragment / userinfo 都拒绝启动", () => {
+    // 这三处 issuer（JWT iss、授权响应 iss、metadata issuer）必须逐字符相同；
+    // 一旦允许路径，就只能在元数据层归一化，从而让三者产生分歧。
+    expectIssuerRefusal("https://cloud.example.com/api", 'path "/api"');
+    expectIssuerRefusal("https://cloud.example.com/?a=1", "a query string");
+    expectIssuerRefusal("https://cloud.example.com/#frag", "a fragment");
+    expectIssuerRefusal("https://user:pass@cloud.example.com", "userinfo");
+  });
+
+  it("纯 origin 接受（尾斜杠会被去掉，不算路径）", () => {
+    expect(loadEnv({ ...validProduction, BASE_URL: "https://cloud.example.com/" }).baseUrl).toBe(
+      "https://cloud.example.com",
+    );
+  });
+
+  it("非生产环境同样拒绝（issuer 一致性不是生产专属）", () => {
+    let message = "";
+    try {
+      loadEnv({ ...validProduction, NODE_ENV: "development", BASE_URL: "http://127.0.0.1:3000/api" });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain("[env] BASE_URL must be an origin only");
+  });
+});
+
 describe("loadEnv production 校验", () => {
   it("完整配置可以启动", () => {
     const env = loadEnv(validProduction);

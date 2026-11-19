@@ -14,6 +14,7 @@ import { routeHealth } from "./routes/health.js";
 import { routeOauth } from "./routes/oauth.js";
 import { routeMcpDevices } from "./mcp-devices/index.js";
 import { routeMcpOAuth } from "./routes/mcp-oauth.js";
+import { routeMcpDiscovery } from "./routes/mcp-discovery.js";
 import { resolveMcpOAuthEnablement } from "./mcp-oauth/enablement.js";
 
 /** 从进程环境装配完整应用上下文（生产入口用；测试自己构造 AppContext）。 */
@@ -109,6 +110,8 @@ export function createApp(ctx: AppContext): AppHono {
   const mcpOAuth = resolveMcpOAuthEnablement(ctx.env);
   if (mcpOAuth.enabled) {
     routeMcpOAuth(app, ctx);
+    // Discovery 与授权路由同生共死：未启用的授权服务器不该有元数据。
+    routeMcpDiscovery(app, ctx);
   } else {
     ctx.logger.warn("mcp_oauth_disabled", { reason: mcpOAuth.reason });
   }
