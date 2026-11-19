@@ -855,3 +855,60 @@ ack 失败仍当作已安装。
 - **1.3.3**：ChatGPT / Grok 真实联调。
 - **仍未验证**：真实 Google / GitHub 的完整回调（本阶段用契约校验型 Mock）；
   真实客户端对 `iss` 参数与 60 秒授权码的接受度。
+
+---
+
+## 22. Phase 1.3.1-C2b-R1：绑定失败的条件删除（已交付）
+
+C2b 的安全加固。两个「绑定不匹配」分支原本都按 `rid` 直接删行，而同一个
+`rid` 允许在同一 Provider 下重新发起登录（换一把 `provider_state_hash`）：
+旧 State 的失配回调会把用户刚发起的新授权一起删掉。
+
+### 22.1 修复
+
+| 位置 | 修复 |
+|---|---|
+| `/callback/:provider` 的 `binding_mismatch` | 改调 `deleteMismatchedProviderRequest()` |
+| `handleProviderDenied` 的失配分支 | 同上 |
+| `ConsumeOutcome` | `binding_mismatch` 独立成携带 `provider` / `stateHash` / `storedBindingHash` 的分支 |
+
+### 22.2 判据（六条，值全部来自那次 SELECT）
+
+`id` + `provider_state_hash` + `provider` + **行内** `browser_binding_hash` +
+`provider_consumed_at IS NULL` + `expires_at > now`，`RETURNING id`。
+
+- 命中 1 行：删掉「刚才读到的那一行」，写 `mcp_browser_binding_mismatch`。
+- 命中 0 行：状态已变 → **不删、不审计、不重定向**，对外仍 400。
+- 预期绑定**绝不**取请求携带的值（那是攻击者的）。
+
+### 22.3 新增测试（+11 条）
+
+| 用例 | 位置 |
+|---|---|
+| 正常回调：旧 State 的失配回调不能删新授权 | `callback-route.test.ts` |
+| 拒绝：旧 State 的失配拒绝回调不能删新授权 | 同上 |
+| 正常拒绝：旧 State 的拒绝回调不能删新授权 | 同上 |
+| 拒绝路径状态未变时仍清理并审计 | 同上 |
+| 条件删除的六条判据（命中 + 五种不命中） | `authorize-flow.test.ts` |
+
+交错用**行锁 + `pg_stat_activity` 的 Lock 等待**构造，不 sleep、不重试。
+
+### 22.4 变异（5/5 被抓）
+
+失配清理去掉 state 判据（路由 / 业务层）、正常拒绝去掉 state 判据、
+两处把预期绑定换成请求绑定——各有具体用例转红。
+
+> 第一次跑的 M1 变异**误命中**了 `deleteDeniedProviderRequest` 里的同名条件
+> （两处 SQL 片段相同），因此存活。顺手补了「正常拒绝：旧 State 的拒绝回调
+> 也不能删除新授权」，把那条判据也钉住。
+
+### 22.5 门禁
+
+Cloud `typecheck` / `lint` / `build` 通过，`pnpm test` **923 passed / 56 files**；
+Desktop `typecheck` / `test` / `build` / `mcp:build` 通过，**1265 passed / 89 files**，
+`stdio.mjs` 911.67 kB 不变。**无新增迁移、无新增路由、未改 Desktop 生产代码。**
+
+### 22.6 状态
+
+C2b 至此完成（授权到「302 带 code」）；`/mcp/oauth/token`、`/revoke`、PRM、
+AS metadata、CIMD、DCR、`POST /mcp` 仍属 **C3 / 1.3.2（未实现）**。

@@ -879,6 +879,62 @@ ack 超时 / `applied=false` / 离线都**不回滚数据库**：授权与设备
 metadata、CIMD、DCR、`POST /mcp`、工具面、真实客户端联调。授权码兑换时创建
 Session 也属 C3（`mcp_sessions` 在 C2b 里**一行都不写**）。
 
+### 3.11 1.3.1-C2b-R1 已交付（绑定失败的条件删除）
+
+C2b 的安全加固，不是新功能。修的是同一类问题：**按 `rid` 直接删**在两个
+「绑定不匹配」分支里会删掉用户刚重新发起的授权（同一 `rid` 换了一把新的
+`provider_state_hash`）。
+
+| 位置 | 修复前 | 修复后 |
+|---|---|---|
+| `/callback/:provider` 的 `binding_mismatch` | `deleteAuthRequest(rid)` | `deleteMismatchedProviderRequest(...)` |
+| `handleProviderDenied` 的失配分支 | `deleteAuthRequest(row.id)` | 同上 |
+
+**条件（值全部来自刚才那次 SELECT）**：
+
+```
+id = :rid
+provider_state_hash = :state_hash      ← 本次读到的那把
+provider = :provider
+browser_binding_hash = :stored_binding ← 行内读到的（不是请求携带的）
+provider_consumed_at IS NULL
+expires_at > :now
+RETURNING id
+```
+
+命中 0 行 = 状态已变（重新发起 / 换 Provider / 已消费 / 已过期 / 换绑定）：
+**不删、不审计、不重定向**，对外仍 400。只有命中 1 行才写
+`mcp_browser_binding_mismatch`。
+
+**`ConsumeOutcome` 的变化**：`binding_mismatch` 从「只有 `rid`」改成携带
+`provider` / `stateHash` / `storedBindingHash` 的独立分支，让路由层有能力做
+条件删除；其余失败原因收窄为不带清理信息的分支。
+
+**测试（+11 条，Cloud 912 → 923）**：
+
+| 用例 | 判据 |
+|---|---|
+| 正常回调：旧 State 的失配回调不能删除新授权 | 行仍在、state 是 S2、无审计、`exchangeCount=0` |
+| 拒绝：旧 State 的失配拒绝回调不能删除新授权 | 行仍在、无 `mcp_provider_denied` |
+| 正常拒绝：旧 State 的拒绝回调也不能删除新授权 | 同上（保护 `deleteDeniedProviderRequest` 的 state 判据） |
+| 拒绝路径状态未变时仍清理并审计 | 行被删 + 审计 1 条 |
+| `deleteMismatchedProviderRequest` 六条判据 | 命中 1 次 + 每个条件各破坏一次均命中 0 行 |
+
+交错全部用**行锁 + `pg_stat_activity` 的 Lock 等待**构造：外部事务持行锁，
+回调的 DELETE 停在锁上，确认「确实有后端在等锁」后才更新 State 并提交。
+没有 sleep，也没有重试碰运气。
+
+**变异（5/5 被抓）**：失配清理去掉 state 判据（路由 / 业务层）、正常拒绝去掉
+state 判据、两处把预期绑定换成请求绑定——各自都有具体用例转红。
+
+**门禁**：Cloud `typecheck` / `lint` / `build` 通过，`pnpm test`
+**923 passed / 56 files**；Desktop `typecheck` / `test` / `build` / `mcp:build`
+通过，**1265 passed / 89 files**，`stdio.mjs` 911.67 kB 不变；**无新增迁移**、
+**无新增路由**、**未改 Desktop 生产代码**。
+
+**C2b 整体状态**：授权流程到「302 带 code」为止完整可用；`/mcp/oauth/token`
+兑换与之后的一切仍属 C3（未实现）。
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、

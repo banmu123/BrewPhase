@@ -755,7 +755,32 @@ isStepUp = 已有 active grant 的 scope ⊆ 本次请求的 scope
 两个生命周期。设备重新握手时 `hello_ok` 会按数据库重建整张快照，那条路径
 不依赖这次在线同步是否成功。
 
-#### 5.10.7 与 Desktop OAuth 的隔离（C2b 复核）
+#### 5.10.7 绑定失败清理必须是条件删除（C2b-R1）
+
+`consumeProviderCallback` 的 `binding_mismatch` 与 `handleProviderDenied` 的
+失配分支都不许「按 rid 直接删」——同一个 `rid` 允许在同一 Provider 下重新
+发起登录（`claimProvider` 会换一把新的 `provider_state_hash`），只按 id 删
+会把用户刚发起的新流程一起带走。
+
+两处统一走 `deleteMismatchedProviderRequest()`：
+
+| 条件 | 值从哪来 |
+|---|---|
+| `id` | 本次 SELECT 读到的行 |
+| `provider_state_hash` | 本次 SELECT 读到的那把（**不是**重新计算的） |
+| `provider` | 本次回调的 Provider |
+| `browser_binding_hash` | **行内读到的那个**（绝不能取请求携带的那个） |
+| `provider_consumed_at IS NULL` | — |
+| `expires_at > now` | 删除时刻 |
+
+命中 0 行 = 这一行已经不是「刚才读到的那个授权」了（被重新发起 / 换
+Provider / 已消费 / 已过期 / 换绑定）。此时**不删、不写审计、不重定向**，
+对外仍然统一 400。只有命中 1 行才记 `mcp_browser_binding_mismatch`。
+
+> 为什么审计也要跟着条件走：留一条指向「已被新流程取代的 rid」的安全事件，
+> 会让排障者去找一次并不存在的绑定劫持。
+
+#### 5.10.8 与 Desktop OAuth 的隔离（C2b 复核）
 
 一次完整的同意流程不写 `oauth_codes` / `oauth_transactions` / `auth_sessions`；
 `bp_mcp_bs` 发给 `/auth/me` 仍 401、发给 `/oauth/token` 仍 400；
@@ -1530,6 +1555,8 @@ CREATE UNIQUE INDEX "mcp_refresh_tokens_session_active_uq"
 > Cookie 建立、Provider 错误映射、旧 State 删除竞态、State 原子消费条件）。
 > **1.3.1-C2b 已交付第 8 条**（`GET/POST /mcp/oauth/consent`：CSRF、Step-up、
 > Grant upsert、授权码签发、在线 Grant 同步），实现要点见 §5.10。
+> **1.3.1-C2b-R1 补齐两处回调状态清理竞态**：绑定失败分支改为条件删除
+> （§5.10.7），不再按 rid 直接删。
 > 余下第 9–15 条（token endpoint、revoke、discovery、CIMD、DCR）属 **C3**，
 > 尚未实现。详见路线图 §3.8–§3.10 与索引 §19–§21。
 
