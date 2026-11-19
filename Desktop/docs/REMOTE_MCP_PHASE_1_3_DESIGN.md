@@ -1463,6 +1463,27 @@ Provider 通道「告警后直连」是可接受的，这里不行——那等�
 | 状态分类 | 原实现「非 200 一律 terminal」，把 503/429 记成「客户端元数据失效」。现在 408/425/429/5xx 为 `transient`，3xx 与其它 4xx 为 `terminal` |
 | 5 KiB 可证明性 | 响应处理抽成 `readPinnedResponse` / `readResponseBody`，超限时**返回空 body** 并立即 `destroy()`；测试用按需生产的源证明「停手」，而不是只看 `destroyed` |
 
+**R2 独立复审加固（C3c-2-R2）**
+
+复审不接受 R1 的自审结论，重读源码后发现并修掉 5 个缺陷 + 2 个策略缺口：
+
+| 项 | 根因 | 现在 |
+|---|---|---|
+| 总超时不清理在建连 socket | 定时器只 `request.destroy()`，而建连/等 CONNECT 期间 socket 不属于任何 request | `AbortSignal` 贯穿 `openTunnel` 的**整个建隧道窗口**；单次 settle |
+| JWK `oth` 漏检 | `PRIVATE_JWK_MEMBERS` 少 RFC 7518 §6.2.2 的 `oth` | 8 个成员逐个覆盖 |
+| `client_uri` / `logo_uri` 只判类型 | 同意页会把它们渲染成链接/图片 | `validateInformationalUri`：https、无 userinfo、≤2048；失败即文档非法 |
+| RFC 6890 缺 4 段 | 按印象列举 | 补 AS112-v4 / AMT / AS112 direct delegation / AS112-v6 |
+| `sendConnect` 用 `http.globalAgent` | 池名默认 `localhost:80`，理论上可复用无关空闲连接 | 每次隧道一条专用 agent |
+| resolver 同步抛错 | 逃出「fetcher 不抛异常」契约 | 映射为 `transient/dns_failure` |
+| `client_id` / `client_name` 无长度上限 | 项目策略缺口 | 2048 / 256 |
+
+**目标侧 TLS 的端到端证明**：`PinnedRequestOptions.ca` 只增加信任锚（没有
+`rejectUnauthorized`）。用它证明：直连与 HTTPS 代理两条路径上，连接打到 pinned IP，
+而 SNI / Host / 证书校验都用原始域名；不传 `ca` 时自签名证书必须被拒。
+
+**明确的能力边界**：`setTimeout` 只保证「不会无限等」，不提供硬实时保证；代理主机名
+的 DNS 查询没有注入点，调用方超时返回 ≠ 后台查询终止。
+
 **失败分类（草案 §6.1）**
 
 | kind | 情形 | 对已有缓存的影响 |

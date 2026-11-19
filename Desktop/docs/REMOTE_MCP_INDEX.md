@@ -1535,3 +1535,27 @@ C3c-2 完成（**未接入授权流程**），安全加固见 §33。
 变异 5/5。无迁移、无新依赖、未接入 authorize。
 实施报告：`cloud/docs/implementation/phase-1.3.1-c3c-2-r1-cimd-hardening-report.md`；
 自审：`cloud/docs/reviews/phase-1.3.1-c3c-2-r1-security-self-review.md`。
+
+---
+
+## 34. Phase 1.3.1-C3c-2-R2：独立安全复审（已完成）
+
+复审基线 `92148bf`。不接受 R1 自审结论，重读源码 + 探针验证，发现并修复
+**3 Medium / 4 Low**，另补 1 个验证缺口：
+
+| # | 严重性 | 问题 |
+|---|---|---|
+| F1 | Medium | 总超时后建连中的代理 socket 未销毁（实测 `getConnections()===1`） |
+| F2 | Medium | JWK 私钥成员漏 `oth`（RFC 7518 §6.2.2） |
+| F3 | Medium | `client_uri` / `logo_uri` 只判类型，可存 `javascript:` |
+| F4 | Low | RFC 6890 缺 AS112-v4 / AMT / AS112 direct / AS112-v6 |
+| F5 | Low | `sendConnect` 走 `http.globalAgent`（池名默认 `localhost:80`） |
+| F6 | Low | resolver 同步抛错逃出「不抛异常」契约 |
+| F7 | Low | `client_id` / `client_name` 无长度上限 |
+| F8 | Info | 目标侧 TLS 缺端到端证明 → `ca` 信任锚 + 5 条测试 |
+
+**测试**：Cloud 1333 → **1355 / 65 files**（cimd 197 / proxy 28 / pinned 28）。
+**变异 12/12 被抓**。结论：允许进入 C3c-3（附两个条件，见复审报告 §10）。
+
+复审报告：`cloud/docs/reviews/phase-1.3.1-c3c-2-r2-security-review.md`；
+修复报告：`cloud/docs/implementation/phase-1.3.1-c3c-2-r2-remediation-report.md`。

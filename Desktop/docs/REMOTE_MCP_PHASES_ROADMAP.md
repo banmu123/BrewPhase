@@ -1575,6 +1575,36 @@ Discovery 与 Desktop OAuth 用例全部原位通过。
 
 **未证明**：目标侧 TLS 握手仍只有代码审查（需要受信任证书 + 443，未放宽端口）。
 
+### 3.23 1.3.1-C3c-2-R2 已完成（独立安全复审）
+
+复审不接受 R1 自审结论，重读源码 + 探针验证，发现并修复 **3 个 Medium / 4 个 Low**
+（另补 1 个验证缺口）：
+
+| 编号 | 严重性 | 问题 | 修法 |
+|---|---|---|---|
+| F1 | Medium | 总超时只 destroy request，建连/等 CONNECT 的代理 socket 无人清理（实测 `getConnections()===1`） | `AbortSignal` 贯穿 `openTunnel` 全窗口；单次 settle |
+| F2 | Medium | JWK 私钥成员漏 `oth`（RFC 7518 §6.2.2） | 8 个成员逐个覆盖 |
+| F3 | Medium | `client_uri` / `logo_uri` 只判 `typeof string` | `validateInformationalUri`：https / 无 userinfo / ≤2048，失败即文档非法 |
+| F4 | Low | RFC 6890 缺 AS112-v4 / AMT / AS112 direct / AS112-v6 | 补 4 段 |
+| F5 | Low | `sendConnect` 走 `http.globalAgent`（池名默认 `localhost:80`） | 每次隧道专用 agent |
+| F6 | Low | resolver 同步抛错逃出「不抛异常」契约 | 映射 `transient/dns_failure` |
+| F7 | Low | `client_id` / `client_name` 无长度上限 | 2048 / 256 |
+| F8 | Info | 目标侧 TLS 无端到端证明（R1 自认） | `ca` 信任锚 + 5 条端到端测试 |
+
+**端到端证据**：直连与 HTTPS 代理两条路径都证明「连接打到 pinned IP、SNI/Host/证书
+校验用原始域名」；不传 `ca` 时自签名证书必须被拒；代理证书失败时 CONNECT 一个字节
+都不发；代理 502 时目标服务器 0 连接。
+
+**变异 12/12 被抓**（DNS 截止、代理 TCP 超时、HTTPS 代理改明文、关闭目标证书校验、
+SNI 换成 IP、删 IPv6 白名单、IPv4 私有段漏判、JWK oth、503/429 判 terminal、
+删 5 KiB destroy、总超时不清理 socket）。
+
+**门禁**：Cloud **1355 passed / 65 files**（1333 → +22）；Desktop 1265 / 89 不变。
+无迁移、无新依赖、未接入 authorize。
+
+**结论**：允许进入 C3c-3，条件是复审接受 `PinnedRequestOptions.ca`，且接入前先定义
+「transient / terminal 对已有缓存与 refresh token 的处置」。
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、

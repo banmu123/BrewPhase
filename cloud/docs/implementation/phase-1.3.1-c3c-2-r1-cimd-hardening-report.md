@@ -16,6 +16,17 @@
 | 远程 HEAD | 需核对 | `139731f`（`ls-remote` 实读） | ✅ 未假设 |
 | 工作区 | 不得覆盖未提交修改 | 干净 | ✅ |
 
+**提交链路（R2 复审时补记，避免「远程 HEAD 仍是 139731f」的过期读法）**
+
+| 节点 | SHA | 说明 |
+|---|---|---|
+| C3c-2 起始基线 | `139731f` | 本报告编写时的 HEAD |
+| R1 代码提交 | `cb2e68c` | `fix(cloud): harden CIMD fetcher network and failure boundaries` |
+| R1 文档提交 | `92148bf` | `docs(cloud): record CIMD fetcher security hardening`（R1 终态） |
+| R2 审查基线 | `92148bf` | R2 复审的起点 |
+
+上面的「远程 HEAD = `139731f`」只描述**开工时**的事实；R1 交付后远程 HEAD 已是 `92148bf`。
+
 ---
 
 ## 2. 修改文件清单
