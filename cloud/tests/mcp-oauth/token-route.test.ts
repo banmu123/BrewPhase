@@ -9,6 +9,8 @@ import {
   postTokenRaw,
   readTokenResponse,
   refreshToken,
+  refreshRows,
+  sessionCount,
   type AuthCodeFixture,
 } from "../helpers/mcp-token.js";
 
@@ -101,6 +103,285 @@ describe("表单格式", () => {
   it("GET 不提供服务（不是 200）", async () => {
     const res = await h.app.request("/mcp/oauth/token");
     expect(res.status).not.toBe(200);
+  });
+});
+
+/**
+ * 请求体边界（Phase 1.3.1-C3a-R1）。
+ *
+ * 要修的三件事：用 `.length`（UTF-16 码元）冒充字节数、先整体读入再判大小、
+ * 以及 `startsWith` 放行 `…-evil` 后缀的媒体类型。每一条都用真实请求打路由，
+ * 并且**验证数据库状态**——只断言 400 无法区分「拒绝了」与「拒绝了但已经
+ * 把授权码烧掉了」。
+ */
+
+interface RawRequestOptions {
+  body: string | Uint8Array;
+  /** 传 `null` 表示不带 Content-Type。 */
+  contentType?: string | null;
+  contentLength?: string;
+}
+
+async function postRawRequest(
+  h: McpOAuthHarness,
+  options: RawRequestOptions,
+): Promise<Response> {
+  const headers: Record<string, string> = {};
+  if (options.contentType !== null) {
+    headers["content-type"] = options.contentType ?? "application/x-www-form-urlencoded";
+  }
+  if (options.contentLength !== undefined) {
+    headers["content-length"] = options.contentLength;
+  }
+  return h.app.request("/mcp/oauth/token", {
+    method: "POST",
+    headers,
+    body: options.body as NonNullable<RequestInit["body"]>,
+  });
+}
+
+/** 授权码是否已被消费（读库，不读响应）。 */
+async function codeConsumed(): Promise<boolean> {
+  const rows = await handle.sql<{ count: string }[]>`
+    select count(*)::text as count from mcp_auth_codes where consumed_at is not null`;
+  return Number(rows[0]?.count ?? "0") > 0;
+}
+
+/** 针对某枚授权码的完整表单。 */
+function formFor(target: AuthCodeFixture): string {
+  return new URLSearchParams({
+    grant_type: "authorization_code",
+    code: target.code,
+    client_id: target.clientId,
+    redirect_uri: target.redirectUri,
+    code_verifier: target.verifier,
+    resource: "https://gateway.example/mcp",
+  }).toString();
+}
+
+/** 一条「本来能成功」的表单，附上任意 padding。 */
+function paddedForm(padding: string): string {
+  return `${formFor(fixture)}&pad=${padding}`;
+}
+
+describe("请求体字节上限", () => {
+  it("小于 8 KiB 的请求仍然可以兑换（上限没有被改小）", async () => {
+    // 8 KiB 减去表单本身的长度，留一点余量，确保仍在限内。
+    const res = await postRawRequest(h, { body: paddedForm("p".repeat(7000)) });
+    expect(res.status).toBe(200);
+    expect(await codeConsumed()).toBe(true);
+  });
+
+  it("UTF-8 实际字节数超限、但字符串长度没超 → 拒绝（.length 不能当字节）", async () => {
+    // 3000 个汉字：JS 字符串长度 3000（< 8192），实际 UTF-8 9000 字节（> 8192）。
+    const padding = "汉".repeat(3000);
+    const body = paddedForm(padding);
+    expect(body.length).toBeLessThan(8192);
+    expect(Buffer.byteLength(body, "utf8")).toBeGreaterThan(8192);
+
+    const res = await postRawRequest(h, { body });
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toBe("invalid_request");
+
+    // 关键：拒绝必须发生在任何写入之前。
+    expect(await codeConsumed()).toBe(false);
+    expect(await sessionCount(handle, fixture.userId)).toBe(0);
+    expect(await refreshRows(handle, fixture.userId)).toHaveLength(0);
+  });
+
+  it("没有 Content-Length 时按实际流累计截断", async () => {
+    // `app.request` 不会自动带 content-length，所以这条走的就是流累计路径。
+    const body = paddedForm("p".repeat(9000));
+    const res = await postRawRequest(h, { body });
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toBe("invalid_request");
+    expect(await codeConsumed()).toBe(false);
+    expect(await sessionCount(handle, fixture.userId)).toBe(0);
+  });
+
+  it("Content-Length 声称超限 → 提前拒绝（不读 body）", async () => {
+    const res = await postRawRequest(h, {
+      body: "grant_type=authorization_code",
+      contentLength: "9000",
+    });
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toBe("invalid_request");
+    expect(await codeConsumed()).toBe(false);
+  });
+
+  it("Content-Length 撒谎（声称 10，实际超限）→ 仍按实际字节拒绝", async () => {
+    const body = paddedForm("p".repeat(9000));
+    const res = await postRawRequest(h, { body, contentLength: "10" });
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toBe("invalid_request");
+    expect(await codeConsumed()).toBe(false);
+    expect(await sessionCount(handle, fixture.userId)).toBe(0);
+    expect(await refreshRows(handle, fixture.userId)).toHaveLength(0);
+  });
+
+  it("Content-Length 不是合法字节数（空 / 负数 / 小数 / 科学计数）→ 拒绝", async () => {
+    // 同样用**完整合法表单**：这样「返回 400」只可能来自 header 校验，
+    // 而不是来自「body 解析后缺字段」。
+    for (const value of ["", "-1", "1.5", "1e3", "12abc"]) {
+      const res = await postRawRequest(h, { body: formFor(fixture), contentLength: value });
+      expect(res.status, value).toBe(400);
+      expect(await errorOf(res), value).toBe("invalid_request");
+    }
+    // 五条都没通过 header 校验，授权码不能被消费。
+    expect(await codeConsumed()).toBe(false);
+  });
+
+  it("超限后立刻停止读取（不把整个 body 拉进内存）", async () => {
+    // 1 MiB 的流式 body。若实现是「先读完再判大小」，这里的 `pulled` 会到
+    // 1 MiB；正确实现只可能拉到略多于 8 KiB（允许一个 chunk 的超出）。
+    const chunk = new Uint8Array(1024).fill(0x61);
+    const maxPulled = 1024 * 1024;
+    let pulled = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pulled >= maxPulled) {
+          controller.close();
+          return;
+        }
+        pulled += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+    });
+
+    const res = await h.app.request("/mcp/oauth/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: stream,
+      // undici 对「流式请求体」要求显式声明半双工。
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
+
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toBe("invalid_request");
+    // 下限：必须真的读到超过上限才停（否则「根本没读」也会让上界通过）。
+    expect(pulled).toBeGreaterThan(8192);
+    // 上限 8192 + 一个 1024 的 chunk 已经是宽松上界；读满 1 MiB 必然失败。
+    expect(pulled).toBeLessThanOrEqual(9 * 1024);
+    expect(await codeConsumed()).toBe(false);
+  });
+
+  it("恰好 8192 字节仍然接受（上限是「大于」才拒）", async () => {
+    const base = paddedForm("");
+    const padLength = 8192 - Buffer.byteLength(base, "utf8");
+    expect(padLength).toBeGreaterThan(0);
+    const body = paddedForm("p".repeat(padLength));
+    expect(Buffer.byteLength(body, "utf8")).toBe(8192);
+
+    const res = await postRawRequest(h, { body });
+    expect(res.status).toBe(200);
+  });
+
+  it("8193 字节被拒绝（边界只差一个字节）", async () => {
+    const base = paddedForm("");
+    const padLength = 8193 - Buffer.byteLength(base, "utf8");
+    const res = await postRawRequest(h, { body: paddedForm("p".repeat(padLength)) });
+    expect(res.status).toBe(400);
+    expect(await codeConsumed()).toBe(false);
+  });
+});
+
+describe("Content-Type 严格解析", () => {
+  it("charset 参数（大小写混合、带引号、无空格）都被接受", async () => {
+    for (const contentType of [
+      "application/x-www-form-urlencoded; charset=UTF-8",
+      "application/x-www-form-urlencoded;charset=utf-8",
+      'application/x-www-form-urlencoded; charset="UTF-8"',
+      "APPLICATION/X-WWW-FORM-URLENCODED; Charset=Utf-8",
+    ]) {
+      // 每次换一枚新授权码：授权码一次性，复用会让后续迭代变成 invalid_grant，
+      // 那样「200」就永远不可能出现，断言会空转。
+      const fresh = await obtainAuthCode(h);
+      const res = await postRawRequest(h, { body: formFor(fresh), contentType });
+      expect(res.status, contentType).toBe(200);
+    }
+  });
+
+  it("charset 合法 → 200（用独立授权码验证真的解析成功）", async () => {
+    const fresh = await obtainAuthCode(h);
+    const body = new URLSearchParams({
+      grant_type: "authorization_code",
+      code: fresh.code,
+      client_id: fresh.clientId,
+      redirect_uri: fresh.redirectUri,
+      code_verifier: fresh.verifier,
+      resource: "https://gateway.example/mcp",
+    }).toString();
+
+    const res = await postRawRequest(h, {
+      body,
+      contentType: "application/x-www-form-urlencoded; charset=UTF-8",
+    });
+    expect(res.status).toBe(200);
+    const tokens = await readTokenResponse(res);
+    expect(tokens.token_type).toBe("Bearer");
+  });
+
+  it("非法媒体类型后缀 → 拒绝（不是 startsWith 就放行）", async () => {
+    for (const contentType of [
+      "application/x-www-form-urlencoded-evil",
+      "application/x-www-form-urlencodedx",
+      "application/x-www-form-urlencoded;",
+      "application/x-www-form-urlencoded; charset=utf-8;",
+      "application/x-www-form-urlencoded; charset",
+      "application/x-www-form-urlencoded; charset=iso-8859-1",
+      "application/x-www-form-urlencoded; boundary=x",
+      "application/x-www-form-urlencoded, application/json",
+      "text/plain",
+      "application/json",
+      "multipart/form-data; boundary=x",
+    ]) {
+      const res = await postTokenRaw(h, formFor(fixture), contentType);
+      expect(res.status, contentType).toBe(400);
+      expect(await errorOf(res), contentType).toBe("invalid_request");
+    }
+    // 一个都没成功，授权码自然也不能被消费。
+    expect(await codeConsumed()).toBe(false);
+  });
+
+  it("缺 Content-Type → 拒绝", async () => {
+    const res = await postRawRequest(h, { body: formFor(fixture), contentType: null });
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toBe("invalid_request");
+    expect(await codeConsumed()).toBe(false);
+  });
+});
+
+describe("UTF-8 严格解码", () => {
+  it("非法 UTF-8 字节序列 → invalid_request（不替换成 U+FFFD）", async () => {
+    // **完整合法表单** + 尾部非法字节（0xFF 0xFE 在 UTF-8 里不是合法起始/延续）。
+    //
+    // 这一点很关键：如果只发 `grant_type=…` 这一段，宽松解码之后仍然会死在
+    // 「缺 client_id」上，错误码同为 invalid_request——两种实现就区分不出来了。
+    // 表单必须是「除了解码之外一切正常」，断言才有意义。
+    const head = Buffer.from(`&note=`, "utf8");
+    const bytes = new Uint8Array(
+      Buffer.concat([Buffer.from(formFor(fixture), "utf8"), head, Buffer.from([0xff, 0xfe])]),
+    );
+    const res = await postRawRequest(h, { body: bytes });
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toBe("invalid_request");
+    expect(await codeConsumed()).toBe(false);
+  });
+
+  it("被截断的多字节序列（半个汉字）同样拒绝", async () => {
+    const body = Buffer.from(`code=${fixture.code}&x=`, "utf8");
+    const partial = Buffer.from("汉", "utf8").subarray(0, 2);
+    const res = await postRawRequest(h, { body: new Uint8Array(Buffer.concat([body, partial])) });
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toBe("invalid_request");
+    expect(await codeConsumed()).toBe(false);
+  });
+
+  it("合法 UTF-8（含中文值）不会因为严格解码被误拒", async () => {
+    // 中文出现在一个未知字段里：解析要成功，兑换也要成功（未知参数被忽略）。
+    const body = `${paddedForm("值")}&note=烘焙`;
+    const res = await postRawRequest(h, { body });
+    expect(res.status).toBe(200);
   });
 });
 

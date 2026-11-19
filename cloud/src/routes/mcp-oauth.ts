@@ -908,6 +908,129 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
 const MAX_TOKEN_BODY_BYTES = 8 * 1024;
 /** 表单字段的长度上限（授权码 / refresh token 都是 43 字符，512 足够）。 */
 const MAX_TOKEN_FIELD_LENGTH = 512;
+const FORM_CONTENT_TYPE = "application/x-www-form-urlencoded";
+
+/**
+ * 严格解析 `Content-Type`（Phase 1.3.1-C3a-R1）。
+ *
+ * 原来的 `startsWith("application/x-www-form-urlencoded")` 会接受
+ * `application/x-www-form-urlencoded-evil`——一个完全不同（且未注册）的媒体
+ * 类型，只因为前缀相同就被当成表单。这里按 RFC 9110 的结构解析：
+ *
+ * ```
+ * type "/" subtype *( OWS ";" OWS parameter )
+ * parameter = token "=" ( token / quoted-string )
+ * ```
+ *
+ * 规则：
+ * - 类型必须**逐字符**等于 `application/x-www-form-urlencoded`（大小写不敏感）；
+ * - 参数只允许 `charset`，且值必须是 `utf-8`（大小写不敏感，可带引号）；
+ * - 空参数（尾随 `;`、`;;`）、缺 `=`、未知参数名、未知 charset 一律拒绝。
+ *
+ * 只允许 `utf-8` 是因为下面的解码器就是 UTF-8；接受 `charset=iso-8859-1`
+ * 然后按 UTF-8 解码，等于对同一段字节给出两种解释。
+ */
+function isFormContentType(raw: string | undefined): boolean {
+  if (raw === undefined || raw.length === 0) return false;
+
+  const segments = raw.split(";");
+  if ((segments[0] ?? "").trim().toLowerCase() !== FORM_CONTENT_TYPE) return false;
+
+  for (const segment of segments.slice(1)) {
+    const param = segment.trim();
+    // 空参数说明头本身有语法错误（`…;` / `…;;charset=utf-8`）。
+    if (param.length === 0) return false;
+    const eq = param.indexOf("=");
+    if (eq <= 0) return false;
+    const name = param.slice(0, eq).trim().toLowerCase();
+    let value = param.slice(eq + 1).trim();
+    if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+      value = value.slice(1, -1);
+    }
+    if (name !== "charset") return false;
+    if (value.toLowerCase() !== "utf-8") return false;
+  }
+  return true;
+}
+
+/**
+ * 有界读取请求体（Phase 1.3.1-C3a-R1）。
+ *
+ * 三条约束，缺一不可：
+ *
+ * 1. **按字节而不是按字符计数**。`body.length` 是 UTF-16 码元数，一个汉字算
+ *    1 而实际占 3 字节——用它做上限，攻击者可以把 8 KiB 的配额放大三倍。
+ * 2. **在读取过程中截断**。先 `c.req.text()` 再判大小意味着先把任意大的请求
+ *    读进内存，上限只在事后生效（正是要修的问题）。
+ * 3. **`Content-Length` 只作为早退优化，不作为判据**。它可以缺失、可以撒谎；
+ *    真正的判据是累计读到的字节数。
+ *
+ * 超限时 `cancel()` 掉 reader：剩下的字节不再消费，也不留在流里。
+ */
+async function readBoundedBody(c: Context, maxBytes: number): Promise<Uint8Array> {
+  const declared = c.req.header("content-length");
+  if (declared !== undefined) {
+    // RFC 9110：`Content-Length = 1*DIGIT`。**必须逐字符校验**——`Number()` 太宽容：
+    // `Number("")` 是 0（空头会被当成「零字节」放行）、`Number("0x10")` 是 16、
+    // `Number("1e3")` 是 1000。这些都不是合法的 Content-Length。
+    if (!/^\d+$/.test(declared)) {
+      throw invalidRequest("content-length is not a valid byte count");
+    }
+    if (Number(declared) > maxBytes) throw invalidRequest("request body is too large");
+  }
+
+  const body = c.req.raw.body;
+  if (body === null) return new Uint8Array(0);
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let completed = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        completed = true;
+        break;
+      }
+      total += value.byteLength;
+      if (total > maxBytes) throw invalidRequest("request body is too large");
+      chunks.push(value);
+    }
+  } finally {
+    if (!completed) {
+      // 不读完剩余字节：既省带宽，也让「超大请求」无法靠慢速续传拖住连接。
+      await reader.cancel().catch(() => undefined);
+    }
+    try {
+      reader.releaseLock();
+    } catch {
+      // 已 cancel 的 reader 可能不允许再释放锁；此处无副作用需要处理。
+    }
+  }
+
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return merged;
+}
+
+/**
+ * 按 UTF-8 严格解码。非法字节序列 **fail-closed**，不替换成 U+FFFD。
+ *
+ * 宽松解码会把「一段垃圾字节」变成一串看似正常（但被悄悄改过）的参数值——
+ * 那是比 400 更糟的结果：请求被接受，内容却不是客户端发的。
+ */
+function decodeFormBody(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw invalidRequest("request body is not valid UTF-8");
+  }
+}
 
 /**
  * 解析 token 请求的表单。
@@ -917,15 +1040,14 @@ const MAX_TOKEN_FIELD_LENGTH = 512;
  * 拒绝重复字段，而不是挑一个。
  */
 async function parseTokenForm(c: Context): Promise<Map<string, string>> {
-  const contentType = (c.req.header("content-type") ?? "").toLowerCase();
-  if (!contentType.startsWith("application/x-www-form-urlencoded")) {
+  if (!isFormContentType(c.req.header("content-type"))) {
     throw invalidRequest("content-type must be application/x-www-form-urlencoded");
   }
 
-  const body = await c.req.text();
-  if (body.length > MAX_TOKEN_BODY_BYTES) {
-    throw invalidRequest("request body is too large");
-  }
+  // 顺序固定：先按字节截断，再解码。反过来会让「非法 UTF-8」与「超限」
+  // 互相掩盖——两条拒绝理由里必须只有一条成立。
+  const bytes = await readBoundedBody(c, MAX_TOKEN_BODY_BYTES);
+  const body = decodeFormBody(bytes);
 
   const params = new URLSearchParams(body);
   const values = new Map<string, string>();
