@@ -1117,4 +1117,75 @@ Cloud `typecheck` / `lint` / `build` 通过，`pnpm test` **1016 passed / 61 fil
 
 ### 25.5 状态
 
-C3a（含 R1 / R2）完成。**C3b 未开始。**
+C3a（含 R1 / R2）完成。C3b 由 §26 交付。
+
+---
+
+## 26. Phase 1.3.1-C3b：Token Revocation（已交付）
+
+`POST /mcp/oauth/revoke`（RFC 7009）。撤销单位是 **Session**，不是 Grant。
+
+### 26.1 交付物
+
+| 项 | 落点 |
+|---|---|
+| 路由 | `cloud/src/routes/mcp-oauth.ts`：`POST /mcp/oauth/revoke` + 独立限流桶 `mcp-revoke` |
+| 业务层 | `cloud/src/mcp-oauth/revoke-flow.ts`（`revokeToken`） |
+| 错误码 | `unsupported_token_type`（400） |
+| 表单 | 复用 `parseTokenForm()`（8 KiB / 512 字符 / 重复字段 / 严格媒体类型） |
+| 撤销 | 复用 `revokeMcpSession({ reason: "client_revoke" })` |
+| 迁移 | **无** |
+
+### 26.2 响应
+
+| 输入 | 结果 |
+|---|---|
+| 有效 Refresh Token（未消费、未过期、Session active） | 200 空体 |
+| 随机 / 不存在 / 已消费旧代 / 已过期 / Session 已撤销或已过期 | 200 空体 |
+| 有效 MCP Access JWT | 400 `unsupported_token_type` |
+| 缺 token / 重复字段 / 媒体类型错 / 超限 | 400 `invalid_request` |
+
+无效 Token 一律 200（RFC 7009 §2.2）——区分原因会把端点变成存在性探针。
+所有响应（含 400）带 `no-store` + `no-cache`。
+
+### 26.3 Session / Grant 隔离（核心证据）
+
+B 组用「同一个 Grant 下的两个 Session」验证：
+
+- 撤 A：A 的 `revoked_at` 写入、`revoked_reason = client_revoke`；**B 仍 active**；
+- `mcp_grants` 的 `scopes` / `epoch` / `revoked_at` 逐字段不变；
+- `auth_sessions`（Desktop）零写入；
+- 两行 Session 都还在，`user_id` / `grant_id` 归属不变；
+- 撤销别的 client 的会话时，本 client 不受影响。
+
+**RFC 7009 §2.1 SHOULD 偏离**：RFC 建议撤销 Refresh 时连带失效该授权下的
+Access Token。本项目以 Session 为凭证家族边界，`/mcp` 按 `sid` 回查状态，
+所以「连带失效」的**效果**成立，但不走撤销 Grant 这条更粗的路径。
+
+### 26.4 `token_type_hint`
+
+只当提示：先查 Refresh 哈希（唯一索引），未命中才验 Access JWT。因此 Hint
+缺失 / 未知 / 写成 `access_token` 都不影响正确撤销；反过来先验 JWT 会让每个
+无效 token 都花一次签名验证。
+
+### 26.5 测试与变异
+
++31 条（Cloud 1016 → **1047 / 62 files**）：协议面 10、Session 隔离 3、
+Token 生命周期 7、Hint 7、并发与审计 3、服务层幂等 1。
+
+> 服务层幂等那条是刻意的：路由在调用前先判 `getMcpSessionState()`，所以
+> 「重复撤销」在 HTTP 层提前返回，测不到 `revokeMcpSession` 自己的
+> `WHERE revoked_at IS NULL`。直接打服务层才钉得住。
+
+变异 7/7：删 `revoked_at IS NULL`、扩大成 Grant 批量撤销、不查 `consumed_at`、
+不查 `expires_at`、无效 Token 返 400、错误响应回显 Token、重复撤销仍写审计。
+
+### 26.6 门禁
+
+Cloud `typecheck` / `lint` / `build` 通过，`pnpm test` **1047 passed / 62 files**；
+Desktop `typecheck` / `test` / `build` / `mcp:build` 通过，**1265 passed / 89 files**，
+`stdio.mjs` 911.67 kB 不变。**无新增迁移、未改 Desktop 生产代码。**
+
+### 26.7 状态
+
+C3b 完成。**C3c 未开始**（PRM、AS Metadata、CIMD、DCR）。

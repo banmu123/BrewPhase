@@ -381,7 +381,7 @@ SSE 而解析失败；若只说「返回 SSE」，modern 客户端会等不到�
 | `GET` | `/mcp/oauth/consent` | 渲染同意页（HTML）；每次渲染轮换 CSRF（C2b 已实现） | 浏览器 Cookie（绑定）+ 行内 `user_id` |
 | `POST` | `/mcp/oauth/consent` | 批准 / 拒绝 → upsert grant + 签 60s code + 删行（**同一事务**）→ 302 回 `redirect_uri`（C2b 已实现） | 浏览器 Cookie + CSRF |
 | `POST` | `/mcp/oauth/token` | `authorization_code` 兑换（单事务：消费码 + 建 Session + 初代 Refresh）、`refresh_token` 轮换（C3a 已实现，见 §5.11） | 无（PKCE / refresh 本身就是凭据） |
-| `POST` | `/mcp/oauth/revoke` | RFC 7009；只撤 refresh 所属 **session**，不撤 grant | 无（token 即凭据） |
+| `POST` | `/mcp/oauth/revoke` | RFC 7009；只撤 refresh 所属 **session**，不撤 grant（C3b 已实现，见 §5.12） | 无（token 即凭据） |
 | `GET` | `.well-known/oauth-protected-resource` | PRM | 无 |
 | `GET` | `.well-known/oauth-authorization-server` | AS 元数据 | 无 |
 | `POST` | `/mcp/oauth/register` | DCR（**默认关闭**） | 无 |
@@ -981,6 +981,74 @@ JavaScript 字符单位即 `invalid_request`**，在进入业务流程之前完�
 **Content-Type 参数不能重复**（`charset=utf-8; charset=UTF-8` 一律拒绝，即使
 两处值完全相同）：两个解析器各取一个就是两种行为，重复声明意味着这个头没有
 确定含义。`Charset` 与 `charset` 视为同名（大小写不敏感）。
+
+### 5.12 Token Revocation（1.3.1-C3b 已落地）
+
+`POST /mcp/oauth/revoke`，RFC 7009。表单与 Token Endpoint **共用同一个**
+`parseTokenForm()`：只收 urlencoded、≤ 8192 字节、单字段 ≤ 512 字符、
+任何字段重复即 `invalid_request`、不读任何 Cookie。
+
+#### 5.12.1 撤销粒度：Session，不是 Grant
+
+```
+refresh_token → sha256(pepper, "mcp-refresh", token) → mcp_refresh_tokens
+  → session_id → mcp_sessions.id → UPDATE … WHERE id = ? AND revoked_at IS NULL
+```
+
+| 受影响 | 不受影响 |
+|---|---|
+| 这一条 Session（`revoked_at` + `revoked_reason = client_revoke`） | 同 Grant 下的**其它** Session |
+| 该 Session 签出的全部 Access JWT（`/mcp` 按 `sid` 回查状态） | `mcp_grants` 的任何列（scope / epoch / revoked_at） |
+| — | Desktop `auth_sessions` 与 `/oauth/*` 全流程 |
+| — | 其它 MCP 客户端 |
+
+**对 RFC 7009 §2.1 一处 SHOULD 的有意偏离**：RFC 建议撤销 Refresh Token 时
+「一并使其授权下的 Access Token 失效」。本项目的凭证家族边界是 **Session**，
+而 `/mcp` 每次请求都按 `sid` 回查 Session 状态——Session 一被撤销，它签出的
+所有 Access JWT 立刻不可用。也就是说 SHOULD 的**效果**满足了，但不通过
+「撤销 Grant」这条更粗的路径实现：Grant 是用户的授权决定，一次客户端登出
+不该把用户在别处的授权一起清掉。设计 §9.11 的行为矩阵是这条策略的验收本体。
+
+#### 5.12.2 响应语义
+
+| 情况 | HTTP | 体 |
+|---|---:|---|
+| 有效且未消费、未过期、Session active 的 Refresh Token | 200 | 空 |
+| 随机值 / 不存在 / 已消费的历史代 / 已过期 | 200 | 空 |
+| Session 已撤销 / 已过期 | 200 | 空 |
+| 有效 **MCP Access JWT** | **400** `unsupported_token_type` | OAuth JSON 错误 |
+| 缺 `token` / 重复字段 / 媒体类型不对 / 超限 | 400 `invalid_request` | OAuth JSON 错误 |
+
+无效 Token 一律 200（RFC 7009 §2.2）：区分「不存在 / 过期 / 曾有效」会把端点
+变成存在性探针。所有响应（含 400）都带 `Cache-Control: no-store` + `Pragma: no-cache`。
+
+#### 5.12.3 `token_type_hint` 只当提示
+
+不按 Hint 分流：**先按 Refresh Token 哈希查一次**（唯一索引，O(1)），没命中才
+把它当 Access JWT 验一次。因此：
+
+- Hint 缺失 / 未知值 → 忽略，照常识别；
+- Hint 说 `access_token` 但实际给的是 Refresh Token → **仍然撤销**（RFC 7009 §2.1
+  明确要求不要只信 Hint）；
+- 反向顺序（先验 JWT）会让每个无效 Refresh Token 都付一次签名验证代价，
+  等于给攻击者一个 CPU 消耗点。
+
+#### 5.12.4 无效 Token 不产生数据库副作用
+
+- 已消费的历史代**不会**撤销它的 Session：否则「捡到旧 token 的人」就获得了
+  踢掉合法会话的能力。
+- Session 已过期时**不写** `revoked_at`：过期是时间的函数，不是一次事件。
+  写进去会让「撤销」与「到期」在审计上无法区分。
+- Session 行与 Refresh Token 历史行都不删除（重放检测需要它们）。
+- `revokeMcpSession()` 的条件更新（`WHERE revoked_at IS NULL`）保证并发/重复
+  撤销只真正发生一次，审计也只写一条。
+
+#### 5.12.5 限流与错误
+
+独立限流桶 `mcp-revoke`（复用 `rateLimit.maxToken`，不新增环境变量）；与
+`mcp-oauth` / `mcp-token` 互不影响。非 `AppError` 异常统一换成固定文案
+`serverError("token revocation failed")`：drizzle 的 message 带整条 SQL 与
+参数（这里就是 token 哈希），原样透出即凭据泄露。
 
 ## 6. Discovery 设计
 
@@ -1759,7 +1827,9 @@ CREATE UNIQUE INDEX "mcp_refresh_tokens_session_active_uq"
 > 严格媒体类型解析与严格 UTF-8 解码（§5.11.9）。
 > **1.3.1-C3a-R2 补齐字段面**：所有字段值（含 `scope` 与未知扩展）≤ 512 字符，
 > Content-Type 参数不得重复（§5.11.10）。
-> 余下第 10–15 条（revoke、discovery、CIMD、DCR）属 **C3b**，尚未实现。
+> **1.3.1-C3b 已交付第 10 条**（`POST /mcp/oauth/revoke`：Session 级撤销、
+> RFC 7009 响应语义与 `token_type_hint` 处理，§5.12）。
+> 余下第 11–15 条（discovery、CIMD、DCR）属 **C3c**，尚未实现。
 > 详见路线图 §3.8–§3.12 与索引 §19–§23。
 
 | # | 范围 | 验收 |
@@ -1773,7 +1843,7 @@ CREATE UNIQUE INDEX "mcp_refresh_tokens_session_active_uq"
 | 7 | `/mcp/oauth/login` + `/mcp/oauth/callback/:provider` | **MCP 专用回调**；TOFU 绑定；`findOrCreateUserWithIdentity` 建新用户；`provider_consumed_at` 一次性 |
 | 8 | `GET/POST /mcp/oauth/consent`（HTML，无前端框架） | 4 个 scope 逐项 + 可取消；显示 `client_name` 与 `redirect_uri` host；CSRF；拒绝走 `access_denied` |
 | 9 | `/mcp/oauth/token` 两分支（**C3a 已交付**） | code 一次性 + 60s；refresh 轮换；§9.10 矩阵 |
-| 10 | `/mcp/oauth/revoke` | 只撤 session，不撤 grant（§9.11 第 1 行） |
+| 10 | `/mcp/oauth/revoke`（**C3b 已交付**） | 只撤 session，不撤 grant（§9.11 第 1 行） |
 | 11 | CIMD 严格抓取器 | SSRF 用例全绿（私网/回环/重定向/超大/超时/非 JSON） |
 | 12 | PRM（root + path-inserted）与 AS 元数据 | `issuer` 与 URL 逐字符一致；`code_challenge_methods_supported` 存在；`authorization_response_iss_parameter_supported: true`；401 challenge **不带** `scope` |
 | 13 | `/mcp/oauth/register`（DCR，**默认关闭**） | 开关关闭时元数据不出现 `registration_endpoint` |

@@ -1149,6 +1149,68 @@ body，现在会先撞字段上限——改成按目标字节数精确拼多个 
 
 **C3b 未开始**（`/revoke`、PRM、AS Metadata、CIMD、DCR）。
 
+### 3.15 1.3.1-C3b 已交付（Token Revocation / RFC 7009）
+
+`POST /mcp/oauth/revoke` 落地。撤销粒度是 **Session**，不是 Grant——这是设计
+§9.11 第 1 行早已冻结的行为，本阶段只是把它实现出来并钉住。
+
+| 项 | 落点 |
+|---|---|
+| 路由 | `cloud/src/routes/mcp-oauth.ts`：`POST /mcp/oauth/revoke` + 独立限流桶 `mcp-revoke` |
+| 业务层 | `cloud/src/mcp-oauth/revoke-flow.ts`（`revokeToken`） |
+| 错误码 | `errors.ts` 新增 `unsupported_token_type`（400） |
+| 表单 | **复用** `parseTokenForm()`（8 KiB / 512 字符 / 重复字段 / 严格 Content-Type） |
+| 撤销 | **复用** `revokeMcpSession({ reason: "client_revoke" })`，条件更新 `WHERE revoked_at IS NULL` |
+| 迁移 | **无** |
+
+**响应语义**：
+
+| 情况 | 结果 |
+|---|---|
+| 有效未消费、未过期、Session active 的 Refresh Token | 200 空体 |
+| 随机值 / 不存在 / 已消费旧代 / 已过期 / Session 已撤销或已过期 | 200 空体（RFC 7009 §2.2：无效 Token 不产生错误） |
+| 有效 MCP Access JWT | 400 `unsupported_token_type` |
+| 缺 token / 重复字段 / 媒体类型错 / 超限 | 400 `invalid_request` |
+
+**对 RFC 7009 §2.1 的 SHOULD 偏离**：RFC 建议撤销 Refresh Token 时连带撤销该
+授权下的 Access Token。本项目以 Session 为凭证家族边界，`/mcp` 按 `sid` 回查
+状态——Session 撤销后它签出的所有 JWT 立即失效，SHOULD 的**效果**达成，但
+不走「撤销 Grant」这条更粗的路径（一次客户端登出不该清掉用户在别处的授权）。
+
+**`token_type_hint` 只当提示**：不按 Hint 分流，先查 Refresh 哈希、未命中才验
+Access JWT。因此 Hint 缺失 / 未知 / 甚至写成 `access_token` 都不影响正确撤销；
+反向顺序会给攻击者一个「每个无效 token 都换一次签名验证」的 CPU 消耗点。
+
+**无效 Token 无数据库副作用**：已消费的历史代不会撤销它的 Session（否则捡到
+旧 token 就能踢掉合法会话）；Session 已过期不写 `revoked_at`（过期不是事件）；
+Session 行与 Refresh Token 历史行一律不删。
+
+**顺带修掉 R2 遗留**：重复字段的错误文案从 `parameter ${key} must appear
+exactly once` 改成固定文案 `a parameter appears more than once`——字段名完全
+由请求方控制（可含换行），拼进 description 是日志注入面。
+
+**测试（+31，Cloud 1016 → 1047 / 62 files）**：
+
+| 组 | 条数 | 关键项 |
+|---|---:|---|
+| 协议面 | 10 | 缺/空 token、JSON、multipart、重复字段、8 KiB、512 字符、空体 + no-store、Query 不生效、Cookie 不参与 |
+| Session 级撤销（核心） | 3 | 同 Grant 两个 Session 只撤一个；Grant scope/epoch/revoked_at 全不变；Desktop `auth_sessions` 零写入；行不删除；跨 client 不受影响 |
+| Token 生命周期 | 7 | 随机 / 已消费旧代 / 已过期 / Session 已过期 / Session 已撤销 / 重复撤销，全部 200 且无副作用 |
+| `token_type_hint` | 7 | 四种 hint 都能撤 refresh；有效 JWT → 400 且不撤；过期 JWT → 200；Desktop JWT → 200 |
+| 并发与审计 | 3 | 并发撤销都 200、审计仅 1 条；审计无明文；DB 异常 → 500 固定文案、不泄 SQL/表名/token |
+| 服务层幂等 | 1 | 直接调 `revokeMcpSession` 两次：第二次 `revoked=false`、审计不重复 |
+
+**变异 7/7 被抓**：删 `revoked_at IS NULL`、扩大成 Grant 批量撤销、不查
+`consumed_at`、不查 `expires_at`、无效 Token 返 400、错误响应回显 Token、
+重复撤销仍写审计。
+
+**门禁**：Cloud `typecheck` / `lint` / `build` 通过，`pnpm test`
+**1047 passed / 62 files**；Desktop `typecheck` / `test` / `build` / `mcp:build`
+通过，**1265 passed / 89 files**，`stdio.mjs` 911.67 kB 不变。
+**无新增迁移、未改 Desktop 生产代码。**
+
+**C3c 未开始**（discovery / PRM / AS Metadata / CIMD / DCR）。
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、
