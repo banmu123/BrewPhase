@@ -382,8 +382,9 @@ SSE 而解析失败；若只说「返回 SSE」，modern 客户端会等不到�
 | `POST` | `/mcp/oauth/consent` | 批准 / 拒绝 → upsert grant + 签 60s code + 删行（**同一事务**）→ 302 回 `redirect_uri`（C2b 已实现） | 浏览器 Cookie + CSRF |
 | `POST` | `/mcp/oauth/token` | `authorization_code` 兑换（单事务：消费码 + 建 Session + 初代 Refresh）、`refresh_token` 轮换（C3a 已实现，见 §5.11） | 无（PKCE / refresh 本身就是凭据） |
 | `POST` | `/mcp/oauth/revoke` | RFC 7009；只撤 refresh 所属 **session**，不撤 grant（C3b 已实现，见 §5.12） | 无（token 即凭据） |
-| `GET` | `.well-known/oauth-protected-resource` | PRM | 无 |
-| `GET` | `.well-known/oauth-authorization-server` | AS 元数据 | 无 |
+| `GET` | `.well-known/oauth-protected-resource` | PRM（C3c-1 已实现，§6.1.1） | 无 |
+| `GET` | `.well-known/oauth-protected-resource/mcp` | PRM 的路径插入形式（内容同上） | 无 |
+| `GET` | `.well-known/oauth-authorization-server` | AS 元数据（C3c-1 已实现，§6.1.1） | 无 |
 | `POST` | `/mcp/oauth/register` | DCR（**默认关闭**） | 无 |
 
 **与 Desktop 登录的边界**（`/oauth/authorize` 那套）：
@@ -1192,6 +1193,41 @@ AS Metadata: https://<host>/.well-known/oauth-authorization-server
        "client_id_metadata_document_supported": true       ← 仅当启用 CIMD
      }
 ```
+
+### 6.1.1 已落地（C3c-1）
+
+上面两段 JSON 是**目标形态**。实际实现（`cloud/src/mcp-oauth/discovery.ts`
+
+- `cloud/src/routes/mcp-discovery.ts`）刻意只包含已经存在的能力：
+
+| 文档 | 路径 | 字段 |
+|---|---|---|
+| PRM | `/.well-known/oauth-protected-resource` **与** `/.well-known/oauth-protected-resource/mcp`（同一份） | `resource` / `authorization_servers` / `scopes_supported` / `bearer_methods_supported` |
+| AS Metadata | `/.well-known/oauth-authorization-server` | `issuer` / `authorization_endpoint` / `token_endpoint` / `revocation_endpoint` / `scopes_supported` / `response_types_supported` / `grant_types_supported` / `token_endpoint_auth_methods_supported` / `code_challenge_methods_supported` / `authorization_response_iss_parameter_supported` |
+
+**不声明**（都还没有实现）：
+
+| 字段 | 原因 |
+|---|---|
+| `registration_endpoint` | DCR 默认关闭，`/mcp/oauth/register` 是 404 |
+| `client_id_metadata_document_supported` | 严格 CIMD Fetcher 未实现 |
+| `introspection_endpoint` | RFC 7662 未实现 |
+| `userinfo_endpoint` | 没有用户信息端点 |
+| `jwks_uri` | HS256，没有 JWKS |
+
+**为什么两条 PRM 都要有**：RFC 9728 的路径插入形式是「资源 URI 带路径时」
+的标准查询方式。本项目的资源是 `https://<host>/mcp`，客户端可能先试
+`/.well-known/oauth-protected-resource/mcp`，也可能直接查根形式；两条返回
+同一份文档，`resource` 永远是 `https://<host>/mcp`（不是站点根）。
+
+**启用边界**：三条路由与 `/mcp/oauth/*` 同生共死——`resolveMcpOAuthEnablement()`
+不通过时它们根本不注册（404）。理由与授权路由一致：不能对外声明一个实际
+不可用的授权服务器。
+
+**Issuer 一致性**：`issuer` 直接取 `env.baseUrl`，不经过 `new URL().origin`
+归一化。`loadEnv()` 现在会在启动时拒绝带 path / query / fragment / userinfo 的
+`BASE_URL`——一旦允许，三处 issuer（JWT `iss`、授权响应 `iss`、metadata
+`issuer`）就只能靠元数据层归一化对齐，而那正是分歧的来源。
 
 ### 6.2 路径规则（含 issuer 带路径的情形）
 

@@ -1329,4 +1329,62 @@ Cloud **1081 passed / 62 files**；Desktop **1265 passed / 89 files**，
 
 ### 29.4 状态
 
-C3b（含 R1 / R2 / R2-R1）完成。**C3c 未开始。**
+C3b（含 R1 / R2 / R2-R1）完成。C3c-1 见 §30。
+
+---
+
+## 30. Phase 1.3.1-C3c-1：OAuth Discovery Metadata（已交付）
+
+### 30.1 三条路由
+
+| 路径 | 文档 |
+|---|---|
+| `/.well-known/oauth-protected-resource` | PRM（RFC 9728） |
+| `/.well-known/oauth-protected-resource/mcp` | PRM 的路径插入形式，**内容相同** |
+| `/.well-known/oauth-authorization-server` | AS Metadata（RFC 8414） |
+
+全部 GET、无认证、无 Cookie、不读数据库、不写审计。与 `/mcp/oauth/*`
+同生共死：`resolveMcpOAuthEnablement()` 不通过时三条都 404。
+
+实现：`cloud/src/mcp-oauth/discovery.ts`（纯函数）+ `cloud/src/routes/mcp-discovery.ts`。
+
+### 30.2 字段
+
+PRM：`resource = baseUrl + "/mcp"`（不是站点根）、`authorization_servers = [baseUrl]`、
+`scopes_supported = MCP_SCOPES`、`bearer_methods_supported = ["header"]`（不含
+`body` / `query`）。
+
+AS：`issuer` / `authorization_endpoint` / `token_endpoint` / `revocation_endpoint` /
+`scopes_supported` / `response_types_supported: ["code"]` /
+`grant_types_supported: ["authorization_code","refresh_token"]` /
+`token_endpoint_auth_methods_supported: ["none"]` /
+`code_challenge_methods_supported: ["S256"]` /
+`authorization_response_iss_parameter_supported: true`。
+
+**不声明**：`registration_endpoint`、`client_id_metadata_document_supported`、
+`introspection_endpoint`、`userinfo_endpoint`、`jwks_uri`。字段全集有测试钉住
+（多一个就红）。
+
+### 30.3 Issuer 一致性
+
+`issuer` 直接取 `env.baseUrl`，不归一化。`loadEnv()` 新增形态校验：带 path /
+query / fragment / userinfo 的 `BASE_URL` 直接拒绝启动（生产与开发同一套）。
+这样 JWT 的 `iss`、授权响应的 `iss`、metadata 的 `issuer` 只有一个来源。
+
+### 30.4 测试与变异
+
++29 条（Cloud 1081 → **1110 / 63 files**）：`discovery.test.ts` 26 条
+（PRM 8 / AS 12 / RFC 9207 iss 回归 4 / 启用边界 2 / 零副作用 1 组）、
+`env-production.test.ts` +3。
+
+变异 5/5：PRM resource 写成站点根、bearer 加 query、提前声明 DCR、
+成功响应去掉 iss、Discovery 脱离启用边界。
+
+### 30.5 门禁
+
+Cloud **1110 passed / 63 files**；Desktop **1265 passed / 89 files**，
+`stdio.mjs` 911.67 kB 不变。无新增迁移、无新增依赖、未改 Desktop 生产代码。
+
+### 30.6 状态
+
+C3c-1 完成。**C3c-2 未开始**（CIMD / DCR）。

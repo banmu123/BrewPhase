@@ -1359,6 +1359,64 @@ Access 分支全程只读：不调用 `revokeMcpSession()`，四个表零写入�
 通过，**1265 passed / 89 files**，`stdio.mjs` 911.67 kB 不变。
 **无新增迁移、无新增路由、未改 Desktop 生产代码。**
 
+### 3.19 1.3.1-C3c-1 已交付（OAuth Discovery Metadata）
+
+客户端现在能自己找到「资源要什么凭据、由谁签发」和「去哪里授权/换 token/撤销」。
+
+| 项 | 落点 |
+|---|---|
+| 纯函数 | `cloud/src/mcp-oauth/discovery.ts`（两个 builder，全部从 `env.baseUrl` 推导） |
+| 路由 | `cloud/src/routes/mcp-discovery.ts`：三条 GET，挂在 `mcpOAuth.enabled` 分支里 |
+| 启动校验 | `env.ts` 新增 `assertIssuerBaseUrl()`：`BASE_URL` 必须是纯 origin |
+| 迁移 | **无** |
+
+**PRM（RFC 9728）** 两条路径返回同一份文档：
+
+```
+/.well-known/oauth-protected-resource
+/.well-known/oauth-protected-resource/mcp      ← 路径插入形式
+{ resource: baseUrl + "/mcp",
+  authorization_servers: [baseUrl],
+  scopes_supported: MCP_SCOPES,
+  bearer_methods_supported: ["header"] }
+```
+
+`resource` 是 MCP 端点本身，不是站点根；`bearer_methods_supported` **不声明**
+`body` / `query`（撤销端点已经拒绝 Query 里的 token，元数据不能反过来说它能用）。
+
+**AS Metadata（RFC 8414）**：`/.well-known/oauth-authorization-server`，字段就是
+实现里真实存在的十个——`issuer` / 三个 endpoint / `scopes_supported` /
+`response_types_supported: ["code"]` / `grant_types_supported: [authorization_code,
+refresh_token]` / `token_endpoint_auth_methods_supported: ["none"]` /
+`code_challenge_methods_supported: ["S256"]` /
+`authorization_response_iss_parameter_supported: true`。
+
+**刻意不声明**：`registration_endpoint`（DCR 默认关闭，`/mcp/oauth/register` 是
+404）、`client_id_metadata_document_supported`（严格 CIMD Fetcher 未实现）、
+`introspection_endpoint`、`userinfo_endpoint`、`jwks_uri`（HS256，无 JWKS）。
+元数据是承诺：多写一个字段就是多一个客户端会去调用、而我们只能 404 的接口。
+
+**Issuer 一致性**：`issuer` 直接取 `env.baseUrl`。`loadEnv()` 新增形态校验，
+拒绝带 path / query / fragment / userinfo 的 `BASE_URL`（生产与开发同一套规则）
+——不做归一化，否则「metadata 的 issuer」与「JWT 的 iss」会变成两个字符串。
+
+**测试（+29，Cloud 1081 → 1110 / 63 files）**：
+
+| 文件 | 条数 | 覆盖 |
+|---|---:|---|
+| `discovery.test.ts` | 26 | PRM 两路径一致 / resource 精确 / scope 同源 / 只声明 header / 子路径 404；AS 十字段、三个 endpoint 真实存在（非 404）、不声明 DCR/CIMD/introspection/userinfo/jwks、字段全集；RFC 9207 三条 `iss` 回归（成功 / access_denied / server_error）与 issuer 一致；OAuth 关闭时三条 404 且 Desktop OAuth 仍可用；零副作用 |
+| `env-production.test.ts` | +3 | path / query / fragment / userinfo 拒绝；纯 origin 接受；非生产同样拒绝 |
+
+**变异 5/5 被抓**：PRM `resource` 写成站点根、`bearer_methods` 加 `query`、
+AS 元数据提前声明 DCR、成功响应去掉 `iss`、Discovery 脱离启用边界（3 条转红）。
+
+**门禁**：Cloud `typecheck` / `lint` / `build` 通过，`pnpm test`
+**1110 passed / 63 files**；Desktop `typecheck` / `test` / `build` / `mcp:build`
+通过，**1265 passed / 89 files**，`stdio.mjs` 911.67 kB 不变。
+**无新增迁移、无新增依赖、未改 Desktop 生产代码。**
+
+**C3c-2 未开始**（CIMD / DCR）。
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、
