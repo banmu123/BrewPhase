@@ -1636,6 +1636,48 @@ SNI 换成 IP、删 IPv6 白名单、IPv4 私有段漏判、JWK oth、503/429 �
 
 **范围**：无生产逻辑改动（仅两处注释）、无迁移、无依赖、未改 Desktop。
 
+### 3.25 1.3.1-C3c-3A-R1 已完成（接入契约复审与决策关闭）
+
+对 `b45809f` 的设计做第二轮独立审查。**没有生产逻辑改动**：只改设计文档与审查报告。
+
+**两处会产生真实后果的设计缺陷**：
+
+| # | 级别 | 问题 | 修法 |
+|---|---|---|---|
+| F1 | High | 初版只撤 Session、保留 Grant → 同意页仍显示「已授予」、step-up 继续继承 scope、`epoch` 因「scope 未变」不递增，Desktop 的 `(grantId, epoch)` 上下文被复用 | mismatch 同时撤销 Grant 与 Session；Grant 撤销时 `epoch + 1` |
+| F2 | High | 待完成授权请求与元数据刷新竞态：刷新删掉 `redirect_uri` 后，consent 仍会签发授权码并 302 到已删除的回调 | Consent GET/POST 双重复核注册；POST 在事务内 `FOR SHARE` 锁注册行 |
+
+**其余修订**：
+
+- **判定顺序修正**（F11，High）：初稿「长度 → 形态 → 查库」会把**所有预注册客户端**
+  拒掉（预注册 id 不是 URL，形态必然不合格）。改为「长度硬上限 → 查库 → 未命中才判
+  形态 → 身份冲突 → 抓取」，512 降为创建时约束。
+- **缓存冷却窗口改为 fail-closed**：初版「低于 30s 用旧 STALE」把 [ID §6.2 MAY]
+  （限流）误读成「可以用过期数据」。现在冷却内返回 503，`INVALID` 优先于 floor，
+  `no-cache` 明确为「永久 STALE、每次重抓」。
+- **身份冲突检查**（[ID §10.1 SHOULD]）：新增纯函数
+  `conflictsWithTrustedIdentifier()`，比对 issuer / MCP resource / 预留 peer 列表，
+  原始字符串精确比较，DNS 之前，terminal。
+- **CAS 精度实测**：真实 PG + Drizzle 证明「毫秒 JS Date 往返精确、CAS 命中 1 行」，
+  而 `now()` 的微秒被截断后 CAS **必然 0 行**；另外 postgres.js 3.4.9 不接受裸 `Date`
+  参数（`ERR_INVALID_ARG_TYPE`），CAS 谓词必须 `::timestamptz` 或 `eq()`。
+- **grant/response 默认值**：`grant_types` 省略按 RFC 7591 §2 取
+  `["authorization_code"]`（不再默认含 `refresh_token`）；`refresh_token` 需显式声明，
+  未声明则不签发。
+- **3B 与 1.3.3 的循环依赖**：3B 只实现、**不声明** `client_id_metadata_document_supported`；
+  真实客户端联调（1.3.3）之后再单独提交声明。
+- **审计命名统一**：`mcp_cimd_*` + `mcp_client_id_mismatch`；`client_id_mismatch`
+  只是 DB 取值，不是事件名；mismatch 不再额外写 `mcp_session_revoked`。
+- **同意页**：新增 `clientIdentifierHost`，与 `redirectHost` 分开渲染；继续不显示远程
+  logo（[ID §10.9 MUST] 的三个前置条件都未实现）。
+
+**验收矩阵**：22 → **44 条**（新增撤销 7、竞态 6、默认值与身份冲突 6、CAS 精度与并发 3）。
+
+**未决项全部关闭**：撤销 Grant（是）、迁移 0004（接受）、宿主机代理继承（允许但显式
+解析 + 脱敏记录）。
+
+**范围**：无生产逻辑改动、无迁移、无依赖、未改 Desktop、未声明能力。
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、

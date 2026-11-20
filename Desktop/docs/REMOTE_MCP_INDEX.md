@@ -1579,3 +1579,26 @@ C3c-2 完成（**未接入授权流程**），安全加固见 §33。
 
 设计：`cloud/docs/design/phase-1.3.1-c3c-3a-cimd-authorize-integration-contract.md`；
 审查：`cloud/docs/reviews/phase-1.3.1-c3c-3a-design-review.md`。
+
+---
+
+## 36. Phase 1.3.1-C3c-3A-R1：设计契约复审（已完成）
+
+基线 `b45809f`。两处 High 级设计缺陷被修正：
+
+| # | 问题 | 修法 |
+|---|---|---|
+| F1 | 只撤 Session → 旧 Grant 被静默继承（同意页显示已授予、step-up 继承 scope、`epoch` 不变） | Grant + Session 一起撤，Grant `epoch + 1` |
+| F2 | 授权请求固化 `redirect_uri` 后，刷新删掉它仍会签发授权码 | Consent GET/POST 双重复核，POST 用 `FOR SHARE` 锁注册行 |
+
+其余：判定顺序改为「查库优先于形态」（初稿会把所有预注册客户端拒掉）、
+冷却窗口改 fail-closed（503，不再用旧 STALE）、`INVALID` 优先于 floor、
+`no-cache` = 永久 STALE；新增身份冲突检查（issuer / resource，DNS 之前）；
+`grant_types` 默认按 RFC 7591 取 `["authorization_code"]`；CAS 精度实测（毫秒精确 /
+`now()` 必失配 / 裸 `Date` 会抛错）；审计命名统一；同意页分离
+`clientIdentifierHost` 与 `redirectHost`；3B 不声明能力，声明留到 1.3.3 之后。
+
+验收矩阵 22 → **44 条**。三个初版未决项全部关闭。
+
+设计（v2）：`cloud/docs/design/phase-1.3.1-c3c-3a-cimd-authorize-integration-contract.md`；
+R1 审查：`cloud/docs/reviews/phase-1.3.1-c3c-3a-r1-design-review.md`。

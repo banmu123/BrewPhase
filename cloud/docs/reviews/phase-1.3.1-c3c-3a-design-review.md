@@ -1,6 +1,10 @@
 # BrewPhase Phase 1.3.1-C3c-3A — 设计审查报告
 
 > 日期：2026-11-20 · 分支：`feature/remote-mcp` · HEAD `6c20908`
+> **后续修订：本报告的 §8「仍未解决的问题」已由
+> `phase-1.3.1-c3c-3a-r1-design-review.md` 全部关闭（2026-11-20，基线 `b45809f`）。
+> 其中 D6（只撤 Session）与 §5.3 的撤销语义已在 R1 被推翻并改写——原文保留作历史记录，
+> 阅读时以 R1 报告与设计文档 v2 为准。**
 > 性质：设计审查 / 规范对齐 / 架构决策 / 测试契约冻结。
 > **没有生产逻辑改动**（唯一的源码编辑是两处注释，见 §7）。
 > 设计正文：`docs/design/phase-1.3.1-c3c-3a-cimd-authorize-integration-contract.md`
