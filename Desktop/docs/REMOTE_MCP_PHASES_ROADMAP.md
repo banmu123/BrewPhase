@@ -1944,6 +1944,30 @@ guards 10 / session-grant 10 / scope 11 / forwarding 8 / logging 3 / schema 6）
 
 **报告**：`cloud/docs/reviews/phase-1.3.2-closeout.md`。
 
+### 3.33 1.3.2-R1 已完成（请求体限长与 OPTIONS 边界安全硬化）
+
+基线 `0b35ea7`。只改 3 个文件（`mcp-http/guards.ts`、`routes/mcp-http.ts`、
+`tests/mcp-http/guards.test.ts`）；无新增依赖、无迁移、不重实现 1.3.2。
+
+| # | 问题 | 修复 |
+|---|---|---|
+| P1 | 无 `Content-Length` 的 chunked 请求绕过 256 KiB：入口只信 CL，且 Scope 预检 `request.clone().text()` **无上限**缓冲（SDK 限制生效太晚） | 新增 `readBoundedMcpBody()` **按实际字节硬上限**流式读取：累计 `byteLength`，`> 256 KiB` 立即停读 + `reader.cancel()` + 413（先于 Host/Origin/Bearer/DB/SDK）；流不可读 → 400；成功路径产出**有界正文**，`withBoundedBody()` 重建 Request（URL/method/全部 headers/AbortSignal 保留）交 SDK；`maxRequestBodySize` 保留为第二道。Scope 预检改读有界 bytes（含 **batch 逐元素**），非法 JSON/形状/未知工具交回 SDK（`-32700` 等分类不变）；`clone().text()` 代码 0 处 |
+| P2 | `CORS_ORIGINS` 默认为空 → 全局中间件不注册 → `OPTIONS /mcp` 404（设计 §4.1 要求 204） | 路由注册 OPTIONS 分支（最先，不进认证/SDK/DB）：默认 **204 无任何 ACAO**（无 `*`、不放大跨源）；白名单命中才回显具体 origin（无通配、无 credentials，头部与全局中间件逐字段一致）；未命中 204 无 ACAO；POST 的 Origin Guard 不受影响；GET/DELETE 仍 SDK 405 |
+| 核查 | JSON-RPC Batch 的 Scope 预检边界 | SDK 实测**支持 legacy batch**（逐元素执行）→ 预检遍历数组**每一个** `tools/call`：`[有权, 缺权]` → 403 + 0 派发；全有权 → 放行 + SDK 双派发；非法 JSON → SDK `-32700` |
+
+**测试**：`guards.test.ts` 新增 11 条（流式 A–D 边界 / batch 预检 / OPTIONS 三态），
+含**真实 `ReadableStream`** 的 pull/cancel 观测——1 MiB 无 CL + 非法 Host + 无
+Bearer → 413 纯文本、流在 `pulled=5`（256 KiB+64 KiB）处被取消、后 11 块从未读取；
+恰好 256 KiB 放行、+1 byte 拒绝（CL 与流式各一组，无 off-by-one）。
+
+**门禁（实测）**：`tsc` ✅ · `eslint src tests` ✅ · `tests/mcp-http`
+**81 / 8**（70 → +11）· 全量 **1596 passed / 78 files**（+11，既有零回归、
+无 skip/only）· `npm run build` ✅ · 无新增依赖/迁移 ·
+`client_id_metadata_document_supported` 仍未声明 · GitHub CI 仅
+`desktop-release.yml`（未配置、未观测到 Runs，不声称通过）。
+
+**报告**：`cloud/docs/reviews/phase-1.3.2-r1-closeout.md`。
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、

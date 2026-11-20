@@ -9,25 +9,36 @@ import {
   toSdkAuthInfo,
   type McpAuthOutcome,
 } from "../mcp-http/authorize.js";
-import { bodyTooLargeResponse, hostGuard, originGuard } from "../mcp-http/guards.js";
+import {
+  bodyTooLargeResponse,
+  hostGuard,
+  originGuard,
+  readBoundedMcpBody,
+  tooLargeResponse,
+  withBoundedBody,
+} from "../mcp-http/guards.js";
 import { createMcpHttpHandler } from "../mcp-http/handler.js";
 import { scopeForTool } from "../mcp-http/tools.js";
 
 /**
- * `POST /mcp` —— Remote MCP Streamable HTTP 端点（Phase 1.3.2，设计 §4）。
+ * `POST /mcp` —— Remote MCP Streamable HTTP 端点（Phase 1.3.2；R1 修订 P1/P2）。
  *
- * ## 入口顺序（契约，任务书 §四）
+ * ## 入口顺序（契约，任务书 §四；P1 把大小限制改为实际字节硬上限）
  *
  * ```text
  * 0. 限流（独立桶 mcp-http，非浏览器授权桶）
- * 1. GET / DELETE → 交给 SDK → 405（无 SSE、无会话终止）
- * 2. 请求体大小 → 413（纯文本；Content-Length 先判，chunked 由 SDK 兜底）
+ * 1. OPTIONS → 204（CORS 预检，设计 §4.1；不进认证、不进 SDK）
+ *    GET / DELETE → 交给 SDK → 405（无 SSE、无会话终止）
+ * 2a. Content-Length > 256 KiB → 413（廉价快路径，一个字节都不读）
+ * 2b. 有界流式读取（实际字节硬上限 256 KiB；超限立即停读 + 取消底层流）
+ *     → 413 纯文本（先于 Host / Origin / Bearer / 数据库 / SDK）
+ *     → 流不可读 → 400 纯文本
  * 3. Host → 403（与 WSS 共用 normalizeHost / 同一份 env 解析）
  * 4. Origin → 403（存在即须精确命中 CORS 白名单；无 Origin = 服务端调用，通过）
  * 5. Bearer 验签（HS256 / kid / iss / aud / exp / sub / sid / client_id / scope / jti）→ 401
  * 6. Session 实时回查 → 401；Grant 实时回查 → 403（每次都查库，无进程缓存）
- * 7. tools/call 的 scope 预检 → 403 insufficient_scope（只报缺的那一个）
- * 8. 交给 createMcpHandler().fetch(request, { authInfo })（协议层全部由 SDK 处理）
+ * 7. tools/call 的 scope 预检（解析**有界正文**；batch 的每个元素都查）→ 403
+ * 8. 用有界正文重建 Request → createMcpHandler().fetch(...)（协议层全部由 SDK 产出）
  * ```
  *
  * ## 错误面（设计 §4.6）
@@ -36,57 +47,44 @@ import { scopeForTool } from "../mcp-http/tools.js";
  * - 403 insufficient_scope：`Bearer error="insufficient_scope", scope="<缺的一个>", resource_metadata="…"`；
  * - 403 其它（Origin / Host / grant 回查失败）：JSON-RPC `-32000`（与 SDK 的
  *   传输层拒绝同形）或带 `invalid_token` challenge 的 403；
- * - 405 / 413 / 429 / 协议层 `-32020` `-32022` `-32601`：SDK 或既有设施产出。
+ * - 405 / 413 / 429 / 协议层 `-32020` `-32022` `-32601` `-32700`：SDK 或既有设施产出。
  *
  * **协议层以下的业务失败不进这里**：`tools/call` 的结果面（含 `isError`）
  * 由 handler 映射（§6.4），不改变 HTTP 状态。
  */
 
-/** 从 POST body 里**只读地**窥探 `tools/call` 的工具名（scope 预检用）。 */
-async function peekToolCallName(request: Request): Promise<string | null | "unparsable"> {
-  let clone: Request;
-  try {
-    // 读 clone、不读原请求：原请求仍完整交给 SDK（SDK 自己也会 clone 分类）。
-    clone = request.clone();
-  } catch {
-    return "unparsable"; // body 已被消费等异常形态 → 交给 SDK 处理
-  }
-  let text: string;
-  try {
-    text = await clone.text();
-  } catch {
-    return "unparsable";
-  }
-  if (text.length === 0) return "unparsable";
+/**
+ * 步骤 7 的输入：从**已有界的正文**解析出缺失的 scope。
+ *
+ * - 单条 JSON-RPC 与 **batch 数组**都处理：SDK 实测支持 legacy batch
+ *   （数组里每个 `tools/call` 都会执行），因此 batch 的**每一个**元素都要过
+ *   预检——任何一个缺权即拒，绝不让未授权工具进入派发；
+ * - 非法 JSON / 空正文 / 形状问题 / 未知工具名 → `null`：**分类权属于 SDK**
+ *   （`-32700`、`-32600`、参数错误原样产出），预检不改变既有协议错误面。
+ */
+function missingScopeFromBoundedBody(
+  bytes: Uint8Array,
+  effectiveScopes: readonly string[],
+): string | null {
+  if (bytes.length === 0) return null;
   let body: unknown;
   try {
-    body = JSON.parse(text);
+    body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   } catch {
-    return "unparsable"; // 非法 JSON 的分类权属于 SDK
+    return null; // 非法 JSON → SDK 的协议错误（-32700）
   }
-  if (typeof body !== "object" || body === null || Array.isArray(body)) return "unparsable";
-  const record = body as { method?: unknown; params?: { name?: unknown } };
-  if (record.method !== "tools/call") return "unparsable";
-  if (typeof record.params?.name !== "string") return "unparsable"; // 形状问题交给 SDK
-  return record.params.name;
-}
-
-/**
- * 步骤 7：`tools/call` 的 scope 预检。
- *
- * 返回 `null` = 通过 / 非 tools/call（交给 SDK）；返回 scope 字符串 = 缺少该
- * scope → 403。**在派发之前**判定（§7.2），且只报**本次缺少的那一个**
- * （§5.8.3）。未知工具名不在此判 404——工具存在性是 SDK 的协议面。
- */
-async function checkToolCallScope(
-  request: Request,
-  effectiveScopes: readonly string[],
-): Promise<string | null> {
-  const name = await peekToolCallName(request);
-  if (name === null || name === "unparsable") return null;
-  const required = scopeForTool(name);
-  if (required === undefined) return null;
-  return effectiveScopes.includes(required) ? null : required;
+  const messages = Array.isArray(body) ? body : [body];
+  for (const message of messages) {
+    if (typeof message !== "object" || message === null) continue;
+    const record = message as { method?: unknown; params?: { name?: unknown } };
+    if (record.method !== "tools/call") continue;
+    const name = record.params?.name;
+    if (typeof name !== "string") continue; // 形状问题交给 SDK
+    const required = scopeForTool(name);
+    if (required === undefined) continue; // 未知工具交给 SDK
+    if (!effectiveScopes.includes(required)) return required;
+  }
+  return null;
 }
 
 function unauthorized(c: Context, challenge: string): Response {
@@ -95,6 +93,37 @@ function unauthorized(c: Context, challenge: string): Response {
 
 function forbidden(c: Context, challenge: string): Response {
   return c.body(null, 403, { "WWW-Authenticate": challenge });
+}
+
+/**
+ * `OPTIONS /mcp` → **204**（设计 §4.1，P2）。
+ *
+ * 头部与 `app.ts` 全局 CORS 中间件**逐字段一致**（`Vary: Origin`、
+ * `GET, POST, OPTIONS`、`Authorization, Content-Type`）：
+ *
+ * - **默认（`CORS_ORIGINS` 为空）**：204，但**不下发任何
+ *   `Access-Control-Allow-Origin`**——没有 `*`、没有隐式放开跨源；
+ *   预检只回答「不许」，不扩大权限；
+ * - **配置白名单时**：命中 `CORS_ORIGINS` 的 Origin 才回显 ACAO（不使用通配符、
+ *   不带 credentials）；未命中的 Origin 拿到 204 但没有 ACAO（浏览器自行拦截）。
+ *   （配置了 CORS 时 `app.use("*")` 的全局中间件会先拦截 OPTIONS——两处
+ *   语义逐字段一致，行为不因走哪条分支而不同。）
+ *
+ * OPTIONS **不进入** Bearer / Session / Grant / 工具的任何业务处理。
+ */
+function optionsPreflight(c: Context, allowedOrigins: readonly string[]): Response {
+  const headers: Record<string, string> = {
+    Vary: "Origin",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type",
+  };
+  const origin = c.req.header("origin");
+  if (origin !== undefined && origin.length > 0) {
+    const allowed = allowedOrigins.some((value) => value.toLowerCase() === origin.toLowerCase());
+    // 回显白名单里的具体 origin，绝不用 `*`。
+    if (allowed) headers["Access-Control-Allow-Origin"] = origin;
+  }
+  return c.body(null, 204, headers);
 }
 
 export function routeMcpHttp(app: AppHono, ctx: AppContext): void {
@@ -115,17 +144,36 @@ export function routeMcpHttp(app: AppHono, ctx: AppContext): void {
   const handler = createMcpHttpHandler(ctx);
   const resource = mcpResourceFor(ctx.env.baseUrl);
 
-  app.on(["GET", "DELETE", "POST"], "/mcp", limiter, async (c) => {
+  app.on(["GET", "DELETE", "POST", "OPTIONS"], "/mcp", limiter, async (c) => {
     const request = c.req.raw;
 
-    // ---- 1. 方法：GET / DELETE → 405（SDK 的 canonical 响应；无 SSE、无会话）----
+    // ---- 1. OPTIONS → 204 预检（先于一切；不进认证、不进 SDK、不查库）----
+    if (c.req.method === "OPTIONS") {
+      return optionsPreflight(c, ctx.env.corsOrigins);
+    }
+
+    // ---- 1b. GET / DELETE → 405（SDK 的 canonical 响应；无 SSE、无会话）----
     if (c.req.method !== "POST") {
       return handler.fetch(request);
     }
 
-    // ---- 2. 请求体大小 → 413 纯文本（在任何读取 / Host / 认证之前）----
-    const tooLarge = bodyTooLargeResponse(request);
-    if (tooLarge) return tooLarge;
+    // ---- 2a. Content-Length 声明超限 → 413（不读任何字节）----
+    const declaredTooLarge = bodyTooLargeResponse(request);
+    if (declaredTooLarge) return declaredTooLarge;
+
+    // ---- 2b. 实际字节硬上限：有界流式读取（先于 Host / Origin / 认证 / SDK）----
+    const read = await readBoundedMcpBody(request);
+    if (read.outcome === "too_large") {
+      // 与 2a 完全相同的 413 纯文本（声明头缺失或谎报，响应一致）。
+      return tooLargeResponse();
+    }
+    if (read.outcome === "unreadable") {
+      // 对端中断 / 流错误：不进入任何后续阶段（不查库、不进 SDK）。
+      return new Response("request body could not be read", {
+        status: 400,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
+    }
 
     // ---- 3. Host（与 WSS 同一份 normalizeHost / env 解析）----
     const hostRejected = hostGuard(request, ctx.env.gateway.allowedHosts);
@@ -155,13 +203,15 @@ export function routeMcpHttp(app: AppHono, ctx: AppContext): void {
       return forbidden(c, outcome.challenge);
     }
 
-    // ---- 7. tools/call scope 预检（派发之前；只报缺的那一个）----
-    const missingScope = await checkToolCallScope(request, outcome.auth.effectiveScopes);
+    // ---- 7. tools/call scope 预检（派发之前；只报缺的那一个；含 batch 每个元素）----
+    const missingScope = missingScopeFromBoundedBody(read.bytes, outcome.auth.effectiveScopes);
     if (missingScope !== null) {
       return forbidden(c, challengeInsufficientScope(missingScope, resource));
     }
 
-    // ---- 8. 交给 SDK（协议 / 时代 / 传输层响应全部由它产出）----
-    return handler.fetch(request, { authInfo: toSdkAuthInfo(outcome.auth, resource) });
+    // ---- 8. 有界正文重建 Request → SDK（协议 / 时代 / 传输层响应全部由它产出）----
+    return handler.fetch(withBoundedBody(request, read.bytes), {
+      authInfo: toSdkAuthInfo(outcome.auth, resource),
+    });
   });
 }

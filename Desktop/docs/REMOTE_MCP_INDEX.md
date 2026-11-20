@@ -1846,3 +1846,32 @@ token-registration 14），含 S1–S7、真实 U/S 锁与两用户并发、路�
 SDK 为唯一新依赖 · **CIMD 能力仍未声明** · GitHub CI 未配置（不声称通过）。
 
 报告：`cloud/docs/reviews/phase-1.3.2-closeout.md`。
+
+---
+
+## 44. Phase 1.3.2-R1：请求体限长与 OPTIONS 边界安全硬化（已完成）
+
+基线 `0b35ea7`。只改 3 文件：`src/mcp-http/guards.ts`、`src/routes/mcp-http.ts`、
+`tests/mcp-http/guards.test.ts`；无新增依赖、无迁移。
+
+- **P1 请求体硬上限**：新增 `readBoundedMcpBody()`——流式累计**实际字节**，
+  `> 256 KiB` 立即停读 + `reader.cancel()` + 413（先于 Host/Origin/Bearer/DB/SDK）；
+  `withBoundedBody()` 用有界字节重建 Request（URL/method/全部 headers/
+  AbortSignal 保留）交 SDK；`maxRequestBodySize` 保留为第二道。移除
+  `request.clone().text()`（src 0 处代码）。Scope 预检改读有界 bytes，**batch
+  逐元素**检查（SDK 实测支持 legacy batch）；非法 JSON/形状/未知工具交回 SDK。
+- **P2 OPTIONS**：路由注册 `OPTIONS /mcp` 分支（最先、不进业务）——默认 CORS
+  关闭时 **204 且无任何 ACAO**（无 `*`、不放大跨源）；白名单命中才回显具体
+  origin（无通配、无 credentials，与全局 CORS 中间件逐字段一致）；未命中 204
+  无 ACAO；POST Origin Guard 不变；GET/DELETE 仍 SDK 405。
+- **实测证据**：1 MiB 无 CL + 非法 Host + 无 Bearer → **413 纯文本**（非 403/
+  401），流 `pulled=5`（256 KiB+64 KiB）处被取消、后 11 块从未读取；恰好
+  256 KiB 放行 / +1 byte 拒绝（CL 与流式各一组，无 off-by-one）；batch
+  `[有权,缺权]` → 403 + 0 派发、全有权 → SDK 双派发、非法 JSON → `-32700`。
+
+**门禁**：`tsc` ✅ · `eslint` ✅ · `tests/mcp-http` **81 / 8**（+11）·
+全量 **1596 passed / 78 files** · `npm run build` ✅ · 双时代/405/202/
+`-32020/-32022/-32601` 回归全绿 · CIMD 能力仍未声明 · GitHub CI 未配置
+（不声称通过）。
+
+报告：`cloud/docs/reviews/phase-1.3.2-r1-closeout.md`。

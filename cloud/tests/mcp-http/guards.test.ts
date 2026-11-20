@@ -175,3 +175,400 @@ describe("启用边界", () => {
     expect(oauth.status).toBe(404);
   });
 });
+
+
+/* ========================================================================== *
+ * P1：请求体实际字节硬上限（R1，任务书 §三 / §四）
+ *
+ * 修复前只信 Content-Length，且 Scope 预检用 request.clone().text() 无上限
+ * 缓冲——chunked（无 CL）请求可在预检阶段被完整读入。现在一切 POST 都先经
+ * readBoundedMcpBody()：流式累计字节、超限立即停读 + 取消底层流。
+ * ========================================================================== */
+
+/** 造一个**无 Content-Length** 的流式 POST：每块 64 KiB，共 chunks 块。 */
+function streamPost(
+  chunks: number,
+  options: { headers?: Record<string, string> } = {},
+): { request: Request; state: { pulled: number; cancelled: boolean } } {
+  const CHUNK = 64 * 1024;
+  const state = { pulled: 0, cancelled: false };
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      state.pulled += 1;
+      controller.enqueue(new Uint8Array(CHUNK));
+      if (state.pulled >= chunks) controller.close();
+    },
+    cancel() {
+      state.cancelled = true;
+    },
+  });
+  const request = new Request("https://gateway.example/mcp", {
+    method: "POST",
+    headers: {
+      host: MCP_HOST,
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      ...options.headers,
+    },
+    body: stream,
+    duplex: "half",
+  } as RequestInit & { duplex: "half" });
+  return { request, state };
+}
+
+/** 造一个**无 Content-Length** 的流式 POST：正文 = 一段 JSON 文本（单块）。 */
+function textStreamPost(
+  bodyText: string,
+  headers: Record<string, string>,
+): Request {
+  return new Request("https://gateway.example/mcp", {
+    method: "POST",
+    headers: {
+      host: MCP_HOST,
+      accept: "application/json, text/event-stream",
+      "content-type": "application/json",
+      ...headers,
+    },
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(bodyText));
+        controller.close();
+      },
+    }),
+    duplex: "half",
+  } as RequestInit & { duplex: "half" });
+}
+
+describe("P1：无 Content-Length 的请求体硬上限", () => {
+  it("测试 A：无 CL 的 1 MiB 超限 + 非法 Host + 无 Bearer → 413（先于一切），流被提前取消", async () => {
+    const CHUNK = 64 * 1024;
+    // 16 块 = 1 MiB（远超 256 KiB）；Host 故意非法、不带 Bearer。
+    const { request, state } = streamPost(16, { headers: { host: "evil.example" } });
+    const res = await h.app.request(request);
+
+    // 413，且**不是** Host 的 403、**不是** Bearer 的 401——大小最先。
+    expect(res.status).toBe(413);
+    expect(res.headers.get("content-type")).toContain("text/plain");
+    expect(res.headers.get("www-authenticate")).toBeNull();
+    // 我们自己的纯文本响应 = 未进入 SDK（SDK 的 413/400 都是 JSON-RPC 形态）。
+    expect(await res.text()).toBe("request body too large");
+    // 没有任何工具/处理器日志（SDK 与业务逻辑都没跑）。
+    expect(h.logs.filter((l) => l.message === "mcp_tool_call")).toHaveLength(0);
+
+    // 底层流在超限后被取消，且**读取量有硬上限**：
+    // 4 块 = 256 KiB（≤ 上限，继续），第 5 块跨过上限 → 立即 cancel，不再拉第 6 块。
+    expect(state.cancelled).toBe(true);
+    expect(state.pulled).toBe(5);
+    expect(state.pulled * CHUNK).toBe(MCP_HTTP_MAX_BODY_BYTES + CHUNK); // 上限 + 单块
+    expect(state.pulled * CHUNK).toBeLessThan(16 * CHUNK); // 绝没读完 1 MiB
+  });
+
+  it("测试 B：无 CL 的合法请求（modern discover / tools/call 参数原样 / legacy initialize）", async () => {
+    const bearer = await obtainMcpBearer(h, { scope: "records:read" });
+
+    // 1) modern discover（流式正文，无 Content-Length）
+    const discoverRes = await h.app.request(
+      textStreamPost(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 6,
+          method: "server/discover",
+          params: { _meta: modernEnvelope() },
+        }),
+        {
+          "mcp-protocol-version": "2026-07-28",
+          "mcp-method": "server/discover",
+          authorization: `Bearer ${bearer.accessToken}`,
+        },
+      ),
+    );
+    expect(discoverRes.status).toBe(200);
+    const discoverBody = (await discoverRes.json()) as { result: { supportedVersions: string[] } };
+    expect(discoverBody.result.supportedVersions).toContain("2026-07-28");
+
+    // 2) modern tools/call：SDK 收到**完整正文**，参数逐项原样到达派发层
+    const callBody = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 7,
+      method: "tools/call",
+      params: {
+        name: "search_records",
+        arguments: { search: "ethiopia", limit: 3 },
+        _meta: modernEnvelope(),
+      },
+    });
+    // 逐块喂：每块 64 KiB（首块含全部 JSON，其余为空填充）——模拟真实 chunked。
+    const callRequest = new Request("https://gateway.example/mcp", {
+      method: "POST",
+      headers: {
+        host: MCP_HOST,
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+        "mcp-protocol-version": "2026-07-28",
+        "mcp-method": "tools/call",
+        "mcp-name": "search_records",
+        authorization: `Bearer ${bearer.accessToken}`,
+      },
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(callBody));
+          controller.close();
+        },
+      }),
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
+    const callRes = await h.app.request(callRequest);
+    expect(callRes.status).toBe(200);
+    expect(h.link.calls).toHaveLength(1);
+    expect(h.link.calls[0]?.tool).toBe("search_records");
+    expect(h.link.calls[0]?.arguments).toEqual({ search: "ethiopia", limit: 3 });
+
+    // 3) legacy initialize（流式正文）→ 200 SSE（旧时代同样经有界读取 + 重建）
+    const initBody = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 8,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "legacy", version: "1" },
+      },
+    });
+    const initRequest = textStreamPost(initBody, {
+      authorization: `Bearer ${bearer.accessToken}`,
+    });
+    const initRes = await h.app.request(initRequest);
+    expect(initRes.status).toBe(200);
+    expect(initRes.headers.get("content-type")).toContain("text/event-stream");
+  });
+
+  it("测试 C：带 Content-Length 的超限在 Host / Origin / Auth 之前 413（纯文本、不查库）", async () => {
+    const res = await h.app.request(
+      new Request("https://gateway.example/mcp", {
+        method: "POST",
+        headers: {
+          host: "evil.example", // 若先判 Host 会是 403
+          origin: "https://evil.example", // 若先判 Origin 也会是 403
+          "content-type": "application/json",
+          accept: "application/json",
+          "content-length": String(MCP_HTTP_MAX_BODY_BYTES + 1),
+        },
+        body: "{}", // 声明值超限：一个字节都不读
+      }),
+    );
+    expect(res.status).toBe(413);
+    expect(res.headers.get("content-type")).toContain("text/plain");
+    expect(res.headers.get("www-authenticate")).toBeNull(); // 没进 Bearer（= 没进 DB）
+    expect(await res.text()).toBe("request body too large");
+  });
+
+  it("测试 D：边界恰好 256 KiB 放行、256 KiB + 1 byte 拒绝（禁止 off-by-one）", async () => {
+    const LIMIT = MCP_HTTP_MAX_BODY_BYTES; // 262144
+
+    // 1) CL 恰好等于上限 → 通过大小关（走到认证 → 401，因为没带 Bearer）
+    const atLimit = await h.app.request(
+      new Request("https://gateway.example/mcp", {
+        method: "POST",
+        headers: { host: MCP_HOST, "content-type": "application/json", "content-length": String(LIMIT) },
+        body: "{}",
+      }),
+    );
+    expect(atLimit.status).toBe(401); // 过了 413，停在 Bearer
+
+    // 2) CL = 上限 + 1 → 413
+    const overLimit = await h.app.request(
+      new Request("https://gateway.example/mcp", {
+        method: "POST",
+        headers: { host: MCP_HOST, "content-type": "application/json", "content-length": String(LIMIT + 1) },
+        body: "{}",
+      }),
+    );
+    expect(overLimit.status).toBe(413);
+
+    // 3) 流式（无 CL）恰好 256 KiB：4 × 64 KiB 后正常关闭 → 放行到 401
+    const exactStream = streamPost(4);
+    const exactRes = await h.app.request(exactStream.request);
+    expect(exactRes.status).toBe(401);
+    expect(exactStream.state.pulled).toBe(4); // 正好读满上限即止
+    expect(exactStream.state.cancelled).toBe(false); // 没超限就不取消
+
+    // 4) 流式 256 KiB + 1 byte：第 5 块一进来就超 → 413 + 取消（后面还有 3 块没读）
+    //    用 8 块（512 KiB）而不是恰好 5 块：后者会在跨界同一次 pull 里 close，
+    //    cancel 自然是 no-op——断言「取消」必须让流还有剩余可取消。
+    const overStream = streamPost(8);
+    const overRes = await h.app.request(overStream.request);
+    expect(overRes.status).toBe(413);
+    expect(overStream.state.cancelled).toBe(true);
+    expect(overStream.state.pulled).toBe(5); // 上限 + 单块即停，第 6–8 块从未被拉取
+    expect(overStream.state.pulled).toBeLessThan(8);
+  });
+});
+
+describe("P1：Scope 预检回归（有界正文 + batch）", () => {
+  it("batch 中第二个 tools/call 缺权 → 403（不只检查数组第一个），0 次派发", async () => {
+    const recordsOnly = await obtainMcpBearer(h, { scope: "records:read" });
+    // 第一个有权限、第二个缺 coffee:read——只查第一个就会放行未授权工具。
+    const batch = JSON.stringify([
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search_records", arguments: {} } },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "list_beans", arguments: {} } },
+    ]);
+    const res = await h.app.request(
+      new Request("https://gateway.example/mcp", {
+        method: "POST",
+        headers: {
+          host: MCP_HOST,
+          accept: "application/json, text/event-stream",
+          "content-type": "application/json",
+          authorization: `Bearer ${recordsOnly.accessToken}`,
+        },
+        body: batch,
+      }),
+    );
+    expect(res.status).toBe(403);
+    const challenge = res.headers.get("www-authenticate") ?? "";
+    expect(challenge).toContain('scope="coffee:read"');
+    expect(h.link.calls).toHaveLength(0); // 未授权工具绝不进入派发
+  });
+
+  it("batch 内全部 tools/call 都有权 → 预检放行，SDK 批量执行（两个都派发）", async () => {
+    const full = await obtainMcpBearer(h, { scope: "records:read coffee:read" });
+    const batch = JSON.stringify([
+      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search_records", arguments: {} } },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "list_beans", arguments: {} } },
+    ]);
+    const res = await h.app.request(
+      new Request("https://gateway.example/mcp", {
+        method: "POST",
+        headers: {
+          host: MCP_HOST,
+          accept: "application/json, text/event-stream",
+          "content-type": "application/json",
+          authorization: `Bearer ${full.accessToken}`,
+        },
+        body: batch,
+      }),
+    );
+    // 预检放行（非 403）；legacy batch 由 SDK 执行 → SSE 帧（形态由 SDK 决定）。
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    expect(h.link.calls.map((c) => c.tool)).toEqual(["search_records", "list_beans"]);
+  });
+
+  it("非法 JSON（无 CL 流式）→ 仍是 SDK 的 -32700（预检不改变协议错误分类）", async () => {
+    const bearer = await obtainMcpBearer(h, { scope: "records:read" });
+    // 非法 JSON 的流式正文（无 CL）：预检解析失败 → 分类权交给 SDK。
+    const broken = textStreamPost("{not json", {
+      authorization: `Bearer ${bearer.accessToken}`,
+    });
+    const res = await h.app.request(broken);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: { code: number } };
+    expect(body.error?.code).toBe(-32700); // SDK 的 Parse error，不是我们的 413/403
+    expect(h.link.calls).toHaveLength(0);
+  });
+
+  it("有权限工具照常派发、缺权限 403（单条路径回归）", async () => {
+    const recordsOnly = await obtainMcpBearer(h, { scope: "records:read" });
+    const okRes = await h.app.request(
+      modernRequest(
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "search_records", arguments: { search: "x" }, _meta: modernEnvelope() },
+        },
+        { token: recordsOnly.accessToken, mcpName: "search_records" },
+      ),
+    );
+    expect(okRes.status).toBe(200);
+    expect(h.link.calls).toHaveLength(1);
+
+    const denied = await h.app.request(
+      modernRequest(
+        {
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: { name: "list_beans", arguments: {}, _meta: modernEnvelope() },
+        },
+        { token: recordsOnly.accessToken, mcpName: "list_beans" },
+      ),
+    );
+    expect(denied.status).toBe(403);
+    expect(h.link.calls).toHaveLength(1); // 未授权的那次没有派发
+  });
+});
+
+/* ========================================================================== *
+ * P2：OPTIONS /mcp（R1，设计 §4.1）
+ * ========================================================================== */
+
+describe("P2：OPTIONS /mcp → 204（CORS 预检）", () => {
+  it("CORS 默认关闭：OPTIONS → 204，无任何 ACAO（无 *、不放大跨源），且不进 Bearer", async () => {
+    const off = await createMcpHttpHarness(); // 未配置 corsOrigins
+    const res = await off.app.request("/mcp", {
+      method: "OPTIONS",
+      headers: { host: MCP_HOST, origin: "https://anywhere.example" },
+    });
+    expect(res.status).toBe(204);
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+    expect(res.headers.get("access-control-allow-credentials")).toBeNull();
+    expect(JSON.stringify(Object.fromEntries(res.headers.entries()))).not.toContain("*");
+    // 预检头仍给出方法/允许头（与全局 CORS 中间件同形），供浏览器读取。
+    expect(res.headers.get("access-control-allow-methods")).toBe("GET, POST, OPTIONS");
+    expect(res.headers.get("access-control-allow-headers")).toBe("Authorization, Content-Type");
+    expect(res.headers.get("vary")).toContain("Origin");
+    // 不进认证：没带 Bearer 也照样 204；也没进任何工具逻辑。
+    expect((await off.app.request("/mcp", { method: "GET", headers: { host: MCP_HOST } })).status).toBe(405);
+  });
+
+  it("CORS 白名单开启：命中 Origin 得到 204 + 回显 ACAO（非 *）；未命中没有 ACAO", async () => {
+    const on = await createMcpHttpHarness({ corsOrigins: ["https://allowed.example"] });
+
+    const allowed = await on.app.request("/mcp", {
+      method: "OPTIONS",
+      headers: { host: MCP_HOST, origin: "https://allowed.example" },
+    });
+    expect(allowed.status).toBe(204);
+    expect(allowed.headers.get("access-control-allow-origin")).toBe("https://allowed.example");
+    expect(allowed.headers.get("access-control-allow-credentials")).toBeNull(); // 不允许 credentials
+    expect(allowed.headers.get("access-control-allow-methods")).toBe("GET, POST, OPTIONS");
+
+    const denied = await on.app.request("/mcp", {
+      method: "OPTIONS",
+      headers: { host: MCP_HOST, origin: "https://evil.example" },
+    });
+    expect(denied.status).toBe(204);
+    expect(denied.headers.get("access-control-allow-origin")).toBeNull(); // 不扩大来源
+
+    // POST 的 Origin Guard 不受 OPTIONS 影响：非白名单 Origin 的 POST 仍 403。
+    const post = await on.app.request("/mcp", {
+      method: "POST",
+      headers: {
+        host: MCP_HOST,
+        origin: "https://evil.example",
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "server/discover" }),
+    });
+    expect(post.status).toBe(403);
+  });
+
+  it("OPTIONS 不进入业务逻辑：无工具日志、无派发，后续 POST 正常（不消耗状态）", async () => {
+    const bearer = await obtainMcpBearer(h, { scope: "records:read" });
+    for (let i = 0; i < 3; i += 1) {
+      const res = await h.app.request("/mcp", {
+        method: "OPTIONS",
+        headers: { host: MCP_HOST },
+      });
+      expect(res.status).toBe(204);
+    }
+    expect(h.logs.filter((l) => l.message === "mcp_tool_call")).toHaveLength(0);
+    expect(h.link.calls).toHaveLength(0);
+
+    // 预检之后同一条链路照常工作（没有被 OPTIONS 消耗掉任何东西）。
+    const post = await h.app.request(discover(bearer.accessToken));
+    expect(post.status).toBe(200);
+  });
+});
