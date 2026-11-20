@@ -1744,3 +1744,37 @@ Desktop 无改动 · 未声明能力。
 `cloud/docs/design/phase-1.3.1-c3c-3a-cimd-authorize-integration-contract.md`；
 3B-2 报告（§13 修订记录）：`cloud/docs/reviews/phase-1.3.1-c3c-3b-2-registry-review.md`；
 R1 收尾报告：`cloud/docs/reviews/phase-1.3.1-c3c-3b-2-r1-closeout.md`。
+
+---
+
+## 41. Phase 1.3.1-C3c-3B-3：生产链路接入（Consent 四条件 / Authorize / Token）（已完成）
+
+基线 `2328a89`。**服务端授权闭环完成**；未新增迁移 / 依赖，未改 Desktop，
+**未声明** `client_id_metadata_document_supported`（留 1.3.3 联调后单独提交）。
+
+- **Consent 四条件（§8.3 方案 B）**：1 行存在 / 2 非 INVALID epoch / 3
+  redirect 逐字符 / 4 含 `authorization_code`。GET 纯读 + 拒绝时「删行 +
+  `mcp_consent_metadata_invalid`」**同事务提交**（400 HTML、不渲染、不重复
+  副作用）；POST allow 走 `auth_requests(U) → oauth_clients(S) → 四条件 →
+  Grant/code/删行`，拒绝分支**正常提交**；deny 也受约束（invalid 不 302）；
+  **不比对 `metadata_version`**、STALE 放行只拒 epoch。
+- **Authorize 接入**：语法预检 → `resolveClientForAuthorize()` → 参数校验 →
+  建行；Registry 失败 → **HTML 400/503/500**（不重定向、只显 hostname / 40
+  截断、不回显完整 URL、不建行）；512 预检按 §3.1 移除；cooldown / singleflight
+  进程级共享、抓取器按请求读 `ctx.cimdFetcher`。
+- **Token（§8.4）**：code 兑换复核「行存在 + `authorization_code`」→
+  `invalid_client`（消费前）；不回溯 INVALID / 版本 / redirect；**refresh
+  gating**：显式声明才建行 + 出字段（同一分支）；refresh 兑换先复核
+  （`invalid_client` / `unauthorized_client`）再轮换 → 旧代零消费。
+- **同意页（§16）**：`clientIdentifierHost` 与 `redirectHost` 双标签；纯文本、
+  转义、无链接、无 logo。
+
+**测试**：新增 45 条（consent-metadata 19 / authorize-registry 12 /
+token-registration 14），含 S1–S7、真实 U/S 锁与两用户并发、路由级并发 CAS。
+**门禁**：`tsc` ✅ · `eslint` ✅ · `tests/mcp-oauth` **877 / 34** · 全量
+**1511 passed / 70 files**（1465 → +46）· 扫描门禁全过 · 既有测试无删除跳过
+弱化（1 条未注册 client 断言按 §5.5 JSON→HTML 为预期变更）。
+
+设计（§12 状态 / §13.12 / §17 C3c-3B-3 修订）：
+`cloud/docs/design/phase-1.3.1-c3c-3a-cimd-authorize-integration-contract.md`；
+3B-3 收尾报告：`cloud/docs/reviews/phase-1.3.1-c3c-3b-3-integration-closeout.md`。

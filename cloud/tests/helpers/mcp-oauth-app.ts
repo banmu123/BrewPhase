@@ -14,6 +14,7 @@ import {
 import { serverError } from "../../src/security/errors.js";
 import { createKeyRing } from "../../src/sessions/jwt.js";
 import { sha256Hex } from "../../src/security/crypto.js";
+import type { CimdFetcherDeps } from "../../src/mcp-oauth/cimd.js";
 import { makeTestEnv, TEST_DATABASE_URL, type TestEnvOverrides } from "./env.js";
 import { MCP_BROWSER_COOKIE_NAME, MCP_BROWSER_COOKIE_PATH } from "../../src/mcp-oauth/constants.js";
 import { seedClient } from "./oauth-db.js";
@@ -136,6 +137,14 @@ export interface CreateHarnessOptions {
   env?: TestEnvOverrides;
   /** 用真实适配器替代 Mock（只用于 URL 拼装测试）。 */
   useRealProviders?: boolean;
+  /**
+   * 注入可控的 CIMD 抓取器（Phase 1.3.1-C3c-3B-3）。
+   *
+   * Registry 接入后 `GET /authorize` 会经 `resolveClientForAuthorize` 抓取
+   * 未注册的 URL 形式 client_id；不注入时用生产同款 `createCimdDeps(proxy)`
+   * （真实 DNS——路由测试应避免走到那条路径）。
+   */
+  cimdFetcher?: CimdFetcherDeps;
 }
 
 export async function createMcpOAuthHarness(
@@ -165,6 +174,7 @@ export async function createMcpOAuthHarness(
     providers,
     logger: createLogger(env.logLevel),
     keyRing: createKeyRing(env.jwtSigningKey, env.jwtSigningKeyPrevious),
+    ...(options.cimdFetcher ? { cimdFetcher: options.cimdFetcher } : {}),
   };
 
   return {

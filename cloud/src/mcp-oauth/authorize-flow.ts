@@ -112,7 +112,11 @@ export async function validateAuthorizeParams(
   }
 
   const clientId = params.clientId;
-  if (!clientId || clientId.length === 0 || clientId.length > 512) {
+  // **不再按 512 预先拒绝**（设计 §3.1）：长度硬上限（2048）与「查库优先」
+  // 由 `resolveClientForAuthorize` 承担——先按原始字符串查库，命中就用；
+  // 在这里按 512 拒绝会让「查库命中才说明是我们自己建的」这半条顺序修正失效。
+  // 512 仍是**创建**预注册客户端时的约束。
+  if (!clientId || clientId.length === 0) {
     throw invalidRequest("client_id is required");
   }
 

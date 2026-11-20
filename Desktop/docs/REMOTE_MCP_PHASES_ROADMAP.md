@@ -1841,6 +1841,34 @@ raw SQL 0 处 · `metadataFetchedAt` 无等值比较 · Desktop / discovery 未�
 **报告**：`cloud/docs/reviews/phase-1.3.1-c3c-3b-2-r1-closeout.md`
 （3B-2 报告尾部另有 §13 修订记录，原结论不改写）。
 
+### 3.30 1.3.1-C3c-3B-3 已完成（生产链路接入：Consent 四条件 / Authorize / Token）
+
+基线 `2328a89`。把 Registry 真正接入 authorize、Consent GET/POST 与 Token
+Endpoint，完成服务端授权闭环。**未新增迁移、未新增依赖、未改 Desktop、
+未声明 `client_id_metadata_document_supported`**。
+
+| 部分 | 交付 |
+|---|---|
+| **Consent 四条件（方案 B）** | GET：纯读复核，失败 → **删 pending + `mcp_consent_metadata_invalid` 同一事务提交** → 400 HTML（不渲染、不重定向、不重复副作用）；POST allow：`FOR UPDATE(auth_requests) → FOR SHARE(oauth_clients) → 四条件 → 才 upsert Grant / 插 code / 删行`，拒绝分支**正常提交**（不 throw——抛错会把删行审计一起回滚）；deny 同样受四条件约束（invalid 一律 400 不 302）；**不比对 `metadata_version`、不加快照列**；STALE 放行、只拒 INVALID epoch |
+| **Authorize 接入** | 语法预检 → **`resolveClientForAuthorize()`** → 参数校验 → 建行（先查库后判 URL 形态不回退）；Registry 失败 → **HTML 400/503/500**（不重定向、只显 hostname / ≤40 截断、不回显完整 client_id URL、不建 auth request）；`validateAuthorizeParams` 移除 512 预检（§3.1）；`cooldown` 进程级共享、singleflight 走 `processWideSingleflight`、抓取器按请求读 `ctx.cimdFetcher`（生产恒为 DNS Pinning 实现） |
+| **Token 注册约束** | code 兑换：单行 PK 读 → 行缺失 / 不含 `authorization_code` → **`invalid_client`**（消费前）；**不回溯** INVALID / 版本 / redirect_uri（§8.4 信任阶段）；**refresh gating**：显式声明才创建第一代 Refresh Token + 响应字段（响应与库同一分支）；refresh 兑换先复核（`invalid_client` / **`unauthorized_client`**）**再**轮换 → 拒绝时旧代零消费；错误保持 JSON、无凭据泄漏 |
+| **同意页** | `clientIdentifierHost`（`clientIdentifierDisplay`：URL→hostname、IPv6 `[::1]`、不透明 id 40 截断、解析失败空串）与 `redirectHost` **分别带标签**渲染；纯文本、转义、无链接、无 logo |
+
+**测试**：新增 3 文件 **45 条**（consent-metadata 19 / authorize-registry 12 /
+token-registration 14），含 S1–S7、**真实 U/S 锁**（`pg_stat_activity` +
+`pg_blocking_pids`）、两用户并发 POST、路由级并发 CAS（一次抓取 + 一条 302 +
+一条 503）。既有 1465 条无删除无弱化——仅 1 条「未注册 client」断言按 §5.5
+由 JSON 改 HTML（预期行为变更）。
+
+**门禁（实测）**：`tsc` ✅ · `eslint` ✅ · `vitest run tests/mcp-oauth`
+**877 passed / 34 files** · `vitest run` **1511 passed / 70 files**
+（1465 → **+46**）· 新文件 + Registry 3 连跑 109/109 ·
+`.update(mcpOauthClients)` 2/2 带 `version+1` · raw SQL 0 处 ·
+`metadataFetchedAt` 无等值比较 · 抓取只经 `fetchClientMetadataDocument` ·
+迁移 / 依赖 / Desktop / discovery 未改。
+
+**报告**：`cloud/docs/reviews/phase-1.3.1-c3c-3b-3-integration-closeout.md`。
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、

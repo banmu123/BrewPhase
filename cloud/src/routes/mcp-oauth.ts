@@ -52,7 +52,14 @@ import {
   loadConsentRequest,
   type ConsentFailure,
 } from "../mcp-oauth/consent-flow.js";
-import { renderConsentPage } from "../mcp-oauth/consent-page.js";
+import { clientIdentifierDisplay, renderConsentPage } from "../mcp-oauth/consent-page.js";
+import { createCimdDeps, type CimdFetcherDeps } from "../mcp-oauth/cimd.js";
+import {
+  InMemoryNegativeCooldown,
+  resolveClientForAuthorize,
+  type CimdRegistryDeps,
+  type RegistryFailure,
+} from "../mcp-oauth/cimd-registry.js";
 import { syncGrantToOnlineDevice } from "../mcp-oauth/grant-sync.js";
 import { AUTH_PAGE_HEADERS, renderErrorPage, renderLoginPage } from "../mcp-oauth/login-page.js";
 
@@ -83,6 +90,44 @@ function htmlError(c: Context, status: number, title: string, message: string): 
     renderErrorPage(title, message),
     status as ContentfulStatusCode,
     AUTH_PAGE_HEADERS,
+  );
+}
+
+/**
+ * Registry（`resolveClientForAuthorize`）失败 → **HTML 错误页**（设计 §5.5 /
+ * 任务书 §5.3）。
+ *
+ * | status | 语义 |
+ * |---|---|
+ * | 400 | terminal（含 mismatch、身份冲突、形态不合格、行消失）→「无法验证该客户端」 |
+ * | 503 | transient（含 STALE floor 内、**CAS 失败 fail-closed**）→ 可重试 |
+ * | 500 | `database_error`（固定文案，不泄 SQL） |
+ *
+ * 三条纪律（§5.5 / §16.2）：
+ * 1. **HTML、不重定向**——[ID §6.1 MUST NOT]；此刻没有可信的 `redirect_uri`。
+ * 2. **不回显完整 `client_id`**：只放 `clientIdentifierDisplay()`（hostname 或
+ *    ≤40 字符截断），且 `renderErrorPage` 会再 `escapeHtml` 一次。
+ * 3. 只渲染本次失败的结论，不带 Registry 的 detail（可能含抓取细节）。
+ */
+function registryFailurePage(c: Context, clientId: string, failure: RegistryFailure): Response {
+  const label = clientIdentifierDisplay(clientId);
+  const suffix = label.length > 0 ? `（${label}）` : "";
+  if (failure.status === 503) {
+    return htmlError(
+      c,
+      503,
+      "暂时无法验证客户端",
+      `暂时无法验证该客户端${suffix}的身份，请稍后重试。`,
+    );
+  }
+  if (failure.status === 500) {
+    return htmlError(c, 500, "服务暂时不可用", "服务暂时不可用，请稍后重试。");
+  }
+  return htmlError(
+    c,
+    400,
+    "无法验证该客户端",
+    `无法验证该客户端${suffix}的身份。请回到发起授权的应用重新开始。`,
   );
 }
 
@@ -162,6 +207,13 @@ const CONSENT_FAILURE_MESSAGES: Record<ConsentFailure, { title: string; message:
   unsupported_provider: {
     title: "不支持的登录方式",
     message: "这次授权使用的登录方式不受支持。请重新开始授权。",
+  },
+  // 四条件实时复核失败（§8.3）：删行 + `mcp_consent_metadata_invalid` 审计
+  // 已在业务层的事务里提交，这里只负责 400 页面——**不重定向、不再删一次、
+  // 不再审计一次**。
+  metadata_invalid: {
+    title: "客户端信息已变更",
+    message: "无法继续这次授权：该应用的注册信息已发生变化。请回到发起授权的应用重新开始。",
   },
 };
 
@@ -283,23 +335,69 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
 
   const now = (): Date => new Date();
 
+  /**
+   * CIMD Registry 依赖（Phase 1.3.1-C3c-3B-3，任务书 §5.2）。
+   *
+   * **共享状态只建一次**：`cooldown`（ABSENT / no-store 负面冷却）与
+   * `singleflight`（省略 → `processWideSingleflight` 进程级默认）都是跨请求
+   * 共享的进程内状态，**绝不能**每次 HTTP 请求 `new`（那会让冷却永远只覆盖
+   * 一次请求）。每次 authorize 只重建**薄壳对象**并**按请求读取**
+   * `ctx.cimdFetcher`（测试在建 app 之后注入可控抓取器；生产恒为
+   * `createCimdDeps(proxy)` 的 DNS Pinning 实现，没有任何绕过路径）。
+   */
+  const registryCooldown = new InMemoryNegativeCooldown();
+  let productionFetcher: CimdFetcherDeps | undefined;
+  const makeRegistryDeps = (): CimdRegistryDeps => ({
+    db: ctx.db.db,
+    fetcher: ctx.cimdFetcher ?? (productionFetcher ??= createCimdDeps(ctx.env.outboundProxy)),
+    baseUrl: ctx.env.baseUrl,
+    mcpResource: mcpResourceFor(ctx.env.baseUrl),
+    mcpTrustedPeerIdentifiers: ctx.env.mcpTrustedPeerIdentifiers,
+    now,
+    cooldown: registryCooldown,
+    audit: (input) => audit(ctx, input),
+  });
+
   // -------------------------------------------------------------------------
   // GET /mcp/oauth/authorize
   // -------------------------------------------------------------------------
 
   /**
-   * 授权入口。校验全部通过后建 `mcp_auth_requests`，然后 302 到登录页。
+   * 授权入口。顺序（任务书 §5.1，**不可调换**）：
    *
-   * **失败一律 400 JSON，不做任何重定向**：此刻 `redirect_uri` 还没被验证过，
-   * 往一个未验证的地址重定向就是开放重定向。
+   * ```text
+   * 0. 纯语法预检（response_type / client_id 非空）——无 DB、无网络
+   * 1. Registry：长度上限 → 精确查库 → pre_registered/dcr（URL 形态才查身份
+   *    冲突）→ cimd 四态 → 未注册 URL 才抓取（先查库、再判 URL 形态）
+   * 2. validateAuthorizeParams（redirect_uri 逐字符 / scope / PKCE / resource）
+   * 3. createAuthorizeRequest —— 只有 1 与 2 都成功才建行
+   * ```
+   *
+   * Registry 失败 → **HTML 错误页**（`registryFailurePage`，400/503/500，
+   * 不重定向、不回显完整 client_id）；参数失败维持既有 JSON `invalid_request`。
+   * **绝不先建 auth request 再验证 CIMD**（§8.5 边界一）。
    */
   app.get("/mcp/oauth/authorize", limiter, async (c) => {
+    // 步骤 0：纯语法预检。放在 Registry 之前是为了让「参数写错」的请求
+    // 不触发一次真实抓取，也维持这类错误既有的 JSON 形态。
+    if (c.req.query("response_type") !== "code") {
+      throw invalidRequest("response_type must be code");
+    }
+    const clientIdParam = c.req.query("client_id");
+    if (!clientIdParam || clientIdParam.length === 0) {
+      throw invalidRequest("client_id is required");
+    }
+
+    // 步骤 1：Registry 确认客户端。
+    const resolved = await resolveClientForAuthorize(clientIdParam, makeRegistryDeps());
+    if (!resolved.ok) return registryFailurePage(c, clientIdParam, resolved.failure);
+
     const validated = await validateAuthorizeParams(
       ctx.db.db,
       { baseUrl: ctx.env.baseUrl },
       {
         responseType: c.req.query("response_type"),
-        clientId: c.req.query("client_id"),
+        clientId: clientIdParam,
         redirectUri: c.req.query("redirect_uri"),
         scope: c.req.query("scope"),
         state: c.req.query("state"),
@@ -743,6 +841,7 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
         rid,
         csrf,
         clientName: loaded.request.clientName,
+        clientIdentifierHost: loaded.request.clientIdentifierHost,
         redirectHost: loaded.request.redirectHost,
         scopes: loaded.request.requestedScopes.map((scope) => ({
           scope,
@@ -1225,14 +1324,22 @@ function parseScopeParam(raw: string): string[] {
 
 function tokenResponse(
   c: Context,
-  issued: { accessToken: string; refreshToken: string; expiresIn: number; scope: readonly string[] },
+  issued: {
+    accessToken: string;
+    /** `undefined` = 客户端未声明 `refresh_token` → 响应**不出现**该字段。 */
+    refreshToken?: string | undefined;
+    expiresIn: number;
+    scope: readonly string[];
+  },
 ): Response {
   return c.json({
     access_token: issued.accessToken,
     token_type: "Bearer",
     // 必须是配置值，不是硬编码 900：客户端按它安排刷新节奏。
     expires_in: issued.expiresIn,
-    refresh_token: issued.refreshToken,
+    // 与数据库一致：未声明 `refresh_token` 的客户端既没有行、也没有字段
+    // （§8.4 gating——禁止「库里有、响应没有」的分裂）。
+    ...(issued.refreshToken === undefined ? {} : { refresh_token: issued.refreshToken }),
     scope: formatScopeClaim(issued.scope),
   });
 }
@@ -1317,6 +1424,13 @@ async function consentFailurePage(
   rid: string,
   reason: ConsentFailure,
 ): Promise<Response> {
+  if (reason === "metadata_invalid") {
+    // 四条件失败的删行 + `mcp_consent_metadata_invalid` 审计**已经由
+    // `loadConsentRequest` 的事务提交**（§8.5 边界二）。这里绝不再删一次、
+    // 不再审计一次（重复副作用会污染审计计数；重复删除是无意义的写）。
+    const mapped = CONSENT_FAILURE_MESSAGES.metadata_invalid;
+    return htmlError(c, 400, mapped.title, mapped.message);
+  }
   if (reason === "binding_mismatch") {
     await deleteAuthRequest(ctx.db.db, rid);
     await audit(ctx, {
@@ -1343,6 +1457,14 @@ async function consentSubmitFailure(
   reason: ConsentFailure | "invalid_request" | "csrf_mismatch" | "invalid_scope" | "no_scope_granted",
   context: { userId?: string | undefined; clientId?: string | undefined },
 ): Promise<Response> {
+  if (reason === "metadata_invalid") {
+    // 删行 + 审计已在 `decideConsent` 的事务里提交（POST 分支是**有意拒绝、
+    // 正常提交**，不是回滚）。这里只渲染 400 HTML：不 302、不建 Grant / Code、
+    // 不再删行、不再审计（任务书 §4.4）。
+    const mapped = CONSENT_FAILURE_MESSAGES.metadata_invalid;
+    return htmlError(c, 400, mapped.title, mapped.message);
+  }
+
   if (reason === "csrf_mismatch") {
     await audit(ctx, {
       eventType: "mcp_consent_csrf_mismatch",

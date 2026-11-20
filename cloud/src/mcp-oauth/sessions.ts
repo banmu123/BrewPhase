@@ -160,6 +160,19 @@ export interface CreateMcpSessionInput {
   issuedScope: readonly string[];
   ipHash?: string | undefined;
   userAgent?: string | undefined;
+  /**
+   * 是否创建第一代 Refresh Token（Phase 1.3.1-C3c-3B-3，设计 §8.4 / §12 #10）。
+   *
+   * **只有注册 `grant_types` 显式声明 `refresh_token` 的客户端才允许获得
+   * Refresh Token**——CIMD 文档的缺省是 `["authorization_code"]`，不能因为
+   * 授权码流程成功就顺手签一枚续期凭据。
+   *
+   * 缺省 `true` 只服务**不涉及客户端注册语义的内部 / 测试调用**；生产唯一
+   * 调用点（`exchangeAuthorizationCode`）**必须**按客户端当前 `grant_types`
+   * 显式传入，且响应与数据库必须同时有 / 同时无（禁止「响应不返回但库里
+   * 已创建」）。
+   */
+  issueRefreshToken?: boolean;
 }
 
 export interface CreatedMcpSession {
@@ -171,8 +184,11 @@ export interface CreatedMcpSession {
   resource: string;
   issuedScope: string[];
   absoluteExpiresAt: Date;
-  /** 明文 Refresh Token，**只在这里出现一次**。 */
-  refreshToken: string;
+  /**
+   * 明文 Refresh Token，**只在这里出现一次**；`issueRefreshToken` 为 false 时
+   * 为 `undefined`（既不创建行，也不出现在响应里）。
+   */
+  refreshToken?: string;
 }
 
 /**
@@ -244,11 +260,12 @@ export async function createMcpSessionInTransaction(
 
   const now = readClock(deps);
   const absoluteExpiresAt = new Date(now.getTime() + MCP_SESSION_ABSOLUTE_TTL_MS);
+  const issueRefreshToken = input.issueRefreshToken ?? true;
   const refreshExpiresAt = earliest(
     new Date(now.getTime() + MCP_REFRESH_TOKEN_TTL_MS),
     absoluteExpiresAt,
   );
-  const rawToken = generateMcpRefreshToken();
+  const rawToken = issueRefreshToken ? generateMcpRefreshToken() : undefined;
 
   // ---- 1. 用户必须存在且处于 active ----
   const userRows = await tx
@@ -310,16 +327,21 @@ export async function createMcpSessionInTransaction(
   const session = sessionRows[0];
   if (!session) throw new Error("failed to create mcp session");
 
-  // ---- 5. 第一代 Refresh Token ----
-  await tx.insert(mcpRefreshTokens).values({
-    sessionId: session.id,
-    tokenHash: mcpRefreshTokenHash(deps.pepper, rawToken),
-    generation: 1,
-    createdAt: now,
-    expiresAt: refreshExpiresAt,
-    ipHash: input.ipHash ?? "",
-    userAgent: input.userAgent ?? "",
-  });
+  // ---- 5. 第一代 Refresh Token（仅当调用方按客户端注册范围要求时）----
+  //
+  // 不支持 `refresh_token` 的客户端：**不插入任何行**——响应里也就没有
+  // `refresh_token` 字段，两者由同一个分支保证（禁止「库里有、响应没有」）。
+  if (issueRefreshToken && rawToken !== undefined) {
+    await tx.insert(mcpRefreshTokens).values({
+      sessionId: session.id,
+      tokenHash: mcpRefreshTokenHash(deps.pepper, rawToken),
+      generation: 1,
+      createdAt: now,
+      expiresAt: refreshExpiresAt,
+      ipHash: input.ipHash ?? "",
+      userAgent: input.userAgent ?? "",
+    });
+  }
 
   return {
     sessionId: session.id,
@@ -329,7 +351,7 @@ export async function createMcpSessionInTransaction(
     resource: grant.resource,
     issuedScope,
     absoluteExpiresAt,
-    refreshToken: rawToken,
+    ...(rawToken === undefined ? {} : { refreshToken: rawToken }),
   };
 }
 

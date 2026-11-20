@@ -245,7 +245,7 @@ describe("创建先拿到锁：撤销必须能看到并撤掉它", () => {
 
     // 那条 Session 再也刷不出新 token。
     await expect(
-      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken }),
+      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! }),
     ).rejects.toMatchObject({ code: "invalid_grant" });
   });
 

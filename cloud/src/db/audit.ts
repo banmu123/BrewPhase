@@ -52,6 +52,14 @@ export type AuthEventType =
   | "mcp_consent_allowed"
   | "mcp_consent_denied"
   | "mcp_consent_csrf_mismatch"
+  /**
+   * Consent GET / POST 因**四条件实时复核**失败被拒（设计 §8.3 / §15）。
+   *
+   * detail：`rid`、`clientId`、`stage`（`consent` = GET / `consent_submit` = POST）、
+   * `condition`（1–4）。删行与本事件在**同一事务**提交——拒绝必须真正落库，
+   * 不能只留在内存里（§8.5 边界二）。
+   */
+  | "mcp_consent_metadata_invalid"
   | "mcp_auth_code_issued"
   | "mcp_grant_sync_failed"
   // ---- CIMD 注册与元数据（Phase 1.3.1-C3c-3B-2）----

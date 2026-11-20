@@ -93,13 +93,19 @@ describe("参数校验：每一项都必须严格", () => {
     expect(await rows()).toHaveLength(0);
   });
 
-  it("client_id 未注册 → 400（不区分「不存在」与「参数错」）", async () => {
+  it("client_id 未注册 → 400 HTML（不重定向、不建行、不回显存在性判断）", async () => {
+    // C3c-3B-3：未注册的非 URL client_id 由 **Registry** 先拒（先查库、再判
+    // URL 形态），按 §5.5 渲染 HTML 错误页——不再是 JSON `invalid_request`。
     const res = await get(authorizeQuery({ client_id: "no-such-client" }));
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string; error_description: string };
-    expect(body.error).toBe("invalid_request");
-    // 文案里不能出现「这个 client 不存在」这类存在性判断。
-    expect(body.error_description).toBe("client is not registered");
+    expect(res.headers.get("content-type") ?? "").toContain("text/html");
+    // [ID §6.1 MUST NOT]：不得重定向到客户端。
+    expect(res.headers.get("location")).toBeNull();
+    const body = await res.text();
+    // 文案里不能出现「这个 client 不存在」这类存在性判断（§16 允许按截断规则
+    // 展示标识本身，但绝不允许替服务端下存在性结论）。
+    expect(body).not.toContain("client is not registered");
+    expect(body).toContain("无法验证该客户端");
     expect(await rows()).toHaveLength(0);
   });
 

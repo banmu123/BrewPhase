@@ -4,6 +4,7 @@ import type { Env } from "./env.js";
 import type { JwtKeyRing, AccessClaims } from "./sessions/jwt.js";
 import type { Logger } from "./logger.js";
 import type { ProviderMap } from "./oauth/providers.js";
+import type { CimdFetcherDeps } from "./mcp-oauth/cimd.js";
 import type { DispatchToolCallInput, Forwarder, GrantSyncOutcome } from "./link/forwarder.js";
 import type { DispatchResult } from "./link/request-registry.js";
 
@@ -27,6 +28,14 @@ export interface AppContext {
   keyRing: JwtKeyRing;
   link?: LinkControl;
   instanceId?: string;
+  /**
+   * CIMD 抓取器注入点（Phase 1.3.1-C3c-3B-3）。
+   *
+   * 生产**不设置**：`routeMcpOAuth` 会用 `createCimdDeps(env.outboundProxy)`
+   * 装配带 DNS Pinning 的真实抓取器。测试用它注入可控 fetcher（断言抓取次数、
+   * 返回 no-store / terminal 文档），**不提供**任何绕过 DNS Pinning 的生产路径。
+   */
+  cimdFetcher?: CimdFetcherDeps;
 }
 
 /**

@@ -7,7 +7,6 @@ import { browserBindingHash } from "../../src/mcp-oauth/browser-session.js";
 import { hashCsrf } from "../../src/mcp-oauth/authorize-flow.js";
 import { signBrowserCookie } from "./mcp-oauth-app.js";
 import { MCP_RESOURCE } from "./oauth-db.js";
-
 /**
  * 同意页测试的共用原语（Phase 1.3.1-C2b）。
  *
@@ -230,6 +229,19 @@ export async function seedConsentRow(
   const sid = input.sid ?? randomBytes(32).toString("base64url");
   const binding = browserBindingHash(sid);
   const nowSec = Math.floor(Date.now() / 1000);
+
+  /**
+   * 注册行必须存在（C3c-3B-3 四条件的条件 1）：auth request 指向一个不存在的
+   * 客户端本身就是非法状态。`ON CONFLICT DO NOTHING`——测试若要构造「注册行
+   * 被删」的场景，应在造行**之后**显式删除，而不是靠这里漏建。
+   * `redirect_uris` 取本次使用的回调，保证条件 3 默认成立（要测条件 3 失败的
+   * 用例在造行后改写该列）。
+   */
+  await sql`
+    insert into mcp_oauth_clients
+      (client_id, client_name, redirect_uris, registration_source)
+    values (${clientId}, ${input.clientName ?? "Test Client"}, array[${redirectUri}], 'pre_registered')
+    on conflict (client_id) do nothing`;
 
   const rows = await sql<{ id: string }[]>`
     insert into mcp_auth_requests

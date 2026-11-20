@@ -11,6 +11,7 @@ export type ErrorCode =
   | "invalid_request"
   | "invalid_grant"
   | "invalid_client"
+  | "unauthorized_client"
   | "invalid_scope"
   | "unsupported_grant_type"
   | "unsupported_token_type"
@@ -80,6 +81,17 @@ export const invalidGrant = (description: string, meta?: Record<string, unknown>
  */
 export const invalidClient = (description = "client is not valid") =>
   new AppError("invalid_client", 401, description);
+
+/**
+ * 客户端**没有被授权使用**这个授权方式（Phase 1.3.1-C3c-3B-3，设计 §8.4）。
+ *
+ * 与 `invalid_client` 分开：后者是「身份不成立」（行不存在 / 绑定不符），
+ * 这里是「身份成立，但注册的 `grant_types` 不含所请求的那一种」——RFC 6749
+ * §5.2 的 `unauthorized_client`。400 而不是 401：请求格式没问题，是授权范围
+ * 不允许（同 `invalid_scope` 的取向）。
+ */
+export const unauthorizedClient = (description = "client is not authorized to use this grant type") =>
+  new AppError("unauthorized_client", 400, description);
 
 /**
  * 请求的 scope 超出已有授权（Phase 1.3.1-C3a）。

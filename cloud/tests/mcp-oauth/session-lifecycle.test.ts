@@ -49,12 +49,12 @@ describe("Session 身份稳定", () => {
       issuedScope: ["records:read"],
     });
 
-    let token = created.refreshToken;
+    let token = created.refreshToken!;
     for (let i = 0; i < 3; i += 1) {
       f.clock.advance(60_000);
       const rotated = await rotateMcpRefreshToken(f.deps, { refreshToken: token });
       expect(rotated.sessionId).toBe(created.sessionId);
-      token = rotated.refreshToken;
+      token = rotated.refreshToken!;
     }
 
     const rows = await sessions();
@@ -73,7 +73,7 @@ describe("Session 身份稳定", () => {
     const before = (await sessions())[0]!;
 
     f.clock.advance(30 * DAY_MS - 1000);
-    await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken });
+    await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! });
 
     const after = (await sessions())[0]!;
     expect(after.absoluteExpiresAt.getTime()).toBe(before.absoluteExpiresAt.getTime());
@@ -122,7 +122,7 @@ describe("撤销语义", () => {
       issuedScope: ["records:read"],
     });
     f.clock.advance(60_000);
-    await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken });
+    await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! });
 
     const result = await revokeMcpSession(f.deps, {
       sessionId: created.sessionId,
@@ -204,7 +204,7 @@ describe("撤销语义", () => {
     // 被撤的三条都无法刷新。
     for (const session of sameGrant) {
       await expect(
-        rotateMcpRefreshToken(f.deps, { refreshToken: session.refreshToken }),
+        rotateMcpRefreshToken(f.deps, { refreshToken: session.refreshToken! }),
       ).rejects.toMatchObject({ code: "invalid_grant" });
     }
   });
@@ -311,7 +311,7 @@ describe("三方隔离（§9.11 矩阵）", () => {
     const rotated = await rotateDesktopRefreshToken(
       handle.db,
       { pepper: MCP_TEST_PEPPER, ttlSeconds: 30 * 24 * 3600 },
-      desktop.refreshToken,
+      desktop.refreshToken!,
       { userAgent: "desktop-test", ipHash: "" },
     );
     expect(rotated.sessionId).not.toBe(desktop.sessionId);
@@ -329,7 +329,7 @@ describe("三方隔离（§9.11 矩阵）", () => {
     const logout = await logoutByRefreshToken(
       handle.db,
       { pepper: MCP_TEST_PEPPER },
-      desktop.refreshToken,
+      desktop.refreshToken!,
       { userAgent: "desktop-test", ipHash: "" },
     );
     expect(logout.found).toBe(true);
@@ -342,7 +342,7 @@ describe("三方隔离（§9.11 矩阵）", () => {
     // MCP token 仍可轮换 —— 这是「Desktop 登出不影响 MCP」最硬的证据。
     f.clock.advance(1000);
     await expect(
-      rotateMcpRefreshToken(f.deps, { refreshToken: mcp.refreshToken }),
+      rotateMcpRefreshToken(f.deps, { refreshToken: mcp.refreshToken! }),
     ).resolves.toMatchObject({ sessionId: mcp.sessionId });
   });
 
@@ -354,7 +354,7 @@ describe("三方隔离（§9.11 矩阵）", () => {
       issuedScope: ["records:read"],
     });
     f.clock.advance(60_000);
-    await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken });
+    await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! });
 
     expect(await handle.db.select().from(authSessions)).toHaveLength(0);
   });
@@ -389,7 +389,7 @@ describe("三方隔离（§9.11 矩阵）", () => {
     );
     f.clock.advance(1000);
     await expect(
-      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken }),
+      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! }),
     ).resolves.toMatchObject({ sessionId: created.sessionId });
   });
 });

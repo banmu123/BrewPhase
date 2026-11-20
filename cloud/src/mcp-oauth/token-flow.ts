@@ -1,9 +1,9 @@
 import { and, eq, gt, isNull } from "drizzle-orm";
 import type { Database } from "../db/client.js";
-import { mcpAuthCodes, mcpGrants } from "../db/schema.js";
+import { mcpAuthCodes, mcpGrants, mcpOauthClients } from "../db/schema.js";
 import type { Logger } from "../logger.js";
 import { verifyPkce } from "../security/crypto.js";
-import { invalidGrant } from "../security/errors.js";
+import { invalidClient, invalidGrant, unauthorizedClient } from "../security/errors.js";
 import type { JwtKeyRing } from "../sessions/jwt.js";
 import { mcpAuthCodeHash } from "./authorize-flow.js";
 import { orderMcpScopes, type McpScope } from "./constants.js";
@@ -61,8 +61,14 @@ export interface TokenFlowDeps {
 
 export interface IssuedTokens {
   accessToken: string;
-  /** 明文 Refresh Token。**只在这里出现一次**。 */
-  refreshToken: string;
+  /**
+   * 明文 Refresh Token。**只在这里出现一次**。
+   *
+   * `undefined` = 该客户端注册的 `grant_types` **未声明** `refresh_token`
+   * （设计 §8.4 gating）：此时数据库里同样**没有**创建任何 Refresh Token 行，
+   * 响应里也不出现该字段——三者由同一个分支保证。
+   */
+  refreshToken?: string;
   /** 与 `access_token.exp - iat` 一致，供 `expires_in` 直接使用。 */
   expiresIn: number;
   /** 本次签发的 scope（= `issued_scope ∩ grant.scopes`，可能被请求再收窄）。 */
@@ -132,6 +138,30 @@ export async function exchangeAuthorizationCode(
     // 授权码是发给「某个 client 的某个回调」的，任何一处放宽都等于把码
     // 投递给另一个接收方。
     if (row.clientId !== input.clientId) throw invalidGrant(CODE_INVALID_MESSAGE);
+
+    /**
+     * 注册行复核（设计 §8.4：**单行 PK 读、不加锁**，不引入新的锁边）。
+     *
+     * 只查两条：注册行存在、`grant_types` 仍含 `authorization_code`。
+     * **不查**缓存 INVALID、**不查** `metadata_version`、**不回溯**
+     * `redirect_uri` 是否还在注册集合里——授权码代表一次**已经发生**的用户
+     * 同意（签发时四条件已全过），回调合法性在签发时刻判定。
+     * 失败映射 `invalid_client` [ID §6.1 MUST]，且发生在**消费授权码之前**。
+     */
+    const clientRows = await tx
+      .select({ grantTypes: mcpOauthClients.grantTypes })
+      .from(mcpOauthClients)
+      .where(eq(mcpOauthClients.clientId, row.clientId))
+      .limit(1);
+    const client = clientRows[0];
+    if (!client) throw invalidClient("client is not registered");
+    if (!client.grantTypes.includes("authorization_code")) {
+      throw invalidClient("client is not allowed to use the authorization code grant");
+    }
+    // Refresh gating（§8.4）：只有**显式声明** `refresh_token` 才创建第一代
+    // Refresh Token；未声明的客户端只拿 Session + Access Token。
+    const issueRefreshToken = client.grantTypes.includes("refresh_token");
+
     if (row.redirectUri !== input.redirectUri) throw invalidGrant(CODE_INVALID_MESSAGE);
     if (row.resource !== input.resource) throw invalidGrant(CODE_INVALID_MESSAGE);
     // PKCE：`verifyPkce` 内部先校验 verifier 形态（RFC 7636 的 43–128 与
@@ -168,6 +198,7 @@ export async function exchangeAuthorizationCode(
       issuedScope: row.scope,
       ipHash: input.ipHash,
       userAgent: input.userAgent,
+      issueRefreshToken,
     });
 
     // ---- 4. 本次签发的 scope ----
@@ -209,7 +240,9 @@ export async function exchangeAuthorizationCode(
 
   return {
     accessToken: issued.accessToken,
-    refreshToken: issued.session.refreshToken,
+    ...(issued.session.refreshToken === undefined
+      ? {}
+      : { refreshToken: issued.session.refreshToken }),
     expiresIn: deps.accessTokenTtlSeconds,
     scope: issued.scope,
     sessionId: issued.session.sessionId,
@@ -235,6 +268,23 @@ export async function exchangeRefreshToken(
   deps: TokenFlowDeps,
   input: ExchangeRefreshTokenInput,
 ): Promise<IssuedTokens> {
+  /**
+   * 注册行复核——**必须在轮换（任何写入 / 消费）之前**（设计 §8.4 / 任务书
+   * §6.3）：行不存在 → `invalid_client`；未声明 `refresh_token` →
+   * `unauthorized_client`。放在 `rotateMcpRefreshToken` 之前，保证拒绝时
+   * 旧代 Refresh Token **一个字节都没被消费**。
+   */
+  const clientRows = await deps.db
+    .select({ grantTypes: mcpOauthClients.grantTypes })
+    .from(mcpOauthClients)
+    .where(eq(mcpOauthClients.clientId, input.clientId))
+    .limit(1);
+  const client = clientRows[0];
+  if (!client) throw invalidClient("client is not registered");
+  if (!client.grantTypes.includes("refresh_token")) {
+    throw unauthorizedClient("client is not allowed to use the refresh token grant");
+  }
+
   // 轮换内部已经处理：客户端/资源绑定、scope 收窄、重放宽限、绝对期限、
   // Grant / 用户状态。它**先算 scope 再写任何状态**，所以越界的请求不会
   // 消费掉旧代 Refresh Token。

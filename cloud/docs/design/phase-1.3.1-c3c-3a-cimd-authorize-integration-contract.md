@@ -1278,10 +1278,10 @@ R1 的结论是「迁移只改约束（`DROP CONSTRAINT` + `ADD CONSTRAINT`）�
 
 ## 12. C3c-3B 实施任务拆分（顺序即依赖）
 
-> **C3c-3B-1 已完成 #1–#5（配置收口、TLS 语义、迁移 0004、迁移 0005、`cimd.ts`
-> 纯校验）与 #14（文档）。#6–#13 属 C3c-3B-2 及之后——`cimd-registry.ts`、
-> Grant/Session 联动撤销、Consent 四条件、authorize 接入、HTML 错误页、
-> token gating、同意页身份展示均**尚未实现**。**
+> **C3c-3B-1 完成 #1–#5 与 #14；C3c-3B-2 完成 #6 / #7（Registry 与联动撤销，
+> 含 3B-2-R1 收尾）；C3c-3B-3 完成 #8–#13（Consent 四条件、authorize 接入、
+> HTML 错误页、token gating、同意页身份展示与测试矩阵）。**
+> 至此 **C3c-3B 全部任务完成**；能力**已实现但未声明**（§12.2，仍属 1.3.3）。
 
 | # | 任务 | 产出 | 状态 |
 |---|---|---|---|
@@ -1292,12 +1292,12 @@ R1 的结论是「迁移只改约束（`DROP CONSTRAINT` + `ADD CONSTRAINT`）�
 | 5 | `cimd.ts`：`conflictsWithTrustedIdentifier()` / `isUrlShapedClientId()` / `clientIdConflictsWithTrusted()`（纯函数）；`grantTypes` 缺省 `["authorization_code"]`；`responseTypes` 缺省 `["code"]`；**§5.6 规则 1 交叉一致性检查**；`fetchClientMetadataDocument` 支持 `trustedIdentifiers`（DNS 之前） | 判据、默认值、交叉约束、身份冲突 | ✅ C3c-3B-1 |
 | 6 | `cimd-registry.ts`（新）：`resolveClientForAuthorize()`——长度 → 形态 → 身份冲突（**URL 形态，含预注册**，§3.2）→ 查行 → 缓存四态 → floor → 抓取 → 注册 / **版本 CAS**；**边界一（§8.5）的 CAS 失败处置**；ABSENT 负面冷却 | 纯逻辑 + 注入 deps | ✅ C3c-3B-2 |
 | 7 | `sessions.ts`：`revokeMcpGrantsAndSessionsByClient()`（Grant → Session，epoch + 1，单条聚合审计），**必须与版本 CAS 同一事务**（CAS 命中 1 行才撤） | 撤销语义（§8.1） | ✅ C3c-3B-2 |
-| 8 | `consent-flow.ts`：GET / POST **四条件**复核（POST 内 `FOR SHARE`）+ 失败删 auth request + 审计 `mcp_consent_metadata_invalid`；**边界二（§8.5）的提交语义** | 关闭 §8.3 的竞态与 **INVALID 缺口** | ⬜ C3c-3B-2 |
-| 9 | `authorize-flow.ts`：未注册 → 调 #6；错误映射 `invalid_client`；显式异常类型（transient / terminal） | 接入点 | ⬜ C3c-3B-2 |
-| 10 | `routes/mcp-oauth.ts`：HTML 错误页（不重定向）+ 审计事件（§15 命名） | 用户可见行为 | ⬜ C3c-3B-2 |
-| 11 | token 端点：`invalid_client` / 503 映射；**未声明 `refresh_token` 的客户端不签发 refresh token**，refresh 端点为它返回 `unauthorized_client`；**旧授权码按 §8.4（不查 INVALID / 版本）** | 规范对齐 + 信任阶段 | ⬜ C3c-3B-2 |
-| 12 | `consent-page.ts`：`clientIdentifierHost`（§16） | 反钓鱼 | ⬜ C3c-3B-2 |
-| 13 | 测试矩阵（§13 全部条目，含 R2 新增 A–D 四组与 §13.10） | 验收 | 🟡 3B-1 完成迁移 / CIMD / 配置三组；**3B-2 完成 Registry / CAS 竞争 / 撤销 / 负面冷却四组**；consent / token 随 #8–#11 |
+| 8 | `consent-flow.ts`：GET / POST **四条件**复核（POST 内 `FOR SHARE`）+ 失败删 auth request + 审计 `mcp_consent_metadata_invalid`；**边界二（§8.5）的提交语义** | 关闭 §8.3 的竞态与 **INVALID 缺口** | ✅ C3c-3B-3 |
+| 9 | authorize 接入：路由先调 `resolveClientForAuthorize()`（`authorize-flow` 保留纯参数校验，512 预检按 §3.1 移除）；显式失败分类（transient / terminal / database_error） | 接入点 | ✅ C3c-3B-3 |
+| 10 | `routes/mcp-oauth.ts`：Registry 失败 → HTML 错误页（不重定向、不回显完整 client_id）+ `mcp_consent_metadata_invalid` 审计事件（§15 命名） | 用户可见行为 | ✅ C3c-3B-3 |
+| 11 | token 端点：注册行存在 + `authorization_code` → `invalid_client`；**未声明 `refresh_token` 不签发**、refresh 端点返回 `unauthorized_client`（拒绝先于消费）；**旧授权码按 §8.4（不查 INVALID / 版本）** | 规范对齐 + 信任阶段 | ✅ C3c-3B-3 |
+| 12 | `consent-page.ts`：`clientIdentifierHost`（§16，独立标签、纯文本、截断 40 字符） | 反钓鱼 | ✅ C3c-3B-3 |
+| 13 | 测试矩阵（§13 全部条目，含 R2 新增 A–D 四组、§13.10、§13.11） | 验收 | ✅ C3c-3B-3（Registry 64 条 + Consent / Authorize / Token 新组全绿） |
 | 14 | 文档：本文件（含 §8.5 后续实施说明）+ R2/3B-1 审查报告 + 路线图 / 索引 | 文档一致 | ✅ C3c-3B-1 |
 
 ### 12.1 C3c-3B 明确不包含
@@ -1515,6 +1515,44 @@ P2 证明版本 CAS 使迟到成功命中 0 行；P3 证明并发单写者 + 真
 #72–#74 边界一，全部在本轮**原样通过**（三个 barrier 用例改为「两个独立
 singleflight 实例」以保持**非合并写入者**的原语义，各自断言抓取 2 次）。
 
+### 13.12 C3c-3B-3 追加：Consent 四条件 / Authorize 接入 / Token 注册约束
+
+编号接在 91 之后，**不重排**既有编号。全部跑在真实 PostgreSQL 上。
+
+| # | 组 | 场景 | 预期 |
+|---|---|---|---|
+| 92 | Consent 条件 1 | 注册行被删 → GET | 400 HTML、删 pending、审计 `stage=consent condition=1`、不渲染同意页 |
+| 93 | Consent 条件 1 | 注册行被删 → POST allow | 400、零 Code / Grant / Session、审计 `condition=1` |
+| 94 | Consent 条件 2（S1） | INVALID 先发生 → GET | 400、删行 + 审计 `condition=2 stage=consent`、不渲染 |
+| 95 | Consent 条件 2（S2） | GET 通过 → POST 前 INVALID | 400、不 302、零 Code、**已撤 Grant 不恢复（epoch 不动）**、审计 `condition=2` |
+| 96 | Consent 条件 2（S3） | terminal INVALID（非 mismatch）后旧 pending 提交 | 同 S2；Grant 集合逐项不变 |
+| 97 | Consent 条件 2（S4） | INVALID 恢复 FRESH 后旧 pending 再提交 | **302 + code**；版本递增过也照常通过 |
+| 98 | Consent 版本语义 | 仅 `client_name` 变化（版本 +1、行非 INVALID） | GET 渲染新名、POST 302——**按字段而非按版本** |
+| 99 | Consent 条件 3（S5） | `redirect_uris` 移除该回调（行非 INVALID）→ POST / GET | 400、审计 `condition=3`、零 Code |
+| 100 | Consent 条件 4（S6） | `grant_types` 不含 `authorization_code` → POST / GET | 400、审计 `condition=4`、零 Grant / Code |
+| 101 | Consent deny | metadata invalid 时提交 deny | **400 不 302**、删行 + 审计 |
+| 102 | Consent S7 | 同一 client 两个用户并发 POST（google + github 身份） | 双双 302、两条 code、两条 grant、无死锁 |
+| 103 | Consent 锁 | 另一事务持 **S 锁**时 POST | **不被阻塞**（证明 `FOR SHARE` 而非 `FOR UPDATE`） |
+| 104 | Consent 锁（P4） | 刷新事务持 **U 锁**标 INVALID 未提交 → POST | `pg_stat_activity` 观测真实锁等待 → 提交后读到 epoch → 400 `condition=2`、零 Code、version=2 |
+| 105 | STALE 放行 | `no-cache`（ttl=0 永久 STALE）客户端走完 authorize → GET → POST | 全程行 STALE（非 epoch）→ 302 签发 |
+| 106 | 同意页展示 | 不透明 id / URL id / IPv6 / 长 id | 两个独立标签；hostname / `[::1]` / 40 字符截断；无 `<a href>`、无 logo |
+| 107 | Authorize 顺序 | 预注册不透明 id | 302、**零网络** |
+| 108 | Authorize 顺序 | URL 形态预注册 id = issuer | 400 HTML、冲突检查在 DNS 前（零网络）、不建行 |
+| 109 | Authorize CIMD | 未注册 URL → 首次抓取注册 | 302、`request=1`、`version=1`、`source=cimd` |
+| 110 | Authorize 缓存 | FRESH 命中 | 302、零网络 |
+| 111 | Authorize 缓存 | STALE floor 内 / INVALID floor 内 | **503 HTML** / **400 HTML**、零网络、零 auth request |
+| 112 | Authorize 失败 | 抓到 terminal（malformed）/ transient（HTTP 503） | 400 / 503 HTML、**零注册行、零 auth request** |
+| 113 | Authorize 错误页 | 带路径 / 查询串的 client_id 抓取失败 | 只显示 hostname；**完整 URL、路径、查询串不出现**；不重定向 |
+| 114 | Authorize 参数 | `response_type` 错 / 缺 `client_id` | 仍 JSON `invalid_request`，且**不触发抓取** |
+| 115 | Authorize CAS（路由级） | 两个并发 authorize（同 STALE client，singleflight 合并） | `request=1`、一条 302 + 一条 **503**、恰一条 auth request、`version=2`、Map 清理 |
+| 116 | Token 结构校验 | 注册行删除 / `grant_types` 不含 `authorization_code` → code 兑换 | `invalid_client`，**授权码未被消费** |
+| 117 | Token 不回溯 | 签发后 `redirect_uris` 移除该回调 / 非 mismatch INVALID | **仍 200**（签发时刻策略，§8.4） |
+| 118 | Token mismatch | 签发后 Grant 被 mismatch 撤销 → 兑换 | `invalid_grant`；code 未消费、Grant 不复活 |
+| 119 | Token gating | 未声明 `refresh_token` | 响应**无** `refresh_token` 字段、库中**零行**、Session 照常 |
+| 120 | Token gating | 未声明后 refresh 兑换 / 注册行删除 | `unauthorized_client` / `invalid_client`；**旧代零消费** |
+| 121 | Token 轮换回归 | 声明 `refresh_token` | 旧代消费、新代签发（原流程不回退） |
+| 122 | Token 结构回归 | PKCE 不符 / redirect 不等 / 同码重放 | 仍 `invalid_grant`（与注册校验分开） |
+
 ---
 
 ## 14. 风险与未决问题
@@ -1723,3 +1761,23 @@ interface ConsentView {
 （未声明能力）、Desktop、迁移文件、依赖；既有 42 条 Registry 测试与全部门禁
 原样通过（三个 barrier 用例只改为「两个独立 singleflight 实例」以保持其
 **非合并写入者**的原语义，断言不弱化）。
+
+### C3c-3B-3（2026-11-20，基线 `2328a89`）
+
+本阶段把 Registry **接入生产链路**（authorize / Consent GET+POST / Token），
+完成 Remote MCP OAuth 服务端授权闭环。**只追加，不修改既有历史结论**：
+
+| # | 修订 | 原因 |
+|---|---|---|
+| 1 | **§8.3 落地说明**：四条件在 GET（纯读 + 拒绝时「删行 + 审计」同事务提交）与 POST（`auth_requests(U) → oauth_clients(S)`，拒绝分支**正常提交**而非回滚）两个检查点实现；deny 提交同样受四条件约束（metadata invalid 一律 400、不 302）；方案 B 不比对 `metadata_version`、不加快照列 | 任务书 §四；§8.5 边界二 |
+| 2 | **§8.4 落地说明**：code 兑换复核「注册行存在 + `authorization_code`」（单行 PK 读、不加锁）→ `invalid_client`；**refresh gating**：显式声明 `refresh_token` 才创建第一代 Refresh Token 与响应字段（响应与库同一分支）；refresh 兑换先复核（`invalid_client` / `unauthorized_client`）**再**轮换，拒绝时旧代零消费 | 任务书 §六；RFC 6749 `unauthorized_client` |
+| 3 | **§5.5 落地说明**：authorize 的 Registry 失败显式渲染 `renderErrorPage()`（400/503/500，不依赖全局 JSON `onError`）；错误标识用 §16 同一套 `clientIdentifierDisplay()`（hostname 或 ≤40 字符截断）；参数错误维持既有 JSON `invalid_request` | §5.5「浏览器看到 JSON」的缺口 |
+| 4 | **§3.1 落地说明**：`validateAuthorizeParams` 移除 `client_id > 512` 预检（长度硬上限 2048 与查库优先由 Registry 承担）——否则 513–2048 的 CIMD URL 客户端会被 authorize 误拒 | §3.1「把 512 从 authorize 的预检查里拿掉」 |
+| 5 | **§16 落地说明**：`ConsentPageInput` 增 `clientIdentifierHost`，身份行与回调行**分别带标签渲染**、纯文本、转义、不渲染 logo | §16.2 五条渲染纪律 |
+| 6 | **§13.12（新增）**：#92–#122 三十一条可验收用例（四条件 / S1–S7 / 真实锁 / authorize 接入 / token gating） | 本阶段回归锚点 |
+
+**本阶段未改**：迁移文件（无新增）、`package.json` / lockfile（无新依赖）、
+Desktop 生产代码、`discovery.ts`（`client_id_metadata_document_supported`
+**仍未声明**）、DCR、OAuth Provider 登录流程、冻结的 CAS 与 Grant/Session
+撤销语义；既有 1465 条测试无删除、无跳过、无弱化（仅 1 条 authorize 未注册
+用例按 §5.5 从 JSON 改为 HTML 断言——这是本阶段的**预期行为变更**）。

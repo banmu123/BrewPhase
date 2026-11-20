@@ -1,8 +1,10 @@
 import { and, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Database } from "../db/client.js";
+import { recordAuthEvent } from "../db/audit.js";
 import { mcpAuthCodes, mcpAuthRequests, mcpGrants, mcpOauthClients } from "../db/schema.js";
 import { constantTimeEqual, randomToken } from "../security/crypto.js";
 import { hashCsrf, isAuthRequestId, mcpAuthCodeHash } from "./authorize-flow.js";
+import { clientIdentifierDisplay } from "./consent-page.js";
 import {
   MCP_AUTH_CODE_TTL_MS,
   MCP_CSRF_BYTES,
@@ -48,12 +50,92 @@ export type ConsentFailure =
   | "not_authenticated"
   | "provider_not_consumed"
   | "binding_mismatch"
-  | "unsupported_provider";
+  | "unsupported_provider"
+  /**
+   * 四条件实时复核失败（设计 §8.3）：注册行消失 / INVALID / redirect_uri 已被
+   * 移出注册集合 / grant_types 不再含 `authorization_code`。
+   *
+   * **拒绝的副作用（删行 + `mcp_consent_metadata_invalid` 审计）已经在
+   * `loadConsentRequest` 的事务里提交**——路由层只渲染 400 页面，绝不再删一次、
+   * 再审计一次（§4.4：删除与审计必须真正提交，且不得重复）。
+   */
+  | "metadata_invalid";
+
+/**
+ * 四条件（设计 §8.3 冻结判据）的失败编号。
+ *
+ * 1 = 注册行不存在；2 = `metadata_cache_expires_at` 等于 INVALID 哨兵 epoch；
+ * 3 = `auth_request.redirect_uri` 不在当前 `client.redirect_uris`（逐字符）；
+ * 4 = `client.grant_types` 不含 `authorization_code`。
+ *
+ * **不比对 `metadata_version`**（方案 B）：版本因 `client_name` 等展示字段变化
+ * 而递增时授权必须继续；`response_types` 不落库，运行时也不复核（§5.6）。
+ */
+export type MetadataCondition = 1 | 2 | 3 | 4;
+
+/**
+ * 四条件所需的注册行投影（LEFT JOIN 下「行不存在」= 三个可空字段均为 NULL；
+ * `redirectUris` / `grantTypes` 是 NOT NULL 列，它们为 NULL 即表示整行缺失）。
+ */
+export interface MetadataClientRow {
+  redirectUris: string[] | null;
+  grantTypes: string[] | null;
+  /** NULL 视为非 INVALID；epoch 哨兵（`new Date(0)`）才是 INVALID。 */
+  metadataCacheExpiresAt: Date | null;
+}
+
+/** 只拒绝 INVALID（epoch 哨兵）；FRESH 与 STALE 都放行（§8.3：no-cache 永久 STALE）。 */
+export function evaluateMetadataConditions(
+  client: MetadataClientRow | null | undefined,
+  redirectUri: string,
+): MetadataCondition | null {
+  if (!client || client.redirectUris === null || client.grantTypes === null) return 1;
+  if (client.metadataCacheExpiresAt !== null && client.metadataCacheExpiresAt.getTime() === 0) {
+    return 2;
+  }
+  // [ID §4.2 MUST]：逐字符，不做前缀 / 规范化比较。
+  if (!client.redirectUris.some((registered) => registered === redirectUri)) return 3;
+  if (!client.grantTypes.includes("authorization_code")) return 4;
+  return null;
+}
+
+/**
+ * 「删 pending 授权请求 + 写 `mcp_consent_metadata_invalid`」——**必须同一事务
+ * 提交**（§8.5 边界二：禁止靠抛错让这对副作用一起回滚，也禁止只写其一）。
+ *
+ * `stage`：`consent` = GET（§15）、`consent_submit` = POST。
+ */
+async function commitMetadataRejection(
+  db: Database,
+  input: {
+    rid: string;
+    clientId: string;
+    userId: string | null;
+    stage: "consent" | "consent_submit";
+    condition: MetadataCondition;
+  },
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.delete(mcpAuthRequests).where(eq(mcpAuthRequests.id, input.rid));
+    await recordAuthEvent(tx, {
+      eventType: "mcp_consent_metadata_invalid",
+      ...(input.userId === null ? {} : { userId: input.userId }),
+      detail: {
+        rid: input.rid,
+        clientId: input.clientId,
+        stage: input.stage,
+        condition: input.condition,
+      },
+    });
+  });
+}
 
 export interface ConsentRequest {
   rid: string;
   clientId: string;
   clientName: string;
+  /** `client_id` 的安全展示形式（§16：URL→hostname / 不透明 id 截断 40 字符）。 */
+  clientIdentifierHost: string;
   redirectUri: string;
   /** 只取 host：同意页要显示「回到哪里」，但不必暴露内部查询参数。 */
   redirectHost: string;
@@ -72,12 +154,22 @@ export interface ActiveGrant {
 
 export type ConsentLoadOutcome =
   | { ok: true; request: ConsentRequest; activeGrant: ActiveGrant | null }
-  | { ok: false; reason: ConsentFailure };
+  | {
+      ok: false;
+      reason: ConsentFailure;
+      /** `metadata_invalid` 时给出失败的条件编号（1–4），其余失败为 undefined。 */
+      condition?: MetadataCondition;
+      clientId?: string;
+    };
 
 interface ConsentRow {
   id: string;
   clientId: string;
   clientName: string | null;
+  /** LEFT JOIN 的注册行投影（三个字段同时为 NULL = 注册行不存在）。 */
+  clientRedirectUris: string[] | null;
+  clientGrantTypes: string[] | null;
+  clientMetadataCacheExpiresAt: Date | null;
   redirectUri: string;
   scope: string[];
   resource: string;
@@ -97,6 +189,9 @@ async function readConsentRow(db: Database, rid: string): Promise<ConsentRow | u
       id: mcpAuthRequests.id,
       clientId: mcpAuthRequests.clientId,
       clientName: mcpOauthClients.clientName,
+      clientRedirectUris: mcpOauthClients.redirectUris,
+      clientGrantTypes: mcpOauthClients.grantTypes,
+      clientMetadataCacheExpiresAt: mcpOauthClients.metadataCacheExpiresAt,
       redirectUri: mcpAuthRequests.redirectUri,
       scope: mcpAuthRequests.scope,
       resource: mcpAuthRequests.resource,
@@ -111,10 +206,20 @@ async function readConsentRow(db: Database, rid: string): Promise<ConsentRow | u
     })
     .from(mcpAuthRequests)
     // LEFT JOIN：注册项被清理时仍能渲染（名字退化成 client_id）。
+    // 四条件的「行存在」判断（条件 1）由 `clientRedirectUris === null` 给出。
     .leftJoin(mcpOauthClients, eq(mcpAuthRequests.clientId, mcpOauthClients.clientId))
     .where(eq(mcpAuthRequests.id, rid))
     .limit(1);
   return rows[0];
+}
+
+/** 从 `ConsentRow` 抽出四条件所需的注册行投影。 */
+function metadataClientOf(row: ConsentRow): MetadataClientRow {
+  return {
+    redirectUris: row.clientRedirectUris,
+    grantTypes: row.clientGrantTypes,
+    metadataCacheExpiresAt: row.clientMetadataCacheExpiresAt,
+  };
 }
 
 /**
@@ -125,7 +230,10 @@ async function readConsentRow(db: Database, rid: string): Promise<ConsentRow | u
  * 排在登录态之后——一个没登录的行本来就不该出现在任何人的浏览器里。
  */
 function evaluateConsentRow(
-  row: ConsentRow,
+  row: Pick<
+    ConsentRow,
+    "expiresAt" | "providerConsumedAt" | "userId" | "provider" | "browserBindingHash"
+  >,
   input: { bindingHash: string; now: Date },
 ): ConsentFailure | null {
   if (row.expiresAt.getTime() <= input.now.getTime()) return "expired";
@@ -159,6 +267,25 @@ export async function loadConsentRequest(
   const failure = evaluateConsentRow(row, input);
   if (failure) return { ok: false, reason: failure };
 
+  /**
+   * 四条件实时复核（设计 §8.3，GET 为**纯读检查**、不加锁）。
+   *
+   * 任一失败：删 pending 授权请求 + 写 `mcp_consent_metadata_invalid`——两者
+   * 在**同一事务**提交（`commitMetadataRejection`），随后只返回结论，路由层
+   * 渲染 400 HTML，**不再重复删除 / 重复审计**。
+   */
+  const condition = evaluateMetadataConditions(metadataClientOf(row), row.redirectUri);
+  if (condition !== null) {
+    await commitMetadataRejection(db, {
+      rid: row.id,
+      clientId: row.clientId,
+      userId: row.userId,
+      stage: "consent",
+      condition,
+    });
+    return { ok: false, reason: "metadata_invalid", condition, clientId: row.clientId };
+  }
+
   const requestedScopes = orderMcpScopes(row.scope);
   // 请求里一个已知 scope 都没有 —— 说明这一行不是由 `validateAuthorizeParams`
   // 建出来的（或 scope 已被外部改坏）。不渲染同意页。
@@ -184,6 +311,7 @@ export async function loadConsentRequest(
       rid: row.id,
       clientId: row.clientId,
       clientName: row.clientName ?? row.clientId,
+      clientIdentifierHost: clientIdentifierDisplay(row.clientId),
       redirectUri: row.redirectUri,
       redirectHost: hostOf(row.redirectUri),
       requestedScopes,
@@ -403,10 +531,7 @@ async function allowConsent(
       if (!row) reject("not_found");
 
       // ---- 2. 重新验证（不信任 GET 时的任何结论）----
-      const failure = evaluateConsentRow(
-        { ...row, clientName: null },
-        input,
-      );
+      const failure = evaluateConsentRow(row, input);
       if (failure) reject(failure, { userId: row.userId ?? undefined, clientId: row.clientId });
 
       // CSRF 用常量时间比较；不一致就**删行**（这张表单已被篡改，不能再用）。
@@ -425,6 +550,67 @@ async function allowConsent(
         return {
           kind: "rejected",
           reason: "csrf_mismatch",
+          userId: row.userId ?? undefined,
+          clientId: row.clientId,
+        };
+      }
+
+      /**
+       * 四条件实时复核（设计 §8.3 检查点 2）：`mcp_oauth_clients` **`FOR SHARE`**。
+       *
+       * 为什么必须加锁：READ COMMITTED 的普通 SELECT 只看语句开始时的快照，
+       * 刷新事务可以在「我们查完」与「我们插码」之间提交，码就会按旧集合签发。
+       * `FOR SHARE` 与刷新的 `UPDATE` 冲突，把这段窗口关掉；`FOR SHARE` 而不是
+       * `FOR UPDATE`，是为了让**同一 client 的多个用户并发同意互不阻塞**
+       * （S7/P6），只与刷新串行。
+       *
+       * 锁顺序：`auth_requests(U) → oauth_clients(S) → grants(UPSERT) → auth_codes(I)`。
+       */
+      const clientRows = await tx
+        .select({
+          clientName: mcpOauthClients.clientName,
+          redirectUris: mcpOauthClients.redirectUris,
+          grantTypes: mcpOauthClients.grantTypes,
+          metadataCacheExpiresAt: mcpOauthClients.metadataCacheExpiresAt,
+        })
+        .from(mcpOauthClients)
+        .where(eq(mcpOauthClients.clientId, row.clientId))
+        .for("share")
+        .limit(1);
+      const client = clientRows[0];
+      const condition = evaluateMetadataConditions(
+        client
+          ? {
+              redirectUris: client.redirectUris,
+              grantTypes: client.grantTypes,
+              metadataCacheExpiresAt: client.metadataCacheExpiresAt,
+            }
+          : null,
+        row.redirectUri,
+      );
+      if (condition !== null) {
+        /**
+         * 有意的拒绝分支：**只删行 + 写审计，然后正常 `return`（提交事务）**。
+         *
+         * 绝不 throw——抛错会把删除与审计一起回滚（§8.5 边界二）：授权请求
+         * 永远留在表里，用户每次重试都撞同一堵墙，审计里也查不到它为什么被拒。
+         * Grant upsert、授权码、Session 在这里**都还没有发生**，因此本分支天然
+         * 零副作用（不创建 / 不恢复任何授权，不 302）。
+         */
+        await tx.delete(mcpAuthRequests).where(eq(mcpAuthRequests.id, input.rid));
+        await recordAuthEvent(tx, {
+          eventType: "mcp_consent_metadata_invalid",
+          ...(row.userId === null ? {} : { userId: row.userId }),
+          detail: {
+            rid: input.rid,
+            clientId: row.clientId,
+            stage: "consent_submit",
+            condition,
+          },
+        });
+        return {
+          kind: "rejected",
+          reason: "metadata_invalid",
           userId: row.userId ?? undefined,
           clientId: row.clientId,
         };
@@ -475,12 +661,8 @@ async function allowConsent(
       const finalScopes = isStepUp ? orderMcpScopes([...previousScopes, ...selected]) : selected;
       if (finalScopes.length === 0) reject("no_scope_granted", { userId, clientId: row.clientId });
 
-      const clientRows = await tx
-        .select({ clientName: mcpOauthClients.clientName })
-        .from(mcpOauthClients)
-        .where(eq(mcpOauthClients.clientId, row.clientId))
-        .limit(1);
-      const clientName = clientRows[0]?.clientName ?? row.clientId;
+      // 客户端名来自上面那次 `FOR SHARE` 读（同一把锁内，不再另开一次普通读）。
+      const clientName = client?.clientName ?? row.clientId;
 
       // ---- 5. upsert grant（唯一约束 + ON CONFLICT 是并发保护）----
       //
@@ -637,6 +819,33 @@ export async function decideConsent(
       userId: row.userId ?? undefined,
       clientId: row.clientId,
     };
+  }
+
+  /**
+   * 拒绝路径（显式 `deny`，或「允许但一个都没勾」）也要过四条件（§8.3：
+   * GET / POST 都必须全查；metadata invalid 时**不得 302**）。
+   *
+   * 这里是**无锁读 + 原子删行/审计**：拒绝不创建任何凭据，检查与删行之间的
+   * 窗口里即使注册行翻转，最坏结果也只是「晚了一次拒绝」——不会签出授权码。
+   * 授权路径（allow）的权威判定在 `allowConsent` 事务内带 `FOR SHARE` 完成。
+   */
+  if (input.decision === "deny" || input.scopes.length === 0) {
+    const condition = evaluateMetadataConditions(metadataClientOf(row), row.redirectUri);
+    if (condition !== null) {
+      await commitMetadataRejection(db, {
+        rid: input.rid,
+        clientId: row.clientId,
+        userId: row.userId,
+        stage: "consent_submit",
+        condition,
+      });
+      return {
+        ok: false,
+        reason: "metadata_invalid",
+        userId: row.userId ?? undefined,
+        clientId: row.clientId,
+      };
+    }
   }
 
   if (input.decision === "deny") {

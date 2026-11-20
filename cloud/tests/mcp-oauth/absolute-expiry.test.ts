@@ -61,13 +61,13 @@ describe("A1/A2 连续刷新：sid 与绝对期限不变", () => {
     const absoluteBefore = (await sessionRow(created.sessionId)).absoluteExpiresAt.getTime();
     const createdAtBefore = (await sessionRow(created.sessionId)).createdAt.getTime();
 
-    let token = created.refreshToken;
+    let token = created.refreshToken!;
     for (let i = 0; i < 5; i += 1) {
       f.clock.advance(60 * 60 * 1000);
       const rotated = await rotateMcpRefreshToken(f.deps, { refreshToken: token });
       // sid 跨刷新不变：这是「正常轮换」与「授权被收回」能区分开的唯一依据。
       expect(rotated.sessionId).toBe(created.sessionId);
-      token = rotated.refreshToken;
+      token = rotated.refreshToken!;
     }
 
     const after = await sessionRow(created.sessionId);
@@ -96,11 +96,11 @@ describe("A1/A2 连续刷新：sid 与绝对期限不变", () => {
       issuedScope: ["records:read"],
     });
 
-    let token = created.refreshToken;
+    let token = created.refreshToken!;
     for (let day = 7; day <= 84; day += 7) {
       f.clock.set(new Date(f.clock.current().getTime() + 7 * DAY_MS));
       const rotated = await rotateMcpRefreshToken(f.deps, { refreshToken: token });
-      token = rotated.refreshToken;
+      token = rotated.refreshToken!;
     }
 
     const absolute = (await sessionRow(created.sessionId)).absoluteExpiresAt.getTime();
@@ -133,12 +133,12 @@ describe("A3/A5 跨窗口刷新", () => {
     const absolute = (await sessionRow(created.sessionId)).absoluteExpiresAt.getTime();
     const started = f.clock.current().getTime();
 
-    let token = created.refreshToken;
+    let token = created.refreshToken!;
     for (const day of [29, 58, 87, 89]) {
       f.clock.set(new Date(started + day * DAY_MS));
       const rotated = await rotateMcpRefreshToken(f.deps, { refreshToken: token });
       expect(rotated.sessionId).toBe(created.sessionId);
-      token = rotated.refreshToken;
+      token = rotated.refreshToken!;
       expect((await sessionRow(created.sessionId)).absoluteExpiresAt.getTime()).toBe(absolute);
     }
 
@@ -156,10 +156,10 @@ describe("A3/A5 跨窗口刷新", () => {
     const started = f.clock.current().getTime();
     const absolute = (await sessionRow(created.sessionId)).absoluteExpiresAt.getTime();
     // 走到第 89 天：中途必须先刷新，否则第一代在 30 天时就过期了。
-    let token = created.refreshToken;
+    let token = created.refreshToken!;
     for (const day of [29, 58, 87, 89]) {
       f.clock.set(new Date(started + day * DAY_MS));
-      token = (await rotateMcpRefreshToken(f.deps, { refreshToken: token })).refreshToken;
+      token = (await rotateMcpRefreshToken(f.deps, { refreshToken: token })).refreshToken!;
     }
 
     const rows = await handle.db
@@ -186,10 +186,10 @@ describe("A4/A6/A7 到期、撤销、重放", () => {
       issuedScope: ["records:read"],
     });
     const started = f.clock.current().getTime();
-    let token = created.refreshToken;
+    let token = created.refreshToken!;
     for (const day of [29, 58, 87, 89]) {
       f.clock.set(new Date(started + day * DAY_MS));
-      token = (await rotateMcpRefreshToken(f.deps, { refreshToken: token })).refreshToken;
+      token = (await rotateMcpRefreshToken(f.deps, { refreshToken: token })).refreshToken!;
     }
 
     // 越过绝对上限 1 秒。
@@ -222,7 +222,7 @@ describe("A4/A6/A7 到期、撤销、重放", () => {
     expect(revoked.revoked).toBe(true);
 
     await expect(
-      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken }),
+      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! }),
     ).rejects.toMatchObject({ code: "invalid_grant" });
     expect(await tokenCount(created.sessionId)).toBe(before);
   });
@@ -235,11 +235,11 @@ describe("A4/A6/A7 到期、撤销、重放", () => {
       issuedScope: ["records:read"],
     });
     f.clock.advance(1000);
-    const rotated = await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken });
+    const rotated = await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! });
 
     f.clock.advance(31_000);
     await expect(
-      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken }),
+      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! }),
     ).rejects.toMatchObject({ code: "invalid_grant" });
 
     const row = await sessionRow(created.sessionId);
@@ -251,7 +251,7 @@ describe("A4/A6/A7 到期、撤销、重放", () => {
     // 未被消费的那一代也无法使用。
     f.clock.advance(1000);
     await expect(
-      rotateMcpRefreshToken(f.deps, { refreshToken: rotated.refreshToken }),
+      rotateMcpRefreshToken(f.deps, { refreshToken: rotated.refreshToken! }),
     ).rejects.toMatchObject({ code: "invalid_grant" });
 
     // 历史行仍在（撤销不删数据）。
@@ -320,10 +320,10 @@ describe("A8 没有任何 UPDATE 能碰不可变字段", () => {
     };
 
     const before = await snapshot();
-    let token = created.refreshToken;
+    let token = created.refreshToken!;
     for (let i = 0; i < 5; i += 1) {
       f.clock.advance(3600_000);
-      token = (await rotateMcpRefreshToken(f.deps, { refreshToken: token })).refreshToken;
+      token = (await rotateMcpRefreshToken(f.deps, { refreshToken: token })).refreshToken!;
     }
     expect(await snapshot()).toBe(before);
 

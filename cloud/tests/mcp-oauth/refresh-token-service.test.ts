@@ -53,22 +53,22 @@ describe("签发", () => {
     });
 
     // 256 bit 随机值的 base64url 形态：43 字符。
-    expect(created.refreshToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(created.refreshToken!).toMatch(/^[A-Za-z0-9_-]{43}$/);
 
     const rows = await tokenRows(created.sessionId);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.generation).toBe(1);
     expect(rows[0]?.consumedAt).toBeNull();
-    expect(rows[0]?.tokenHash).toBe(mcpRefreshTokenHash(MCP_TEST_PEPPER, created.refreshToken));
+    expect(rows[0]?.tokenHash).toBe(mcpRefreshTokenHash(MCP_TEST_PEPPER, created.refreshToken!));
 
     // 明文一个字节都不该进库：既能按值查不到，也查不到任何包含它的行。
     const byValue = await handle.sql<{ count: string }[]>`
       select count(*)::text as count from mcp_refresh_tokens
-       where token_hash = ${created.refreshToken}`;
+       where token_hash = ${created.refreshToken!}`;
     expect(byValue[0]?.count).toBe("0");
     const bySubstring = await handle.sql<{ count: string }[]>`
       select count(*)::text as count from mcp_refresh_tokens
-       where token_hash like '%' || ${created.refreshToken} || '%'`;
+       where token_hash like '%' || ${created.refreshToken!} || '%'`;
     expect(bySubstring[0]?.count).toBe("0");
   });
 
@@ -169,11 +169,11 @@ describe("轮换", () => {
     });
 
     f.clock.advance(60_000);
-    const rotated = await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken });
+    const rotated = await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! });
 
     expect(rotated.sessionId).toBe(created.sessionId);
     expect(rotated.generation).toBe(2);
-    expect(rotated.refreshToken).not.toBe(created.refreshToken);
+    expect(rotated.refreshToken!).not.toBe(created.refreshToken!);
 
     const rows = await tokenRows(created.sessionId);
     expect(rows).toHaveLength(2);
@@ -182,7 +182,7 @@ describe("轮换", () => {
     expect(rows[1]?.consumedAt).toBeNull();
     expect(rows[1]?.generation).toBe(2);
     // 旧行**保留**：重放检测要靠它。
-    expect(rows[0]?.tokenHash).toBe(mcpRefreshTokenHash(MCP_TEST_PEPPER, created.refreshToken));
+    expect(rows[0]?.tokenHash).toBe(mcpRefreshTokenHash(MCP_TEST_PEPPER, created.refreshToken!));
   });
 
   it("generation 单调递增，历史行全部保留", async () => {
@@ -193,12 +193,12 @@ describe("轮换", () => {
       issuedScope: ["records:read"],
     });
 
-    let token = created.refreshToken;
+    let token = created.refreshToken!;
     for (let i = 0; i < 4; i += 1) {
       f.clock.advance(60_000);
       const next = await rotateMcpRefreshToken(f.deps, { refreshToken: token });
       expect(next.generation).toBe(i + 2);
-      token = next.refreshToken;
+      token = next.refreshToken!;
     }
 
     const rows = await tokenRows(created.sessionId);
@@ -215,7 +215,7 @@ describe("轮换", () => {
       issuedScope: ["records:read"],
     });
     f.clock.advance(60_000);
-    await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken });
+    await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! });
 
     const active = await handle.sql<{ count: string }[]>`
       select count(*)::text as count from mcp_refresh_tokens
@@ -241,7 +241,7 @@ describe("轮换", () => {
 
     // Grant 侧多给一个 coffee:read，但这次授权没勾选它 → 交集仍是单元素。
     f.clock.advance(1000);
-    const rotated = await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken });
+    const rotated = await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! });
     expect(rotated.issuedScope).toEqual(["records:read"]);
     expect(rotated.effectiveScope).toEqual(["records:read"]);
   });
@@ -258,8 +258,8 @@ describe("并发与重放", () => {
     f.clock.advance(1000);
 
     const results = await Promise.allSettled([
-      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken }),
-      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken }),
+      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! }),
+      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! }),
     ]);
     const ok = results.filter((r) => r.status === "fulfilled");
     const failed = results.filter((r) => r.status === "rejected");
@@ -273,7 +273,7 @@ describe("并发与重放", () => {
     const winner = (ok[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof rotateMcpRefreshToken>>>)
       .value;
     f.clock.advance(1000);
-    const next = await rotateMcpRefreshToken(f.deps, { refreshToken: winner.refreshToken });
+    const next = await rotateMcpRefreshToken(f.deps, { refreshToken: winner.refreshToken! });
     expect(next.generation).toBe(3);
   });
 
@@ -285,13 +285,13 @@ describe("并发与重放", () => {
       issuedScope: ["records:read"],
     });
     f.clock.advance(1000);
-    const rotated = await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken });
+    const rotated = await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! });
 
     // **必须让时钟走一段**再重放。若在同一毫秒重放，`sinceConsumedMs` 恰好是 0，
     // 于是「宽限窗口 = 0」这种错误实现也能通过——变异验证在这里发现过这个假绿。
     f.clock.advance(5_000);
     await expect(
-      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken }),
+      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! }),
     ).rejects.toMatchObject({ code: "invalid_grant" });
 
     const sessions = await handle.db.select().from(mcpSessions);
@@ -301,7 +301,7 @@ describe("并发与重放", () => {
     // 现役 token 仍可用 → 整条会话没被误杀。
     f.clock.advance(1000);
     await expect(
-      rotateMcpRefreshToken(f.deps, { refreshToken: rotated.refreshToken }),
+      rotateMcpRefreshToken(f.deps, { refreshToken: rotated.refreshToken! }),
     ).resolves.toMatchObject({ generation: 3 });
   });
 
@@ -313,12 +313,12 @@ describe("并发与重放", () => {
       issuedScope: ["records:read"],
     });
     f.clock.advance(1000);
-    const rotated = await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken });
+    const rotated = await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! });
 
     // 越过 30 秒宽限窗口。
     f.clock.advance(31_000);
     await expect(
-      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken }),
+      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! }),
     ).rejects.toMatchObject({ code: "invalid_grant" });
 
     const sessions = await handle.db.select().from(mcpSessions);
@@ -328,7 +328,7 @@ describe("并发与重放", () => {
     // 现役（尚未消费）的那代也刷新不了：撤销是会话级的。
     f.clock.advance(1000);
     await expect(
-      rotateMcpRefreshToken(f.deps, { refreshToken: rotated.refreshToken }),
+      rotateMcpRefreshToken(f.deps, { refreshToken: rotated.refreshToken! }),
     ).rejects.toMatchObject({ code: "invalid_grant" });
   });
 
@@ -340,11 +340,11 @@ describe("并发与重放", () => {
       issuedScope: ["records:read"],
     });
     f.clock.advance(1000);
-    await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken });
+    await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! });
     const before = (await tokenRows(created.sessionId)).length;
 
     const retry = await rotateMcpRefreshToken(f.deps, {
-      refreshToken: created.refreshToken,
+      refreshToken: created.refreshToken!,
     }).catch((err: unknown) => err);
     // 关键：拒绝是**抛错**，不是返回上一次的新 token。想「恢复」就必须
     // 在服务端暂存明文，而那违反「只存哈希」。
@@ -394,8 +394,8 @@ describe("并发与重放", () => {
 
     // 已消费（宽限内）
     f.clock.advance(1000);
-    await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken });
-    const consumed = await collect(f.deps, created.refreshToken);
+    await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! });
+    const consumed = await collect(f.deps, created.refreshToken!);
 
     // 过期：另造一条会话，把时钟推到 31 天后
     const other = await seedMcpOAuthFixture(handle, { clientId: "expired-client" });
@@ -405,7 +405,7 @@ describe("并发与重放", () => {
       issuedScope: ["records:read"],
     });
     other.clock.advance(31 * DAY_MS);
-    const expired = await collect(other.deps, otherSession.refreshToken);
+    const expired = await collect(other.deps, otherSession.refreshToken!);
 
     // 会话已撤销
     const third = await seedMcpOAuthFixture(handle, { clientId: "revoked-client" });
@@ -418,7 +418,7 @@ describe("并发与重放", () => {
       .update(mcpSessions)
       .set({ revokedAt: third.clock.current(), revokedReason: "user_revoke" })
       .where(eq(mcpSessions.id, thirdSession.sessionId));
-    const revoked = await collect(third.deps, thirdSession.refreshToken);
+    const revoked = await collect(third.deps, thirdSession.refreshToken!);
 
     for (const result of [consumed, expired, revoked]) {
       expect(result).toEqual(unknown);
@@ -441,7 +441,7 @@ describe("前置条件变化后无法刷新", () => {
       .where(eq(mcpSessions.id, created.sessionId));
 
     await expect(
-      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken }),
+      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! }),
     ).rejects.toMatchObject({ code: "invalid_grant" });
   });
 
@@ -455,7 +455,7 @@ describe("前置条件变化后无法刷新", () => {
     await handle.db.update(users).set({ status: "suspended" }).where(eq(users.id, f.userId));
 
     await expect(
-      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken }),
+      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! }),
     ).rejects.toMatchObject({ code: "invalid_grant" });
   });
 
@@ -473,7 +473,7 @@ describe("前置条件变化后无法刷新", () => {
       .where(eq(mcpGrants.id, f.grantId));
 
     await expect(
-      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken }),
+      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! }),
     ).rejects.toMatchObject({ code: "invalid_grant" });
   });
 
@@ -487,7 +487,7 @@ describe("前置条件变化后无法刷新", () => {
     f.clock.advance(31 * DAY_MS);
 
     await expect(
-      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken }),
+      rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! }),
     ).rejects.toMatchObject({ code: "invalid_grant" });
 
     // 会话仍未撤销（token 过期不是安全事件）。
@@ -505,7 +505,7 @@ describe("审计", () => {
       issuedScope: ["records:read"],
     });
     f.clock.advance(1000);
-    const rotated = await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken });
+    const rotated = await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! });
 
     const events = await handle.sql<{ event_type: string; detail: unknown }[]>`
       select event_type, detail from auth_events
@@ -515,8 +515,8 @@ describe("审计", () => {
     expect(types).toContain("mcp_refresh_success");
 
     const serialized = JSON.stringify(events);
-    expect(serialized).not.toContain(created.refreshToken);
-    expect(serialized).not.toContain(rotated.refreshToken);
+    expect(serialized).not.toContain(created.refreshToken!);
+    expect(serialized).not.toContain(rotated.refreshToken!);
   });
 
   it("宽限内重试与宽限外盗用各写一条不同的安全事件", async () => {
@@ -527,13 +527,13 @@ describe("审计", () => {
       issuedScope: ["records:read"],
     });
     f.clock.advance(1000);
-    const rotated = await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken });
+    const rotated = await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! });
 
     // 同样留出 5 秒，确保这一次落进宽限窗口而不是「恰好 0ms」。
     f.clock.advance(5_000);
-    await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken }).catch(() => {});
+    await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! }).catch(() => {});
     f.clock.advance(31_000);
-    await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken }).catch(() => {});
+    await rotateMcpRefreshToken(f.deps, { refreshToken: created.refreshToken! }).catch(() => {});
 
     const counts = await handle.sql<{ event_type: string; count: string }[]>`
       select event_type, count(*)::text as count from auth_events

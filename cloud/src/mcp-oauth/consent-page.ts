@@ -79,10 +79,48 @@ export interface ConsentScopeRow {
   granted: boolean;
 }
 
+/**
+ * `client_id` 的**安全展示形式**（设计 §16.2 / §5.5：错误页与同意页共用同一套
+ * host 渲染规则）。
+ *
+ * | 输入 | 结果 |
+ * |---|---|
+ * | URL 形态（http/https） | `URL.hostname`——WHATWG 已 lowercase + IDN→punycode；IPv6 保留方括号（`[::1]`） |
+ * | http(s) 形态但解析失败（理论上不发生） | 空字符串（该行不渲染） |
+ * | 不透明预注册 id | 截断到 40 字符 + `…`（不回显超长内容、不尝试解析成 host） |
+ *
+ * **只返回纯文本**：调用方一律过 `escapeHtml`，且**不得**渲染成链接。
+ * 完整的 `client_id` URL（可能很长、含攻击者可控的路径 / 查询串）**绝不**
+ * 进入任何页面或错误文案。
+ */
+export function clientIdentifierDisplay(clientId: string): string {
+  try {
+    const url = new URL(clientId);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      // hostname 为空 = 形态上是 http(s) 但不是合法 URL（如 `http://`）→ 空串。
+      return url.hostname;
+    }
+  } catch {
+    // 解析失败：继续按「不是 URL」处理（不透明 id 就是解析失败的常态）。
+  }
+  if (/^https?:\/\//i.test(clientId)) {
+    // 以 http(s):// 开头却解析不出 host → §16 的「解析失败」行：空字符串。
+    return "";
+  }
+  return clientId.length > 40 ? `${clientId.slice(0, 39)}…` : clientId;
+}
+
 export interface ConsentPageInput {
   rid: string;
   csrf: string;
   clientName: string;
+  /**
+   * 客户端**身份**域名（`client_id` 的 host；不透明 id 用截断标识）。
+   *
+   * 与 `redirectHost` **互相独立、分别渲染**（§16.2 纪律 1）：把回调域名当成
+   * 客户端身份展示，会让用户把「回到哪里」误认成「授权给了谁」。
+   */
+  clientIdentifierHost: string;
   /** 回调地址的 host（不展示完整 URI）。 */
   redirectHost: string;
   scopes: readonly ConsentScopeRow[];
@@ -119,9 +157,20 @@ export function renderConsentPage(input: ConsentPageInput): string {
     ? `授权完成后你会回到 <strong>${escapeHtml(input.redirectHost)}</strong>。`
     : "授权完成后你会回到发起授权的应用。";
 
+  /**
+   * 身份行与回调行**分开渲染、各带标签**（§16.2 纪律 1）。
+   * `clientIdentifierHost` 为空（§16 的「解析失败」行）时整行不渲染，
+   * 回调行不受影响。两个值都只作纯文本，**不做链接**（纪律 2）。
+   * 客户端名已由 `<h1>` 展示，这里只补身份域名本身。
+   */
+  const identityLine = input.clientIdentifierHost
+    ? `<p class="sub">你正在授权给 <strong>${escapeHtml(input.clientIdentifierHost)}</strong>。</p>`
+    : "";
+
   return renderAuthPage(
     "授权 BrewPhase 访问",
     `<h1><span class="client">${escapeHtml(input.clientName)}</span> 请求读取你的 BrewPhase 数据</h1>
+${identityLine}
 <p class="sub">${hostLine}</p>
 <form method="post" action="/mcp/oauth/consent">
   <input type="hidden" name="rid" value="${escapeHtml(input.rid)}">
