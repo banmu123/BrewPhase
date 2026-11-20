@@ -692,3 +692,205 @@ describe("STALE 放行与同意页身份展示（§8.3 / §16）", () => {
     expect(flow.html).not.toContain("partner.example.com/oauth/client");
   });
 });
+
+/* ========================================================================== *
+ * deny / 空 scope 的事务与真实锁（C3c-3B-3-R1，任务书 §六）
+ *
+ * 修复前：deny / 空 scope 走「普通 SELECT 快照查四条件 → 条件 DELETE → 302」，
+ * 检查与重定向之间不持锁——刷新可以在窗口内把本次 redirect_uri 移出注册集合，
+ * 拒绝仍会 302 到已不在册的回调（独立审核 P2）。
+ * 修复后：两条路径与 allow 同一锁序的事务
+ * `auth_requests FOR UPDATE → oauth_clients FOR SHARE → 四条件 → 删行/审计`。
+ * ========================================================================== */
+
+describe("deny / 空 scope 的事务与真实锁（C3c-3B-3-R1）", () => {
+  /** 另一个用户 + 另一个 client 的 Grant（断言拒绝路径不误伤）。 */
+  async function seedForeignGrant(): Promise<{ userId: string; grantId: string }> {
+    const users = await handle.sql<{ id: string }[]>`
+      insert into users (display_name) values (${"foreign-" + Math.random().toString(36).slice(2)}) returning id`;
+    const userId = users[0]!.id;
+    const grants = await handle.sql<{ id: string }[]>`
+      insert into mcp_grants (user_id, client_id, client_name, scopes, resource, epoch)
+      values (${userId}, 'other-client', 'Foreign', array['records:read'],
+              ${"https://gateway.example/mcp"}, 1)
+      returning id`;
+    return { userId, grantId: grants[0]!.id };
+  }
+
+  async function grantSnapshot(grantId: string): Promise<Record<string, unknown>> {
+    const rows = await handle.sql<{ revoked: string | null; epoch: number; scopes: string[] }[]>`
+      select revoked_at::text as revoked, epoch, scopes from mcp_grants where id = ${grantId}`;
+    expect(rows).toHaveLength(1);
+    return { ...rows[0]! };
+  }
+
+  it("测试 A：显式 deny 与注册信息刷新竞争 → FOR SHARE 阻塞 → B 提交后 condition=3 拒绝", async () => {
+    const flow = await startConsentFlow(h);
+    const foreign = await seedForeignGrant();
+    const foreignBefore = await grantSnapshot(foreign.grantId);
+
+    // 事务 B：先取 `mcp_oauth_clients` 排他锁（不提交），收到信号后再移除
+    // 本次 redirect_uri 并 COMMIT。
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let locked!: () => void;
+    const lockedPromise = new Promise<void>((r) => (locked = r));
+    const holder = handle.sql
+      .begin(async (t) => {
+        await t`
+          update mcp_oauth_clients
+             set metadata_version = metadata_version + 1
+           where client_id = 'test-client'`;
+        locked();
+        await gate;
+        // B COMMIT 前的写：把 auth request 的 redirect_uri 移出注册集合。
+        await t`
+          update mcp_oauth_clients
+             set redirect_uris = array['https://elsewhere.example/cb']
+           where client_id = 'test-client'`;
+      })
+      .catch(() => undefined);
+    await lockedPromise;
+
+    // Consent POST（decision=deny）→ 应真实阻塞在 FOR SHARE。
+    const pending = submitConsent(h, {
+      rid: flow.rid,
+      cookie: flow.cookie,
+      csrf: flow.csrf,
+      decision: "deny",
+    });
+    try {
+      const waiter = await waitForLockWaiter(5000);
+      expect(waiter, "deny POST 应阻塞在 mcp_oauth_clients 的 FOR SHARE").not.toBeNull();
+      expect(Array.isArray(waiter!.blockers)).toBe(true);
+      expect((waiter!.blockers as unknown[]).length).toBeGreaterThan(0);
+    } finally {
+      // 无论断言成败都放行 B（避免失败时持锁事务泄漏、卡住后续 resetDb）。
+      release();
+      await holder;
+    }
+
+    // B 已提交（redirect_uri 移出注册集合）→ POST 恢复，读到条件 3 失败。
+    const res = await pending;
+
+    expect(res.status).toBe(400);
+    expect(res.headers.get("location")).toBeNull(); // invalid 时绝不重定向
+    expect(await authRequestExists(flow.rid)).toBe(false);
+
+    const audits = await metadataAudits(flow.rid);
+    expect(audits).toHaveLength(1);
+    expect(audits[0]?.detail.stage).toBe("consent_submit");
+    expect(audits[0]?.detail.condition).toBe(3);
+
+    // 零副作用：无 Code、无新 Grant、无 Session。
+    expect(await tableCount(handle.sql, "mcp_auth_codes")).toBe(0);
+    expect(await tableCount(handle.sql, "mcp_grants")).toBe(1); // 只有 seeded foreign
+    expect(await sessionCountFor(flow.userId)).toBe(0);
+    expect(await sessionCountFor(foreign.userId)).toBe(0);
+    // 其他用户 / 其他 client 的 Grant 逐字段不变。
+    expect(await grantSnapshot(foreign.grantId)).toEqual(foreignBefore);
+  });
+
+  it("测试 B：空 scope 与 INVALID 竞争 → FOR SHARE 阻塞 → 读到 epoch → 400 condition=2", async () => {
+    const flow = await startConsentFlow(h);
+
+    // 事务 B：把注册行标成 INVALID（U 锁）但不提交。
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let locked!: () => void;
+    const lockedPromise = new Promise<void>((r) => (locked = r));
+    const holder = handle.sql
+      .begin(async (t) => {
+        await t`
+          update mcp_oauth_clients
+             set metadata_cache_expires_at = '1970-01-01T00:00:00.000Z'::timestamptz,
+                 metadata_version = metadata_version + 1
+           where client_id = 'test-client'`;
+        locked();
+        await gate;
+      })
+      .catch(() => undefined);
+    await lockedPromise;
+
+    // 空 scope（allow 但一个都没勾）→ 按 deny 处理，同样必须阻塞在 FOR SHARE。
+    const pending = submitConsent(h, {
+      rid: flow.rid,
+      cookie: flow.cookie,
+      csrf: flow.csrf,
+      decision: "allow",
+      scopes: [],
+    });
+    try {
+      const waiter = await waitForLockWaiter(5000);
+      expect(waiter, "空 scope POST 应阻塞在 mcp_oauth_clients 的 FOR SHARE").not.toBeNull();
+      expect((waiter!.blockers as unknown[]).length).toBeGreaterThan(0);
+    } finally {
+      release();
+      await holder;
+    }
+
+    const res = await pending;
+
+    expect(res.status).toBe(400);
+    expect(res.headers.get("location")).toBeNull();
+    expect(await authRequestExists(flow.rid)).toBe(false);
+    const audits = await metadataAudits(flow.rid);
+    expect(audits).toHaveLength(1);
+    expect(audits[0]?.detail.stage).toBe("consent_submit");
+    expect(audits[0]?.detail.condition).toBe(2);
+
+    // 零副作用。
+    expect(await tableCount(handle.sql, "mcp_auth_codes")).toBe(0);
+    expect(await tableCount(handle.sql, "mcp_grants")).toBe(0);
+    expect(await sessionCountFor(flow.userId)).toBe(0);
+    expect(await versionOf("test-client")).toBe(2); // B 的版本推进已提交
+  });
+
+  it("测试 C：有效 deny 正常路径 → 302 access_denied、state 原样、零副作用", async () => {
+    const flow = await startConsentFlow(h);
+
+    const res = await submitConsent(h, {
+      rid: flow.rid,
+      cookie: flow.cookie,
+      csrf: flow.csrf,
+      decision: "deny",
+    });
+
+    expect(res.status).toBe(302);
+    const params = redirectParams(res);
+    expect(params.get("error")).toBe("access_denied");
+    expect(params.get("state")).toBe("client-state-1"); // 原样回传
+    expect(params.get("code")).toBeNull();
+
+    expect(await authRequestExists(flow.rid)).toBe(false);
+    expect(await tableCount(handle.sql, "mcp_auth_codes")).toBe(0);
+    expect(await tableCount(handle.sql, "mcp_grants")).toBe(0);
+    expect(await sessionCountFor(flow.userId)).toBe(0);
+    // 正常拒绝不是 metadata 拒绝：无该审计。
+    expect(await metadataAudits(flow.rid)).toHaveLength(0);
+  });
+
+  it("测试 D：空 scope 正常路径 → 302 access_denied、不签发、行已删", async () => {
+    const flow = await startConsentFlow(h);
+
+    const res = await submitConsent(h, {
+      rid: flow.rid,
+      cookie: flow.cookie,
+      csrf: flow.csrf,
+      decision: "allow",
+      scopes: [],
+    });
+
+    expect(res.status).toBe(302);
+    const params = redirectParams(res);
+    expect(params.get("error")).toBe("access_denied");
+    expect(params.get("state")).toBe("client-state-1");
+    expect(params.get("code")).toBeNull();
+
+    expect(await authRequestExists(flow.rid)).toBe(false);
+    expect(await tableCount(handle.sql, "mcp_auth_codes")).toBe(0);
+    expect(await tableCount(handle.sql, "mcp_grants")).toBe(0);
+    expect(await sessionCountFor(flow.userId)).toBe(0);
+    expect(await metadataAudits(flow.rid)).toHaveLength(0);
+  });
+});

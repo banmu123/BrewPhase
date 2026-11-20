@@ -414,54 +414,184 @@ export type ConsentDecisionOutcome =
       clientId?: string;
     };
 
-/**
- * 用户拒绝（显式 `deny`，或允许但一个 scope 都没选）。
- *
- * 判据是那次**条件 DELETE 的命中行数**，不是前面读到的状态：读到「可以拒绝」
- * 之后、删之前，可能有另一个 POST 已经把它批准了。这时 DELETE 命中 0 行，
- * 拒绝方得到 400，而不是把一次已成立的授权撤销掉。
- */
-async function denyConsent(
-  db: Database,
-  input: {
-    rid: string;
-    bindingHash: string;
-    row: ConsentRow;
-    now: Date;
-  },
-): Promise<ConsentDecisionOutcome> {
-  const userId = input.row.userId as string;
-  const deleted = await db
-    .delete(mcpAuthRequests)
-    .where(
-      and(
-        eq(mcpAuthRequests.id, input.rid),
-        eq(mcpAuthRequests.csrfHash, input.row.csrfHash),
-        eq(mcpAuthRequests.browserBindingHash, input.bindingHash),
-        eq(mcpAuthRequests.userId, userId),
-        isNotNull(mcpAuthRequests.providerConsumedAt),
-        gt(mcpAuthRequests.expiresAt, input.now),
-      ),
-    )
-    .returning({
-      redirectUri: mcpAuthRequests.redirectUri,
-      state: mcpAuthRequests.state,
-    });
+/** deny 事务的结果：两条分支都**正常提交**（§8.5 边界二），绝不靠 throw 表达拒绝。 */
+type DenyTxOutcome =
+  | { kind: "denied"; result: ConsentDenied }
+  | { kind: "rejected"; reason: ConsentDecisionFailure; userId?: string; clientId?: string };
 
-  const hit = deleted[0];
-  if (!hit) {
-    return { ok: false, reason: "not_found", userId, clientId: input.row.clientId };
-  }
-  return {
-    ok: true,
-    result: {
+/**
+ * 用户拒绝（显式 `deny`，或「允许但一个 scope 都没选」）的**事务实现**
+ * （C3c-3B-3-R1，任务书 §5.1）。
+ *
+ * ## 为什么必须是事务 + `FOR SHARE`（修复前的 P2）
+ *
+ * 修复前的路径是「普通 SELECT 快照查四条件 → 条件 DELETE → 302」：检查与
+ * 删除/重定向之间没有持锁，刷新事务可以在窗口内改写注册行（例如把本次
+ * `redirect_uri` 移出 `redirect_uris`），拒绝仍会把响应 302 到**已不在注册
+ * 集合里**的回调地址。现在判定与删除在同一次持锁事务里完成，锁序与 allow
+ * 完全一致、**不得反向**：
+ *
+ * ```text
+ * 1. SELECT mcp_auth_requests FOR UPDATE
+ * 2. 重新检查：行存在 / expires_at / provider_consumed_at / user_id / provider /
+ *    browser_binding_hash / CSRF（不信任入口读时的任何结论）
+ * 3. SELECT mcp_oauth_clients FOR SHARE
+ * 4. 四条件（锁内值；条件 1–4 见 evaluateMetadataConditions）
+ * 5. metadata invalid → 删行 + mcp_consent_metadata_invalid（stage=consent_submit、
+ *    condition=1|2|3|4）**同一事务正常 return 提交** → 路由 400，绝不 302
+ * 6. 四条件通过 → 删行（redirect_uri / state 取锁内行）→ return denied
+ *    → 事务提交后路由才允许 302 access_denied
+ * ```
+ *
+ * `FOR SHARE` 与刷新的 `UPDATE` 冲突：刷新要么先提交（我们读到新值、按新值
+ * 判定），要么等我们提交（拒绝只删自己的 pending 行，不签发任何凭据）。
+ *
+ * **不 throw 表达预期拒绝**：throw 会把删行与审计一起回滚（§8.5 边界二）。
+ * 只有数据库异常才抛出 → 外层 `decideConsentSafely` 收口成固定 500（整事务
+ * 回滚）。
+ *
+ * 判据仍是「条件 DELETE 的命中行数」（读到可以拒绝之后、删之前，可能有另一个
+ * POST 已经把它批准了——持锁后该窗口被关闭，命中 0 行仍按 fail-closed 处理）。
+ */
+async function denyConsentInTransaction(
+  db: Database,
+  input: ConsentDecisionInput,
+): Promise<ConsentDecisionOutcome> {
+  const outcome = await db.transaction(async (tx): Promise<DenyTxOutcome> => {
+    // ---- 1. 锁住这一行，之后所有判据都以锁内读到的为准 ----
+    const rows = await tx
+      .select({
+        id: mcpAuthRequests.id,
+        clientId: mcpAuthRequests.clientId,
+        redirectUri: mcpAuthRequests.redirectUri,
+        state: mcpAuthRequests.state,
+        csrfHash: mcpAuthRequests.csrfHash,
+        browserBindingHash: mcpAuthRequests.browserBindingHash,
+        userId: mcpAuthRequests.userId,
+        provider: mcpAuthRequests.provider,
+        providerConsumedAt: mcpAuthRequests.providerConsumedAt,
+        expiresAt: mcpAuthRequests.expiresAt,
+      })
+      .from(mcpAuthRequests)
+      .where(eq(mcpAuthRequests.id, input.rid))
+      .for("update")
+      .limit(1);
+    const row = rows[0];
+    if (!row) return { kind: "rejected", reason: "not_found" };
+
+    // ---- 2. 重新检查（入口的普通读只用于选错误文案，这里才是判据）----
+    const failure = evaluateConsentRow(row, input);
+    if (failure) {
+      return {
+        kind: "rejected",
+        reason: failure,
+        userId: row.userId ?? undefined,
+        clientId: row.clientId,
+      };
+    }
+    // CSRF：与 allow 路径同一纪律——不一致就删行并**正常 return（提交）**，
+    // 不 throw（抛错会把删除一起回滚，被篡改的表单就能继续重试）。
+    if (!constantTimeEqual(row.csrfHash, hashCsrf(input.csrf))) {
+      await tx.delete(mcpAuthRequests).where(eq(mcpAuthRequests.id, input.rid));
+      return {
+        kind: "rejected",
+        reason: "csrf_mismatch",
+        userId: row.userId ?? undefined,
+        clientId: row.clientId,
+      };
+    }
+
+    // ---- 3. 客户端注册行 FOR SHARE（锁序：auth_requests → oauth_clients）----
+    const clientRows = await tx
+      .select({
+        redirectUris: mcpOauthClients.redirectUris,
+        grantTypes: mcpOauthClients.grantTypes,
+        metadataCacheExpiresAt: mcpOauthClients.metadataCacheExpiresAt,
+      })
+      .from(mcpOauthClients)
+      .where(eq(mcpOauthClients.clientId, row.clientId))
+      .for("share")
+      .limit(1);
+    const client = clientRows[0];
+
+    // ---- 4. 四条件（全部基于锁内读到的当前值）----
+    const condition = evaluateMetadataConditions(
+      client
+        ? {
+            redirectUris: client.redirectUris,
+            grantTypes: client.grantTypes,
+            metadataCacheExpiresAt: client.metadataCacheExpiresAt,
+          }
+        : null,
+      row.redirectUri,
+    );
+
+    // ---- 5. metadata invalid：删行 + 审计，同一事务正常提交 → 路由 400 ----
+    if (condition !== null) {
+      await tx.delete(mcpAuthRequests).where(eq(mcpAuthRequests.id, input.rid));
+      await recordAuthEvent(tx, {
+        eventType: "mcp_consent_metadata_invalid",
+        ...(row.userId === null ? {} : { userId: row.userId }),
+        detail: {
+          rid: input.rid,
+          clientId: row.clientId,
+          stage: "consent_submit",
+          condition,
+        },
+      });
+      return {
+        kind: "rejected",
+        reason: "metadata_invalid",
+        userId: row.userId ?? undefined,
+        clientId: row.clientId,
+      };
+    }
+
+    // ---- 6. 四条件通过：删行（防御性条件仍在），redirect/state 取锁内行 ----
+    const userId = row.userId as string;
+    const deleted = await tx
+      .delete(mcpAuthRequests)
+      .where(
+        and(
+          eq(mcpAuthRequests.id, input.rid),
+          eq(mcpAuthRequests.csrfHash, row.csrfHash),
+          eq(mcpAuthRequests.browserBindingHash, input.bindingHash),
+          eq(mcpAuthRequests.userId, userId),
+          isNotNull(mcpAuthRequests.providerConsumedAt),
+          gt(mcpAuthRequests.expiresAt, input.now),
+        ),
+      )
+      .returning({ id: mcpAuthRequests.id });
+    if (deleted.length !== 1) {
+      // 持锁下不该发生（读与删之间没人能改这一行）；真发生就 fail-closed。
+      return {
+        kind: "rejected",
+        reason: "not_found",
+        userId,
+        clientId: row.clientId,
+      };
+    }
+    return {
       kind: "denied",
-      redirectUri: hit.redirectUri,
-      state: hit.state,
-      userId,
-      clientId: input.row.clientId,
-    },
-  };
+      result: {
+        kind: "denied",
+        redirectUri: row.redirectUri,
+        state: row.state,
+        userId,
+        clientId: row.clientId,
+      },
+    };
+  });
+
+  if (outcome.kind === "rejected") {
+    return {
+      ok: false,
+      reason: outcome.reason,
+      ...(outcome.userId === undefined ? {} : { userId: outcome.userId }),
+      ...(outcome.clientId === undefined ? {} : { clientId: outcome.clientId }),
+    };
+  }
+  return { ok: true, result: outcome.result };
 }
 
 class ConsentRejection extends Error {
@@ -822,40 +952,16 @@ export async function decideConsent(
   }
 
   /**
-   * 拒绝路径（显式 `deny`，或「允许但一个都没勾」）也要过四条件（§8.3：
-   * GET / POST 都必须全查；metadata invalid 时**不得 302**）。
+   * 拒绝路径（显式 `deny`，或「允许但一个都没勾」）——**与 allow 同一锁序的
+   * 事务**（C3c-3B-3-R1）。
    *
-   * 这里是**无锁读 + 原子删行/审计**：拒绝不创建任何凭据，检查与删行之间的
-   * 窗口里即使注册行翻转，最坏结果也只是「晚了一次拒绝」——不会签出授权码。
-   * 授权路径（allow）的权威判定在 `allowConsent` 事务内带 `FOR SHARE` 完成。
+   * 入口处按快照做的四条件预检已**移入事务**：判定与删除必须在
+   * `auth_requests FOR UPDATE → oauth_clients FOR SHARE` 保护下完成，否则刷新
+   * 可以在「检查之后、删除/重定向之前」改写注册行，拒绝仍会把响应 302 到已移出
+   * 注册集合的回调（独立审核 P2）。空 scope 沿用显式 deny 的同一处理逻辑。
    */
   if (input.decision === "deny" || input.scopes.length === 0) {
-    const condition = evaluateMetadataConditions(metadataClientOf(row), row.redirectUri);
-    if (condition !== null) {
-      await commitMetadataRejection(db, {
-        rid: input.rid,
-        clientId: row.clientId,
-        userId: row.userId,
-        stage: "consent_submit",
-        condition,
-      });
-      return {
-        ok: false,
-        reason: "metadata_invalid",
-        userId: row.userId ?? undefined,
-        clientId: row.clientId,
-      };
-    }
-  }
-
-  if (input.decision === "deny") {
-    return denyConsent(db, { rid: input.rid, bindingHash: input.bindingHash, row, now: input.now });
-  }
-
-  // 「允许但一个都没勾」= 拒绝。先做这一步，才能在 deny 路径上走同一条
-  // 原子删除，而不是先建 grant 再发现 scope 为空。
-  if (input.scopes.length === 0) {
-    return denyConsent(db, { rid: input.rid, bindingHash: input.bindingHash, row, now: input.now });
+    return denyConsentInTransaction(db, input);
   }
 
   return allowConsent(db, {

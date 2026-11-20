@@ -1869,6 +1869,49 @@ token-registration 14），含 S1–S7、**真实 U/S 锁**（`pg_stat_activity`
 
 **报告**：`cloud/docs/reviews/phase-1.3.1-c3c-3b-3-integration-closeout.md`。
 
+### 3.31 1.3.1-C3c-3B-3-R1 已完成（Consent 拒绝路径并发锁收尾，P2）
+
+基线 `fe37aee`。独立审核 P2：**deny / 空 scope POST 缺 `mcp_oauth_clients`
+`FOR SHARE` 锁**——修复前是「快照读四条件 → 无锁条件 DELETE → 302」，刷新可以在
+检查与重定向之间把本次 `redirect_uri` 移出注册集合，拒绝仍会 302 到已不在册的
+回调（[ID §4.2] 精确匹配缺口）。
+
+**修复**（只改 `consent-flow.ts`，allow 路径零改动）：新增
+`denyConsentInTransaction()`，显式 deny 与空 scope 共用同一事务，锁序与 allow
+完全一致、不反向：
+
+```text
+BEGIN
+1. SELECT mcp_auth_requests FOR UPDATE
+2. 锁内重查：行存在 / expires_at / provider_consumed_at / user_id / provider /
+   browser_binding_hash / CSRF
+3. SELECT mcp_oauth_clients FOR SHARE
+4. 四条件（锁内当前值，条件 1–4）
+5. metadata invalid → 删行 + mcp_consent_metadata_invalid（stage=consent_submit、
+   condition=1|2|3|4）同事务**正常 return 提交** → 400，绝不 302、不 throw
+6. 四条件通过 → 条件 DELETE → redirect/state 取锁内行 → 提交后路由 302 access_denied
+COMMIT（仅数据库异常抛出 → 固定 500 回滚）
+```
+
+**测试 A–D（真实 PostgreSQL，`consent-metadata.test.ts` 19 → 23）**：
+
+| 用例 | 证据 |
+|---|---|
+| A：deny vs 刷新竞争 | B 持 U 锁 → deny POST **在 `FOR SHARE` 真实阻塞**（`pg_stat_activity` + `pg_blocking_pids` 断言）→ B 移除 redirect_uri 并提交 → POST 恢复 → **400 / 无 Location / 删行 + 审计 `condition=3` / 零 Code·Grant·Session / 他用户他 client Grant 逐字段不变** |
+| B：空 scope vs INVALID | 同样观测真实阻塞 → B 提交 epoch → **400 / 无 Location / 审计 `condition=2` / 零副作用 / version=2** |
+| C：有效 deny | **302 `access_denied`**、state 原样、删行、零 Code/Grant/Session、无 metadata 审计 |
+| D：空 scope | **302 `access_denied`**、无 code、删行、零副作用 |
+
+阻塞检测不 sleep、不 mock 锁；断言包 `try/finally` 防失败时泄漏持锁事务。
+
+**门禁（实测）**：`tsc` ✅ · `eslint` ✅ · `consent-metadata`
+**23 passed（3 连跑）** · `tests/mcp-oauth` **881 / 34**（877 → +4）·
+全量 **1515 passed / 70 files**（1511 → +4）· allow 仍 `FOR SHARE`、deny 新增
+`FOR SHARE`、无反向锁序、无删除/跳过/弱化 · 未改 Authorize / Token / Registry /
+CAS / 迁移 / 依赖 / Desktop / Discovery。
+
+**报告**：`cloud/docs/reviews/phase-1.3.1-c3c-3b-3-r1-closeout.md`。
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、

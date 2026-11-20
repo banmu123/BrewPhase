@@ -1778,3 +1778,31 @@ token-registration 14），含 S1–S7、真实 U/S 锁与两用户并发、路�
 设计（§12 状态 / §13.12 / §17 C3c-3B-3 修订）：
 `cloud/docs/design/phase-1.3.1-c3c-3a-cimd-authorize-integration-contract.md`；
 3B-3 收尾报告：`cloud/docs/reviews/phase-1.3.1-c3c-3b-3-integration-closeout.md`。
+
+---
+
+## 42. Phase 1.3.1-C3c-3B-3-R1：Consent 拒绝路径并发锁收尾（P2，已完成）
+
+基线 `fe37aee`。只改 `cloud/src/mcp-oauth/consent-flow.ts` +
+`cloud/tests/mcp-oauth/consent-metadata.test.ts`（+ 本条目与 closeout）。
+
+- **问题**：deny / 空 scope POST 走「快照读四条件 → 无锁条件 DELETE → 302」，
+  检查与重定向之间刷新可改写注册行 → 拒绝仍 302 到已移出注册集合的回调。
+- **修复**：`denyConsentInTransaction()`——显式 deny 与空 scope 共用事务，锁序
+  `mcp_auth_requests FOR UPDATE → mcp_oauth_clients FOR SHARE`（与 allow 一致、
+  不反向）；锁内重查行状态 + CSRF → `FOR SHARE` → 四条件 →
+  invalid：删行 + `mcp_consent_metadata_invalid`（`stage=consent_submit`、
+  `condition=1–4`）同事务**正常 return 提交**（400、绝不 302、不 throw）；
+  通过：条件 DELETE（redirect/state 取锁内行）→ 提交后 302 `access_denied`。
+  allow 路径零改动。
+- **测试 A–D**（真实 PG，`pg_stat_activity` / `pg_blocking_pids` 观测真实
+  `FOR SHARE` 阻塞，不 sleep、不 mock 锁）：A deny vs 刷新 → 400 `condition=3`
+  且零副作用、他用户 Grant 不变；B 空 scope vs INVALID → 400 `condition=2`；
+  C 有效 deny → 302 `access_denied` state 原样；D 空 scope → 302 同上。
+  `consent-metadata` 19 → **23（3 连跑稳定）**。
+- **门禁**：`tsc` ✅ · `eslint` ✅ · `tests/mcp-oauth` **881 / 34** ·
+  全量 **1515 passed / 70 files**（+4）· allow 与 deny 均 `FOR SHARE`、无反向
+  锁序、无删除/跳过/弱化 · Authorize / Token / Registry / CAS / 迁移 / 依赖 /
+  Desktop / Discovery **零改动**。
+
+报告：`cloud/docs/reviews/phase-1.3.1-c3c-3b-3-r1-closeout.md`。
