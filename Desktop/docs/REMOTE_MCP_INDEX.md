@@ -1559,3 +1559,23 @@ C3c-2 完成（**未接入授权流程**），安全加固见 §33。
 
 复审报告：`cloud/docs/reviews/phase-1.3.1-c3c-2-r2-security-review.md`；
 修复报告：`cloud/docs/implementation/phase-1.3.1-c3c-2-r2-remediation-report.md`。
+
+---
+
+## 35. Phase 1.3.1-C3c-3A：CIMD 接入契约（设计完成，未接入）
+
+依据 `draft-…-03`（2026-11-02，Internet-Draft）逐条对照。已实现部分无违反 MUST；
+差距都在接入层。**没有生产逻辑改动**（仅两处注释）。
+
+**冻结的决策**：`pre_registered`/`dcr` 永不被覆盖；未注册 id 只抓合法 CIMD URL；
+缓存四态 + 30s 重取下限；transient 保留一切、只中止当前请求；terminal 只有
+`client_id_mismatch` 撤销 Session（单条 UPDATE + 聚合审计）；`no-store` 直接拒绝；
+元数据变化不触发通用撤销；并发用 `ON CONFLICT` + `metadata_fetched_at` CAS；
+代理收口到 `Env.outboundProxy`；`ca` 是替换语义（3B 改名 `caOverride`）。
+
+**3B 顺序**：配置 → TLS → 迁移 0004（CHECK）→ registry → 撤销函数 → authorize
+接入 → HTML 错误页 → token 错误映射 → 22 条验收 → 最后才声明
+`client_id_metadata_document_supported`。
+
+设计：`cloud/docs/design/phase-1.3.1-c3c-3a-cimd-authorize-integration-contract.md`；
+审查：`cloud/docs/reviews/phase-1.3.1-c3c-3a-design-review.md`。

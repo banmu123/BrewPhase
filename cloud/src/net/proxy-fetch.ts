@@ -665,10 +665,16 @@ export interface PinnedRequestOptions {
   totalTimeoutMs?: number;
   env?: NodeJS.ProcessEnv;
   /**
-   * 附加信任锚（私有 CA / 测试证书），对**代理那一跳与目标那一跳**都生效。
+   * 信任锚**覆盖**（私有 CA / 测试证书），对**代理那一跳与目标那一跳**都生效。
    *
-   * 语义等同于 `NODE_EXTRA_CA_CERTS`：只增加可信任的锚，不改变「必须验证」
-   * 这件事本身——没有 `rejectUnauthorized` 字段，也没有任何关闭校验的入口。
+   * 注意语义：按 Node 官方文档（`tls.createSecureContext` 的 `ca` 条目），
+   * 指定 `ca` 会**完全替换**默认信任链，而不是像 `NODE_EXTRA_CA_CERTS` 那样
+   * 追加（"If specified, the default list would be completely replaced
+   * (instead of being concatenated)"）。所以这个字段一旦设置，调用方就同时
+   * 失去了对公共 CA 的信任——它只应作为测试注入使用。
+   *
+   * 无论如何都不改变「必须验证」：没有 `rejectUnauthorized` 字段，也没有任何
+   * 关闭校验的入口。C3c-3B 将把它重命名为 `caOverride` 并从生产入口移除。
    */
   ca?: string | string[];
 }

@@ -1605,6 +1605,37 @@ SNI 换成 IP、删 IPv6 白名单、IPv4 私有段漏判、JWK oth、503/429 �
 **结论**：允许进入 C3c-3，条件是复审接受 `PinnedRequestOptions.ca`，且接入前先定义
 「transient / terminal 对已有缓存与 refresh token 的处置」。
 
+### 3.24 1.3.1-C3c-3A 已完成（CIMD 接入契约与预检）
+
+设计阶段，**未接入**。产出 `cloud/docs/design/phase-1.3.1-c3c-3a-cimd-authorize-integration-contract.md`
+（14 节）与 `cloud/docs/reviews/phase-1.3.1-c3c-3a-design-review.md`。
+
+**规范核对**：以 `draft-…-03`（2026-11-02，**不是 RFC**）原文逐条对照。已实现部分
+没有违反 MUST 的项；差距集中在接入层——`invalid_client` 错误码、两个 auth 字段的
+自洽校验、以及 §6.1 的失败处置。
+
+**核心决策**：
+
+| 主题 | 决策 |
+|---|---|
+| 注册优先级 | `pre_registered` / `dcr` 永不被 CIMD 覆盖，也不触发抓取 |
+| 未注册 id | 只有通过 CIMD URL 形态校验才抓取；否则按既有 512 上限拒绝 |
+| 缓存 | 四态 `ABSENT/FRESH/STALE/INVALID`；`expires_at = NULL` 视为 STALE；重取下限 30s |
+| transient | 中止当前请求，保留行/时间戳/Session/Refresh |
+| terminal | **只有** `client_id_mismatch` 撤销该 client 全部 Session（单条 UPDATE + 聚合审计）；其余只标缓存不可用 |
+| no-store | **拒绝**（terminal，不写行）——授权码流程必跨两个请求，必然落库，与 no-store 冲突 |
+| 元数据变化 | 不触发通用撤销（同意页每次授权都出现，令牌不依赖这些字段） |
+| 并发 | `ON CONFLICT DO NOTHING` + 以 `metadata_fetched_at` 做 CAS |
+| 配置 | 代理收口到 `Env.outboundProxy`；`createCimdDeps` 去掉默认参数 |
+| TLS | `ca` 是**替换**默认信任链（Node 文档原文），3B 改名 `caOverride` 并移出生产入口 |
+| 数据模型 | 只加一条 CHECK（`revoked_reason` 增 `client_id_mismatch`） |
+
+**3B 施工顺序**：配置收口 → TLS 语义 → 迁移 0004 → `cimd-registry` →
+`revokeMcpSessionsByClient` → authorize 接入 → HTML 错误页 → token 错误映射 →
+22 条验收用例 → 最后才声明 `client_id_metadata_document_supported`。
+
+**范围**：无生产逻辑改动（仅两处注释）、无迁移、无依赖、未改 Desktop。
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、

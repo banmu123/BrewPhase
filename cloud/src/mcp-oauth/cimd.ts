@@ -6,8 +6,9 @@ import { requestPinnedHttps } from "../net/proxy-fetch.js";
 /**
  * CIMD（Client ID Metadata Document）严格抓取器（Phase 1.3.1-C3c-2）。
  *
- * 依据 `draft-ietf-oauth-client-id-metadata-document-03`（Internet-Draft，
- * 2025 年版本；**不是 RFC**）。本模块只负责「拿文档、验文档、算缓存」，
+ * 依据 `draft-ietf-oauth-client-id-metadata-document-03`
+ * （Internet-Draft，发布日期 **2026-11-02**，有效期至 2027-05-06；
+ * **不是 RFC**，不应作为正式标准引用）。本模块只负责「拿文档、验文档、算缓存」，
  * 不接入授权流程，也不对外声明 CIMD 能力——`client_id_metadata_document_supported`
  * 仍然是「未实现」。
  *
