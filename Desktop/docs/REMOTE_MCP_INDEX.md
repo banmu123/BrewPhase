@@ -1875,3 +1875,33 @@ SDK 为唯一新依赖 · **CIMD 能力仍未声明** · GitHub CI 未配置（�
 （不声称通过）。
 
 报告：`cloud/docs/reviews/phase-1.3.2-r1-closeout.md`。
+
+---
+
+## 45. Phase 1.3.2-R2：流式读取超时与 OPTIONS 限流隔离（已完成）
+
+基线 `845cac9`。只改 3 文件：`src/mcp-http/guards.ts`、`src/routes/mcp-http.ts`、
+`tests/mcp-http/guards.test.ts`；无新增依赖、无迁移。
+
+- **P1 流读取超时**：`readBoundedMcpBody()` 增加**绝对总时限**（默认 15s，
+  循环外单个定时器，持续收数据不重置）；超时 → 停读 + `reader.cancel()` →
+  **408 固定纯文本**，不进 Host/Origin/Bearer/DB/SDK；每次 `read()` 双向 then
+  转 tagged 结果再 race（被放弃的 read **无 unhandled rejection**）；`finally`
+  任何退出路径清定时器 + `releaseLock`；结果类型四态（ok/too_large/unreadable/
+  timeout），断开=400、超时=408、超限=413 分类互斥。256 KiB 字节硬上限与
+  CL 零读取快路径、SDK 第二道限制全部保留。
+- **P2 OPTIONS 隔离**：`OPTIONS /mcp` **独立注册**（精确路径、不挂 limiter）：
+  不认证/不查库/不进 SDK/**不消耗 `mcp-http` 额度**；响应逻辑不变（默认 CORS
+  关闭 → 204 无任何 ACAO、白名单才回显、无 `*`、无 credentials）；GET/DELETE
+  仍 SDK 405；未扩大 CORS 白名单；其它路径 OPTIONS 仍 404。
+- **实测**：fake timers 路由级 408（流取消、`getTimerCount()===0`、非法 Host/
+  无 Bearer 未触达、unhandled rejection 0）；注入 150ms 短超时（不等 15s）；
+  时限内流正文逐字节完整；客户端中断 → 400 且后续请求正常；`maxMcp=3` 下
+  OPTIONS×6 全 204 → POST×3 全 200 → 第 4 次 429；`maxMcp=1` 互不影响。
+
+**门禁**：`tsc` ✅ · `eslint` ✅ · `tests/mcp-http` **88 / 8**（+7）·
+全量 **1603 passed / 78 files** · `npm run build` ✅ · R1 边界与 Batch Scope
+回归通过（跨限块数断言区间化并注释 HWM 预取，安全性质保留）· CIMD 能力仍未
+声明 · GitHub CI 未配置（**不声称通过**）。
+
+报告：`cloud/docs/reviews/phase-1.3.2-r2-closeout.md`。

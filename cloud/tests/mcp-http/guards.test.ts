@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeTestDb, ensureDatabaseOrThrow, getTestDb, resetDb } from "../helpers/db.js";
 import {
   MCP_HOST,
@@ -10,7 +10,11 @@ import {
   rpcError,
   type McpHttpHarness,
 } from "../helpers/mcp-http.js";
-import { MCP_HTTP_MAX_BODY_BYTES } from "../../src/mcp-http/guards.js";
+import {
+  MCP_HTTP_BODY_READ_TIMEOUT_MS,
+  MCP_HTTP_MAX_BODY_BYTES,
+  readBoundedMcpBody,
+} from "../../src/mcp-http/guards.js";
 import { resetRateLimiter } from "../../src/security/rate-limit.js";
 
 /**
@@ -256,10 +260,14 @@ describe("P1：无 Content-Length 的请求体硬上限", () => {
     expect(h.logs.filter((l) => l.message === "mcp_tool_call")).toHaveLength(0);
 
     // 底层流在超限后被取消，且**读取量有硬上限**：
-    // 4 块 = 256 KiB（≤ 上限，继续），第 5 块跨过上限 → 立即 cancel，不再拉第 6 块。
+    // 4 块 = 256 KiB（≤ 上限，缓冲进正文），第 5 块跨过上限 → 立即 cancel。
+    // 允许的第 6 次 pull 是流的 HWM 预取（chunk 进入**流内部队列**，从未进入
+    // 我们的缓冲，cancel 时被丢弃）——送达块数与预取次数由流实现决定，
+    // 因此断言区间而不是精确值；关键是远小于总长且跨限即停。
     expect(state.cancelled).toBe(true);
-    expect(state.pulled).toBe(5);
-    expect(state.pulled * CHUNK).toBe(MCP_HTTP_MAX_BODY_BYTES + CHUNK); // 上限 + 单块
+    expect(state.pulled).toBeGreaterThanOrEqual(5); // 至少读到跨限那一块
+    expect(state.pulled).toBeLessThanOrEqual(6); // 至多 +1 次预取
+    expect(state.pulled * CHUNK).toBeLessThan(512 * 1024); // < 512 KiB
     expect(state.pulled * CHUNK).toBeLessThan(16 * CHUNK); // 绝没读完 1 MiB
   });
 
@@ -392,15 +400,17 @@ describe("P1：无 Content-Length 的请求体硬上限", () => {
     expect(exactStream.state.pulled).toBe(4); // 正好读满上限即止
     expect(exactStream.state.cancelled).toBe(false); // 没超限就不取消
 
-    // 4) 流式 256 KiB + 1 byte：第 5 块一进来就超 → 413 + 取消（后面还有 3 块没读）
+    // 4) 流式 256 KiB + 1 byte：第 5 块一进来就超 → 413 + 取消（后面还有块没读）
     //    用 8 块（512 KiB）而不是恰好 5 块：后者会在跨界同一次 pull 里 close，
     //    cancel 自然是 no-op——断言「取消」必须让流还有剩余可取消。
+    //    同测试 A：允许 HWM 预取的第 6 次 pull，但跨限即停、远小于总长。
     const overStream = streamPost(8);
     const overRes = await h.app.request(overStream.request);
     expect(overRes.status).toBe(413);
     expect(overStream.state.cancelled).toBe(true);
-    expect(overStream.state.pulled).toBe(5); // 上限 + 单块即停，第 6–8 块从未被拉取
-    expect(overStream.state.pulled).toBeLessThan(8);
+    expect(overStream.state.pulled).toBeGreaterThanOrEqual(5);
+    expect(overStream.state.pulled).toBeLessThanOrEqual(6);
+    expect(overStream.state.pulled).toBeLessThan(8); // 第 7、8 块从未被拉取
   });
 });
 
@@ -570,5 +580,222 @@ describe("P2：OPTIONS /mcp → 204（CORS 预检）", () => {
     // 预检之后同一条链路照常工作（没有被 OPTIONS 消耗掉任何东西）。
     const post = await h.app.request(discover(bearer.accessToken));
     expect(post.status).toBe(200);
+  });
+});
+
+/* ========================================================================== *
+ * R2-P1：流式读取的绝对总时限（15s）
+ * ========================================================================== */
+
+/**
+ * 造一个「先发少量数据、然后永远停住」的无 CL 流（慢速挂起客户端）。
+ * 第 2 次 pull 返回一个永不 settle 的 Promise —— read() 因此永远挂起。
+ */
+function stallStreamRequest(
+  headers: Record<string, string> = {},
+): { request: Request; state: { pulled: number; cancelled: boolean } } {
+  const state = { pulled: 0, cancelled: false };
+  let pulls = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulls += 1;
+      state.pulled += 1;
+      if (pulls === 1) {
+        controller.enqueue(new TextEncoder().encode("{")); // 少量数据后停住
+        return;
+      }
+      return new Promise<void>(() => undefined); // 永不结束
+    },
+    cancel() {
+      state.cancelled = true;
+    },
+  });
+  const request = new Request("https://gateway.example/mcp", {
+    method: "POST",
+    headers: {
+      host: MCP_HOST,
+      accept: "application/json, text/event-stream",
+      "content-type": "application/json",
+      ...headers,
+    },
+    body: stream,
+    duplex: "half",
+  } as RequestInit & { duplex: "half" });
+  return { request, state };
+}
+
+describe("R2-P1：请求体流式读取的绝对总时限", () => {
+  it("无 CL、发少量数据后停住 → 总时限内 408；不进 Host/Bearer/SDK；流被取消；定时器清理", async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => {
+      rejections.push(reason);
+    };
+    process.on("unhandledRejection", onRejection);
+
+    vi.useFakeTimers();
+    try {
+      // 非法 Host + 无 Bearer：若超时路径没生效，这里会是 403/401——
+      // 断言 408 证明「停读+取消」发生在 Host / Origin / Bearer / DB / SDK 之前。
+      const { request, state } = stallStreamRequest({ host: "evil.example" });
+      const pending = Promise.resolve(h.app.request(request));
+      let settled = false;
+      const guarded = pending.then((res) => {
+        settled = true;
+        return res;
+      });
+      // 推进假时钟（先让微任务流转到定时器创建，再跨过 15s）；最多 60s 假时间，
+      // **不真实等待**。
+      for (let i = 0; i < 60 && !settled; i += 1) {
+        await vi.advanceTimersByTimeAsync(1000);
+      }
+      const res = await guarded;
+
+      expect(res.status).toBe(408);
+      expect(res.headers.get("content-type")).toContain("text/plain");
+      expect(await res.text()).toBe("request body read timed out"); // 固定文案，无内部细节
+      expect(res.headers.get("www-authenticate")).toBeNull(); // 未进 Bearer（= 未进 DB）
+      expect(state.cancelled).toBe(true); // 底层流被取消
+      expect(vi.getTimerCount()).toBe(0); // 超时定时器已清理
+      expect(h.logs.filter((l) => l.message === "mcp_tool_call")).toHaveLength(0); // 未进 SDK/业务
+    } finally {
+      vi.useRealTimers();
+      process.off("unhandledRejection", onRejection);
+    }
+    // 让可能的迟到 settle 暴露为 unhandled rejection（若实现有泄漏，这里会非空；
+    // vitest 本身也会因 unhandled rejection 让整轮变红）。
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(rejections).toHaveLength(0);
+  });
+
+  it("注入短超时：函数在注入的时限内返回 timeout 并取消流（不必等 15 秒）", async () => {
+    // 默认总时限钉死为 15s（任务书 §二「建议 15 秒」）。
+    expect(MCP_HTTP_BODY_READ_TIMEOUT_MS).toBe(15_000);
+    const { request, state } = stallStreamRequest();
+    const startedAt = Date.now();
+    const result = await readBoundedMcpBody(request, MCP_HTTP_MAX_BODY_BYTES, 150);
+    const elapsed = Date.now() - startedAt;
+
+    expect(result.outcome).toBe("timeout");
+    expect(state.cancelled).toBe(true);
+    expect(elapsed).toBeGreaterThanOrEqual(140); // 注入的 150ms 生效
+    expect(elapsed).toBeLessThan(3000); // 远小于默认 15s
+  });
+
+  it("时限内正常结束的流 → ok，正文完整无损", async () => {
+    const payload = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "server/discover",
+      params: { _meta: modernEnvelope() },
+    });
+    const result = await readBoundedMcpBody(textStreamPost(payload, {}));
+    expect(result.outcome).toBe("ok");
+    if (result.outcome === "ok") {
+      expect(new TextDecoder().decode(result.bytes)).toBe(payload); // 完整正文
+      expect(result.bytes.byteLength).toBe(new TextEncoder().encode(payload).byteLength);
+    }
+  });
+
+  it("客户端中断（流在读取中报错）→ 400 固定文案；无 unhandled rejection；后续请求正常", async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => {
+      rejections.push(reason);
+    };
+    process.on("unhandledRejection", onRejection);
+    try {
+      const state = { pulls: 0 };
+      let pulls = 0;
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulls += 1;
+          state.pulls = pulls;
+          if (pulls === 1) {
+            controller.enqueue(new TextEncoder().encode("{"));
+            return;
+          }
+          controller.error(new Error("client disconnected")); // 模拟对端断开
+        },
+      });
+      const request = new Request("https://gateway.example/mcp", {
+        method: "POST",
+        headers: { host: MCP_HOST, "content-type": "application/json", accept: "application/json" },
+        body: stream,
+        duplex: "half",
+      } as RequestInit & { duplex: "half" });
+
+      const res = await h.app.request(request);
+      expect(res.status).toBe(400);
+      expect(await res.text()).toBe("request body could not be read"); // 固定文案
+      expect(res.headers.get("www-authenticate")).toBeNull();
+
+      // 分类与超时互斥且明确：读取异常 = unreadable(400)，不是 408。
+      // 后续正常请求不受任何影响（无泄漏状态）。
+      const bearer = await obtainMcpBearer(h, { scope: "records:read" });
+      const ok = await h.app.request(discover(bearer.accessToken));
+      expect(ok.status).toBe(200);
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(rejections).toHaveLength(0);
+  });
+});
+
+/* ========================================================================== *
+ * R2-P2：OPTIONS 与 mcp-http 限流桶隔离
+ * ========================================================================== */
+
+describe("R2-P2：OPTIONS 不消耗 mcp-http 限流额度", () => {
+  it("maxMcp=3：连续 6 次 OPTIONS 全 204（无 ACAO、无 challenge）；POST 额度完整且仍受限", async () => {
+    const limited = await createMcpHttpHarness({ maxMcp: 3 });
+    const bearer = await obtainMcpBearer(limited, { scope: "records:read" });
+
+    // OPTIONS×6：若计入 mcp-http 桶，第 4 次就该 429——全 204 证明零消耗。
+    for (let i = 0; i < 6; i += 1) {
+      const res = await limited.app.request("/mcp", {
+        method: "OPTIONS",
+        headers: { host: MCP_HOST },
+      });
+      expect(res.status, `options #${i + 1}`).toBe(204);
+      expect(res.headers.get("access-control-allow-origin")).toBeNull(); // CORS 关闭：无 ACAO
+      expect(res.headers.get("www-authenticate")).toBeNull(); // 不需要 Bearer
+    }
+
+    // 额度完整留给 POST：3 次 discover 全 200。
+    for (let i = 0; i < 3; i += 1) {
+      const res = await limited.app.request(discover(bearer.accessToken));
+      expect(res.status, `post #${i + 1}`).toBe(200);
+    }
+    // 第 4 次 POST → 429：正常 POST 仍受原有 mcp-http 限流保护。
+    const blocked = await limited.app.request(discover(bearer.accessToken));
+    expect(blocked.status).toBe(429);
+    expect(Number(blocked.headers.get("retry-after"))).toBeGreaterThan(0);
+  });
+
+  it("maxMcp=1 的极小配额：OPTIONS×3 全 204，随后 1 次 POST 成功、第 2 次 429", async () => {
+    const tiny = await createMcpHttpHarness({ maxMcp: 1 });
+    const bearer = await obtainMcpBearer(tiny, { scope: "records:read" });
+
+    for (let i = 0; i < 3; i += 1) {
+      const res = await tiny.app.request("/mcp", {
+        method: "OPTIONS",
+        headers: { host: MCP_HOST },
+      });
+      expect(res.status, `options #${i + 1}`).toBe(204);
+    }
+    expect((await tiny.app.request(discover(bearer.accessToken))).status).toBe(200);
+    expect((await tiny.app.request(discover(bearer.accessToken))).status).toBe(429);
+  });
+
+  it("OPTIONS 路由精确匹配 /mcp：其它路径的 OPTIONS 不被本路由接管（404）", async () => {
+    const off = await createMcpHttpHarness(); // CORS 关闭：无全局中间件拦截
+    const res = await off.app.request("/mcp/oauth/authorize", {
+      method: "OPTIONS",
+      headers: { host: MCP_HOST },
+    });
+    expect(res.status).toBe(404); // 没有扩大到其它路径
+
+    const mcp = await off.app.request("/mcp", { method: "OPTIONS", headers: { host: MCP_HOST } });
+    expect(mcp.status).toBe(204);
   });
 });

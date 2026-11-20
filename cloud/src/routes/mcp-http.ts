@@ -11,6 +11,7 @@ import {
 } from "../mcp-http/authorize.js";
 import {
   bodyTooLargeResponse,
+  bodyTimeoutResponse,
   hostGuard,
   originGuard,
   readBoundedMcpBody,
@@ -26,13 +27,14 @@ import { scopeForTool } from "../mcp-http/tools.js";
  * ## 入口顺序（契约，任务书 §四；P1 把大小限制改为实际字节硬上限）
  *
  * ```text
- * 0. 限流（独立桶 mcp-http，非浏览器授权桶）
- * 1. OPTIONS → 204（CORS 预检，设计 §4.1；不进认证、不进 SDK）
- *    GET / DELETE → 交给 SDK → 405（无 SSE、无会话终止）
+ * 0a. OPTIONS /mcp → 独立路由（不进限流桶、不进认证、不进 SDK）→ 204
+ * 0. 限流（独立桶 mcp-http，非浏览器授权桶；只作用于 GET/DELETE/POST）
+ * 1. GET / DELETE → 交给 SDK → 405（无 SSE、无会话终止）
  * 2a. Content-Length > 256 KiB → 413（廉价快路径，一个字节都不读）
- * 2b. 有界流式读取（实际字节硬上限 256 KiB；超限立即停读 + 取消底层流）
- *     → 413 纯文本（先于 Host / Origin / Bearer / 数据库 / SDK）
- *     → 流不可读 → 400 纯文本
+ * 2b. 有界流式读取（实际字节硬上限 256 KiB + 绝对总时限 15s）
+ *     → 超限立即停读 + 取消流 → 413 纯文本（先于 Host / Origin / Bearer / DB / SDK）
+ *     → 超时停读 + 取消流 → 408 纯文本（同样先于一切后续阶段）
+ *     → 流不可读（对端断开 / 流错误）→ 400 纯文本
  * 3. Host → 403（与 WSS 共用 normalizeHost / 同一份 env 解析）
  * 4. Origin → 403（存在即须精确命中 CORS 白名单；无 Origin = 服务端调用，通过）
  * 5. Bearer 验签（HS256 / kid / iss / aud / exp / sub / sid / client_id / scope / jti）→ 401
@@ -110,6 +112,11 @@ function forbidden(c: Context, challenge: string): Response {
  *   语义逐字段一致，行为不因走哪条分支而不同。）
  *
  * OPTIONS **不进入** Bearer / Session / Grant / 工具的任何业务处理。
+ *
+ * **独立注册（R2 P2）**：`OPTIONS /mcp` 单独成路由、**不挂 `limiter`**——
+ * 预检请求不得消耗 `mcp-http` 业务限流额度（默认关闭 CORS 时全局中间件不
+ * 拦截 OPTIONS，它会落到本路由；挂了桶就会被恶意刷预检打满业务配额）。
+ * 路径**精确匹配 `/mcp`**，不扩大到其它路径。
  */
 function optionsPreflight(c: Context, allowedOrigins: readonly string[]): Response {
   const headers: Record<string, string> = {
@@ -144,13 +151,17 @@ export function routeMcpHttp(app: AppHono, ctx: AppContext): void {
   const handler = createMcpHttpHandler(ctx);
   const resource = mcpResourceFor(ctx.env.baseUrl);
 
-  app.on(["GET", "DELETE", "POST", "OPTIONS"], "/mcp", limiter, async (c) => {
-    const request = c.req.raw;
+  /**
+   * OPTIONS：**独立路由、不经过 `limiter`**（R2 P2）。
+   *
+   * 精确匹配 `/mcp`；不认证、不查库、不进 SDK、**不消耗 `mcp-http` 额度**。
+   * 配置了 CORS 时全局中间件会先拦截 OPTIONS（既有语义不变）——本路由主要
+   * 服务「CORS 默认关闭」的场景，两条路径的响应逐字段一致。
+   */
+  app.on("OPTIONS", "/mcp", (c) => optionsPreflight(c, ctx.env.corsOrigins));
 
-    // ---- 1. OPTIONS → 204 预检（先于一切；不进认证、不进 SDK、不查库）----
-    if (c.req.method === "OPTIONS") {
-      return optionsPreflight(c, ctx.env.corsOrigins);
-    }
+  app.on(["GET", "DELETE", "POST"], "/mcp", limiter, async (c) => {
+    const request = c.req.raw;
 
     // ---- 1b. GET / DELETE → 405（SDK 的 canonical 响应；无 SSE、无会话）----
     if (c.req.method !== "POST") {
@@ -161,11 +172,16 @@ export function routeMcpHttp(app: AppHono, ctx: AppContext): void {
     const declaredTooLarge = bodyTooLargeResponse(request);
     if (declaredTooLarge) return declaredTooLarge;
 
-    // ---- 2b. 实际字节硬上限：有界流式读取（先于 Host / Origin / 认证 / SDK）----
+    // ---- 2b. 实际字节硬上限 + 绝对总时限：有界流式读取 ----
     const read = await readBoundedMcpBody(request);
     if (read.outcome === "too_large") {
       // 与 2a 完全相同的 413 纯文本（声明头缺失或谎报，响应一致）。
       return tooLargeResponse();
+    }
+    if (read.outcome === "timeout") {
+      // 慢速挂起（无 CL、发几个字节就停）：总时限内停读 + 取消流 → 408。
+      // 固定纯文本，不进 Host / Origin / Bearer / 数据库 / SDK。
+      return bodyTimeoutResponse();
     }
     if (read.outcome === "unreadable") {
       // 对端中断 / 流错误：不进入任何后续阶段（不查库、不进 SDK）。

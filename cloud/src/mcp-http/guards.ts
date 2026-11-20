@@ -18,10 +18,28 @@ import { normalizeHost } from "../link/link-server.js";
 /** 请求体上限 256 KiB（设计 §4.2 步骤 1）。 */
 export const MCP_HTTP_MAX_BODY_BYTES = 256 * 1024;
 
-/** 413 纯文本响应（设计 §4.6）——声明头快路径与实际字节超限共用同一响应。 */
+/**
+ * 请求体流式读取的**绝对总时限**（Phase 1.3.2-R2 P1）。
+ *
+ * 没有 `Content-Length` 的请求在读取阶段可以「每次发几个字节然后停住」——
+ * 字节上限挡不住这种慢速挂起：处理流程会一直占着未完成的请求。15 秒是
+ * 「正常 chunked 上传 256 KiB 远用不满」与「挂起连接不得长期占用」的折中。
+ * **绝对总时限**：一个定时器覆盖整次读取，持续收到少量数据**不会**重置它。
+ */
+export const MCP_HTTP_BODY_READ_TIMEOUT_MS = 15_000;
+
+/** 413 纯文本响应（设计 §4.6）。 */
 export function tooLargeResponse(): Response {
   return new Response("request body too large", {
     status: 413,
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+  });
+}
+
+/** 408 纯文本响应（读取超时；固定文案，不返回任何内部细节）。 */
+export function bodyTimeoutResponse(): Response {
+  return new Response("request body read timed out", {
+    status: 408,
     headers: { "Content-Type": "text/plain; charset=utf-8" },
   });
 }
@@ -43,31 +61,43 @@ export function bodyTooLargeResponse(request: Request): Response | undefined {
   return undefined;
 }
 
-/** `readBoundedMcpBody` 的结果：成功（有界）/ 超限（已取消流）/ 不可读。 */
+/** `readBoundedMcpBody` 的结果：成功（有界）/ 超限（已取消流）/ 不可读 / 超时。 */
 export type BoundedBodyRead =
   | { outcome: "ok"; bytes: Uint8Array }
   | { outcome: "too_large"; bytesRead: number }
-  | { outcome: "unreadable" };
+  | { outcome: "unreadable" }
+  | { outcome: "timeout" };
 
 /**
- * 步骤 1b：**按实际字节的硬上限**流式读取请求体（Phase 1.3.2-R1 P1）。
+ * 步骤 1b：**按实际字节的硬上限 + 绝对总时限**流式读取请求体
+ * （Phase 1.3.2-R1 P1 + R2 P1）。
  *
- * 修复前的顺序是「只信 `Content-Length` → Scope 预检时 `request.clone().text()`
- * 无上限缓冲」——没有 `Content-Length` 的 chunked 请求可以在 Scope 预检阶段
- * 被完整读入内存（SDK 的 `maxRequestBodySize` 在那之后才生效）。现在：
- *
+ * 字节侧（R1）：
  * - **流式读取**，累计 `Uint8Array.byteLength`；一旦 `> limit`：
  *   **立即停止读取、`reader.cancel()` 取消底层流**，返回 `too_large`——
  *   正文最多保留 `limit` 字节（跨越上限的那个 chunk 只计数、不入缓冲）。
  * - 因此**任何超过 256 KiB 的请求都不可能被完整缓冲**：读取量上界是
  *   `limit + 单个 chunk`，而不是请求的真实总长。
- * - 读取异常 / 对端中断 → `unreadable`（入口回 400，不进入后续任何阶段）。
- * - 成功路径返回**恰好有界**的完整正文，Host/Origin/Bearer/Scope 预检与 SDK
- *   共用这一份数据（SDK 不再各自读原始流，`maxRequestBodySize` 保留为第二道）。
+ *
+ * 时间侧（R2）：
+ * - **绝对总时限** `timeoutMs`（默认 15 秒）：一个 `setTimeout` 覆盖整次读取，
+ *   **持续收到少量数据不会重置它**——「每次发几字节然后停住」的慢速挂起
+ *   会在总时限内被判超时；
+ * - 超时 → 停读 + `reader.cancel()`（取消底层流）→ `timeout`（入口回 **408**
+ *   固定纯文本），**不进入** Host / Origin / Bearer / 数据库 / SDK；
+ * - 每次 `reader.read()` 都用**双向 then** 转成已决议的 tagged 结果再 race：
+ *   无论超时、正常还是错误胜出，被放弃的 read promise 都已挂 handler——
+ *   **不会有 unhandled rejection、不会留下无法处理的挂起**；
+ * - `finally` 在**任何**退出路径（ok / too_large / unreadable / timeout / 抛错）
+ *   上 `clearTimeout` 并 `releaseLock()`（清理失败被吞掉，不改变结果分类）。
+ *
+ * 分类：客户端主动断开 / 流错误 → `unreadable`（入口 400）；超时 → `timeout`
+ * （入口 408）；两者互斥且明确。
  */
 export async function readBoundedMcpBody(
   request: Request,
   limit: number = MCP_HTTP_MAX_BODY_BYTES,
+  timeoutMs: number = MCP_HTTP_BODY_READ_TIMEOUT_MS,
 ): Promise<BoundedBodyRead> {
   const body = request.body;
   if (body === null) return { outcome: "ok", bytes: new Uint8Array(0) };
@@ -75,26 +105,47 @@ export async function readBoundedMcpBody(
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
+
+  // 绝对总时限：整次读取只创建一个定时器（不在循环里重建 = 不会被数据重置）。
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<{ kind: "timeout" }>((resolve) => {
+    timer = setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
+  });
+
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      // 双向 then：读取的**拒绝**也被转成已决议的 tagged 值——race 落定后
+      // 被放弃的 read promise 不会变成 unhandled rejection。
+      const read = reader.read().then(
+        (result) => ({ kind: "read" as const, result }),
+        () => ({ kind: "error" as const }),
+      );
+      const winner = await Promise.race([read, timeout]);
+
+      if (winner.kind === "timeout") {
+        // 立即停读并取消底层流。cancel 会 settle 挂起的 read（其拒绝已挂 handler）。
+        await reader.cancel().catch(() => undefined);
+        return { outcome: "timeout" };
+      }
+      if (winner.kind === "error") {
+        return { outcome: "unreadable" }; // 对端断开 / 流错误
+      }
+      const { done, value } = winner.result;
       if (done) break;
       total += value.byteLength;
       if (total > limit) {
-        // 超限：立刻停读并取消底层流（不等对端发完，不缓冲跨越上限的 chunk）。
         await reader.cancel().catch(() => undefined);
         return { outcome: "too_large", bytesRead: total };
       }
       chunks.push(value);
     }
-  } catch {
-    // 对端中断 / 流错误：不做部分解析，交由入口回 400（不进入 SDK、不查库）。
-    return { outcome: "unreadable" };
   } finally {
+    if (timer !== undefined) clearTimeout(timer); // 任何退出路径都清定时器
     try {
       reader.releaseLock();
     } catch {
-      // 已 cancel / 已出错的 reader 释放会抛——这里只需要不泄漏锁。
+      // 极端路径下（pending read 未 settle）releaseLock 会抛——清理失败
+      // 不得改变结果分类，吞掉即可。
     }
   }
 

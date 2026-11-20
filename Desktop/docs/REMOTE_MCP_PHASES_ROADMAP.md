@@ -1968,6 +1968,32 @@ Bearer → 413 纯文本、流在 `pulled=5`（256 KiB+64 KiB）处被取消、�
 
 **报告**：`cloud/docs/reviews/phase-1.3.2-r1-closeout.md`。
 
+### 3.34 1.3.2-R2 已完成（流式读取超时与 OPTIONS 限流隔离）
+
+基线 `845cac9`。安全与可靠性收尾：只改 3 个文件（`mcp-http/guards.ts`、
+`routes/mcp-http.ts`、`tests/mcp-http/guards.test.ts`）；无新增依赖、无迁移。
+
+| # | 问题 | 修复 |
+|---|---|---|
+| P1 | `readBoundedMcpBody()` 只有 256 KiB 字节上限、**无时间上限**：无 CL 的客户端发几个字节后可无限挂起（且读取发生在认证之前） | **绝对总时限 15s**（`MCP_HTTP_BODY_READ_TIMEOUT_MS`，循环外单个定时器，持续收数据不重置）；超时 → 停读 + `reader.cancel()` → **408 固定纯文本**，不进 Host/Origin/Bearer/DB/SDK；每次 read 用**双向 then** 转 tagged 值再 race（被放弃的 read 无 unhandled rejection）；`finally` 任何路径清定时器 + `releaseLock`；分类：断开/流错误→400 `unreadable`、超时→408 `timeout`、超限→413 |
+| P2 | `OPTIONS /mcp` 与业务共用 `limiter`：CORS 默认关闭时全局中间件不拦 OPTIONS → 预检**消耗 `mcp-http` 额度**（可被刷满打停业务） | `OPTIONS` **独立注册**（精确 `/mcp`、不挂 limiter）：不认证、不查库、不进 SDK、**零额度消耗**；响应逻辑一字未改（默认 204 无 ACAO、白名单才回显、无 `*`、无 credentials）；GET/DELETE 仍 SDK 405；未扩大 CORS 白名单 |
+
+**测试**：新增 7 条（`guards.test.ts` 21 → **28**）——路由级 fake timers 超时
+（408 + 流取消 + `getTimerCount()===0` + 非法 Host/Bearer 未触达 + unhandled
+rejection 0）、注入 150ms 短超时（不等 15s，钉死默认 15_000）、时限内正常流
+正文逐字节完整、客户端中断 400 且后续请求正常、OPTIONS×6 全 204 且
+`maxMcp=3` 的 POST 额度完整（第 4 次 429）、`maxMcp=1` 互不影响、OPTIONS
+精确路径（其它路径 404）。R1 边界测试保留（跨限块数断言改区间 5..6 并注释
+HWM 预取原因，安全性质逐条保留）。
+
+**门禁（实测）**：`tsc` ✅ · `eslint src tests` ✅ · `tests/mcp-http`
+**88 / 8**（81 → +7）· 全量 **1603 passed / 78 files**（+7，既有零回归、
+无 skip/only）· `npm run build` ✅ · 256KiB/CL 快路径/batch Scope/双时代/
+日志哨兵/CIMD 未声明全部回归通过 · GitHub CI 仅 `desktop-release.yml`
+（未配置、未观测到 Runs，**不声称通过**）。
+
+**报告**：`cloud/docs/reviews/phase-1.3.2-r2-closeout.md`。
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、
