@@ -486,6 +486,22 @@ cannot register itself into an inconsistent state*）。两者是**不同**的�
 （替换当前第 725 行的 `["authorization_code","refresh_token"]`）；`responseTypes`
 缺省 `["code"]`；在 §6 的两个交集检查之后追加规则 1 的交叉检查。
 
+#### C3c-3B-2 补充：交集必须**真正过滤**，且错误分类独立（3B-1 遗留 #1 / #3）
+
+3B-1 只用 `.some()` 判交集非空，却把**原始数组**放进 `metadata.grantTypes`。
+这不正确：原始数组可能含 `client_credentials` 这类不受支持的值，入库会撞
+`mcp_oauth_clients` 的 `grant_types <@ [...]` CHECK，让注册在别处炸掉。
+**不得**靠放宽数据库 CHECK 来迁就。
+
+| 要求 | 做法 |
+|---|---|
+| 真正的交集过滤 | `grantTypes = declared.filter(t => SUPPORTED_GRANT_TYPES.has(t))`；`responseTypes` 同理 |
+| 交集为空 → 拒绝 | 过滤后 `length === 0` 即拒（与「过滤后非空」是同一件事的两面） |
+| 空数组 ≠ 省略 | `undefined` 走缺省；`[]` 过滤后长度 0 → 拒（不被缺省洗白） |
+| 交叉一致性用**过滤后**的有效数组 | 先过滤、再判 `R ∋ code ⇒ G ∋ authorization_code` |
+| `metadata` 只存有效值 | `metadata.grantTypes = [...过滤后的 grantTypes]` |
+| **错误分类独立** | 交集为空 / 交叉不一致 → `unsupported_grant`；普通字段格式错误 → `document`。**禁止靠匹配 detail 文本决定审计事件**（见 §15） |
+
 ---
 
 ## 6. `Cache-Control: no-store` 的处理
@@ -557,6 +573,14 @@ token 端点对 ephemeral 行强制重抓一次并比对 `redirect_uris`。需�
 **不变量（C3c-3B 必须有测试盯住）**：对 `mcp_oauth_clients` 的**每一条** `UPDATE`
 都必须带 `metadata_version = metadata_version + 1`。做法与 `absolute_expires_at`
 的守卫相同——剥注释后扫描全部 `.update(mcpOauthClients)` 调用，凡缺版本递增即转红。
+
+> **C3c-3B-2 补充（3B-1 遗留 #2）**：CAS 的 `WHERE` **必须同时**包含
+> `client_id` 与读取时的旧 `metadata_version`——
+> `WHERE client_id = ? AND metadata_version = ?`。
+> 只写 `WHERE metadata_version = ?` 会把**任何**恰好同版本的行一起更新（另一个
+> 客户端也是 version=1 时被误伤）。3B-1 的迁移测试正是这样写的，已修正为
+> 造两个 `client_id`、相同版本的行来钉住「只影响目标客户端」。
+> 后续 Registry 的**每一处**版本 CAS 都必须走同一个 `casWhere(clientId, version)` 谓词。
 
 **禁止**：用「先 DELETE 再 INSERT」表达刷新（会让并发的授权读到空行）；
 用进程内 Map / 单例状态充当版本（多实例与重启都会失效，§7 明令禁止）。
@@ -634,6 +658,14 @@ INVALID──floor ≥ 30s，terminal，CAS version=V──> (V+1, INVALID)
    Grant / Session 并写审计；CAS 被拒的 mismatch **不撤销任何东西**（P5 反向亦证）。
 3. **版本只增不减、只由 DB 递增**：应用层不得传入期望的绝对版本以外的值；
    进程内 singleflight 只合并请求，不参与判定。
+
+   > **C3c-3B-2 澄清（3B-1 遗留 #4）**：数据库 `CHECK (metadata_version >= 1)`
+   > **只保证版本为正数**，**不能**阻止「把 5 改成 3」这类递减写入——**不得**
+   > 把该 CHECK 描述成「数据库已保证版本单调递增」。单调性完全由**应用层**
+   > 的版本 CAS 承担：每条 `mcp_oauth_clients` 的 UPDATE 必须
+   > `SET metadata_version = metadata_version + 1`，且 `WHERE` **同时**包含
+   > `client_id` 与读取时的旧 `metadata_version`；CAS 0 行即丢弃本次抓取结果。
+   > 「所有更新入口都遵守该 CAS」由**应用层守卫测试**扫描保证（见 §8.1 不变量）。
 
 **为什么不能只测成功刷新之间的竞争**（任务书 §2.2）：成功 vs mismatch、
 mismatch vs 迟到成功、INVALID vs 迟到成功是**三条不同的边**，R1 的 CAS 只在
@@ -1170,14 +1202,14 @@ R1 的结论是「迁移只改约束（`DROP CONSTRAINT` + `ADD CONSTRAINT`）�
 | 3 | 迁移 `0004_mcp_session_revoked_reason.sql`：CHECK 增加 `client_id_mismatch` | 数据模型（P7 已证当前 CHECK 拒绝） | ✅ C3c-3B-1 |
 | 4 | **迁移 `0005_mcp_metadata_version.sql`（R2 新增）**：`mcp_oauth_clients` 加 `metadata_version BIGINT NOT NULL DEFAULT 1`（`CHECK >= 1`），**无回填** | 唯一 CAS 令牌（§8.1 / §8.2） | ✅ C3c-3B-1 |
 | 5 | `cimd.ts`：`conflictsWithTrustedIdentifier()` / `isUrlShapedClientId()` / `clientIdConflictsWithTrusted()`（纯函数）；`grantTypes` 缺省 `["authorization_code"]`；`responseTypes` 缺省 `["code"]`；**§5.6 规则 1 交叉一致性检查**；`fetchClientMetadataDocument` 支持 `trustedIdentifiers`（DNS 之前） | 判据、默认值、交叉约束、身份冲突 | ✅ C3c-3B-1 |
-| 6 | `cimd-registry.ts`（新）：`resolveClientForAuthorize()`——长度 → 形态 → 身份冲突（**URL 形态，含预注册**，§3.2）→ 查行 → 缓存四态 → floor → 抓取 → 注册 / **版本 CAS**；**边界一（§8.5）的 CAS 失败处置** | 纯逻辑 + 注入 deps | ⬜ C3c-3B-2 |
-| 7 | `sessions.ts`：`revokeMcpGrantsAndSessionsByClient()`（Grant → Session，epoch + 1，单条聚合审计），**必须与版本 CAS 同一事务**（CAS 命中 1 行才撤） | 撤销语义（§8.1） | ⬜ C3c-3B-2 |
+| 6 | `cimd-registry.ts`（新）：`resolveClientForAuthorize()`——长度 → 形态 → 身份冲突（**URL 形态，含预注册**，§3.2）→ 查行 → 缓存四态 → floor → 抓取 → 注册 / **版本 CAS**；**边界一（§8.5）的 CAS 失败处置**；ABSENT 负面冷却 | 纯逻辑 + 注入 deps | ✅ C3c-3B-2 |
+| 7 | `sessions.ts`：`revokeMcpGrantsAndSessionsByClient()`（Grant → Session，epoch + 1，单条聚合审计），**必须与版本 CAS 同一事务**（CAS 命中 1 行才撤） | 撤销语义（§8.1） | ✅ C3c-3B-2 |
 | 8 | `consent-flow.ts`：GET / POST **四条件**复核（POST 内 `FOR SHARE`）+ 失败删 auth request + 审计 `mcp_consent_metadata_invalid`；**边界二（§8.5）的提交语义** | 关闭 §8.3 的竞态与 **INVALID 缺口** | ⬜ C3c-3B-2 |
 | 9 | `authorize-flow.ts`：未注册 → 调 #6；错误映射 `invalid_client`；显式异常类型（transient / terminal） | 接入点 | ⬜ C3c-3B-2 |
 | 10 | `routes/mcp-oauth.ts`：HTML 错误页（不重定向）+ 审计事件（§15 命名） | 用户可见行为 | ⬜ C3c-3B-2 |
 | 11 | token 端点：`invalid_client` / 503 映射；**未声明 `refresh_token` 的客户端不签发 refresh token**，refresh 端点为它返回 `unauthorized_client`；**旧授权码按 §8.4（不查 INVALID / 版本）** | 规范对齐 + 信任阶段 | ⬜ C3c-3B-2 |
 | 12 | `consent-page.ts`：`clientIdentifierHost`（§16） | 反钓鱼 | ⬜ C3c-3B-2 |
-| 13 | 测试矩阵（§13 全部条目，含 R2 新增 A–D 四组与 §13.10） | 验收 | 🟡 3B-1 完成迁移 / CIMD / 配置三组；其余随 #6–#12 |
+| 13 | 测试矩阵（§13 全部条目，含 R2 新增 A–D 四组与 §13.10） | 验收 | 🟡 3B-1 完成迁移 / CIMD / 配置三组；**3B-2 完成 Registry / CAS 竞争 / 撤销 / 负面冷却四组**；consent / token 随 #8–#11 |
 | 14 | 文档：本文件（含 §8.5 后续实施说明）+ R2/3B-1 审查报告 + 路线图 / 索引 | 文档一致 | ✅ C3c-3B-1 |
 
 ### 12.1 C3c-3B 明确不包含
@@ -1415,6 +1447,11 @@ R2 关闭的决策（见 §17 R2 表）：
 | `mcp_cimd_document_invalid` | JSON / 字段非法 | `clientId`, `field` | 不写文档、不写 redirect_uri 全文 |
 | `mcp_cimd_unsupported_client` | 共享密钥 / 非 none / 私钥材料 | `clientId`, `reason` | 不写密钥内容 |
 | `mcp_cimd_unsupported_grant` | 交集为空 **或交叉不一致（R2）** | `clientId`, `declaredGrantCount`, `declaredResponseCount`, `reason`（`empty_intersection` / `inconsistent_combination`） | 只记数量与枚举，不记原始数组 |
+
+> **C3c-3B-2 补充（3B-1 遗留 #3）**：审计映射**只走 `CimdFailureReason` 枚举**
+> （`auditEventForCimdFailure()`），**禁止**通过匹配错误 `detail` 文本来决定事件名。
+> 因此 grant / response 类失败必须有**独立**的 reason `unsupported_grant`
+> （区别于普通字段格式的 `document`），否则审计层只能去读 detail 文本——那是禁止的。
 | `mcp_cimd_http_invalid` | 3xx / 非 200 / Content-Type / 超限 | `clientId`, `status`, `kind` | 不含响应体 |
 | `mcp_cimd_ssrf_blocked` | 命中特殊用途地址 | `clientId`, `address` | 地址是取证必需，不是凭据 |
 | `mcp_cimd_tls_failure` | 目标 TLS 失败 | `clientId`, `code` | 不含证书内容 |
@@ -1534,3 +1571,19 @@ interface ConsentView {
 
 **本阶段未改**：§3 / §4 / §5 / §6 / §7 / §8.1–§8.4 / §13.1–§13.9 的判据与语义
 （R2 冻结结论原样保留）。
+
+### C3c-3B-2（2026-11-20，基线 `2511bf7`）
+
+本阶段交付 **CIMD Registry、缓存状态机、版本 CAS 与 Grant/Session 联动撤销**，
+并修复 3B-1 的四个遗留问题。对设计正文的修订：
+
+| # | 修订 | 原因 |
+|---|---|---|
+| 1 | **§5.6 新增「交集必须真正过滤」**：`grantTypes` / `responseTypes` 用 `.filter()` 与 AS 支持集求真交集，`metadata` 只存有效值；空数组 ≠ 省略；交叉一致性用过滤后的数组；**错误分类独立**（`unsupported_grant` vs `document`） | 3B-1 遗留 #1：原实现只 `.some()` 判非空却存原始数组，含 `client_credentials` 的文档会撞 DB CHECK |
+| 2 | **§8.1 新增 CAS 谓词约束**：`WHERE` **必须同时**含 `client_id` 与旧 `metadata_version`；每处版本 CAS 走同一 `casWhere(clientId, version)` | 3B-1 遗留 #2：原迁移测试只写 `WHERE metadata_version = 1`，会误伤同版本的其它客户端 |
+| 3 | **§15 新增审计映射纪律**：只走 `CimdFailureReason` 枚举（`auditEventForCimdFailure()`），**禁止匹配 detail 文本**；grant/response 类用独立 reason `unsupported_grant` | 3B-1 遗留 #3：`document` 被「字段非法」与「交集/交叉」共用，审计层无法区分 |
+| 4 | **§8.2 判据 3 补充**：`CHECK (metadata_version >= 1)` **只保证正数、不保证单调**；单调性由应用层版本 CAS 承担，守卫测试扫描全部更新入口 | 3B-1 遗留 #4：不得把 CHECK 描述成「数据库已保证版本单调递增」 |
+| 5 | **§12 状态更新**：#6（`cimd-registry.ts`）、#7（`revokeMcpGrantsAndSessionsByClient`）标记为本阶段完成；新增 ABSENT 负面冷却与版本递增守卫测试 | 从「设计」变为「已实现」 |
+
+**本阶段未改**：authorize / consent / token / revoke 生产逻辑、`discovery.ts`
+（未声明能力）、Desktop、迁移文件（0004 / 0005 沿用 3B-1 的产物）、依赖。

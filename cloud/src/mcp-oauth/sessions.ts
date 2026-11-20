@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import type { Logger } from "../logger.js";
 import { recordAuthEvent, type AuthEventInput } from "../db/audit.js";
@@ -908,4 +908,72 @@ export async function revokeMcpSessionsByGrant(
     },
   });
   return { revokedCount: rows.length };
+}
+
+// ---------------------------------------------------------------------------
+// client_id 级撤销（mismatch，Phase 1.3.1-C3c-3B-2）
+// ---------------------------------------------------------------------------
+
+export interface RevokeMcpGrantsAndSessionsByClientInput {
+  clientId: string;
+  now: Date;
+}
+
+/**
+ * 撤销某 `client_id` 下的**全部未撤销 Grant 与 Session**（`client_id_mismatch`
+ * 语义，设计 §5.3）。跨用户、跨 resource；不误伤其它 client；不删除历史行。
+ *
+ * ## 必须在调用方的事务里执行，且该事务已经先完成版本 CAS
+ *
+ * 锁顺序固定 **`mcp_oauth_clients → mcp_grants → mcp_sessions`**：调用方
+ * （`cimd-registry`）必须先对 `mcp_oauth_clients` 做
+ * `WHERE client_id = ? AND metadata_version = ?` 的 CAS，**命中 1 行**才有资格
+ * 调用本函数。CAS 0 行时**一个字节都不能写**（设计 §8.5 边界一）。
+ *
+ * 本函数自己**不开事务**——传进来的可以是 `db`，也可以是一层 `tx`
+ * （`McpOAuthTransaction`；drizzle 的 `PgTransaction` 结构上兼容，同
+ * `recordAuthEvent(tx, …)` 的既有用法）。三条写入 + 一条聚合审计必须落在
+ * **同一事务**：审计失败即整体回滚，不会出现「Session 撤了、Grant 没撤」
+ * 或「撤了却没记账」。
+ *
+ * ## epoch 递增
+ *
+ * Grant 撤销时 `epoch = epoch + 1`（同一条 UPDATE 内，不先读后写）。这样
+ * Desktop 侧以 `(grantId, epoch)` 为键的授权上下文会立即失效，旧 epoch 永不
+ * 复用（设计 §5.3 / §5.4）。
+ */
+export async function revokeMcpGrantsAndSessionsByClient(
+  tx: McpOAuthTransaction,
+  input: RevokeMcpGrantsAndSessionsByClientInput,
+): Promise<{ revokedGrantCount: number; revokedSessionCount: number }> {
+  const { clientId, now } = input;
+
+  // 1) Grant：撤销 + epoch +1（单条语句，不先读后写）。
+  const grants = await tx
+    .update(mcpGrants)
+    .set({ revokedAt: now, epoch: sql`${mcpGrants.epoch} + 1` })
+    .where(and(eq(mcpGrants.clientId, clientId), isNull(mcpGrants.revokedAt)))
+    .returning({ id: mcpGrants.id, userId: mcpGrants.userId });
+
+  // 2) Session：只撤销该 client 的、尚未撤销的（顺序永远在 Grant 之后）。
+  const sessions = await tx
+    .update(mcpSessions)
+    .set({ revokedAt: now, revokedReason: "client_id_mismatch" })
+    .where(and(eq(mcpSessions.clientId, clientId), isNull(mcpSessions.revokedAt)))
+    .returning({ id: mcpSessions.id, userId: mcpSessions.userId });
+
+  // 3) 一条聚合审计，与两条 UPDATE 同事务（审计失败 → 整体回滚）。
+  //    不传 `userId`：`recordAuthEvent` 会写成 NULL——这是跨用户的系统动作，
+  //    挂到任何单个用户名下都是错误归因（设计 §5.3）。
+  await recordAuthEvent(tx, {
+    eventType: "mcp_client_id_mismatch",
+    detail: {
+      clientId,
+      reason: "client_id_mismatch",
+      revokedGrantCount: grants.length,
+      revokedSessionCount: sessions.length,
+    },
+  });
+
+  return { revokedGrantCount: grants.length, revokedSessionCount: sessions.length };
 }

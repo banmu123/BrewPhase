@@ -53,7 +53,25 @@ export type AuthEventType =
   | "mcp_consent_denied"
   | "mcp_consent_csrf_mismatch"
   | "mcp_auth_code_issued"
-  | "mcp_grant_sync_failed";
+  | "mcp_grant_sync_failed"
+  // ---- CIMD 注册与元数据（Phase 1.3.1-C3c-3B-2）----
+  //
+  // 这组事件由 `cimd-registry` 写入。**审计映射必须走 `reason` 枚举**
+  // （`auditEventForCimdFailure`），**禁止**通过匹配错误 detail 文本来决定
+  // 事件名——detail 是给人看的、随时可能改写，枚举才是契约。
+  | "mcp_cimd_registered"
+  | "mcp_cimd_refreshed"
+  | "mcp_cimd_fetch_transient"
+  | "mcp_cimd_document_invalid"
+  | "mcp_cimd_unsupported_client"
+  | "mcp_cimd_unsupported_grant"
+  | "mcp_cimd_http_invalid"
+  | "mcp_cimd_ssrf_blocked"
+  | "mcp_cimd_tls_failure"
+  | "mcp_cimd_no_store_rejected"
+  | "mcp_cimd_client_id_conflict"
+  // mismatch 身份失效的**唯一**聚合审计（与撤销同事务提交，设计 §5.3）。
+  | "mcp_client_id_mismatch";
 
 export interface AuthEventInput {
   eventType: AuthEventType;

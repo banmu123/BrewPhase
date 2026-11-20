@@ -1772,6 +1772,48 @@ Desktop 无改动 · `discovery.ts` 未改（**未声明能力**）。
 
 **报告**：`cloud/docs/reviews/phase-1.3.1-c3c-3b-1-foundation-review.md`。
 
+### 3.28 1.3.1-C3c-3B-2 已完成（CIMD Registry、缓存状态机、版本 CAS 与联动撤销）
+
+实施轮。基线 `2511bf7`。**未接入** `/mcp/oauth/authorize`、Consent、Token 生产链路，
+**未改** Desktop，**未声明** CIMD 能力。
+
+**先修复 3B-1 的四个遗留问题**：
+
+| # | 问题 | 修法 |
+|---|---|---|
+| 1 | 交集只 `.some()` 判非空，却存**原始数组** → 含 `client_credentials` 的文档会撞 DB CHECK | 与 AS 支持集**真正过滤**（`.filter()`），`metadata` 只存有效值；空数组 ≠ 省略；交叉一致性用过滤后数组 |
+| 2 | CAS 只写 `WHERE metadata_version = 1`，会误伤同版本的其它客户端 | **`WHERE client_id = ? AND metadata_version = ?`**（`casWhere()` 单点）；迁移测试造两 client_id 同版本钉住 |
+| 3 | 「交集为空」与「字段非法」同为 `document` → 审计只能匹配 detail 文本（禁止） | 新增独立 reason **`unsupported_grant`**；`auditEventForCimdFailure()` **只走枚举**映射 |
+| 4 | `CHECK >= 1` 被隐含说成「保证单调」 | 明确 **CHECK 只保证正数**；单调性由应用层版本 CAS 承担 + **守卫测试**扫描全部更新入口 |
+
+**交付**：
+
+| 项 | 落点 |
+|---|---|
+| `cimd-registry.ts`（新） | `resolveClientForAuthorize()`——长度 → 精确查库 → pre_registered/dcr（URL 形态才查身份冲突）→ cimd（四态 + floor）→ 未注册（URL 形态 → 冲突 → 联网 → 注册 version=1）；**依赖注入**（db / fetcher / baseUrl / resource / trusted / clock / cooldown / audit） |
+| 缓存四态 | FRESH 直用不联网；STALE 内 503、外重抓；INVALID 内 400、外重抓（唯一自愈）；`no-cache` 永久 STALE；`no-store` 不落库 |
+| 版本 CAS | `UPDATE … SET metadata_version = metadata_version + 1 WHERE client_id = ? AND metadata_version = ?`；1 行 = 赢、0 行 = 丢弃 |
+| **§8.5 边界一** | 成功 CAS 失败 → **503 fail-closed**；terminal（含 mismatch）CAS 失败 → **400 但零 DB 写入**；行删除 → 400 不重新 INSERT；DB 异常 → 500 rollback |
+| **ABSENT 负面冷却** | `InMemoryNegativeCooldown`：`Map<clientId,{at,reason}>`、TTL **30s**、**只存时间戳+枚举（不存正文/Header）**、容量 10000 逐出最旧、成功清除、transient 不写、可替换注入 |
+| **`revokeMcpGrantsAndSessionsByClient(tx,…)`** | 与版本 CAS **同一事务**；`clients → grants → sessions`；Grant `epoch+1`、跨用户跨 resource、不删行；一条聚合审计 `mcp_client_id_mismatch`（`user_id=NULL` + 两计数）；CAS 0 行 → **零撤销零成功审计**；审计失败 → **整事务回滚** |
+| 审计事件 | `AuthEventType` 增 12 个 `mcp_cimd_*` / `mcp_client_id_mismatch` 取值；映射只走 reason 枚举 |
+
+**测试**：新增 `cimd-registry.test.ts` **42 条**（注册 6 / 缓存 7 / CAS 并发 8 /
+撤销 7 / 冷却 7 / 审计映射 6 / 版本守卫 2）；`cimd.test.ts` +5（交集过滤）、
+迁移 CAS 用例重写（两 client_id 同版本）。并发用**屏障 / 阻塞 fetcher + 持锁事务 +
+`pg_stat_activity`/`pg_blocking_pids`** 编排，非 sleep。
+
+**门禁（实测）**：`tsc --noEmit` ✅ · `eslint src tests` ✅ ·
+`vitest run` **1443 passed / 67 files**（基线 1397/66 → **+46/+1**）·
+`.update(mcpOauthClients)` **2 处均带 `version+1`** · raw SQL 更新 **0 处** ·
+CAS 谓词含 `client_id`+版本 ✅ · `metadata_fetched_at` 无等值比较 ✅ ·
+Desktop 无改动 · `discovery.ts` 未改（**未声明能力**）。
+
+**范围**：无 authorize/consent/token 生产逻辑改动、无迁移文件改动、无依赖变更、
+未改 Desktop、未声明 `client_id_metadata_document_supported`。
+
+**报告**：`cloud/docs/reviews/phase-1.3.1-c3c-3b-2-registry-review.md`。
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、

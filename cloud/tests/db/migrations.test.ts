@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, and } from "drizzle-orm";
 import { fileURLToPath } from "node:url";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -602,7 +602,7 @@ describe("Phase 1.3.1-C3c-3B-1 migrations (0004 / 0005)", () => {
     }
   });
 
-  it("metadata_version：bigint 映射为 JS number；默认 1、CHECK 拒 0/负数、版本 CAS 单写者", async () => {
+  it("metadata_version：bigint 映射为 JS number；默认 1、CHECK 拒 0/负数；CAS 必须同时限定 client_id 与版本", async () => {
     const handle = createDb(migratedUrl);
     try {
       /**
@@ -629,7 +629,10 @@ describe("Phase 1.3.1-C3c-3B-1 migrations (0004 / 0005)", () => {
       expect(viaDrizzle[0]?.v).toBe(1);
       expect(typeof viaDrizzle[0]?.v).toBe("number");
 
-      // CHECK 拒绝 0 与负数（「绕过 CAS 直接把版本写小」必须写不进去）。
+      // CHECK 拒绝 0 与负数（版本不得被写成非正数）。
+      // 注意：CHECK **只**保证 >= 1，**不**保证单调递增——单调性由应用层
+      // 的版本 CAS（client_id + 旧版本）保证，见设计 §8.1。不得把 CHECK
+      // 描述成「数据库已保证版本单调递增」。
       for (const bad of [0, -1]) {
         await expect(
           handle.sql`
@@ -639,23 +642,67 @@ describe("Phase 1.3.1-C3c-3B-1 migrations (0004 / 0005)", () => {
         ).rejects.toThrow(/mcp_oauth_clients_metadata_version_check/);
       }
 
-      // 版本 CAS 的形状（Drizzle 条件 UPDATE，WHERE 值是 JS number）：
-      // 这就是 3B 将写进 cimd-registry 的语句。
-      const updated = await handle.db
-        .update(mcpOauthClients)
-        .set({ metadataVersion: sql`metadata_version + 1` })
-        .where(eq(mcpOauthClients.metadataVersion, 1))
-        .returning({ v: mcpOauthClients.metadataVersion });
-      expect(updated).toHaveLength(1);
-      expect(updated[0]?.v).toBe(2);
+      /**
+       * 版本 CAS 的**真实条件**：`WHERE client_id = ? AND metadata_version = ?`。
+       *
+       * 3B-1 的测试只写了 `metadata_version = 1`——那会把**任何** version=1 的
+       * 行一起更新（另一个客户端恰好也是 version=1 时被误伤）。CAS 必须同时
+       * 限定 client_id：只影响目标客户端。这里造两个 client_id、**相同**
+       * version=1 的行来钉住这一点。
+       */
+      await handle.sql`
+        insert into mcp_oauth_clients (client_id, client_name, redirect_uris, registration_source)
+        values ('v-target-a', 'A', array['https://a/cb'], 'pre_registered')`;
+      await handle.sql`
+        insert into mcp_oauth_clients (client_id, client_name, redirect_uris, registration_source)
+        values ('v-target-b', 'B', array['https://b/cb'], 'pre_registered')`;
 
-      // 同一旧版本再 CAS → 0 行（并发只有一个写入者，R2 §8.1）。
-      const again = await handle.db
+      const versionOf = async (id: string): Promise<number> => {
+        const rows = await handle.db
+          .select({ v: mcpOauthClients.metadataVersion })
+          .from(mcpOauthClients)
+          .where(eq(mcpOauthClients.clientId, id));
+        return rows[0]?.v as number;
+      };
+      expect(await versionOf("v-target-a")).toBe(1);
+      expect(await versionOf("v-target-b")).toBe(1);
+
+      // A 客户端 CAS 成功：只影响 A，B 版本完全不变。
+      const casA = await handle.db
         .update(mcpOauthClients)
         .set({ metadataVersion: sql`metadata_version + 1` })
-        .where(eq(mcpOauthClients.metadataVersion, 1))
+        .where(
+          and(eq(mcpOauthClients.clientId, "v-target-a"), eq(mcpOauthClients.metadataVersion, 1)),
+        )
         .returning({ v: mcpOauthClients.metadataVersion });
-      expect(again).toHaveLength(0);
+      expect(casA).toHaveLength(1);
+      expect(casA[0]?.v).toBe(2);
+      expect(await versionOf("v-target-a")).toBe(2);
+      expect(await versionOf("v-target-b")).toBe(1);
+
+      // A 再用**旧版本** CAS → 0 行（不能因为别处还有 version=1 就命中）。
+      const casAAgain = await handle.db
+        .update(mcpOauthClients)
+        .set({ metadataVersion: sql`metadata_version + 1` })
+        .where(
+          and(eq(mcpOauthClients.clientId, "v-target-a"), eq(mcpOauthClients.metadataVersion, 1)),
+        )
+        .returning({ v: mcpOauthClients.metadataVersion });
+      expect(casAAgain).toHaveLength(0);
+      expect(await versionOf("v-target-a")).toBe(2);
+      expect(await versionOf("v-target-b")).toBe(1);
+
+      // B 自己的 CAS（client_id + 版本）只影响 B，不影响已到 2 的 A。
+      const casB = await handle.db
+        .update(mcpOauthClients)
+        .set({ metadataVersion: sql`metadata_version + 1` })
+        .where(
+          and(eq(mcpOauthClients.clientId, "v-target-b"), eq(mcpOauthClients.metadataVersion, 1)),
+        )
+        .returning({ v: mcpOauthClients.metadataVersion });
+      expect(casB).toHaveLength(1);
+      expect(await versionOf("v-target-b")).toBe(2);
+      expect(await versionOf("v-target-a")).toBe(2);
 
       await handle.sql`delete from mcp_oauth_clients where client_id like 'v-%'`;
     } finally {

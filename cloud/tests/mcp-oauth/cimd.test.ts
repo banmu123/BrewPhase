@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { closeTestDb, getTestDb } from "../helpers/db.js";
 import {
   CIMD_DEFAULT_TTL_MS,
   CIMD_MAX_BODY_BYTES,
@@ -19,6 +20,10 @@ import {
   type CimdTransportRequest,
   type CimdTransportResponse,
 } from "../../src/mcp-oauth/cimd.js";
+
+afterAll(async () => {
+  await closeTestDb();
+});
 
 /**
  * CIMD 严格抓取器（Phase 1.3.1-C3c-2）。
@@ -717,12 +722,14 @@ describe("Document 校验", () => {
   });
 
   it("grant_types / response_types 与支持集没有交集时拒绝", async () => {
+    // 交集为空 → `unsupported_grant`（审计映射到 `mcp_cimd_unsupported_grant`，
+    // 与普通字段格式错误的 `document` 分开——3B-1 遗留 #3）。
     await expectDocumentRejected({ ...VALID_DOC, grant_types: ["client_credentials"] }, {
-      reason: "document",
+      reason: "unsupported_grant",
       detail: "grant_types",
     });
     await expectDocumentRejected({ ...VALID_DOC, response_types: ["token"] }, {
-      reason: "document",
+      reason: "unsupported_grant",
       detail: "response_types",
     });
   });
@@ -738,11 +745,11 @@ describe("Document 校验", () => {
   it("refresh_token + code 是不兼容组合，必须拒绝（RFC 7591 §2.1）", async () => {
     await expectDocumentRejected(
       { ...VALID_DOC, grant_types: ["refresh_token"], response_types: ["code"] },
-      { reason: "document", detail: "inconsistent grant_types/response_types" },
+      { reason: "unsupported_grant", detail: "inconsistent grant_types/response_types" },
     );
     // 声明了 refresh_token 但 response 省略 → 默认 ["code"]，同样不兼容。
     await expectDocumentRejected({ ...VALID_DOC, grant_types: ["refresh_token"] }, {
-      reason: "document",
+      reason: "unsupported_grant",
       detail: "inconsistent grant_types/response_types",
     });
   });
@@ -1036,10 +1043,11 @@ describe("validateCimdDocument 直测", () => {
  * 按 [ID §6] 交集为空拒绝——两者绝不能混（混了就等于用缺省值把空数组洗白）。
  */
 describe("grant_types / response_types 缺省值与交叉一致性（R2 §5.6）", () => {
+  /** grant / response 类问题一律 `unsupported_grant`（≠ 普通字段格式的 `document`）。 */
   async function expectDocRejected(doc: unknown, detail: string): Promise<void> {
     await expectFailure(CLIENT_ID, { response: jsonResponse({ doc }) }, {
       kind: "terminal",
-      reason: "document",
+      reason: "unsupported_grant",
       detail,
     });
   }
@@ -1088,6 +1096,79 @@ describe("grant_types / response_types 缺省值与交叉一致性（R2 §5.6）
   it("空交集：不支持的 grant 与不支持的 response 各自拒绝", async () => {
     await expectDocRejected({ ...VALID_DOC, grant_types: ["client_credentials"] }, "grant_types");
     await expectDocRejected({ ...VALID_DOC, response_types: ["token"] }, "response_types");
+  });
+});
+
+/**
+ * [ID §6] **真正的交集过滤**（3B-1 遗留修复）。
+ *
+ * 3B-1 只用 `.some()` 判交集非空，却把**原始数组**放进 `metadata.grantTypes`——
+ * 那会让含 `client_credentials` 的文档一路通过校验，最后在 `mcp_oauth_clients`
+ * 的 `grant_types <@ [...]` CHECK 上**写入失败**。正确做法是把 AS 支持的值
+ * **过滤**出来再存（且**不得**放宽数据库 CHECK 来迁就）。
+ */
+describe("grant_types / response_types 交集过滤（3B-1 遗留修复）", () => {
+  function validate(doc: unknown) {
+    return validateCimdDocument(doc as Record<string, unknown>, CLIENT_ID);
+  }
+
+  it("authorization_code + client_credentials → 过滤后只保留 authorization_code", () => {
+    const result = validate({
+      ...VALID_DOC,
+      grant_types: ["authorization_code", "client_credentials"],
+      response_types: ["code"],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.metadata.grantTypes).toEqual(["authorization_code"]);
+    expect(result.metadata.grantTypes).not.toContain("client_credentials");
+  });
+
+  it("authorization_code + refresh_token + client_credentials → 过滤后保留两个有效值", () => {
+    const result = validate({
+      ...VALID_DOC,
+      grant_types: ["authorization_code", "refresh_token", "client_credentials"],
+      response_types: ["code"],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.metadata.grantTypes).toEqual(["authorization_code", "refresh_token"]);
+    expect(result.metadata.grantTypes).not.toContain("client_credentials");
+  });
+
+  it("response_types 含 code + token → 只保留 code", () => {
+    const result = validate({
+      ...VALID_DOC,
+      grant_types: ["authorization_code"],
+      response_types: ["code", "token"],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // `response_types` 不落库（无列），但过滤后的值参与交叉判断——
+    // 这里通过「grant_types 仍被正确过滤」间接确认过滤发生，且校验通过。
+    expect(result.metadata.grantTypes).toEqual(["authorization_code"]);
+  });
+
+  it("过滤之后的 grant_types 满足数据库 CHECK（`<@ ['authorization_code','refresh_token']`）", async () => {
+    // 直接把过滤结果当作 grant_types 写进真实表：若过滤不生效，这里会撞 CHECK。
+    const result = validate({
+      ...VALID_DOC,
+      grant_types: ["authorization_code", "refresh_token", "client_credentials", "password"],
+      response_types: ["code"],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const handle = await getTestDb();
+    const clientId = `filter-${Math.random().toString(36).slice(2, 10)}`;
+    await handle.sql`
+      insert into mcp_oauth_clients
+        (client_id, client_name, redirect_uris, registration_source, grant_types)
+      values (${clientId}, 'Filter', array['https://a/cb'], 'cimd', ${result.metadata.grantTypes})`;
+    const rows = await handle.sql<{ grant_types: string[] }[]>`
+      select grant_types from mcp_oauth_clients where client_id = ${clientId}`;
+    expect(rows[0]?.grant_types).toEqual(["authorization_code", "refresh_token"]);
+    await handle.sql`delete from mcp_oauth_clients where client_id = ${clientId}`;
   });
 });
 

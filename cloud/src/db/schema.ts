@@ -418,7 +418,10 @@ export const mcpOauthClients = pgTable(
       "mcp_oauth_clients_grant_types_check",
       sql`${t.grantTypes} <@ ARRAY['authorization_code', 'refresh_token']::text[]`,
     ),
-    // 版本只能递增（设计 §8.1）：0 / 负数意味着「有人绕过 CAS 直接写列」。
+    // 版本不得为非正数。**这个 CHECK 只保证 `>= 1`，并不保证单调递增**
+    // （把 5 改成 3 仍满足 CHECK）。单调性由应用层的版本 CAS 保证——每条
+    // `mcp_oauth_clients` 的 UPDATE 都必须 `metadata_version = metadata_version + 1`
+    // 且 WHERE 同时限定 `client_id` 与旧版本（设计 §8.1）。
     check("mcp_oauth_clients_metadata_version_check", sql`${t.metadataVersion} >= 1`),
   ],
 );

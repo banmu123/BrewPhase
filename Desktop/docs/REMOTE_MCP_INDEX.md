@@ -1664,3 +1664,44 @@ fail-fast 格式校验）；`ca` → **`caOverride`**；迁移 **0004**（`revok
 
 设计（v3 + §8.5）：`cloud/docs/design/phase-1.3.1-c3c-3a-cimd-authorize-integration-contract.md`；
 3B-1 报告：`cloud/docs/reviews/phase-1.3.1-c3c-3b-1-foundation-review.md`。
+
+---
+
+## 39. Phase 1.3.1-C3c-3B-2：CIMD Registry、缓存状态机、版本 CAS 与联动撤销（已完成）
+
+基线 `2511bf7`。**未接入** authorize / consent / token 生产链路，**未改** Desktop，
+**未声明** CIMD 能力。
+
+**先修 3B-1 四个遗留**：① 交集**真正过滤**（存有效值，不撞 DB CHECK）；
+② CAS 谓词 **`WHERE client_id = ? AND metadata_version = ?`**（不再只按版本）；
+③ 错误分类独立 **`unsupported_grant`**（审计只走 reason 枚举、禁止匹配 detail）；
+④ 澄清 **`CHECK >= 1` 只保证正数**、单调性由应用层 CAS + 守卫测试承担。
+
+**交付**：
+
+- **`cimd-registry.ts`（新）**：`resolveClientForAuthorize()`——长度 → 精确查库 →
+  pre_registered/dcr（URL 形态才查身份冲突）→ cimd（四态 + floor）→ 未注册
+  （URL 形态 → 冲突 → 联网 → 注册 `version=1`）；**依赖注入**（db / fetcher /
+  baseUrl / resource / trusted / clock / cooldown / audit）。
+- **缓存四态**：FRESH 直用；STALE 内 503 / 外重抓；INVALID 内 400 / 外重抓
+  （唯一自愈）；`no-cache` 永久 STALE；`no-store` 不落库。
+- **版本 CAS**：`SET metadata_version = metadata_version + 1 WHERE client_id = ?
+  AND metadata_version = ?`；1 行 = 赢、0 行 = 丢弃。
+- **§8.5 边界一**：成功 CAS 失败 → **503 fail-closed**；terminal（含 mismatch）
+  失败 → **400 但零 DB 写入**；行删除 → 400 不 INSERT；DB 异常 → 500 rollback。
+- **ABSENT 负面冷却**：`Map<clientId,{at,reason}>`、TTL **30s**、**只存时间戳 +
+  枚举（不存正文/Header）**、容量 10000 逐出最旧、成功清除、transient 不写。
+- **`revokeMcpGrantsAndSessionsByClient(tx,…)`**：与 CAS 同事务；`clients →
+  grants → sessions`；`epoch+1`、跨用户跨 resource、不删行；一条聚合审计
+  `mcp_client_id_mismatch`；CAS 0 行 → 零撤销零成功审计；审计失败 → 整事务回滚。
+
+**测试**：`cimd-registry.test.ts` **42 条**（注册 6 / 缓存 7 / CAS 并发 8 / 撤销 7 /
+冷却 7 / 审计映射 6 / 版本守卫 2）+ `cimd.test.ts` 交集过滤 5 + 迁移 CAS 重写。
+并发用**屏障 / 阻塞 fetcher + 持锁事务 + `pg_stat_activity`** 编排。
+
+**门禁**：`tsc` ✅ · `eslint` ✅ · **1443 passed / 67 files**（基线 1397 → **+46**）·
+`.update(mcpOauthClients)` 2 处均 `version+1` · raw SQL 更新 0 处 ·
+Desktop 无改动 · 未声明能力。
+
+设计（v3 + 3B-2 补充）：`cloud/docs/design/phase-1.3.1-c3c-3a-cimd-authorize-integration-contract.md`；
+3B-2 报告：`cloud/docs/reviews/phase-1.3.1-c3c-3b-2-registry-review.md`。

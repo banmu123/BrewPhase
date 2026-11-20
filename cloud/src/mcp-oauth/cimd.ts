@@ -71,7 +71,15 @@ export type CimdFailureReason =
   /** [ID §10.1]：client_id 等于 issuer / resource / 受信 AS·RS 标识符（设计 §3.2）。 */
   | "client_id_conflict"
   | "document"
-  | "unsupported_client";
+  | "unsupported_client"
+  /**
+   * `grant_types` / `response_types` **交集为空**或**交叉不一致**（设计 §5.6）。
+   *
+   * 与 `document` 分开是**审计映射的硬要求**（3B-1 遗留 #4）：普通字段格式错误
+   * → `mcp_cimd_document_invalid`，而 grant/response 问题 → `mcp_cimd_unsupported_grant`。
+   * 两者若同为 `document`，审计层就只能去**匹配 detail 文本**来区分——那是禁止的。
+   */
+  | "unsupported_grant";
 
 export interface CimdClientMetadata {
   clientId: string;
@@ -772,20 +780,33 @@ export function validateCimdDocument(doc: Record<string, unknown>, clientId: str
   if (declaredGrantTypes === "invalid") {
     return docFail("document", "grant_types must be a string array");
   }
-  const grantTypes = declaredGrantTypes ?? ["authorization_code"];
+  const declaredG = declaredGrantTypes ?? ["authorization_code"];
 
   const declaredResponseTypes = readStringArray(doc.response_types);
   if (declaredResponseTypes === "invalid") {
     return docFail("document", "response_types must be a string array");
   }
-  const responseTypes = declaredResponseTypes ?? ["code"];
+  const declaredR = declaredResponseTypes ?? ["code"];
 
-  // 草案 §6：两个数组**各自**与 AS 支持集求交集，空交集必须拒绝。
-  if (!grantTypes.some((type) => SUPPORTED_GRANT_TYPES.has(type))) {
-    return docFail("document", "grant_types has no supported value");
+  /**
+   * [ID §6] **真正的交集过滤**（3B-1 遗留修复）。
+   *
+   * 只把 AS 支持的值写进 `metadata.grantTypes`。原始数组可能含
+   * `client_credentials` 这类**不受支持**的值——若原样入库，`mcp_oauth_clients`
+   * 的 `grant_types <@ ARRAY['authorization_code','refresh_token']` CHECK 会在
+   * **写入时**失败（注册流程在别处炸掉）。**不得**靠放宽数据库 CHECK 解决。
+   *
+   * 过滤后再判空：交集为空 = 文档声明的 grant/response 我们一个都不支持。
+   * 用独立的 `unsupported_grant` 原因，让审计映射到 `mcp_cimd_unsupported_grant`
+   * 而不是 `mcp_cimd_document_invalid`（见 `CimdFailureReason` 注释）。
+   */
+  const grantTypes = declaredG.filter((type) => SUPPORTED_GRANT_TYPES.has(type));
+  if (grantTypes.length === 0) {
+    return docFail("unsupported_grant", "grant_types has no supported value");
   }
-  if (!responseTypes.some((type) => SUPPORTED_RESPONSE_TYPES.has(type))) {
-    return docFail("document", "response_types has no supported value");
+  const responseTypes = declaredR.filter((type) => SUPPORTED_RESPONSE_TYPES.has(type));
+  if (responseTypes.length === 0) {
+    return docFail("unsupported_grant", "response_types has no supported value");
   }
 
   /**
@@ -802,7 +823,7 @@ export function validateCimdDocument(doc: Record<string, unknown>, clientId: str
    */
   if (responseTypes.includes("code") && !grantTypes.includes("authorization_code")) {
     return docFail(
-      "document",
+      "unsupported_grant",
       'inconsistent grant_types/response_types: response_types has "code" but grant_types lacks "authorization_code"',
     );
   }
