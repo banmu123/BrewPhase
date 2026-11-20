@@ -965,11 +965,16 @@ export async function revokeMcpGrantsAndSessionsByClient(
   // 3) 一条聚合审计，与两条 UPDATE 同事务（审计失败 → 整体回滚）。
   //    不传 `userId`：`recordAuthEvent` 会写成 NULL——这是跨用户的系统动作，
   //    挂到任何单个用户名下都是错误归因（设计 §5.3）。
+  //    `absent: false` / `casApplied: true`：与 ABSENT 首次注册路径的零撤销审计
+  //    （C3c-3B-2-R1）成对——查询者据这两个字段即可区分「CAS 获胜后的真撤销」
+  //    与「无注册行、零撤销的首次 mismatch」。
   await recordAuthEvent(tx, {
     eventType: "mcp_client_id_mismatch",
     detail: {
       clientId,
       reason: "client_id_mismatch",
+      absent: false,
+      casApplied: true,
       revokedGrantCount: grants.length,
       revokedSessionCount: sessions.length,
     },

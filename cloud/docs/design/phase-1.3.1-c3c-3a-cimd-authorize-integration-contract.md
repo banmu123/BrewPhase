@@ -384,6 +384,27 @@ Access Token（JWT）在过期前仍然有效**（≤15 分钟），因为资源
 「按 `sid` 回查 Session」属于 1.3.2，尚未实现。Grant 撤销同理不回收已签发 access
 token 里的 `scope`。
 
+> **C3c-3B-2-R1 补充（ABSENT 首次注册的 mismatch 审计）**：上表与上述 SQL 描述
+> 的是**已有注册行**的路径——那里有版本 CAS，撤销权来自「CAS 命中 1 行」。
+> **ABSENT（首次、无注册行）抓到 mismatch 时没有可执行的注册行 CAS**：既不能
+> 伪造 CAS 成功，也不能声称撤销了既有 Grant / Session，且**不得**因此创建
+> INVALID 注册行、**不得**把不匹配的文档写库。但审计**不得静默丢失**，因此：
+>
+> - **复用同一条 `mcp_client_id_mismatch`**（不是新事件名），用 detail 三字段
+>   与既有路径成对区分：`absent: true`、`casApplied: false`、
+>   `revokedGrantCount: 0` / `revokedSessionCount: 0`；`user_id` 同为 NULL。
+> - 选同一条事件的理由：mismatch 是同一类**身份失效信号**，安全查询必须一次
+>   拿到全部命中；两种情形由 detail 的**结构化字段**区分，不靠文本匹配（§15）。
+> - 既有路径的 detail 相应补 `absent: false` / `casApplied: true`（计数仍为真值）。
+> - **孤儿边界（调查结论）**：`mcp_grants` / `mcp_sessions` 刻意**不**给
+>   `client_id` 建外键（§2.5 / `mcpOauthClients` 注释），因此「注册行被删除、
+>   Grant / Session 遗留」是**可能且被接受**的形态。ABSENT mismatch **不撤销**
+>   这些孤儿（没有 CAS 就没有撤销权），只以零计数审计如实记录；对它们的清理
+>   属于运维 / 后续阶段，不在 Registry 内暗中执行。
+> - ABSENT mismatch 会写入与其它 ABSENT terminal 一致的负面冷却（时间戳 +
+>   `client_id_mismatch` 枚举，30 秒不重抓），但冷却里**不存**撤销计数——
+>   撤销语义只属于审计事件。
+
 ### 5.4 撤销之后再次授权会发生什么（R1 新增）
 
 这一节回答「撤销是不是等于永久拉黑」。答案是**不是**，但恢复路径必须显式：
@@ -528,6 +549,25 @@ cannot register itself into an inconsistent state*）。两者是**不同**的�
 **不写任何行**，审计 `mcp_cimd_no_store_rejected`。这是 **[项目策略]**——草案没有
 规定 AS 必须拒绝 no-store 的客户端。
 
+> **C3c-3B-2-R1 补充（已有缓存行的 no-store 刷新 + reason 统一）**：
+>
+> 1. **已有 cimd 行 + 新响应带 `no-store`**：同样拒绝当前请求，且**不写行、
+>    不更新 `metadata_fetched_at`、不推进 `metadata_version`**（绝不把 no-store
+>    内容写进缓存行、绝不伪造 FRESH 放行授权）。
+> 2. **频率**：`metadata_fetched_at` 不动意味着 30s floor 管不到这条路径，
+>    下一次请求可能立刻重抓。复用 §8.5 边界三的**负面冷却**补齐：`no-store`
+>    失败记录 `Map<clientId, { at, reason }>`（只存时间戳 + 枚举、固定 TTL 30s、
+>    容量上限、注入时钟、成功后清除），冷却命中 → 直接返回 terminal，
+>    **不发网络、不放行**。这是 §6.1 表里的方案 D 用作**频率收敛**而非状态存储
+>    ——存的仍只是「发生过 terminal」这一事实，不存任何响应内容，不违反本节
+>    的「不存储」决策。
+> 3. **reason 统一**：ABSENT 首次 no-store、已有行 no-store、以及两者之后的
+>    冷却命中，**一律**返回 `client_registration_unsupported`——禁止第一次与
+>    第二次请求因「是否冷却命中」而落入两个不同的错误分类。
+> 4. **不与 ABSENT 混淆**：已有行路径只在「行仍在、floor 已过、即将发网络」
+>    时查冷却；命中也不改变行的任何状态，FRESH 行更是在查冷却之前就直接使用
+>    （成功的刷新会清除冷却条目）。
+
 **备选（记录，不实现）**：给 `mcp_oauth_clients` 加 `metadata_ephemeral boolean`，
 token 端点对 ephemeral 行强制重抓一次并比对 `redirect_uris`。需要一次迁移与一条新的
 并发路径，成本明显高于收益。
@@ -548,6 +588,12 @@ token 端点对 ephemeral 行强制重抓一次并比对 `redirect_uris`。需�
 | `client_name` | 更新行（同意页立即生效） | 展示字段 |
 | `client_uri` / `logo_uri` | 更新行；**从不抓取、从不渲染远程图片**（§10.9 的三个 MUST 因此不触发） | [ID §4.4] / [ID §10.9] |
 | `jwks` / `jwks_uri` | 只校验形态与「不得同时出现」，**不抓取、不用于认证**；变化无影响 | [项目策略] 只支持 `none` |
+
+> **C3c-3B-2-R1 落地**：Registry 的首次 INSERT 与成功刷新 CAS UPDATE **都写**
+> `client_uri` / `logo_uri`（`cimd-registry.ts`）；新文档**省略即清空为 NULL**——
+> 刷新语义是「用新文档替换旧文档」，保留上一份文档的 URI 会让同意页展示过期
+> 甚至已易主的信息。两列**从不抓取**（唯一一次 DNS 解析只针对 `client_id`
+> 主机名）、**从不渲染远程图片**（§16 同意页只用纯文本 / 首字母，不请求 logo）。
 
 **为什么不做「元数据变化 → 撤销令牌」的通用规则**：草案把这件事留给 AS
 （§10.5 全是 should / may）。本项目的风险模型是「同意页每次都出现 + redirect_uri
@@ -581,6 +627,24 @@ token 端点对 ephemeral 行强制重抓一次并比对 `redirect_uris`。需�
 > 客户端也是 version=1 时被误伤）。3B-1 的迁移测试正是这样写的，已修正为
 > 造两个 `client_id`、相同版本的行来钉住「只影响目标客户端」。
 > 后续 Registry 的**每一处**版本 CAS 都必须走同一个 `casWhere(clientId, version)` 谓词。
+
+> **C3c-3B-2-R1 落地（singleflight 的作用边界）**：`InMemorySingleflight`
+> （`cimd-registry.ts`）按 `client_id` 合并**两条抓取路径**（已有行重抓 / ABSENT
+> 首次）的网络请求，实现严格落在「只做合并」这一侧：
+>
+> 1. **只包 `fetchClientMetadataDocument`**——不包整个解析流程，因此不涉及任何
+>    请求级安全上下文的合并（registry 解析只依赖 `client_id` + 共享 deps）；
+>    ABSENT 的 `INSERT … ON CONFLICT DO NOTHING → 读胜者行` 原样保留。
+> 2. **CAS 仍是唯一仲裁**：共享抓取结束后，每个等待者仍各自进入版本 CAS，
+>    `WHERE client_id = ? AND metadata_version = ?` 保证**至多一个提交者**，
+>    其余 0 行 → 按边界一 fail-closed（成功方 503 / mismatch 方按自身结果 400
+>    零写入）。**绝不**用 Map 代替版本 CAS，多实例规则不变（两个进程各自抓取，
+>    只剩 DB 裁决——测试用两个独立 store 钉住）。
+> 3. **完成即清理**：Promise 无论 resolve / reject 都立即从 Map 删除；
+>    抓取的生命周期由 store 持有，`CimdFetcherDeps` 无调用方级 `AbortSignal`，
+>    任何单个等待者的失败都不可能中止共享抓取。
+> 4. **floor / 冷却的判定仍在抓取之前**（用请求开始时刻），singleflight 不改变
+>    任何状态转换；transient 共享后所有等待者拿同一结果，不写行、不写冷却。
 
 **禁止**：用「先 DELETE 再 INSERT」表达刷新（会让并发的授权读到空行）；
 用进程内 Map / 单例状态充当版本（多实例与重启都会失效，§7 明令禁止）。
@@ -633,6 +697,21 @@ R1 用 `metadata_fetched_at` 当 CAS 令牌、INVALID 只改 `metadata_cache_exp
 但 `now()` 也不再导致 CAS 失配）。**哨兵 `metadata_cache_expires_at = epoch` 仍是
 INVALID 的唯一判据**，与版本正交：版本回答「这次写基于哪个状态」，哨兵回答
 「当前是否 INVALID」。
+
+> **C3c-3B-2-R1 冻结（开始时刻 vs 完成时刻）**：
+>
+> - **判定「要不要抓」用请求开始时刻**：缓存四态与 floor 的比较都在抓取之前
+>   决策，此时不可能知道抓取会花多久——floor 语义因此是「距上次**确定性抓取
+>   尝试的完成** ≥ 30s 才允许下一次」。
+> - **`metadata_fetched_at` 记抓取完成时刻**（成功与 terminal 都是），floor 从
+>   它起算；若记开始时刻，一次耗时 25s 的抓取会让 30s 下限实际缩短。transient
+>   与冷却窗口内的拒绝仍**不写**。
+> - **`cacheExpiresAt` 以 fetcher 时钟在解析完响应后计算**（完成时刻 + ttl）；
+>   Registry 写库与**返回给调用方的 `cacheState`** 一律用完成时刻比较——若拿
+>   请求开始时间比较，`no-cache`（ttl=0，expires = 完成时刻）会被误判成
+>   `fresh`。**刚完成验证的新鲜度**（写库结果）与**库中缓存当前的有效状态**
+>   （后续请求读行判定）由此分开：前者只对本次响应成立，后者仍按读行时的
+>   时间比较。
 
 #### 唯一状态机（任务书 §3 要求）
 
@@ -1091,6 +1170,15 @@ client_id 打抓取」的放大。
 **三条纪律**：① **不得**默认 ABSENT 已受 30 秒 floor 保护；② **不得**为了冷却把
 `no-store` 的响应内容存下来；③ **不得**在本阶段未经评估就加缓存表。
 
+> **C3c-3B-2-R1 落地状态（上表从「只定策略」变为「已实现」）**：
+> `InMemoryNegativeCooldown` 按上表实现（TTL 30s、只存时间戳 + 枚举、容量
+> 10 000 先清过期再逐出最旧、成功后 `clear`、时钟注入），并**扩展**到
+> 「已有缓存行 + `no-store`」这一同样不推进 `metadata_fetched_at` 的缺口
+> （§6.2 补充 2）。冷却 reason 类型统一包含 `client_registration_unsupported`
+> （§6.2 补充 3）。**不与 ABSENT 混淆**：冷却只在「即将发网络」前查询，命中
+> 不改变任何行状态，也不覆盖 floor / 缓存四态的既有判定。多实例语义与限流、
+> singleflight 一致：单实例即全局，Phase 1.4 扩容时换共享存储。
+
 ---
 
 ## 9. 环境变量与代理
@@ -1398,6 +1486,35 @@ P2 证明版本 CAS 使迟到成功命中 0 行；P3 证明并发单写者 + 真
 + 自己抓的旧文档拼一拼」的实现都必须转红——权威只能是数据库当前行，而当前行的
 结论应通过**重新发起一次抓取**（基于新版本）得到，不是复用旧结果。
 
+### 13.11 C3c-3B-2-R1 追加：Registry 收尾（持久化 / ABSENT 审计 / singleflight / no-store / 时间）
+
+编号接在 74 之后，**不重排**既有编号。
+
+| # | 组 | 初始 DB | 顺序 | 预期 |
+|---|---|---|---|---|
+| 75 | URI 持久化 | ABSENT | 抓取含 `client_uri` / `logo_uri` 的文档 | 首次 INSERT 两列落库；**不**解析 logo 主机名（DNS 只针对 `client_id`） |
+| 76 | URI 持久化 | cimd 行含两列，STALE | 刷新文档**改变**两列 | 两列更新、`version+1` |
+| 77 | URI 持久化 | cimd 行含两列，STALE | 刷新文档**省略**两列 | 两列清为 NULL；其它元数据不变；**恰好**一次版本写入（不报错、不重复写） |
+| 78 | ABSENT mismatch | 无行，但有孤儿 Grant / Session | ABSENT 抓到 `client_id_mismatch` | 零注册行、400、**一条** `mcp_client_id_mismatch`（`absent=true` / `casApplied=false` / 计数 0）、Grant / Session **不撤销** |
+| 79 | ABSENT mismatch | 无行 | 同上，审计用生产写入器 | `auth_events` 中事件持久可查，`user_id` NULL |
+| 80 | singleflight | cimd 行 STALE，v=1 | 两个并发同 `client_id`（共享 store，抓取挂起后 join） | **1 次** DNS + 1 次 HTTP；一个提交者（v→2），另一 503 `cas_superseded`；赢家版本 = 库中已提交版本；Map 清理 |
+| 81 | singleflight | 无行 | `client_id` A 的抓取在飞时解析 B | B 不被阻塞、正常注册；A 完成后 Map 清理 |
+| 82 | singleflight | 无行 | 共享抓取 reject / 抛异常 | 所有等待者同一 transient 503；Map 清理；无行、无冷却 |
+| 83 | singleflight | STALE + 2 Grant/2 Session | 共享 mismatch 抓取 | 抓取 1 次 → 撤销恰好 1 次（epoch 恰为 2，不是 3）、审计恰好 1 条 |
+| 84 | singleflight | 两个独立 store | 同 key 各自执行 | **不合并**（= 两进程各自抓取，只剩 DB CAS 裁决）；同 store 则合并 |
+| 85 | no-store 已有行 | cimd 行 STALE | 刷新响应带 `no-store` | 400 `client_registration_unsupported`；行零改动（版本 / 时间戳不变）；冷却写入且**无正文**；审计 `mcp_cimd_no_store_rejected` |
+| 86 | no-store 已有行 | 同上，冷却中 | 30s 内再次请求 | **不发网络**、不放行、**同一个 reason** |
+| 87 | no-store 已有行 | 同上 | 冷却过期后重抓成功 | 版本推进、FRESH、冷却清除 |
+| 88 | no-store ABSENT | 无行 | 首次 + 冷却命中 | 两次返回**同一** reason `client_registration_unsupported`（不是 `unsupported_client`） |
+| 89 | 时间语义 | STALE，注入时钟 | 抓取期间时钟前进 5s、文档 `no-cache` | `cacheState = stale`（**不**用开始时间误判 fresh）；`metadata_fetched_at = 完成时刻` |
+| 90 | 时间语义 | STALE，`fetched_at` 距 floor 29.5s | 先后两次请求（间隔 1s） | 第一次 503 不发网络；跨过 floor 的第二次才抓取 |
+| 91 | 时间语义 | STALE，`fetched_at` 距 floor 31s | 抓取耗时 25s（`no-cache`），10s 后再请求 | `fetched_at = 完成时刻`：距完成 10s < 30s → 503（若记开始时刻则会错误放行） |
+
+既有回归（不重排、不弱化）：#1–#12 注册 / 缓存、#13–#20 CAS 竞争、#21–#26
+撤销、#27–#33 ABSENT 冷却、#34–#39 审计映射、#40–#41 版本守卫、#45–#46 /
+#72–#74 边界一，全部在本轮**原样通过**（三个 barrier 用例改为「两个独立
+singleflight 实例」以保持**非合并写入者**的原语义，各自断言抓取 2 次）。
+
 ---
 
 ## 14. 风险与未决问题
@@ -1587,3 +1704,22 @@ interface ConsentView {
 
 **本阶段未改**：authorize / consent / token / revoke 生产逻辑、`discovery.ts`
 （未声明能力）、Desktop、迁移文件（0004 / 0005 沿用 3B-1 的产物）、依赖。
+
+### C3c-3B-2-R1（2026-11-20，基线 `a55976c`）
+
+本阶段是 C3c-3B-2 的**小范围修正轮**（不重新实现 Registry），修复独立审核
+发现的四个问题。**只追加，不修改既有历史结论**：
+
+| # | 修订 | 原因 |
+|---|---|---|
+| 1 | **§7 落地说明**：Registry 的首次 INSERT 与成功刷新 UPDATE 持久化 `client_uri` / `logo_uri`；**省略即清空为 NULL**；两列从不抓取、从不渲染 | 两列在 schema 与 `CimdClientMetadata` 中早已存在，但 Registry 两条写路径漏写，元数据永远落不了库 |
+| 2 | **§5.3 补充**：ABSENT 首次注册的 mismatch 审计——复用 `mcp_client_id_mismatch` 并写 `absent=true` / `casApplied=false` / 零计数；既有路径补 `absent=false` / `casApplied=true`；明确孤儿 Grant / Session（无外键）不在 ABSENT 路径撤销 | `auditEventForCimdFailure("client_id_mismatch")` 返回 null，ABSENT 路径因此**没有** mismatch 审计（既有行路径有、首次注册没有的不对称） |
+| 3 | **§8.1 落地说明**：`InMemorySingleflight` 只包 `fetchClientMetadataDocument`；CAS 仍是唯一仲裁；完成 / 失败即从 Map 删除；不改变多实例规则；ABSENT 保留 `ON CONFLICT` | 设计 §8.1 早已要求「进程内 singleflight + 30s floor」，3B-2 只实现了 floor |
+| 4 | **§6.2 补充 + §8.5 边界三落地**：已有缓存行的 `no-store` 失败接入负面冷却（不写行 / 不推进版本 / 无正文）；reason 统一为 `client_registration_unsupported`（首次与冷却命中一致） | `no-store` 不更新 `metadata_fetched_at`，floor 管不到 → 下一次请求立刻重抓；且 ABSENT 首次记 `unsupported_client`、返回 `client_registration_unsupported`，同一失败出现两种分类 |
+| 5 | **§8.2 时间语义冻结**：floor 判定用请求**开始**时刻；`metadata_fetched_at` 记**完成**时刻；`cacheExpiresAt` 由 fetcher 时钟在响应解析后计算；返回值的 `cacheState` 用完成时刻比较 | 原实现把请求开始时间传进写库与返回值：`no-cache`（ttl=0）在抓取耗时 >0 时会被误判 `fresh`，floor 也会被长抓取变相缩短 |
+| 6 | **§13.11（新增）**：#75–#91 十七个可验收用例 | 上述四项修正各自的回归锚点 |
+
+**本阶段未改**：authorize / consent / token 生产路由、Consent 页面、`discovery.ts`
+（未声明能力）、Desktop、迁移文件、依赖；既有 42 条 Registry 测试与全部门禁
+原样通过（三个 barrier 用例只改为「两个独立 singleflight 实例」以保持其
+**非合并写入者**的原语义，断言不弱化）。

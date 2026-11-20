@@ -1814,6 +1814,33 @@ Desktop 无改动 · `discovery.ts` 未改（**未声明能力**）。
 
 **报告**：`cloud/docs/reviews/phase-1.3.1-c3c-3b-2-registry-review.md`。
 
+### 3.29 1.3.1-C3c-3B-2-R1 已完成（Registry 收尾：URI 持久化 / ABSENT mismatch 审计 / singleflight / no-store 冷却 / 时间语义）
+
+小范围修正轮（不重新实现 Registry）。基线 `a55976c`。**未接入** authorize /
+consent / token 生产路由，**未改** Desktop，**未声明** CIMD 能力。
+
+| # | 独立审核发现的问题 | 修正 |
+|---|---|---|
+| 1 | `client_uri` / `logo_uri` 在 schema 与 metadata 中已有，但 Registry **首次 INSERT 与成功刷新 UPDATE 都漏写** | 两条写路径持久化；**省略即清空 NULL**；两列从不抓取、从不渲染（测试 4 条含「恰好一次版本写入」） |
+| 2 | `auditEventForCimdFailure("client_id_mismatch")` = null → **ABSENT 首次 mismatch 没有审计** | 复用 `mcp_client_id_mismatch` + detail `absent=true` / `casApplied=false` / **零计数**；既有路径补 `absent=false` / `casApplied=true`；不建 INVALID 行、不写不匹配文档、不伪装撤销；孤儿（`client_id` 无外键）不撤销——边界写入设计 §5.3 |
+| 3 | 设计 §8.1 要求「singleflight + floor」，实现只有 floor | `InMemorySingleflight`：按 `client_id` **只合并网络抓取**；CAS 仍是唯一仲裁（等待者仍各进 CAS、至多一个提交者）；完成 / 失败即从 Map 删除；无调用方级 AbortSignal；`deps.singleflight` 可注入，省略用进程级默认；ABSENT 保留 `ON CONFLICT`；两实例 = 两进程不合并 |
+| 4 | 已有行 `no-store` 不更新 `fetched_at` → floor 管不到，立刻重抓；且 ABSENT 冷却记 `unsupported_client`、返回 `client_registration_unsupported`（同一失败两种分类） | 冷却扩展到已有行 `no-store`（不写行 / 不推进版本 / 无正文 / 命中不放行）；reason **统一** `client_registration_unsupported`；成功刷新清除冷却 |
+| 5 | 时间语义：抓取耗时 >0 时 `no-cache` 会被开始时间误判 `fresh`；floor 被长抓取变相缩短 | floor 判定用**开始**时刻；`metadata_fetched_at` 记**完成**时刻；`cacheExpiresAt` 由 fetcher 时钟算；返回值 `cacheState` 用完成时刻 |
+
+**测试**：`cimd-registry.test.ts` 42 → **64**（+22：URI 4 / ABSENT 审计 3 /
+singleflight 8 / no-store 4 / 时间 3）；既有 42 条**无删除、无跳过、无弱化**——
+三个 barrier 用例改为「两个独立 singleflight 实例」保持其非合并写入者语义，
+并各加 `request=2` 断言。并发仍用真锁真事务（`pg_stat_activity` /
+`waitForWaiters`，非 sleep）。
+
+**门禁（实测）**：`tsc` ✅ · `eslint` ✅ · registry **64 passed**（3 连跑）·
+`cimd.test.ts` **217 passed** · `vitest run` **1465 passed / 67 files**
+（1443 → **+22**）· `.update(mcpOauthClients)` 2/2 带 `version+1` ·
+raw SQL 0 处 · `metadataFetchedAt` 无等值比较 · Desktop / discovery 未改。
+
+**报告**：`cloud/docs/reviews/phase-1.3.1-c3c-3b-2-r1-closeout.md`
+（3B-2 报告尾部另有 §13 修订记录，原结论不改写）。
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、

@@ -1705,3 +1705,42 @@ Desktop 无改动 · 未声明能力。
 
 设计（v3 + 3B-2 补充）：`cloud/docs/design/phase-1.3.1-c3c-3a-cimd-authorize-integration-contract.md`；
 3B-2 报告：`cloud/docs/reviews/phase-1.3.1-c3c-3b-2-registry-review.md`。
+
+---
+
+## 40. Phase 1.3.1-C3c-3B-2-R1：Registry 收尾与并发抓取一致性修正（已完成）
+
+基线 `a55976c`。小范围修正轮：**未接入** authorize / consent / token 生产路由，
+**未改** Desktop，**未声明** CIMD 能力。
+
+**修四个问题 + 冻结时间语义**：
+
+1. **`client_uri` / `logo_uri` 落库**：首次 INSERT 与成功刷新 CAS UPDATE 都写；
+   **省略即清空 NULL**；两列从不抓取、从不渲染（4 测试）。
+2. **ABSENT mismatch 审计**：复用 `mcp_client_id_mismatch`，detail
+   `absent=true` / `casApplied=false` / `revokedGrantCount=0` /
+   `revokedSessionCount=0`；既有路径补 `absent=false` / `casApplied=true`。
+   无行 → 无 CAS → 不伪造成功、不撤销、不写 INVALID 行；孤儿 Grant /
+   Session（`client_id` 无外键）如实零计数记录（3 测试 + 2 强化）。
+3. **singleflight**（`InMemorySingleflight`）：按 `client_id` **只合并网络抓取**；
+   版本 CAS 仍是唯一仲裁（等待者仍各进 CAS、至多一个提交者、输家 fail-closed）；
+   完成 / 失败即清理 Map；无调用方级 AbortSignal；`deps.singleflight` 可注入，
+   省略走 `processWideSingleflight`；两实例 = 两进程不合并；ABSENT 保留
+   `ON CONFLICT`（8 测试：1 次抓取 / 不同 key 不阻塞 / 异常清理 / mismatch 只撤
+   一次 epoch=2 / transient 共享且不污染下次 / 默认实例 / 实例独立性）。
+4. **已有行 no-store 频率**：接入负面冷却（TTL 30s、只存时间戳 + 枚举、容量
+   上限、注入时钟、成功清除、命中不放行）；reason **统一**
+   `client_registration_unsupported`（首次与冷却命中一致，不再
+   `unsupported_client`）；不改 `no-cache` floor（4 测试）。
+5. **时间语义**：floor 判定用**开始**时刻；`metadata_fetched_at` 记**完成**时刻；
+   `cacheExpiresAt` 由 fetcher 时钟算；返回值 `cacheState` 用完成时刻
+   （`no-cache` 抓取耗时 >0 不再误判 fresh）（3 测试）。
+
+**门禁**：`tsc` ✅ · `eslint` ✅ · registry **64 passed**（42 → 64，3 连跑）·
+`cimd` **217** · 全套 **1465 passed / 67 files**（+22）· `.update` 2/2 带
+`version+1` · raw SQL 0 处 · 既有 42 条无删除 / 跳过 / 弱化。
+
+设计（R1 追加 §5.3 / §6.2 / §7 / §8.1 / §8.2 / §8.5 / §13.11 / §17）：
+`cloud/docs/design/phase-1.3.1-c3c-3a-cimd-authorize-integration-contract.md`；
+3B-2 报告（§13 修订记录）：`cloud/docs/reviews/phase-1.3.1-c3c-3b-2-registry-review.md`；
+R1 收尾报告：`cloud/docs/reviews/phase-1.3.1-c3c-3b-2-r1-closeout.md`。

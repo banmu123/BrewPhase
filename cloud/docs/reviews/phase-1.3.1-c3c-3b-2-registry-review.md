@@ -383,3 +383,37 @@ malformed 并发用例已改为按「谁获胜」结构化断言）。
    真实客户端联调之后**，本阶段与 3B-3 都不声明。
 
 **本阶段到此为止，未开始 Consent / authorize / token 生产链路接入。**
+
+---
+
+## 13. 修订记录（C3c-3B-2-R1 收尾轮，2026-11-20，基线 `a55976c`）
+
+> 以下为独立审核后的**追加**记录：上文各节的原始结论**不改写**，差异在此说明。
+
+独立审核发现四个问题，本收尾轮全部修复：
+
+| # | 上文 / 实际状态 | R1 修正 |
+|---|---|---|
+| 1 | §10 把 `client_uri` / `logo_uri` 列为已具备（schema + `CimdClientMetadata`），但 Registry 的**首次 INSERT 与成功刷新 UPDATE 都没写这两列** → 元数据永远落不了库 | 两条写路径持久化两列；**省略即清空为 NULL**；测试 #75–#77（含「其它元数据未变时恰好一次版本写入」） |
+| 2 | §6 撤销审计只覆盖**已有注册行**路径；`auditEventForCimdFailure("client_id_mismatch")` 返回 `null` → **ABSENT 首次注册的 mismatch 没有任何审计**（§10「未解决」表未列出） | ABSENT 路径显式写同一条 `mcp_client_id_mismatch`，detail 带 `absent=true` / `casApplied=false` / `revokedGrantCount=0` / `revokedSessionCount=0`；既有路径补 `absent=false` / `casApplied=true`。不创建 INVALID 行、不写不匹配文档、不伪装撤销。孤儿边界（无外键）写入设计 §5.3；测试 #78–#79 |
+| 3 | §4 / §3 引用设计 §8.1 的「singleflight + floor」，但 §9 门禁与 §7 实现**只有 floor**，没有 singleflight | `InMemorySingleflight`（按 `client_id` 合并网络抓取，只做合并、不做正确性；CAS 仍是唯一仲裁；完成 / 失败即清理；`deps.singleflight` 可注入，省略用进程级默认实例）。测试 #80–#84 |
+| 4 | §7 冷却表限定「ABSENT 负面冷却」；已有行的 `no-store` 失败不更新 `metadata_fetched_at` → floor 管不到、下一次立刻重抓；且 ABSENT 首次冷却记 `unsupported_client`、返回 `client_registration_unsupported`，**同一失败两种分类** | 冷却扩展到已有行 `no-store`（不写行 / 不推进版本 / 无正文）；reason 统一为 `client_registration_unsupported`（首次与冷却命中一致）；测试 #85–#88 |
+
+另按 §六.2 冻结**时间语义**（设计 §8.2 新增说明）：floor 判定用请求**开始**
+时刻，`metadata_fetched_at` 记抓取**完成**时刻，返回值 `cacheState` 用完成时刻
+比较——原实现用开始时间会让 `no-cache`（ttl=0）在抓取耗时 >0 时误判 `fresh`。
+测试 #89–#91。
+
+**门禁复验（R1 实测）**：`tsc --noEmit` ✅ 0 error · `eslint src tests` ✅ 0 ·
+`vitest run tests/mcp-oauth/cimd-registry.test.ts` ✅ **64 passed**（42 → 64，
+3 连跑稳定）· `vitest run tests/mcp-oauth/cimd.test.ts` ✅ **217 passed** ·
+`vitest run` ✅ **1465 passed / 67 files**（1443 → **+22**，与新增用例数一致）·
+`.update(mcpOauthClients)` **2 处均带 `version+1`** · raw SQL 更新 **0 处** ·
+`metadataFetchedAt` 出现在 WHERE / eq 比较 **0 处**。
+
+**既有测试处置**：无删除、无跳过、无弱化。三个 barrier 并发用例（同版本竞争 /
+成功 vs mismatch / malformed vs 成功）改为**两个独立 singleflight 实例**——这正是
+它们原本的语义（两个**非合并**写入者，只剩 DB CAS 裁决），并各自新增
+`expect(request).toHaveBeenCalledTimes(2)` 断言以钉住「它们真的各抓了一次」。
+
+收尾轮报告：`cloud/docs/reviews/phase-1.3.1-c3c-3b-2-r1-closeout.md`。

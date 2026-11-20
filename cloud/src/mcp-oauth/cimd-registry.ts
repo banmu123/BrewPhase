@@ -38,11 +38,21 @@ export const CIMD_FETCH_FLOOR_MS = 30_000;
 /** INVALID 哨兵：`metadata_cache_expires_at` 的精确 epoch 值（设计 §4）。 */
 export const CIMD_INVALID_SENTINEL = new Date(0);
 
-/** ABSENT 负面冷却 TTL（设计 §8.5 边界三，与 fetch floor 同值）。 */
+/** 负面冷却 TTL（设计 §8.5 边界三，与 fetch floor 同值）。 */
 export const NEGATIVE_COOLDOWN_TTL_MS = 30_000;
 
-/** ABSENT 负面冷却的容量上限（防御无限建桶；同 `rate-limit.ts` 的取向）。 */
+/** 负面冷却的容量上限（防御无限建桶；同 `rate-limit.ts` 的取向）。 */
 export const NEGATIVE_COOLDOWN_MAX_ENTRIES = 10_000;
+
+/**
+ * 冷却里允许记录的失败原因。
+ *
+ * 比 `CimdFailureReason` 多一个 `client_registration_unsupported`——那是 Registry
+ * 层对 `Cache-Control: no-store` 的**统一**失败分类（§6.2 / C3c-3B-2-R1）：
+ * ABSENT 与「已有缓存行 + no-store」两条路径**必须返回同一个 reason**，
+ * 冷却命中时也原样返回它，否则同一个失败会因「第几次请求」而被分成两类。
+ */
+export type CooldownReason = CimdFailureReason | "client_registration_unsupported";
 
 /* -------------------------------------------------------------------------- *
  * ABSENT 负面冷却（设计 §8.5 边界三）
@@ -60,10 +70,10 @@ export const NEGATIVE_COOLDOWN_MAX_ENTRIES = 10_000;
  */
 export interface NegativeCooldownStore {
   /** 仍在冷却中则返回其 terminal 原因；否则 `null`（调用方据此决定要不要发网络）。 */
-  check(clientId: string, now: Date): { reason: CimdFailureReason } | null;
-  /** 记录一次 ABSENT terminal（只写时间戳 + 原因枚举）。 */
-  record(clientId: string, reason: CimdFailureReason, now: Date): void;
-  /** 成功注册后清除该 client 的冷却。 */
+  check(clientId: string, now: Date): { reason: CooldownReason } | null;
+  /** 记录一次 terminal（只写时间戳 + 原因枚举）。 */
+  record(clientId: string, reason: CooldownReason, now: Date): void;
+  /** 成功注册 / 成功刷新后清除该 client 的冷却。 */
   clear(clientId: string): void;
 }
 
@@ -75,14 +85,14 @@ export interface NegativeCooldownStore {
  * 时钟由调用方注入（`now` 参数），测试可控、不依赖真实时间。
  */
 export class InMemoryNegativeCooldown implements NegativeCooldownStore {
-  private readonly entries = new Map<string, { at: number; reason: CimdFailureReason }>();
+  private readonly entries = new Map<string, { at: number; reason: CooldownReason }>();
 
   constructor(
     private readonly ttlMs: number = NEGATIVE_COOLDOWN_TTL_MS,
     private readonly maxEntries: number = NEGATIVE_COOLDOWN_MAX_ENTRIES,
   ) {}
 
-  check(clientId: string, now: Date): { reason: CimdFailureReason } | null {
+  check(clientId: string, now: Date): { reason: CooldownReason } | null {
     const entry = this.entries.get(clientId);
     if (!entry) return null;
     if (now.getTime() - entry.at >= this.ttlMs) {
@@ -115,7 +125,7 @@ export class InMemoryNegativeCooldown implements NegativeCooldownStore {
    * 用于断言**只存时间戳与原因枚举**——把 `no-store` 响应正文里的哨兵串放进
    * 文档后，`JSON.stringify(snapshot())` 必须**不含**该哨兵（§8.5 边界三）。
    */
-  snapshot(): Array<{ clientId: string; at: number; reason: CimdFailureReason }> {
+  snapshot(): Array<{ clientId: string; at: number; reason: CooldownReason }> {
     return [...this.entries].map(([clientId, entry]) => ({
       clientId,
       at: entry.at,
@@ -139,6 +149,104 @@ export class InMemoryNegativeCooldown implements NegativeCooldownStore {
       }
     }
     if (oldestKey !== null) this.entries.delete(oldestKey);
+  }
+}
+
+/* -------------------------------------------------------------------------- *
+ * 进程内 singleflight（设计 §8.1「抓取风暴」：只做合并，不做正确性）
+ * -------------------------------------------------------------------------- */
+
+/**
+ * 按 `client_id` 合并**同一进程内**并发抓取的最小接口。
+ *
+ * 纪律（设计 §8.1 冻结，本类**只**承担第一条）：
+ *
+ * 1. **只减少重复网络调用**：同一 `client_id` 同一时间只有一次远程抓取在飞；
+ *    不同 `client_id` 互不阻塞。
+ * 2. **不参与正确性**：数据库 `metadata_version` CAS（`WHERE client_id = ?
+ *    AND metadata_version = ?`）仍是唯一正确性保障——合并 fetch 之后，等待者
+ *    仍各自进入 CAS，由版本谓词保证**至多一个提交者**，其余 0 行按 §8.5
+ *    fail-closed。**绝不**用本 Map 代替版本 CAS，也不改变多实例规则。
+ * 3. **完成即清理**：Promise 无论 resolve / reject 都立刻从 Map 删除
+ *    （`finally`），不留 rejected Promise。
+ * 4. **抓取的生命周期不属于任何单个调用方**：共享 Promise 由本 store 持有，
+ *    `CimdFetcherDeps` 没有任何调用方级 `AbortSignal`，因此一个等待者的
+ *    失败 / 提前返回**不可能**中止其它等待者共享的抓取。
+ *
+ * 多实例语义不变：本 Map 只在进程内合并；跨实例仍由 ON CONFLICT + 版本 CAS 裁决。
+ */
+export interface FetchSingleflight {
+  /** 该 key 已有在飞任务则共享之，否则执行 `fn` 并注册。 */
+  do<T>(key: string, fn: () => Promise<T>): Promise<T>;
+  /** 当前在飞任务数（观测用）。 */
+  readonly size: number;
+  /** 某 key 上正在**等待**共享结果的任务数（owner 不计；测试观测用）。 */
+  waiterCount(key: string): number;
+}
+
+export class InMemorySingleflight implements FetchSingleflight {
+  private readonly inflight = new Map<string, { promise: Promise<unknown>; waiters: number }>();
+
+  do<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const existing = this.inflight.get(key);
+    if (existing) {
+      existing.waiters += 1;
+      return existing.promise.finally(() => {
+        existing.waiters -= 1;
+      }) as Promise<T>;
+    }
+
+    const entry: { promise: Promise<unknown>; waiters: number } = { promise: Promise.resolve(), waiters: 0 };
+    entry.promise = (async () => fn())().finally(() => {
+      // 完成 / 失败都立即清理；只删除仍指向自己的条目（防止未来 key 被复用时误删）。
+      if (this.inflight.get(key) === entry) this.inflight.delete(key);
+    });
+    this.inflight.set(key, entry);
+    return entry.promise as Promise<T>;
+  }
+
+  get size(): number {
+    return this.inflight.size;
+  }
+
+  waiterCount(key: string): number {
+    return this.inflight.get(key)?.waiters ?? 0;
+  }
+}
+
+/**
+ * **进程级默认实例**（省略 `deps.singleflight` 时使用）。
+ *
+ * 生产是单实例部署（`GATEWAY_EXPECTED_REPLICAS = 1`），因此它就是「进程内
+ * singleflight」的语义落点；测试注入独立实例以隔离用例，或模拟**多实例**
+ * （两个 store = 两个进程 → 只剩 DB CAS 裁决）。
+ */
+export const processWideSingleflight: FetchSingleflight = new InMemorySingleflight();
+
+/**
+ * 经 singleflight 执行一次 CIMD 抓取（两条路径共用：已有行重抓 / ABSENT 首次）。
+ *
+ * `fetchClientMetadataDocument` 的契约是「不抛异常」（cimd.ts 文首）；这里仍
+ * 防御注入实现的意外抛错——所有等待者拿到**同一个**确定的 transient 结果，
+ * 且 Map 已被 `finally` 清理。
+ */
+async function fetchViaSingleflight(
+  clientId: string,
+  deps: CimdRegistryDeps,
+  trusted: string[],
+): Promise<CimdOutcome> {
+  const singleflight = deps.singleflight ?? processWideSingleflight;
+  try {
+    return await singleflight.do(clientId, () =>
+      fetchClientMetadataDocument(clientId, deps.fetcher, { trustedIdentifiers: trusted }),
+    );
+  } catch {
+    return {
+      ok: false,
+      kind: "transient",
+      reason: "transport_error",
+      detail: "client metadata fetch failed unexpectedly",
+    };
   }
 }
 
@@ -233,10 +341,17 @@ export interface CimdRegistryDeps {
   mcpResource: string;
   /** `Env.mcpTrustedPeerIdentifiers`（[ID §10.1] 比较对象之一）。 */
   mcpTrustedPeerIdentifiers: readonly string[];
-  /** 注入时钟：floor / 缓存态 / 冷却都用它。 */
+  /** 注入时钟：floor / 缓存态 / 冷都用它。 */
   now: () => Date;
-  /** ABSENT 负面冷却存储（可替换；测试注入小 TTL / 小容量）。 */
+  /** 负面冷却存储（可替换；测试注入小 TTL / 小容量）。 */
   cooldown: NegativeCooldownStore;
+  /**
+   * 进程内抓取合并（设计 §8.1：**只做合并，不做正确性**）。
+   *
+   * 省略时使用 `processWideSingleflight`（进程级默认实例）。测试注入独立实例
+   * 以隔离用例，或用「两个实例」模拟多进程写入者（那时只剩 DB CAS 裁决）。
+   */
+  singleflight?: FetchSingleflight;
   /** 审计写入（**非阻断**：失败只吞掉，不影响主流程）。 */
   audit: (input: AuthEventInput) => Promise<void>;
 }
@@ -449,9 +564,23 @@ async function resolveExistingCimdRow(
     }
   }
 
-  const outcome = await fetchClientMetadataDocument(clientId, deps.fetcher, {
-    trustedIdentifiers: trusted,
-  });
+  // floor 已到、即将发网络之前：查负面冷却（C3c-3B-2-R1：`no-store` 不推进
+  // `metadata_fetched_at`，floor 管不到它，冷却补上这段缺口）。命中 → 400，**不发网络**。
+  // 这里仍走「行路径」语义：注册行原样保留，不与 ABSENT 混淆，也绝不放行 no-store。
+  const cooled = deps.cooldown.check(clientId, now);
+  if (cooled) {
+    return fail(
+      "terminal",
+      cooled.reason,
+      "served from negative cooldown (no network request; registration row retained)",
+    );
+  }
+
+  const outcome = await fetchViaSingleflight(clientId, deps, trusted);
+  // 完成时刻：抓取可能横跨数秒，`metadata_fetched_at` / 冷却 / 返回给调用方的
+  // cacheState 一律以**完成时刻**为准，绝不用请求开始时间（否则会把抓取期间
+  // 已过期的 metadata 误判成 FRESH——见 C3c-3B-2-R1 时间语义）。
+  const completedAt = deps.now();
 
   if (!outcome.ok) {
     if (outcome.kind === "transient") {
@@ -462,14 +591,16 @@ async function resolveExistingCimdRow(
       });
       return fail("transient", outcome.reason, outcome.detail);
     }
-    return await applyTerminalOnExistingRow(row, clientId, outcome.reason, outcome.detail, deps, now);
+    return await applyTerminalOnExistingRow(row, clientId, outcome.reason, outcome.detail, deps, completedAt);
   }
 
   if (!outcome.cache.storable) {
-    // `no-store`：不写行（设计 §6.2）。floor 已在上面判过，这里只拒绝当前请求。
+    // `no-store`：不写行、不更新 fetched_at、不推进版本（设计 §6.2）。floor 管不到
+    // 这条路径 → 写入与 ABSENT **同一 reason** 的负面冷却，防止下一次请求立刻重抓。
+    deps.cooldown.record(clientId, "client_registration_unsupported", completedAt);
     await auditBestEffort(deps, {
       eventType: "mcp_cimd_no_store_rejected",
-      detail: { clientId, source: "no-store" },
+      detail: { clientId, source: "no-store", absent: false },
     });
     return fail(
       "terminal",
@@ -478,7 +609,7 @@ async function resolveExistingCimdRow(
     );
   }
 
-  return await applySuccessOnExistingRow(row, clientId, outcome, deps, now);
+  return await applySuccessOnExistingRow(row, clientId, outcome, deps, completedAt);
 }
 
 /* -------------------------------------------------------------------------- *
@@ -499,13 +630,20 @@ function casWhere(clientId: string, expectedVersion: number) {
  * §8.5 边界一：CAS **1 行** = 赢得该版本，提交状态变更；
  * **0 行** = 丢弃本次抓取结果，**503 fail-closed**（不建授权请求、不用自身结果）；
  * 重读仅用于区分「行没了」与「版本变了」，**绝不合并 / 复用自身 metadata**。
+ *
+ * `completedAt` = **抓取完成时刻**（不是请求开始时刻）：`metadata_fetched_at`
+ * 记它，返回给调用方的 `cacheState` 也用它判定（C3c-3B-2-R1 时间语义）。
+ *
+ * `client_uri` / `logo_uri`：**新文档省略即清空为 NULL**——刷新语义是「用新文档
+ * 替换旧文档」，保留上一份文档的 URI 会让同意页展示过期甚至已易主的信息（§7）。
+ * 两列只存字符串，**从不抓取**（SSRF 面）、**从不渲染远程图片**。
  */
 async function applySuccessOnExistingRow(
   row: typeof mcpOauthClients.$inferSelect,
   clientId: string,
   outcome: Extract<CimdOutcome, { ok: true }>,
   deps: CimdRegistryDeps,
-  now: Date,
+  completedAt: Date,
 ): Promise<RegistryOutcome> {
   try {
     const updated = await deps.db.transaction(async (tx) => {
@@ -514,9 +652,11 @@ async function applySuccessOnExistingRow(
         .set({
           metadataVersion: sql`metadata_version + 1`,
           clientName: outcome.metadata.clientName,
+          clientUri: outcome.metadata.clientUri ?? null,
+          logoUri: outcome.metadata.logoUri ?? null,
           redirectUris: outcome.metadata.redirectUris,
           grantTypes: outcome.metadata.grantTypes,
-          metadataFetchedAt: now,
+          metadataFetchedAt: completedAt,
           metadataCacheExpiresAt: outcome.cacheExpiresAt,
         })
         .where(casWhere(clientId, row.metadataVersion))
@@ -533,6 +673,10 @@ async function applySuccessOnExistingRow(
       return fail("transient", "cas_superseded", "client metadata was updated concurrently");
     }
 
+    // 成功刷新是「该 client 最近一次确定性抓取成功」→ 清除负面冷却
+    // （含 ABSENT 阶段与已有行 no-store 留下的条目，C3c-3B-2-R1）。
+    deps.cooldown.clear(clientId);
+
     await auditBestEffort(deps, {
       eventType: "mcp_cimd_refreshed",
       detail: {
@@ -541,7 +685,7 @@ async function applySuccessOnExistingRow(
         toVersion: updated[0]?.metadataVersion,
       },
     });
-    return { ok: true, client: toResolvedClient(updated[0] as typeof mcpOauthClients.$inferSelect, now) };
+    return { ok: true, client: toResolvedClient(updated[0] as typeof mcpOauthClients.$inferSelect, completedAt) };
   } catch {
     return databaseError();
   }
@@ -556,6 +700,8 @@ async function applySuccessOnExistingRow(
  * - CAS **0 行** → **零 DB 写入**：不标 INVALID、不撤销、不写成功审计；
  *   当前请求仍按**自身抓取结果**拒绝（400 terminal）；
  * - 重读只作诊断，不合并 / 复用自身 metadata。
+ *
+ * `completedAt` = 抓取完成时刻（写入 `metadata_fetched_at`；floor 从它起算）。
  */
 async function applyTerminalOnExistingRow(
   row: typeof mcpOauthClients.$inferSelect,
@@ -563,7 +709,7 @@ async function applyTerminalOnExistingRow(
   reason: CimdFailureReason,
   detail: string,
   deps: CimdRegistryDeps,
-  now: Date,
+  completedAt: Date,
 ): Promise<RegistryOutcome> {
   const isMismatch = reason === "client_id_mismatch";
 
@@ -573,7 +719,7 @@ async function applyTerminalOnExistingRow(
         .update(mcpOauthClients)
         .set({
           metadataVersion: sql`metadata_version + 1`,
-          metadataFetchedAt: now,
+          metadataFetchedAt: completedAt,
           metadataCacheExpiresAt: CIMD_INVALID_SENTINEL,
         })
         .where(casWhere(clientId, row.metadataVersion))
@@ -582,7 +728,7 @@ async function applyTerminalOnExistingRow(
       if (updated.length === 0) return { casWon: false as const };
 
       if (isMismatch) {
-        const counts = await revokeMcpGrantsAndSessionsByClient(tx, { clientId, now });
+        const counts = await revokeMcpGrantsAndSessionsByClient(tx, { clientId, now: completedAt });
         return { casWon: true as const, ...counts };
       }
       return { casWon: true as const };
@@ -629,15 +775,47 @@ async function registerFreshClient(
     );
   }
 
-  const outcome = await fetchClientMetadataDocument(clientId, deps.fetcher, {
-    trustedIdentifiers: trusted,
-  });
+  const outcome = await fetchViaSingleflight(clientId, deps, trusted);
+  // 完成时刻（见 resolveExistingCimdRow 的同名注释）：冷却与入库都用它。
+  const completedAt = deps.now();
 
   if (!outcome.ok) {
     if (outcome.kind === "terminal") {
       // 只记时间戳 + 原因枚举；**绝不**存响应正文 / Header（不违反 no-store）。
-      deps.cooldown.record(clientId, outcome.reason, now);
-      await auditTerminal(deps, outcome.reason, clientId, { absent: true });
+      deps.cooldown.record(clientId, outcome.reason, completedAt);
+
+      if (outcome.reason === "client_id_mismatch") {
+        /**
+         * ABSENT + mismatch 的**独立审计分支**（C3c-3B-2-R1，任务书 §三）：
+         *
+         * 这里**没有注册行** → 没有可执行的注册行 CAS → **不能**伪造 CAS 成功、
+         * **不能**声称撤销了既有 Grant / Session。但仍必须留下**明确、可查询**的
+         * 审计（不得静默丢失），因此复用同一条 `mcp_client_id_mismatch`，并用
+         * detail 三字段把两种情形钉死：
+         *
+         * - `absent: true` / `casApplied: false`：首次注册路径，无行可 CAS；
+         * - `revokedGrantCount: 0` / `revokedSessionCount: 0`：**零撤销**——
+         *   绝不误报「已有 Grant / Session 已被撤销」；
+         * - `user_id = NULL`：跨用户的系统动作（同既有撤销审计）。
+         *
+         * 选「同一事件 + 零撤销计数」而不是新事件名的理由：mismatch 是同一类
+         * **身份失效信号**，安全查询必须一次拿到全部命中；两种情形由 detail
+         * 字段区分，不需要靠 detail 文本匹配（§15 纪律不被破坏）。
+         */
+        await auditBestEffort(deps, {
+          eventType: "mcp_client_id_mismatch",
+          detail: {
+            clientId,
+            reason: "client_id_mismatch",
+            absent: true,
+            casApplied: false,
+            revokedGrantCount: 0,
+            revokedSessionCount: 0,
+          },
+        });
+      } else {
+        await auditTerminal(deps, outcome.reason, clientId, { absent: true });
+      }
       return fail("terminal", outcome.reason, outcome.detail);
     }
     // transient：**不写** terminal 冷却（设计 §8.5 边界三测试 4）。
@@ -650,7 +828,8 @@ async function registerFreshClient(
 
   if (!outcome.cache.storable) {
     // `no-store`：不写行；冷却只存「发生过 terminal」这一事实，不存正文。
-    deps.cooldown.record(clientId, "unsupported_client", now);
+    // reason 与「已有行 + no-store」完全一致（C3c-3B-2-R1 统一，§6.2）。
+    deps.cooldown.record(clientId, "client_registration_unsupported", completedAt);
     await auditBestEffort(deps, {
       eventType: "mcp_cimd_no_store_rejected",
       detail: { clientId, source: "no-store", absent: true },
@@ -671,11 +850,15 @@ async function registerFreshClient(
       .values({
         clientId,
         clientName: outcome.metadata.clientName,
+        // 首次注册即持久化已校验的 informational URI；省略 = NULL（不继承任何旧值，
+        // 此时本就无行）。**从不抓取、从不渲染远程图片**（§7 / §16）。
+        clientUri: outcome.metadata.clientUri ?? null,
+        logoUri: outcome.metadata.logoUri ?? null,
         redirectUris: outcome.metadata.redirectUris,
         grantTypes: outcome.metadata.grantTypes,
         tokenEndpointAuthMethod: "none",
         registrationSource: "cimd",
-        metadataFetchedAt: now,
+        metadataFetchedAt: completedAt,
         metadataCacheExpiresAt: outcome.cacheExpiresAt,
         metadataVersion: 1,
       })
@@ -687,7 +870,7 @@ async function registerFreshClient(
         eventType: "mcp_cimd_registered",
         detail: { clientId, metadataVersion: 1 },
       });
-      return { ok: true, client: toResolvedClient(inserted[0] as typeof mcpOauthClients.$inferSelect, now) };
+      return { ok: true, client: toResolvedClient(inserted[0] as typeof mcpOauthClients.$inferSelect, completedAt) };
     }
 
     // 并发首次注册冲突（`ON CONFLICT DO NOTHING` 未插入）→ 重读**胜者**的行，
@@ -697,10 +880,10 @@ async function registerFreshClient(
     if (!winner) {
       return fail("terminal", "row_deleted", "registration row disappeared after conflict");
     }
-    if (computeCacheState(winner.metadataCacheExpiresAt, now) === "invalid") {
+    if (computeCacheState(winner.metadataCacheExpiresAt, completedAt) === "invalid") {
       return fail("terminal", "cache_invalid_cooldown", "concurrent registration ended INVALID");
     }
-    return { ok: true, client: toResolvedClient(winner, now) };
+    return { ok: true, client: toResolvedClient(winner, completedAt) };
   } catch {
     return databaseError();
   }
