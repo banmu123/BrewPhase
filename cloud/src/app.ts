@@ -14,6 +14,7 @@ import { routeHealth } from "./routes/health.js";
 import { routeOauth } from "./routes/oauth.js";
 import { routeMcpDevices } from "./mcp-devices/index.js";
 import { routeMcpOAuth } from "./routes/mcp-oauth.js";
+import { routeMcpHttp } from "./routes/mcp-http.js";
 import { routeMcpDiscovery } from "./routes/mcp-discovery.js";
 import { resolveMcpOAuthEnablement } from "./mcp-oauth/enablement.js";
 
@@ -121,6 +122,9 @@ export function createApp(ctx: AppContext): AppHono {
     routeMcpOAuth(app, ctx);
     // Discovery 与授权路由同生共死：未启用的授权服务器不该有元数据。
     routeMcpDiscovery(app, ctx);
+    // `POST /mcp` 数据端点（Phase 1.3.2）：与 MCP OAuth **同一启用边界**——
+    // 不允许出现「OAuth 已禁用但 MCP 端点仍存在」（禁用时 /mcp 404）。
+    routeMcpHttp(app, ctx);
   } else {
     ctx.logger.warn("mcp_oauth_disabled", { reason: mcpOAuth.reason });
   }

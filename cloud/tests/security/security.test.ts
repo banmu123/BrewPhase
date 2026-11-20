@@ -110,7 +110,7 @@ describe("rate limiting", () => {
       rateLimit: {
         windowMs: 60_000,
         maxAuthorize: 30,
-        maxToken: 20,
+        maxToken: 20, maxMcp: 120,
         maxAuth: 3,
       },
     });

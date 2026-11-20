@@ -184,8 +184,15 @@ $ cd cloud && npx vitest run
 ## 5. 下一阶段建议
 
 本 P2 修复完成，C3c-3B 生产链路（Authorize / Consent / Token）与全部边界
-收口。下一步仍按路线图：**Phase 1.3.3 真实客户端联调**（联调通过后单独提交
-启用 `client_id_metadata_document_supported`）→ Phase 1.4 共享存储 → 1.3.2
-`/mcp` 按 `sid` 回查。
+收口。**正确路线（C3c-3B-3-R1 修正，取代本文档先前的错误顺序）**：
+
+1. **Phase 1.3.2**：`POST /mcp` Streamable HTTP 与 8 个只读工具服务（Bearer /
+   Session / Grant 实时回查、双时代协议、`dispatchToolCall` 转发）；
+2. **Phase 1.3.3**：真实客户端联调（Inspector / ChatGPT / Grok，G1–G6 门禁）；
+3. **单独提交启用 `client_id_metadata_document_supported`**——只有真实客户端
+   联调通过后才开启 CIMD Discovery capability（设计 §12.2，独立可 revert）。
+
+（Phase 1.4 共享存储属于 1.4 自身范围，不在上述链条内；先前
+「1.3.3 → 1.4 → 1.3.2」的顺序是错误的，已废止。）
 
 **完成后停止，等待独立审核；不合并 main、不 force push、不提前声明 CIMD 能力。**

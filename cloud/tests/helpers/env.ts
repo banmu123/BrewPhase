@@ -47,6 +47,7 @@ export function makeTestEnv(overrides: TestEnvOverrides = {}): Env {
       maxAuthorize: 30,
       maxToken: 20,
       maxAuth: 30,
+      maxMcp: 120,
       maxBuckets: DEFAULT_MAX_BUCKETS,
     },
 

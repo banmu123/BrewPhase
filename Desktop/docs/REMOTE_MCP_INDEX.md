@@ -1806,3 +1806,43 @@ token-registration 14），含 S1–S7、真实 U/S 锁与两用户并发、路�
   Desktop / Discovery **零改动**。
 
 报告：`cloud/docs/reviews/phase-1.3.1-c3c-3b-3-r1-closeout.md`。
+
+---
+
+## 43. Phase 1.3.2：Remote MCP Streamable HTTP 与只读工具服务（已完成）
+
+基线 `69c2d42`。Cloud 新增唯一依赖 `@modelcontextprotocol/server@^2.4.0`，
+`POST /mcp` 以 `createMcpHandler(..., { legacy: "stateless" })` 统一接入——
+不手写 Transport、不生成 `Mcp-Session-Id`、GET/DELETE 恒 405、OPTIONS 走既有 CORS。
+
+- **入口顺序**（`routes/mcp-http.ts`）：独立限流桶 `mcp-http`
+  （`RATE_LIMIT_MAX_MCP` 默认 120/min）→ 256 KiB 413（先于 Host）→
+  Host（与 WSS 共用 `normalizeHost`，link-server 导出）→ Origin（存在即精确
+  命中 `CORS_ORIGINS`，无 Origin 放行）→ Bearer → Session(401) → Grant(403) →
+  `tools/call` scope 预检(403) → SDK handler。
+- **双时代**：modern（`io.modelcontextprotocol/*` 信封 + 三头）与 legacy
+  （initialize / tools/list / tools/call / notification 202）实测通过；
+  `-32020` / `-32022` / `-32601` / 405 全由 SDK 产出，不入 19 个业务错误码。
+- **认证链**（`mcp-http/authorize.ts`）：每请求验签（HS256 / kid / iss /
+  aud=MCP_RESOURCE / exp / sub / sid / client_id / scope / jti）→ `mcp_sessions`
+  归属回查（401，§9.5）→ `mcp_grants` 回查（403，§8.5）→
+  `effective = token ∩ session.issued ∩ grant`；身份只来自 JWT `sub`；
+  Desktop token ⇄ MCP token 双向隔离实测。
+- **8 个只读工具**：与 Desktop `TOOL_DEFINITIONS` 运行时逐字段一致
+  （`import.meta.glob` 加载权威源比较：描述逐字符 + `z.toJSONSchema` 深相等 +
+  scope 逐项）；恰 8、无重复、无写工具、arguments 无身份字段。
+- **Scope**：`tools/list` 按 effective 过滤（缺权子集、grant 置空 `[]` 不是 403）；
+  `tools/call` 缺权 403 且 challenge **只报缺的那一个**；step-up 服务端语义
+  （403 → union 重授权 → 新 token 成功、已授 scope 保留）。
+- **转发**：全部经 `ctx.link.dispatchToolCall`（R1/R2 零改动）；离线/超时 →
+  `isError` 工具结果；无 link fail-closed；AbortSignal 透传；真实 WSS 端到端 ×2。
+- **日志**：只记允许字段（`jti` 前 8 位）；哨兵 0 命中；同一 token 连续 10 次
+  `tools/call` 全成功（无 jti 去重）。
+- **启用边界**：`/mcp` 挂在 `resolveMcpOAuthEnablement` enabled 分支，OAuth 关则
+  `/mcp` 404（测试钉住）。
+
+**门禁**：`tsc` ✅ · `eslint` ✅ · `tests/mcp-http` **70 / 8** ·
+全量 **1585 passed / 78 files**（+70）· `npm run build` ✅ · 迁移 6 个未新增 ·
+SDK 为唯一新依赖 · **CIMD 能力仍未声明** · GitHub CI 未配置（不声称通过）。
+
+报告：`cloud/docs/reviews/phase-1.3.2-closeout.md`。

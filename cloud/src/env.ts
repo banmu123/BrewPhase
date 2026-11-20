@@ -49,6 +49,15 @@ const rawSchema = z.object({
   RATE_LIMIT_MAX_AUTHORIZE: z.coerce.number().int().positive().default(30),
   RATE_LIMIT_MAX_TOKEN: z.coerce.number().int().positive().default(20),
   RATE_LIMIT_MAX_AUTH: z.coerce.number().int().positive().default(30),
+  /**
+   * `POST /mcp`（Phase 1.3.2）的**独立**限流桶。
+   *
+   * 与浏览器授权（30/min）、token（20/min）分开：MCP 客户端在一个会话里会
+   * 连续 `server/discover` → `tools/list` → 多次 `tools/call`，正常频率高一个
+   * 量级；共用桶会让一次浏览器授权的浏览行为挤掉客户端的调用额度（或反之）。
+   * 120/min 是「客户端一次会话的合理突发 + 限住单 IP 放大」的折中。
+   */
+  RATE_LIMIT_MAX_MCP: z.coerce.number().int().positive().default(120),
 
   CORS_ORIGINS: z.string().default(""),
   TRUST_PROXY: z
@@ -142,6 +151,8 @@ export type Env = {
     maxAuthorize: number;
     maxToken: number;
     maxAuth: number;
+    /** `POST /mcp` 独立桶（Phase 1.3.2）。 */
+    maxMcp: number;
     /** 桶数量硬上限（生产恒为 DEFAULT_MAX_BUCKETS，仅供测试注入小值）。 */
     maxBuckets: number;
   };
@@ -493,6 +504,7 @@ export function loadEnv(input: Record<string, string | undefined>): Env {
       maxAuthorize: parsed.RATE_LIMIT_MAX_AUTHORIZE,
       maxToken: parsed.RATE_LIMIT_MAX_TOKEN,
       maxAuth: parsed.RATE_LIMIT_MAX_AUTH,
+      maxMcp: parsed.RATE_LIMIT_MAX_MCP,
       // 刻意不从环境变量读：桶上限是防御性常量，不该被部署配置放大。
       maxBuckets: DEFAULT_MAX_BUCKETS,
     },

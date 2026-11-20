@@ -1127,7 +1127,13 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
  *
  * 只保留 hostname 是刻意的（见 handleUpgrade 的注释）。
  */
-function normalizeHost(host: string): string {
+/**
+ * Host 归一化：小写 + 剥端口 + 剥 IPv6 方括号。
+ *
+ * **导出给 `/mcp` HTTP 端点复用**（Phase 1.3.2）：WSS 握手与 HTTP 端点必须
+ * 用同一套 Host 判据，否则会出现「WSS 能连、/mcp 被拒」（设计 §4.5）。
+ */
+export function normalizeHost(host: string): string {
   const trimmed = host.trim().toLowerCase();
   if (trimmed.length === 0) return "";
   if (trimmed.startsWith("[")) {

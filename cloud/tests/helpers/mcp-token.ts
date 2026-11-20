@@ -28,6 +28,8 @@ export interface AuthCodeFixture {
 export interface ObtainCodeOptions {
   clientId?: string;
   redirectUri?: string;
+  /** 走哪个 Provider（决定 mock 身份 → 不同用户）。默认 google。 */
+  provider?: "google" | "github";
   /** 请求的 scope（默认 records:read coffee:read）。 */
   scope?: string;
   /** 用户实际勾选的 scope（默认等于请求）。 */
@@ -66,6 +68,7 @@ export async function obtainAuthCode(
 
   const flow = await startConsentFlow(h, {
     query: query.toString(),
+    ...(options.provider ? { provider: options.provider } : {}),
     ...(options.dropAuthorizeCookie ? { dropAuthorizeCookie: true } : {}),
   });
 

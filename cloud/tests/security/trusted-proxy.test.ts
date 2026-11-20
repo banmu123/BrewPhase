@@ -34,7 +34,7 @@ describe("trusted proxy & IP rate limiting (I-1)", () => {
 
   beforeAll(async () => {
     plain = await createHarness({
-      rateLimit: { windowMs: 60_000, maxAuthorize: 30, maxToken: 20, maxAuth: 3 },
+      rateLimit: { windowMs: 60_000, maxAuthorize: 30, maxToken: 20, maxMcp: 120, maxAuth: 3 },
     });
   });
 
@@ -59,7 +59,7 @@ describe("trusted proxy & IP rate limiting (I-1)", () => {
       proxied = await createHarness({
         trustProxy: true,
         trustProxyHops: 1,
-        rateLimit: { windowMs: 60_000, maxAuthorize: 30, maxToken: 20, maxAuth: 3 },
+        rateLimit: { windowMs: 60_000, maxAuthorize: 30, maxToken: 20, maxMcp: 120, maxAuth: 3 },
       });
     });
 
@@ -94,7 +94,7 @@ describe("trusted proxy & IP rate limiting (I-1)", () => {
       const twoHop = await createHarness({
         trustProxy: true,
         trustProxyHops: 2,
-        rateLimit: { windowMs: 60_000, maxAuthorize: 30, maxToken: 20, maxAuth: 3 },
+        rateLimit: { windowMs: 60_000, maxAuthorize: 30, maxToken: 20, maxMcp: 120, maxAuth: 3 },
       });
       try {
         // 链路：客户端(可伪造) → CDN(8.8.8.8) → 反代(7.7.7.7) → 应用
@@ -155,7 +155,7 @@ describe("strict IP literal validation (N-1)", () => {
     strict = await createHarness({
       trustProxy: true,
       trustProxyHops: 1,
-      rateLimit: { windowMs: 60_000, maxAuthorize: 30, maxToken: 20, maxAuth: 1, maxBuckets: 10_000 },
+      rateLimit: { windowMs: 60_000, maxAuthorize: 30, maxToken: 20, maxMcp: 120, maxAuth: 1, maxBuckets: 10_000 },
     });
   });
 

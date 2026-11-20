@@ -532,20 +532,22 @@ cloud/tests/{mcp-devices,link}/*.test.ts
 > 4. 协议层会话（`Mcp-Session-Id`）已被移除；我们**不生成**任何协议层会话。
 >    OQ-3 的「会话」指的是 OAuth refresh 容器，两件事无关。
 
-### 3.0 拆分（1.3.0 冻结）
+### 3.0 拆分（1.3.0 冻结；状态更新至 1.3.2 开工）
 
-| 子阶段 | 主题 | 产出 |
-|---|---|---|
-| **1.3.0** | 规范对齐与设计冻结 | 本文件 + `REMOTE_MCP_PHASE_1_3_DESIGN.md`；**零代码** |
-| **1.3.0-R1** | 浏览器授权闭环 + Session 两层模型 + 最小权限 | 只改文档 |
-| **1.3.1-A** | **数据层**：迁移 `0003` 五张表 + Drizzle schema + 约束测试 | ✅ **已完成**（见 §3.6） |
-| **1.3.1-B** | Refresh Token 核心服务（签发 / 轮换 / 重放 / 90 天上限）+ Session 生命周期 | ✅ **已完成**（见 §3.7） |
-| **1.3.1-C1** | Access Token + 浏览器 Cookie 基础设施；修 Grant 撤销竞态 | ✅ **已完成**（见 §3.8） |
-| **1.3.1-C2a** | authorize / login / Provider callback 浏览器授权基础流程 | ✅ **已完成**（见 §3.9） |
-| **1.3.1-C2b** | Consent GET/POST（同意页 + grant upsert + 授权码签发） | 待开工 |
-| **1.3.1-C3** | token / revoke / discovery / CIMD / DCR | 待开工 |
-| **1.3.2** | Streamable HTTP 与工具服务 | `POST /mcp`（dual-era）、Bearer + audience + grant 回查、8 个只读工具、错误面、日志纪律 |
-| **1.3.3** | 真实客户端联调 | Inspector、ChatGPT、Grok、refresh 行为、撤销/离线/异常恢复、回填 `NOT VERIFIED` |
+| 子阶段 | 主题 | 产出 | 状态 |
+|---|---|---|---|
+| **1.3.0** | 规范对齐与设计冻结 | 本文件 + `REMOTE_MCP_PHASE_1_3_DESIGN.md`；**零代码** | ✅ 已完成 |
+| **1.3.0-R1** | 浏览器授权闭环 + Session 两层模型 + 最小权限 | 只改文档 | ✅ 已完成 |
+| **1.3.1-A** | **数据层**：迁移 `0003` 五张表 + Drizzle schema + 约束测试 | ✅ **已完成**（见 §3.6） | ✅ 已完成 |
+| **1.3.1-B** | Refresh Token 核心服务（签发 / 轮换 / 重放 / 90 天上限）+ Session 生命周期 | ✅ **已完成**（见 §3.7） | ✅ 已完成 |
+| **1.3.1-C1** | Access Token + 浏览器 Cookie 基础设施；修 Grant 撤销竞态 | ✅ **已完成**（见 §3.8） | ✅ 已完成 |
+| **1.3.1-C2a** | authorize / login / Provider callback 浏览器授权基础流程 | ✅ **已完成**（见 §3.9） | ✅ 已完成 |
+| **1.3.1-C2b** | Consent GET/POST（同意页 + grant upsert + 授权码签发） | ✅ **已完成**（见 §3.10、§3.11 C2b-R1） | ✅ 已完成 |
+| **1.3.1-C3** | token / revoke / discovery / CIMD / DCR | ✅ **已完成**（见 §3.12–§3.24；C3a/C3b/C3c 各轮与 R1–R2-R1 修订均交付） | ✅ 已完成 |
+| **1.3.1-C3c-3B** | CIMD Registry 接入生产链路（Registry / 四条件 / Token 约束 / 同意页身份） | ✅ **已完成**（§3.27–§3.30：3B-1 / 3B-2 / 3B-2-R1 / 3B-3） | ✅ 已完成 |
+| **1.3.1-C3c-3B-3-R1** | Consent 拒绝路径并发锁收尾（deny / 空 scope 补 `FOR SHARE`，P2） | ✅ **已完成**（closeout：`phase-1.3.1-c3c-3b-3-r1-closeout.md`） | ✅ 已完成 |
+| **1.3.2** | Streamable HTTP 与工具服务 | `POST /mcp`（dual-era）、Bearer + audience + grant 回查、8 个只读工具、错误面、日志纪律 | ✅ **已完成**（见 §3.32） |
+| **1.3.3** | 真实客户端联调 | Inspector、ChatGPT、Grok、refresh 行为、撤销/离线/异常恢复、回填 `NOT VERIFIED` | 待真实客户端验收 |
 
 ### 3.1 范围（1.3.1 + 1.3.2）
 
@@ -1911,6 +1913,36 @@ COMMIT（仅数据库异常抛出 → 固定 500 回滚）
 CAS / 迁移 / 依赖 / Desktop / Discovery。
 
 **报告**：`cloud/docs/reviews/phase-1.3.1-c3c-3b-3-r1-closeout.md`。
+
+### 3.32 1.3.2 已完成（Streamable HTTP 与只读工具服务）
+
+基线 `69c2d42`。Cloud 引入 `@modelcontextprotocol/server@^2.4.0`（与 Desktop
+同版本，唯一新依赖），以 `createMcpHandler(..., { legacy: "stateless" })` 统一入口
+实现 `POST /mcp`——**不手写** Streamable HTTP Transport、**不生成**
+`Mcp-Session-Id`、GET/DELETE 恒 405。
+
+| 项 | 落点 |
+|---|---|
+| 入口顺序 | 独立限流桶（`RATE_LIMIT_MAX_MCP`，默认 120/min）→ 256 KiB（413，先于 Host）→ Host（复用 WSS 的 `normalizeHost`）→ Origin（精确匹配 CORS 白名单，无 Origin 放行）→ Bearer → Session(401) → Grant(403) → `tools/call` scope 预检(403) → SDK |
+| 双时代 | modern（`io.modelcontextprotocol/*` 信封 + `MCP-Protocol-Version`/`Mcp-Method`/`Mcp-Name` 头）与 legacy（`initialize`/`tools/list`/`tools/call`）均实测通过；`-32020`/`-32022`/`-32601`/405/202 全由 SDK 产出 |
+| 认证链 | 每请求 `verifyMcpAccessToken`（HS256/kid/iss/aud/exp/sub/sid/client_id/scope/jti）→ `mcp_sessions` 回查（401）→ `mcp_grants` 回查（403）→ `effective = token ∩ session.issued ∩ grant`；身份只取 JWT `sub`；双向 aud 隔离实测 |
+| 8 个只读工具 | 与 Desktop `TOOL_DEFINITIONS` **运行时逐字段一致**（`import.meta.glob` 加载权威定义比较；6 条 schema 测试）；无写工具、无额外工具、arguments 无身份字段 |
+| Scope 最小权限 | `tools/list` 按 effective 过滤（缺权返回子集，grant 置空返回 `[]` 而非 403/-32601）；`tools/call` 缺权 → 403 且 **challenge 只报缺的那一个**；step-up：403 → 重新授权 union → 新 token 成功 |
+| 转发 | 全部经 `ctx.link.dispatchToolCall`（R1/R2 语义零改动）；离线/超时 → `isError` 工具结果（非 JSON-RPC 错误）；无 link fail-closed；AbortSignal 透传；**真实 WSS 端到端 ×2** |
+| 日志 | 只记 tool/status/durationMs/errorCode/`jti` 前 8 位/grantId；哨兵（token/参数/结果/完整 jti）全量日志 **0 命中**；**同一 token 连续 10 次 tools/call 全成功**（无 jti 去重） |
+| 启用边界 | `/mcp` 与 MCP OAuth / Discovery 同生共死（禁用即 404，测试钉住） |
+
+**测试**：新增 `tests/mcp-http/` 8 文件 **70 条**（protocol 13 / auth 9 /
+guards 10 / session-grant 10 / scope 11 / forwarding 8 / logging 3 / schema 6）。
+
+**门禁（实测）**：`tsc` ✅ · `eslint src tests` ✅ · `vitest run tests/mcp-http`
+**70 / 8** · 全量 **1585 passed / 78 files**（1515 → **+70**，既有零回归）·
+`npm run build` 生产构建 ✅ · lockfile 仅新增 SDK · 迁移仍 6 个 ·
+`client_id_metadata_document_supported` **仍未声明** · Desktop 源码零改动。
+**GitHub CI：仅 `desktop-release.yml`，Cloud 测试工作流未配置、未观测到 Runs
+（不声称通过）。**
+
+**报告**：`cloud/docs/reviews/phase-1.3.2-closeout.md`。
 
 ### 3.5 风险
 
