@@ -5,6 +5,22 @@
 > 上一轮报告：`phase-1.3.1-c3c-3a-design-review.md`（**原文保留，不覆盖**）
 > 设计正文（已修订）：`docs/design/phase-1.3.1-c3c-3a-cimd-authorize-integration-contract.md`
 > 性质：**设计复审与决策关闭**。**没有生产逻辑改动、没有迁移、没有依赖变更**。
+>
+> **后续修订（R2，2026-11-20，基线 `0ffd0cf`）**：本报告的以下结论已被
+> `phase-1.3.1-c3c-3a-r2-design-review.md` 修订或推翻——
+>
+> - **§5-D13（CAS 只允许写毫秒 JS `Date`）与 §6 排除的 `metadata_version` 方案**：
+>   R2 改为**采用 `metadata_version` 作唯一 CAS 令牌**（迁移 0005），`metadata_fetched_at`
+>   降级为 floor / 取证时间戳。原因：R1 的「INVALID 只改 `expires_at`、不推进令牌」
+>   会留下**迟到成功复活 INVALID** 的窗口（R2 真实 PG P1 复现）。
+> - **§5-D9（Consent 三条件）**：R2 扩为**四条件**，新增 `metadata_cache_expires_at ≠ epoch`
+>   （INVALID 哨兵）。
+> - **§5-D10（token 只复核注册存在与 `authorization_code`）**：R2 §8.4 细化为
+>   **三个信任阶段**——非 mismatch terminal 不阻断旧 auth code 兑换。
+> - **§5-D11 / §6（身份冲突只对自动抓取标识）**：R2 改为按 **client_id 形态**适用，
+>   URL 形态的预注册 id 也过 §10.1 比对。
+>
+> 原文保留作历史记录，阅读时以 R2 报告与设计文档 v3 为准。
 
 ---
 

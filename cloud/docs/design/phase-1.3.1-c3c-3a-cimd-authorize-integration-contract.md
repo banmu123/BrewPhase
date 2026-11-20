@@ -3,6 +3,7 @@
 > 日期：2026-11-20 · 分支：`feature/remote-mcp`
 > 初版基线：`6c20908`（C3c-2-R2v 终态）
 > **R1 修订基线：`b45809f`**（C3c-3A 终态）
+> **R2 修订基线：`0ffd0cf`**（C3c-3A-R1 终态；本轮为**第三轮独立设计审查**）
 > 性质：**设计审查 / 规范对齐 / 架构决策 / 测试契约冻结**。
 > **不实现接入**：本阶段不改 `/mcp/oauth/authorize` 的行为、不把
 > `fetchClientMetadataDocument()` 接进真实请求链、不加迁移与依赖。
@@ -129,7 +130,8 @@ JSON → 文档字段 → 缓存策略计算 → `transient|terminal` 分类。
 1. 硬上限：client_id > 2048 → 拒绝（不解析、不查库）
 2. 按**原始字符串**查 mcp_oauth_clients（主键命中）
      命中 pre_registered / dcr
-          → 直接使用该行（不判形态、不判身份冲突、不抓取、不覆盖）
+          → client_id 为 URL 形态：先过身份冲突检查（§3.2），命中即拒
+          → client_id 为不透明串：直接使用该行（不判形态、不抓取、不覆盖）
      命中 cimd
           → 身份冲突检查（§3.2）→ 缓存四态（§4）
      未命中
@@ -143,9 +145,12 @@ JSON → 文档字段 → 缓存策略计算 → `transient|terminal` 分类。
 一旦形态不合格就走「未注册 → 拒绝」，等于**把所有预注册客户端全部拒掉**。正确顺序
 是「按原始字符串查库」优先：命中就用，未命中才需要判断「这个值是否值得抓」。
 
-**为什么身份冲突检查也在查库之后**：它回答的是「这个 URL 值会不会冒充我们自己」，
-只对**自动抓取的标识**有意义。`pre_registered` / `dcr` 的 client_id 由人工或注册
-流程产生，即便字符串恰好等于 issuer 也不该被一条 CIMD 规则拒绝。
+**为什么身份冲突检查也在查库之后**（R2 修正适用范围）：它回答的是「这个值会不会
+冒充我们自己」。R1 曾以 `registration_source` 一刀切——`pre_registered` / `dcr`
+直接跳过。R2 改为**按 client_id 形态**判定：URL 形态的值（无论来源）都要过
+§3.2 的比较，因为 [ID §10.1] 的 token confusion 风险来自「client_id 字符串等于受信
+标识符」这一**协议层事实**，与它怎么注册进来无关（§3.2 纪律 4）。不透明 id 不经过
+检查——它在构造上不可能等于 URL 形态的 issuer / resource。
 
 **形态判断仍在原始字符串上做**：`https://h/a/..`、`https://h/%2e%2e` 这类值在
 `new URL()` 之后看不出问题（C3c-1-R1 / C3c-2 的同一个教训），所以形态校验必须在
@@ -195,10 +200,14 @@ export function conflictsWithTrustedIdentifier(
    在这里做归一化反而会造出「拒绝的字符串」与「当成自己的字符串」两套判据。
 2. **在 DNS 之前**：一个必然被拒的值不该打开 DNS / 连接面（§10.7 的 SSRF 面）。
 3. **terminal**：`client_id_conflict`，不写数据库行、不产生 `mcp_oauth_clients` 记录。
-4. **只作用于「要不要抓取」**：判据在查库之后、DNS 之前（§3 的判定顺序第 4 步）。
-   `pre_registered` / `dcr` 行直接使用，**不经过**这条检查——预注册 client_id 由人工
-   核验，即便字符串与 issuer 相同，也不该被一条 CIMD 规则拒绝。`cimd` 行在刷新前
-   也要过这条检查：若部署改了 `BASE_URL`，既有行可能「变成」与 issuer 相同。
+4. **按 client_id 形态适用，不按 `registration_source` 绕过**（R2 修正，[ID §10.1]）：
+   判据在查库之后、DNS 之前（§3 的判定顺序第 2 步）作用于**所有 URL 形态的
+   client_id**——包括人工预注册的 URL id。不透明 id（原始串不含 `://`，如
+   `brewphase-desktop`）不经过本检查：[ID §10.1] 的对象是 Client Identifier URL，
+   且不透明串在构造上不可能等于 URL 形态的受信标识符。**不能仅凭
+   `registration_source` 就跳过 token confusion 检查**：预注册 URL id 若等于
+   issuer / resource / 受信 AS/RS，同样必须拒绝。`cimd` 行在刷新前也要过这条检查：
+   若部署改了 `BASE_URL`，既有行可能「变成」与 issuer 相同。
 
 ---
 
@@ -302,6 +311,12 @@ metadata」；「fetching fails → SHOULD abort the authorization request」。
 标记缓存不可用，不动 Session / Refresh Token / Grant —— 因为「文档写坏了」不等于
 「已签发的令牌必须作废」，过度撤销会把一次文档发布事故放大成全量掉线。
 
+> **R2 补充（版本语义）**：上表除 `client_id_conflict` 与 `no_store_rejected`
+> （两者**不写行**）外，任何「标记 INVALID」的 terminal 都必须在**同一事务**里
+> 执行 `metadata_version = metadata_version + 1`（§8.1 / §8.2）。这是「INVALID
+> 不可被迟到请求复活」的结构保证；只改 `metadata_cache_expires_at` 不推进版本
+> 会留下被旧版本成功刷新覆盖的窗口（§8.2 实测 P1）。
+
 ### 5.3 `client_id_mismatch` 的撤销语义（R1 修订：Grant 与 Session 一起撤销）
 
 **范围**：该 `client_id` 下的**全部** Grant 与**全部未撤销** Session（跨用户、跨设备、
@@ -398,13 +413,78 @@ token 里的 `scope`。
 | 端点 | 失败响应 | 约束 |
 |---|---|---|
 | `GET /authorize` | **HTML 错误页**（400/503），文案说明「无法验证该客户端」 | [ID §6.1 MUST NOT] 不得重定向到客户端 |
-| Consent GET / POST（注册已变） | **HTML 错误页**（400），并删除该 auth request | [ID §4.2 MUST] 回调必须是注册值的精确匹配；[§6.1 MUST NOT] 不重定向 |
+| Consent GET / POST（注册已变 / INVALID） | **HTML 错误页**（400），并删除该 auth request + 审计 `mcp_consent_metadata_invalid` | [ID §4.2 MUST] 回调必须是注册值的精确匹配；[§6.1 MUST NOT] 不重定向；§8.3 四条件 |
 | Token / PAR | JSON `invalid_client`；transient → HTTP **503** | [ID §6.1 MUST] |
 
 现状 `app.onError` 输出 JSON——C3c-3B 必须在 authorize 与 consent 处理器里**显式**
 捕获 CIMD 失败并渲染 `renderErrorPage()`，不能依赖全局处理器（否则浏览器看到 JSON）。
 另一条纪律：错误页**不得**回显 `client_id` 的完整 URL（可能很长且含攻击者可控内容），
 只显示主机名或截断形式（与 §16 同一套渲染规则）。
+
+### 5.6 `grant_types` / `response_types` 交叉一致性（R2 新增）
+
+CIMD -03 §6 只要求两个数组**各自**与 AS 支持集的交集非空（空则 `invalid_client`）。
+RFC 7591 §2.1 进一步要求服务器 SHOULD 防止客户端注册进**不一致**的组合
+（原文：*a server supporting these fields SHOULD take steps to ensure that a client
+cannot register itself into an inconsistent state*）。两者是**不同**的要求：
+
+| 要求 | 来源 | 强度 | 本项目实现 |
+|---|---|---|---|
+| 每个数组与 AS 支持集交集非空，否则 `invalid_client` | [ID §6] | **MUST** | 已实现（各自 `.some(...)`） |
+| 两个数组之间的关联不得矛盾 | [RFC 7591 §2.1] | SHOULD → [项目策略] terminal | **R2 新增**（下表） |
+
+**适用范围**：只在**文档校验阶段**（`validateCimdDocument`）执行。注册行不落
+`response_types`（无列），因此运行时（authorize / consent / token）只复核
+`grant_types`（§8.3 条件 4），不做交叉复核——与 §8.3「`response_types` 不落库」
+的说明一致。
+
+#### 默认值先于交叉检查（RFC 7591 §2）
+
+| 字段 | 缺省（**省略**时） | 空数组 `[]` |
+|---|---|---|
+| `grant_types` | `["authorization_code"]` | 交集为空 → `invalid_client`（省略 ≠ 空） |
+| `response_types` | `["code"]` | 交集为空 → `invalid_client` |
+
+默认值必须在求交集与交叉检查**之前**套用；`undefined` 走默认、`[]` 走拒绝，
+两者不可混。
+
+#### 交叉规则（BrewPhase 只支持授权码流程）
+
+设 `G` = 套用默认后的 `grant_types`，`R` = 套用默认后的 `response_types`：
+
+1. `R ∋ code` ⇒ `G ∋ authorization_code`（RFC 7591 §2.1「vice versa」方向）。
+2. `G ∋ authorization_code` ⇒ `R ∋ code`（表格正向；对本项目被 §6 的交集检查
+   subsume——AS 的 `response_types_supported = ["code"]`，`R` 不含 `code` 时交集必空）。
+3. `refresh_token` 对 `R` **无**要求（RFC 7591 §2.1 表：`refresh_token → (none)`）。
+4. `implicit` / `token` 不受支持（交集必空），不单列规则。
+
+违反规则 1 → 文档自相矛盾 → **terminal `document`**（标记 INVALID + 审计
+`mcp_cimd_unsupported_grant`，`detail.reason = "inconsistent_combination"`）。
+
+#### 判定表
+
+| grant_types | response_types | 预期 | 机制 |
+|---|---|---|---|
+| 缺失 | 缺失 | 默认 `["authorization_code"]` / `["code"]` → **允许**；不签发 refresh token | 默认 + §6 ✓ + 交叉 ✓ |
+| `[authorization_code]` | `[code]` | **允许** | §6 ✓ + 交叉 ✓ |
+| `[authorization_code]` | `[token]` | **拒绝** `invalid_client` | §6 `response_types` 交集 ∅（交叉亦拒） |
+| `[refresh_token]` | `[code]` | **拒绝**（不兼容组合；不得被当作完整授权码流程） | 交叉规则 1 违反 |
+| `[authorization_code, refresh_token]` | `[code]` | **允许**；refresh_token 显式声明 → 签发 refresh token | §6 ✓ + 交叉 ✓ |
+| `[client_credentials]` | `[code]` | `invalid_client` | §6 `grant_types` 交集 ∅ |
+| `[authorization_code]` | 缺失 → `[code]` | 允许 | 默认 + ✓ |
+| `[authorization_code]` | `[]` | `invalid_client` | §6 交集 ∅（空数组 ≠ 省略） |
+
+**为什么 `[refresh_token]` / `[code]` 必须拒绝**：`response_types` 含 `code`
+声明「本客户端在授权端点接收 code」，而 code 只能由 `authorization_code` grant
+产生。只声明 `refresh_token` 的客户端没有任何取得首个 code 的途径——组合自相
+矛盾。[RFC 7591 §2.1] 要求阻止这类注册；本项目按 [项目策略] 直接 terminal，
+而不是放行后在 authorize 层再拒（放行会得到一条「永远换不到 token」的死注册）。
+这正是任务书要求的「不能因为两个数组各自存在一个受支持值，就接受二者之间
+实际上不兼容的组合」。
+
+**实现落点（C3c-3B，`cimd.ts`）**：`grantTypes` 缺省改为 `["authorization_code"]`
+（替换当前第 725 行的 `["authorization_code","refresh_token"]`）；`responseTypes`
+缺省 `["code"]`；在 §6 的两个交集检查之后追加规则 1 的交叉检查。
 
 ---
 
@@ -462,20 +542,105 @@ token 端点对 ephemeral 行强制重抓一次并比对 `redirect_uris`。需�
 
 ## 8. 并发与数据库一致性
 
-### 8.1 写入契约
+### 8.1 写入契约（R2 修订：唯一 CAS 令牌 = `metadata_version`）
 
 | 场景 | 机制 |
 |---|---|
 | 两个并发首次注册同一 URL | `INSERT … ON CONFLICT (client_id) DO NOTHING` → 未插入则重读；**不**先 SELECT 再 INSERT |
-| 并发刷新同一 client | **CAS**：`UPDATE … WHERE client_id = $1 AND metadata_fetched_at IS NOT DISTINCT FROM $2`；影响 0 行说明别人先写了 → 重读并放弃本次结果 |
+| **任何**元数据状态变化（成功刷新 / terminal INVALID / mismatch） | **版本 CAS**：`UPDATE … SET metadata_version = metadata_version + 1, … WHERE client_id = $1 AND metadata_version = $2`；**0 行 = 别人先写了 → 丢弃本次结果**（成功与 terminal 一律丢弃，不重试写、不合并） |
+| mismatch 撤销 | 必须在**同一事务**里：CAS UPDATE 命中 **1 行** → 才撤销 Grant → 撤销 Session → 写审计；CAS 0 行 → **一个都不做**（§8.4） |
 | 抓取风暴 | 进程内 singleflight（**只做合并，不做正确性**）+ 30s fetch floor（§4.1） |
-| 多实例 | 正确性完全由 ON CONFLICT / CAS 保证；进程内 Map 只是省一次网络 |
-| 旧数据覆盖新数据 | CAS 的 `metadata_fetched_at` 是版本令牌；**不用** `now()` 比较（时钟回拨会破坏顺序） |
-| 抓取失败但并发成功 | 失败方不写任何东西（连 `metadata_fetched_at` 都不动）→ 天然不会覆盖 |
+| 多实例 | 正确性完全由 ON CONFLICT / 版本 CAS 保证（DB 是唯一真值）；进程内 Map 只是省一次网络 |
+| 旧数据覆盖新数据 | CAS 令牌是整数 `metadata_version`；**不依赖任何时间比较**（时钟回拨无关） |
+| 抓取失败但并发成功 | 失败方不写任何东西（连 `metadata_version` 都不动）→ 天然不会覆盖 |
 
-**禁止**：用「先 DELETE 再 INSERT」表达刷新（会让并发的授权读到空行）。
+**不变量（C3c-3B 必须有测试盯住）**：对 `mcp_oauth_clients` 的**每一条** `UPDATE`
+都必须带 `metadata_version = metadata_version + 1`。做法与 `absolute_expires_at`
+的守卫相同——剥注释后扫描全部 `.update(mcpOauthClients)` 调用，凡缺版本递增即转红。
 
-### 8.2 CAS 令牌的时间精度（R1 新增，实测）
+**禁止**：用「先 DELETE 再 INSERT」表达刷新（会让并发的授权读到空行）；
+用进程内 Map / 单例状态充当版本（多实例与重启都会失效，§7 明令禁止）。
+
+### 8.2 CAS 令牌的选择与实测（R2 推翻 R1 的 `metadata_fetched_at` 方案）
+
+> **R2 说明**：本节标题下的「时间精度」论证已随 `metadata_version` 的采用而
+> 降级为历史记录——CAS 令牌不再是时间戳，精度不再是正确性前提。原文（R1 的
+> 微秒 / 毫秒实测与三条纪律）保留在下表之后作为「若仍要写 `metadata_fetched_at`
+> 时必须遵守」的参考，**不再是 CAS 的前置条件**。
+
+R1 用 `metadata_fetched_at` 当 CAS 令牌、INVALID 只改 `metadata_cache_expires_at`。
+**这条组合有一个真实缺口**：INVALID 不推进 `metadata_fetched_at`，于是一个持有
+旧 `metadata_fetched_at` 的迟到成功刷新，其 CAS 仍然命中，把已提交的 INVALID
+重新写成 FRESH。
+
+**真实 PostgreSQL 16 实测（2026-11-20，`brewphase-cloud-test-pg`，非 mock）**：
+
+| 探针 | 操作 | 结果 |
+|---|---|---|
+| **P1（复现 R1 缺陷）** | 行 `(fetched=T0, expires=E0)`；B：`UPDATE SET expires=epoch WHERE fetched=T0`（INVALID，不推进 fetched）→ 1 行；A：`UPDATE SET fetched=T1, expires=E1 WHERE fetched=T0` | A **命中 1 行** → 终态被写成 FRESH，**INVALID 被复活** |
+| **P2（R2 修复）** | 行 `(version=1)`；B：`UPDATE SET version=version+1, expires=epoch WHERE version=1` → 1 行；A：`UPDATE SET version=version+1, … WHERE version=1` | A **命中 0 行** → INVALID 存活（`version=2, expires=epoch`） |
+| **P3（并发单写者）** | 两个事务持同一 `version=1` 各自 `UPDATE … WHERE version=1` | 第二个事务确实在等行锁（`pg_stat_activity.wait_event_type='Lock'`、`pg_blocking_pids` 指向第一个）；提交后 **tx1=1 行、tx2=0 行**，`version` 只递增到 2 |
+
+#### 方案对比（任务书 §2.1 要求的六个维度）
+
+| 维度 | 方案 A：复合 CAS（`fetched_at` + `expires_at`） | 方案 B：`metadata_version`（**采用**） |
+|---|---|---|
+| 事务正确性 | 主竞态可挡（INVALID 改了 `expires_at`，复合条件失配）；但**同一毫秒**的两次写可能都命中（值相同） | 结构性单写者：版本严格递增，同毫秒也确定只有一个赢（P3） |
+| 微秒 / 毫秒精度 | 依赖「只写毫秒 JS Date」纪律（R1 §8.2 的 F5 / F10 踩坑面仍在） | 整数，**无精度问题** |
+| 时钟回拨 | 等值比较不受回拨影响，但回拨可让新值等于旧值（值域碰撞） | **完全不依赖时钟** |
+| 并发更新 | 通常一个赢；同毫秒 / 回拨下可能两个都赢 | 恒一个赢 |
+| CAS 冲突处理 | 0 行 → 重读 | 0 行 → 重读（同） |
+| 数据库迁移成本 | 0 | **1 次**（加列 + `DEFAULT 1`，无需回填；C3c-3B 提出，本轮不实施） |
+
+**决策：采用方案 B。** 理由：任务书要求「并发刷新只有一个版本获胜」是**可断言**
+的不变量，方案 A 在同毫秒 / 时钟回拨下无法结构性保证；方案 B 同时消除 R1 已实测
+过的两类驱动层坑（微秒截断、裸 `Date` 抛错）对 CAS 的耦合。
+
+#### `metadata_fetched_at` 的新角色
+
+版本成为 CAS 令牌后，`metadata_fetched_at` **降级**为「最近一次**确定性**抓取
+尝试的时间」，只服务两个用途：
+
+1. **fetch floor**（§4.1 的 30 秒下限）：成功与 terminal 都写 `= now`（记录尝试），
+   transient **不写**（§5.1「保留原行与原时间戳」）；冷却窗口内的拒绝也不写。
+2. **取证**：回答「最后一次抓取尝试在何时」。
+
+它**不再是** CAS 令牌，因此精度不再是正确性前提（仍建议写 JS `Date` 以保持单一时钟源，
+但 `now()` 也不再导致 CAS 失配）。**哨兵 `metadata_cache_expires_at = epoch` 仍是
+INVALID 的唯一判据**，与版本正交：版本回答「这次写基于哪个状态」，哨兵回答
+「当前是否 INVALID」。
+
+#### 唯一状态机（任务书 §3 要求）
+
+```
+状态 = (metadata_version, metadata_cache_expires_at)
+
+ABSENT ──INSERT(ON CONFLICT)──> (version=1, FRESH|STALE)
+FRESH  ──now > expires（无写）──> STALE
+STALE  ──fetch 成功，CAS version=V──> (V+1, FRESH)        expires = fetched + ttl
+STALE  ──terminal，CAS version=V──> (V+1, INVALID)        expires = epoch（+ mismatch 则撤销）
+STALE  ──transient，不写──> STALE 不变
+INVALID──floor < 30s，不抓──> INVALID 不变（400）
+INVALID──floor ≥ 30s，fetch 成功，CAS version=V──> (V+1, FRESH)   ← 唯一自愈路径
+INVALID──floor ≥ 30s，terminal，CAS version=V──> (V+1, INVALID)
+```
+
+三条冻结判据：
+
+1. **持有当前版本者获胜**；任何基于旧版本的写（成功**或** terminal）一律 0 行、
+   一律丢弃。INVALID 一旦提交，只有「先读到 INVALID 版本、过 floor、再成功抓取」
+   的**新**观察才能恢复 FRESH——迟到的旧成功**不能**复活缓存（P2）。
+2. **mismatch 的撤销权 = 版本失效权**：只有 CAS 命中 1 行，才在同一事务里撤销
+   Grant / Session 并写审计；CAS 被拒的 mismatch **不撤销任何东西**（P5 反向亦证）。
+3. **版本只增不减、只由 DB 递增**：应用层不得传入期望的绝对版本以外的值；
+   进程内 singleflight 只合并请求，不参与判定。
+
+**为什么不能只测成功刷新之间的竞争**（任务书 §2.2）：成功 vs mismatch、
+mismatch vs 迟到成功、INVALID vs 迟到成功是**三条不同的边**，R1 的 CAS 只在
+「成功 vs 成功」上验证过。P1 恰恰证明缺口出在「INVALID 不推进令牌」，而不是
+成功刷新之间。
+
+#### 附：R1 的时间精度实测（保留作历史，不再是 CAS 前置条件）
 
 `metadata_fetched_at` 是 `timestamptz`（PostgreSQL 内部精度 **微秒**），Drizzle 用
 `mode: "date"` 映射成 JavaScript `Date`（精度 **毫秒**）。两者精度不同，所以
@@ -494,23 +659,23 @@ token 端点对 ephemeral 行强制重抓一次并比对 `redirect_uris`。需�
 
 1. **允许**用 `metadata_fetched_at` 做 CAS 令牌——**前提是每次写入的都是毫秒精度的
    JavaScript `Date`**（`readClock(deps)` 的产物）。此时「写入值 = 读回值 = 下次比较值」，
-   往返无损。
+   往返无损。**（R2：该前提已不再需要——CAS 令牌是 `metadata_version`。）**
 2. **禁止**让数据库 `now()`（或 `defaultNow()`）写这一列后再把它当 CAS 令牌：
-   微秒会在 JS 侧被截断，同一个值永远比不中（场景 B）。
+   微秒会在 JS 侧被截断，同一个值永远比不中（场景 B）。**（R2：该列已不作 CAS，
+   但为单一时钟源仍建议写 JS `Date`。）**
 3. **禁止**把裸 `Date` 塞进 Drizzle 的 `sql` 模板：postgres.js 3.4.9 会抛
-   `ERR_INVALID_ARG_TYPE`（实测）。CAS 谓词必须写成
+   `ERR_INVALID_ARG_TYPE`（实测）。若仍要对时间戳做等值比较，谓词必须写成
    `is not distinct from ${value.toISOString()}::timestamptz`，或改用 `eq(col, value)`
-   （走列编码器）。这条要写进 3B 的实现注释，否则第一次联调就会炸。
+   （走列编码器）。**版本 CAS 不涉及时间戳，无此约束。**
 4. **失败者必须重读**：CAS 影响 0 行时不重试写、不合并自己的结果，直接返回
    「本次刷新被更新的结果取代」。要区分「0 行因为版本变了」与「0 行因为行被删」，
    重读一次即可。
 5. **首次并发注册**仍由 `ON CONFLICT DO NOTHING` 保护，与 CAS 无关。
 
-**备选（记录，不实现）**：新增 `metadata_version BIGINT NOT NULL DEFAULT 1`，
-刷新时 `SET metadata_version = metadata_version + 1 WHERE metadata_version = $2`。
-它能彻底消除时间精度问题，代价是一次迁移（加列 + 回填 + 改三处查询）与一整套新
-测试。**本轮不采用**，因为场景 A 已证明现有方案在「只写 JS Date」的前提下是精确的；
-若 3B 实现中发现任何一处仍在用 `now()` 写该列，再升级到这个方案。
+**备选（R1 记录、R2 已采纳）**：新增 `metadata_version BIGINT NOT NULL DEFAULT 1`，
+刷新与 terminal 都 `SET metadata_version = metadata_version + 1 WHERE metadata_version = $2`。
+它消除了时间精度与时钟回拨的全部耦合，代价是一次迁移（加列 + 无回填 + 改三处
+查询）与一整套新测试。**R2 已把它定为唯一方案**（见上文方案对比与决策）。
 
 ### 8.3 待完成授权请求 × 元数据刷新的竞态（R1 新增）
 
@@ -532,38 +697,119 @@ t4  A: 302 → R（一个已经不在这份注册里的回调）
 `client_name`，不校验 `redirect_uris`，也不加锁**。token 端点同样只比对
 `mcp_auth_codes.redirect_uri`，从不读 `mcp_oauth_clients`。所以 t3 会成功。
 
-#### 冻结的判据
+#### 冻结的判据（R2 扩为**四条**，GET / POST 都必须全查）
 
-「这次授权请求是否仍然可以继续」= 三条件同时成立，全部以**当前**注册行为准：
+「这次授权请求是否仍然可以继续」= 四条件同时成立，全部以**当前**注册行为准：
 
 | # | 条件 | 依据 |
 |---|---|---|
 | 1 | `mcp_oauth_clients` 行存在 | 客户端被删就没有可授权的对象 |
-| 2 | `auth_request.redirect_uri` ∈ `client.redirect_uris`（逐字符） | [ID §4.2 MUST] 精确匹配 |
-| 3 | `client.grant_types` 含 `authorization_code` | [ID §6 MUST] 交集非空 |
+| 2 | **`metadata_cache_expires_at` 不等于 INVALID 哨兵 `epoch`**（`NULL` 视为非 INVALID） | **R2 High**：已处于 INVALID 的 CIMD 客户端**不得**完成待处理授权（§4 状态机） |
+| 3 | `auth_request.redirect_uri` ∈ `client.redirect_uris`（逐字符） | [ID §4.2 MUST] 精确匹配 |
+| 4 | `client.grant_types` 含 `authorization_code` | [ID §6 MUST] 交集非空 |
 
-`response_types` 不落库（无对应列），只在文档校验阶段要求含 `code`；注册行本身
-不含该字段，因此不作为运行时复核项——这一点必须在 3B 的注释里写明，避免有人误以为
-漏了一条。
+**条件 2 是 R2 补的 High 缺口**：R1 只查 1/3/4，而 terminal INVALID **不清空**
+`redirect_uris` / `grant_types`，也不删行——旧回调与旧 grant 类型都还在，于是
+1/3/4 全过、授权照常签发。必须显式看 INVALID 哨兵。
+
+`response_types` 不落库（无对应列），只在文档校验阶段（§5.6）要求含 `code`；
+注册行本身不含该字段，因此不作为运行时复核项——这一点必须在 3B 的注释里写明，
+避免有人误以为漏了一条。**交叉一致性（§5.6）同理只在文档校验阶段做**，运行时
+只复核 `grant_types`（条件 4）。
+
+#### 方案选择：不存 metadata 版本快照（方案 B——任务书 §3.2 的唯一选择）
+
+任务书给出三个候选。**选定方案 B**：不给 `mcp_auth_requests` 加快照列，
+Consent GET / POST 每次**重新验证当前缓存状态与全部相关字段**（上表四条）。
+
+| 候选 | 结论 | 理由 |
+|---|---|---|
+| A：存 `metadata_version` 到 `mcp_auth_requests`，POST 比对 `===` | **否决** | ① 会对**纯展示字段**（`client_name` / `client_uri` / `logo_uri`）的变更误拒——它们不影响授权有效性，同意页本就实时读当前值；② `no-cache`（`ttl=0`）下**每次 authorize 都抓取、版本必递增**，同一客户端的并发授权会互相踩版本，把第一个用户的 consent 用第二个用户的刷新误拒（任务书明令「不能让每次授权永远无法走完」）；③ 多一列 + 一次迁移，却换不来任何额外的有效性覆盖 |
+| B：不加列，四条件实时复核 | **采用** | 见下「完整性」 |
+| C：其他 | 不需要 | B 已完整 |
+
+**完整性论证（为什么四条件足够）**：`mcp_oauth_clients` 中影响**授权有效性**的列
+只有三处，全部被覆盖——`redirect_uris`（条件 3）、`grant_types`（条件 4）、
+`metadata_cache_expires_at` 的 INVALID 哨兵（条件 2；它同时覆盖一切 terminal
+后果，含 `token_endpoint_auth_method` 变非法 → terminal → INVALID）。其余列均不
+影响有效性：`client_name` / `client_uri` / `logo_uri` 是展示字段（同意页实时读）、
+`metadata_fetched_at` 只服务 floor、`registration_source` / `created_at` /
+`client_id` 不可变。**因此「版本变了」不等于「授权失效了」——按版本拒绝会误伤，
+按字段拒绝才精确。**
+
+**「metadata version 不一致」如何体现（任务书 §8-B）**：方案 B 不在 consent 层比对
+版本，但版本变化仍可观测（`mcp_oauth_clients.metadata_version`）。测试 #53 断言
+「版本因 INVALID 递增 → POST 拒绝」；反向断言「版本因仅 `client_name` 变化递增、
+行仍 FRESH → POST 通过」。两条合起来钉住「按字段而非按版本」这条判据。
+
+**为什么允许 STALE 继续、只拒绝 INVALID**（任务书 §3.2）：consent 跨多个 HTTP
+请求（authorize → login → callback → GET → POST），最长 10 分钟。若要求每步都
+FRESH，`no-cache` 文档（`ttl=0`，**永久 STALE**）将永远走不完授权——任务书明令
+禁止。自然过期只说明「最近没重新验证」，不说明文档变了；而**授权相关的字段**
+（`redirect_uris` / `grant_types`）已由条件 3 / 4 实时复核，`INVALID` 由条件 2
+实时拦截。因此：**FRESH 与 STALE 都放行，只有 INVALID 拒绝。**
 
 #### 三个检查点
 
 | 检查点 | 加锁 | 失败行为 |
 |---|---|---|
-| Consent **GET** | 不加锁（纯读） | 删除该 auth request，渲染 400 HTML 错误页 |
-| Consent **POST**（同一事务内） | `mcp_auth_requests` `FOR UPDATE` → `mcp_oauth_clients` `FOR SHARE` | 回滚事务、删除 auth request、400，**不签发授权码、不 upsert Grant** |
-| **授权码签发** | 与上面同一个事务 | 三者是同一提交：检查通过才有 code |
+| Consent **GET** | 不加锁（纯读） | 删除该 auth request + 审计 `mcp_consent_metadata_invalid`，渲染 400 HTML 错误页 |
+| Consent **POST**（同一事务内） | `mcp_auth_requests` `FOR UPDATE` → `mcp_oauth_clients` `FOR SHARE` → 四条件复核 | 回滚事务、删除 auth request、400 + 审计，**不签发授权码、不 upsert Grant** |
+| **授权码签发** | 与上面同一个事务 | 四者是同一提交：检查通过才有 code |
 
 **为什么 POST 必须加锁、不能只再查一次**：READ COMMITTED 下普通 `SELECT` 只看语句
 开始时的快照；刷新可以在「我们查完」与「我们插码」之间提交，于是码仍然按旧集合
-签发。`FOR SHARE` 与刷新的 `UPDATE` 冲突，把这段窗口关掉。
+签发。`FOR SHARE` 与刷新的 `UPDATE` 冲突，把这段窗口关掉（P4 实测：FOR SHARE
+确实在终端事务持锁时阻塞，提交后读到 `expires=epoch`）。
 
 **为什么是 `FOR SHARE` 而不是 `FOR UPDATE`**：只需要「在事务期间不允许这行被改」，
 不需要排他；`FOR SHARE` 让同一 client 的多个用户并发同意（不同 auth request）互不
-阻塞，只与刷新串行。
+阻塞，只与刷新串行（P6 实测：两用户并发 Consent 均成功、无死锁）。
 
 **为什么不加 `SKIP LOCKED` 之类的乐观变体**：这里要的是「等刷新提交后读到新值」，
 不是「跳过被锁的行」；跳过会让检查落空。
+
+#### 七个必须覆盖的时序（任务书 §3.1）
+
+| # | 时序 | 预期 |
+|---|---|---|
+| S1 | INVALID 先发生，Consent GET 后发生 | GET：条件 2 失败 → 删行 + 审计 + 400，**不渲染同意页** |
+| S2 | Consent GET 先完成，INVALID 在 GET 与 POST 之间发生 | POST：条件 2 失败 → 回滚 + 删行 + 400；**无授权码、无 Grant、不恢复已撤 Grant、不加 Scope、不 302**；其它 client 不受影响；审计说明因 metadata invalid 被拒 |
+| S3 | terminal document invalid（**非** mismatch）后，旧 pending request 提交 | 同 S2（文档 terminal 同样标 INVALID，条件 2 拦截；且不撤销 Grant） |
+| S4 | INVALID 恢复为 FRESH 后，旧 pending request 再提交 | **通过**（四条件当前值全过）：Grant upsert（已撤 → `epoch+1`、`revoked_at=null`）、签发 code、302。这是 §5.4 的合法恢复路径 |
+| S5 | redirect_uri 已删除，但 metadata 仍 FRESH | 条件 3 失败 → 拒绝（删除的回调不得再用，[ID §4.2]） |
+| S6 | grant_types 已不含 `authorization_code` | 条件 4 失败 → 拒绝（防御纵深；CIMD 路径下这种文档会先被 §5.6 判 terminal → 条件 2 也会拦） |
+| S7 | 多用户针对同一 client 并发 Consent POST | 各锁各自 auth_request、`FOR SHARE` 兼容、grant 行按 `(user,client,resource)` 不同 → 全部成功，无死锁（P6） |
+
+**主时序（任务书 §3.1 的 A/B 交错）**：A 建 pending → A 打开 GET → B 刷新发现
+mismatch → 标 INVALID + 撤销 Grant/Session + COMMIT → A POST。预期：**POST 拒绝**
+（条件 2），不新增 Grant、不恢复已撤 Grant、不加 Scope、不插 auth code、不 302、
+不影响其它 client，审计能说明「授权请求因 metadata invalid 被拒」。
+
+#### `no-cache` 下的完整授权流程（任务书 §3.2 / §8-B）
+
+```
+T0  客户端 authorize（no-cache 文档）
+    → 行 STALE（ttl=0）→ floor 已过 → 成功抓取
+    → version+1, fetched_at=T0, expires=T0（= fetched_at，仍 STALE）
+    → 302 → login
+T1  用户登录 → callback → 写 user_id → 302 consent?rid=
+T2  GET consent：行 STALE → 条件 2 通过（非 epoch）→ 渲染同意页
+T3  POST consent：四条件通过 → upsert grant + 插 code + 删行 → 302 redirect?code=
+T4  客户端 token 兑换（§8.4）
+```
+
+**结论**：一次授权可以在「同一份刚成功获取、写进 DB 行的文档快照」上完成——
+consent 不重新抓取，只读 DB 行。若期间有**并发抓取**更新了该行（另一个 authorize
+触发的刷新），条件 2/3/4 会在 POST 事务内用 `FOR SHARE` 读到新值并复核：
+授权相关字段变了就拒绝，没变就继续。**「重新开始一次授权」与「继续完成已经开始
+的授权」是两条不同路径**：
+
+| | 重新开始（新 authorize） | 继续完成（in-flight consent） |
+|---|---|---|
+| 缓存要求 | 走 §4.1：FRESH 用缓存 / STALE 重抓（<30s 503）/ INVALID 重抓或 400 | **允许 FRESH 与 STALE**，只拒绝 INVALID（四条件） |
+| 网络 | 可能发起抓取 | **不抓取**，只读 DB 行 |
+| 失败处置 | 当前请求中止，不建 auth request | 删 auth request + 400，不签发 code |
 
 #### 锁顺序与死锁分析
 
@@ -575,6 +821,12 @@ mcp_auth_requests  ≺  mcp_oauth_clients  ≺  mcp_grants  ≺  mcp_sessions
         mcp_refresh_tokens  ≺  mcp_sessions
 ```
 
+**R2 增补的不变量**：`metadata_version` 只在 `mcp_oauth_clients` 单表上递增，
+不引入新边；终端 INVALID 的顺序是 `clients(U) → grants(U) → sessions(U)`，
+与 Consent POST 的 `auth_requests(U) → clients(S) → grants(U) → auth_codes(I)`
+在 `clients` 上以 **S vs U** 冲突、但两者都先取 `auth_requests` 或都不取
+（终端不碰 `auth_requests`），因此只有**单向等待**、无环。
+
 逐路径核对：
 
 | 路径 | 取锁顺序 | 是否符合 |
@@ -582,12 +834,22 @@ mcp_auth_requests  ≺  mcp_oauth_clients  ≺  mcp_grants  ≺  mcp_sessions
 | Consent POST | `auth_requests(U)` → `oauth_clients(S)` → `grants(UPSERT)` → `auth_codes(INSERT)` | ✅ 沿 DAG 向下 |
 | Token 兑换 | `auth_codes(U)` → `grants(U)` → `sessions(INSERT)` → `refresh_tokens(INSERT)` | ✅ |
 | Refresh 轮换 | `refresh_tokens(U)` → `sessions(U)` | ✅ |
-| mismatch 撤销（§5.3） | `grants(U)` → `sessions(U)` | ✅ |
+| mismatch / 终端 INVALID 撤销（§5.3 / §8.1） | `oauth_clients(U)` → `grants(U)` → `sessions(U)` | ✅（R2：clients 先于 grants） |
 | CIMD 注册 / 刷新 | `oauth_clients(U)` 单表 | ✅ 无后继 |
 | 既有 grant 撤销 | `grants(U)` → `sessions(U)` | ✅ |
 
 **没有环**：所有边都指向 DAG 的下游，任何路径都不会「先拿下游再要上游」。因此
 「A 持 clients 等 grants、B 持 grants 等 clients」这种经典死锁不会出现。
+
+**四条反向路径检查（任务书 §7）**：
+
+| 疑问 | 结论 |
+|---|---|
+| 是否存在 client → auth_request 的反向锁？ | **否**。authorize 读 `oauth_clients` 是**无锁普通 SELECT**（不入锁图），随后 INSERT 新 `auth_requests` 行；Consent 才是 `auth_requests → clients`。终端 / 刷新路径完全不碰 `auth_requests`。 |
+| 是否存在 session → grant 的反向锁？ | **否**。`rotateMcpRefreshToken` 对 grants 只做**无锁普通 SELECT**；持有 session 行锁时从不反向要 grant。创建路径与撤销路径都是 `grant → session`。 |
+| 终端 INVALID 是否 clients → grants → sessions？ | **是**（§8.1）。CAS 先拿 `clients(U)`，命中 1 行后才 `grants(U)` → `sessions(U)`，同事务。 |
+| Consent POST 是否 auth_requests → clients？ | **是**（§8.3）。`auth_requests(U)` → `clients(S)` → `grants` → `auth_codes(I)`。 |
+| `FOR SHARE` 与 `UPDATE` 是否有等待环？ | **否**。两者在 `clients` 上是 S/U 冲突，但只有**单向等待**：Consent 等终端（Consent 已持 `auth_requests`，终端不需要它）；终端等 Consent（终端首锁是 `clients`，不持任何 Consent 需要的锁）。P4 / P6 实测无 `40P01`。 |
 
 **一条容易被忽略的边**：Consent POST 在持 `grants` 锁时 **INSERT** `auth_codes`，
 而 Token 兑换是「先锁 `auth_codes` 再要 `grants`」。这看起来像反向边，实际上不是：
@@ -612,15 +874,96 @@ t6                                   校验失败 → ROLLBACK（含删除 auth 
 反向顺序（A 先持 auth_req、B 只持 clients）同样不会成环：B 从不需要 auth_req。
 两条路径的交集只有 clients 一行，且都按「auth_req → clients」方向取锁。
 
-#### 边界：授权码已经签发之后
+> **R2 实测（P4，真实 PG 16）**：终端事务先持 `mcp_oauth_clients` 排他锁，
+> Consent 事务在 `FOR SHARE` 上阻塞（`pg_stat_activity.wait_event_type='Lock'`、
+> `pg_blocking_pids` 指向终端事务）；终端提交后 Consent 读到 `expires=epoch`
+> （INVALID）→ 拒绝。**两事务均完成，无 `40P01`。**
 
-授权码一旦签发（POST 已提交），就不再受注册变化影响：
+### 8.4 Token Endpoint 对旧授权码的策略（R2 新增）
 
-- token 端点**不**复核 `redirect_uri` 是否仍在注册集合里——回调合法性在签发时刻
-  判定，事后删除一个回调不应让已完成的授权追溯失效；
-- token 端点**会**复核注册行存在且 `grant_types` 仍含 `authorization_code`
-  （单行 PK 读，不加锁）。失败映射为 `invalid_client` [ID §6.1 MUST]。这条是
-  一致性检查，不是安全屏障，60 秒窗口内的偏差不带来额外权限。
+R1 只规定「已签发授权码不追溯回调变化 + 复核注册存在与 `authorization_code` +
+mismatch 撤销 Grant/Session」。R2 补齐**其它 terminal** 情况下旧授权码的确切行为。
+
+#### 核心结论：三个信任阶段（任务书 §4 要求明确）
+
+**「已完成用户同意并签发的 code」与「仍在 pending 状态的 consent」是不同的信任
+阶段。** pending consent 严格按当前态拒绝（§8.3 四条件）；已签发的 code 代表一次
+**已经发生**的用户同意，其兑换只做**结构校验**，不回溯缓存状态。
+
+**兑换不检查缓存 INVALID、不检查 metadata 版本**，理由三条：
+
+1. **consent 已经验过**：code 只可能在四条件全过（非 INVALID）的那一刻签发；
+   code 绑定**签发时已校验**的 `redirect_uri` + PKCE，兑换不依赖文档当前内容。
+2. **与已签发凭据一致**：非 mismatch 的 INVALID **不撤销** Session / Refresh
+   （§5.2）——既然后台的长期凭据继续有效，就没有理由单独掐断一个 60 秒的 code。
+   反向（查 INVALID）会造成「refresh token 活着、59 秒的 code 却换不了」的割裂。
+3. **[ID §6.1] 的 abort 针对授权请求**，不是已完成的兑换；token 端点的
+   `invalid_client` 只在「本次 token 请求触发的抓取失败」时适用——本项目 token
+   端点**不发起抓取**（只单行 PK 读注册表），该 MUST 不触发。
+
+**`client_id_mismatch` 不是特例，但结果是失败**：mismatch 已在同一事务撤销该
+client 的全部 Grant（§5.3），而兑换路径的 `createMcpSessionInTransaction` 对 Grant
+取 `FOR UPDATE` 并要求 `revoked_at IS NULL` → **必然 `invalid_grant`**。兑换
+**不写 `mcp_grants`**（那是 consent 的职责），因此**不存在**「通过重建 Grant 绕过
+撤销」的路径。竞态两种线性化都正确（P5 实测无死锁）：
+
+```
+情形一（兑换先拿 grant 锁）：兑换读到 active → 建 Session → COMMIT
+        → 终端撤销拿到 grant 锁 → 撤销该 client 全部 Grant + 全部 Session（含刚建的）
+情形二（终端先拿 grant 锁）：终端撤销 Grant/Session → COMMIT
+        → 兑换恢复，读到 revoked → invalid_grant → 回滚（code 未消费）
+```
+
+#### 五种情况的逐项判定
+
+| # | 情况 | 允许兑换 | 查 INVALID | 查版本 | 查 `grant_types` | 查 Grant revoked | 新 Session | 签 Refresh | 审计 |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 有效 metadata 下签发 code，兑换 | ✅ | 否 | 否 | ✅ 含 `authorization_code` | ✅ 未撤 | ✅ | 若显式声明 `refresh_token` | `mcp_session_created` |
+| 2 | 之后刷新发现 **malformed document**（terminal → INVALID，**不撤** Grant） | ✅ | **否** | 否 | ✅ | ✅ 未撤 | ✅ | 若声明 | `mcp_session_created` |
+| 3 | 之后刷新发现 **SSRF / trust failure**（terminal → INVALID，**不撤** Grant） | ✅ | **否** | 否 | ✅ | ✅ 未撤 | ✅ | 若声明 | `mcp_session_created` |
+| 4 | 之后刷新发现 **client_id_mismatch**（INVALID + **撤销全部 Grant/Session**） | ❌ | （隐含） | 否 | — | ✅ **已撤 → `invalid_grant`** | ❌ | ❌ | 无新增（mismatch 已写 `mcp_client_id_mismatch`） |
+| 5 | 用先前 code 兑换（通用入口） | 按上表 | 按上表 | 按上表 | 按上表 | 按上表 | 按上表 | 按上表 | 按上表 |
+
+补充判据：
+
+- **不查 `redirect_uri` 是否仍注册**（签发时刻判定，沿用 R1 D10 / §8.3 边界）。
+- **失败审计**：兑换失败**不写新审计事件**（固定 `invalid_grant` 文案，避免给
+  探针信号）；mismatch 场景的身份事件已由 `mcp_client_id_mismatch` 记录。
+- **refresh_token gating**：只有 `grant_types` **显式**含 `refresh_token` 才签发
+  与轮换（§12 #10）；未声明的客户端兑换拿不到 refresh token，refresh 端点对它
+  返回 `unauthorized_client`。
+
+#### 锁顺序（任务书 §7）
+
+```
+终端 INVALID / mismatch：mcp_oauth_clients(U) ≺ mcp_grants(U) ≺ mcp_sessions(U)
+Token 兑换：             mcp_auth_codes(U)   ≺ mcp_grants(U) ≺ mcp_sessions(I) ≺ mcp_refresh_tokens(I)
+```
+
+两者在 `mcp_grants → mcp_sessions` 上**同向**，`mcp_auth_codes` 与
+`mcp_oauth_clients` 不相交 → 无等待环。P5 实测：兑换在 grant 行上等待终端事务，
+终端提交后兑换读到 `grant.revoked_at` 非空，两事务均完成。
+
+#### 边界：授权码已经签发之后（R2 细化为「信任阶段」）
+
+授权码一旦签发（POST 已提交），就不再受注册变化影响——但它与「仍在 pending 的
+consent」是**两个不同的信任阶段**（任务书 §4）：
+
+| 阶段 | 含义 | 受什么约束 |
+|---|---|---|
+| **pending consent** | 授权**尚未**发生 | 严格当前态：四条件（§8.3），INVALID / 字段变化即拒 |
+| **已签发授权码（≤60s）** | 用户**已同意**，码是完成兑换的凭据 | 结构校验：码有效 + Grant 未撤 + 注册行存在 + `grant_types` 含 `authorization_code`（§8.4）；**不**查缓存 INVALID / 版本 |
+| **已签发凭据（Session / Refresh）** | 长期身份与续期凭据 | 不受非 mismatch 的 INVALID 影响；只受显式撤销影响 |
+
+**因此 token 端点的复核项**（沿用 R1，R2 不改）：
+
+- **不**复核 `redirect_uri` 是否仍在注册集合——回调合法性在**签发时刻**判定，
+  事后删除一个回调不应让已完成的授权追溯失效；
+- **会**复核注册行存在且 `grant_types` 仍含 `authorization_code`（单行 PK 读，
+  不加锁）。失败映射为 `invalid_client` [ID §6.1 MUST]。这条是**一致性**检查，
+  不是安全屏障，60 秒窗口内的偏差不带来额外权限。
+
+**R2 明确不复核缓存 INVALID / metadata 版本**，理由与完整策略见 **§8.4**。
 
 ---
 
@@ -700,9 +1043,22 @@ JSDoc 把它类比成 `NODE_EXTRA_CA_CERTS`（后者是**追加**），**那个�
 | Grant 撤销 + epoch | **否** | `mcp_grants` 已有 `revoked_at` 与 `epoch`；`epoch + 1` 不需要新列 |
 | 身份冲突的受信列表 | 否 | 配置项 `Env.mcpTrustedPeerIdentifiers`，不入库 |
 | 抓取失败记录 | 否 | 用 `auth_events`，不加表 |
-| 并发版本号 | 否 | `metadata_fetched_at` 直接做 CAS 令牌（§8.2 已实测） |
+| 并发版本号 | **是（1 列，R2）** | `metadata_version BIGINT NOT NULL DEFAULT 1` 作唯一 CAS 令牌（§8.1 / §8.2；P1–P3 实测）；C3c-3B 提出迁移 `0005`，本轮不实施 |
 
-迁移只改约束（`DROP CONSTRAINT` + `ADD CONSTRAINT`），不重写数据、不加列。
+R1 的结论是「迁移只改约束（`DROP CONSTRAINT` + `ADD CONSTRAINT`），不重写数据」；
+**R2 在此之上增补一列**（`metadata_version`，见下）——它是 CAS 正确性的前提，
+不是可选项。
+
+> **R2 数据模型增补（C3c-3B 实施，本轮只提出不实施）**：
+>
+> | 迁移 | 内容 | 依据 |
+> |---|---|---|
+> | `0004_mcp_session_revoked_reason.sql` | `mcp_sessions_revoked_reason_check` 增 `client_id_mismatch`（R1 已接受） | §5.3；P7 实测当前 CHECK 拒绝该取值 |
+> | `0005_mcp_metadata_version.sql`（**R2 新增**） | `mcp_oauth_clients` 加 `metadata_version BIGINT NOT NULL DEFAULT 1`；可选 `CHECK (metadata_version >= 1)` | §8.1 / §8.2 唯一 CAS 令牌 |
+
+`metadata_version` **不需要回填**：`DEFAULT 1` 对既有行即刻生效，且既有行从未被
+版本化写过，从 1 起算语义正确（「第 1 个版本」）。加列是 `ALTER TABLE … ADD COLUMN`
+带默认值，PG 11+ 为 metadata 操作、瞬时完成，不重写表。
 
 ---
 
@@ -712,22 +1068,29 @@ JSDoc 把它类比成 `NODE_EXTRA_CA_CERTS`（后者是**追加**），**那个�
 |---|---|---|
 | 1 | `env.ts`：`outboundProxy` 解析 + 启动脱敏日志 + `mcpTrustedPeerIdentifiers`；`createCimdDeps` 去掉默认参数 | 配置入口唯一化 |
 | 2 | `proxy-fetch.ts`：`ca` → `caOverride`（命名 + 注释 + 测试跟随） | 语义修正 |
-| 3 | 迁移 `0004_mcp_session_revoked_reason.sql`：CHECK 增加 `client_id_mismatch` | 数据模型 |
-| 4 | `cimd.ts`：`conflictsWithTrustedIdentifier()`（纯函数）；`grantTypes` 默认值改为 `["authorization_code"]`；`response_types` 默认 `["code"]` | 判据与默认值 |
-| 5 | `cimd-registry.ts`（新）：`resolveClientForAuthorize()`——长度 → 形态 → 身份冲突 → 查行 → 缓存四态 → floor → 抓取 → 注册 / CAS | 纯逻辑 + 注入 deps |
-| 6 | `sessions.ts`：`revokeMcpGrantsAndSessionsByClient()`（Grant → Session，epoch + 1，单条聚合审计） | 撤销语义 |
-| 7 | `consent-flow.ts`：GET / POST 复核最新注册（POST 内 `FOR SHARE`）+ 失败删 auth request | 关闭 §8.3 的竞态 |
-| 8 | `authorize-flow.ts`：未注册 → 调 #5；错误映射 `invalid_client`；显式异常类型（transient / terminal） | 接入点 |
-| 9 | `routes/mcp-oauth.ts`：HTML 错误页（不重定向）+ 审计事件（§15 命名） | 用户可见行为 |
-| 10 | token 端点：`invalid_client` / 503 映射；**未声明 `refresh_token` 的客户端不签发 refresh token**，refresh 端点为它返回 `unauthorized_client` | 规范对齐 |
-| 11 | `consent-page.ts`：`clientIdentifierHost`（§16） | 反钓鱼 |
-| 12 | 测试矩阵（§13 全部 44 条） | 验收 |
-| 13 | 文档：`REMOTE_MCP_PHASE_1_3_DESIGN.md` §7 补「已接入」状态 | 文档一致 |
+| 3 | 迁移 `0004_mcp_session_revoked_reason.sql`：CHECK 增加 `client_id_mismatch` | 数据模型（P7 已证当前 CHECK 拒绝） |
+| 4 | **迁移 `0005_mcp_metadata_version.sql`（R2 新增）**：`mcp_oauth_clients` 加 `metadata_version BIGINT NOT NULL DEFAULT 1`（可选 `CHECK >= 1`），**无回填** | 唯一 CAS 令牌（§8.1 / §8.2） |
+| 5 | `cimd.ts`：`conflictsWithTrustedIdentifier()`（纯函数）；`grantTypes` 缺省 `["authorization_code"]`；`responseTypes` 缺省 `["code"]`；**§5.6 规则 1 交叉一致性检查** | 判据、默认值、交叉约束 |
+| 6 | `cimd-registry.ts`（新）：`resolveClientForAuthorize()`——长度 → 形态 → 身份冲突（**URL 形态，含预注册**，§3.2）→ 查行 → 缓存四态 → floor → 抓取 → 注册 / **版本 CAS** | 纯逻辑 + 注入 deps |
+| 7 | `sessions.ts`：`revokeMcpGrantsAndSessionsByClient()`（Grant → Session，epoch + 1，单条聚合审计），**必须与版本 CAS 同一事务**（CAS 命中 1 行才撤） | 撤销语义（§8.1） |
+| 8 | `consent-flow.ts`：GET / POST **四条件**复核（POST 内 `FOR SHARE`）+ 失败删 auth request + 审计 `mcp_consent_metadata_invalid` | 关闭 §8.3 的竞态与 **INVALID 缺口** |
+| 9 | `authorize-flow.ts`：未注册 → 调 #6；错误映射 `invalid_client`；显式异常类型（transient / terminal） | 接入点 |
+| 10 | `routes/mcp-oauth.ts`：HTML 错误页（不重定向）+ 审计事件（§15 命名） | 用户可见行为 |
+| 11 | token 端点：`invalid_client` / 503 映射；**未声明 `refresh_token` 的客户端不签发 refresh token**，refresh 端点为它返回 `unauthorized_client`；**旧授权码按 §8.4（不查 INVALID / 版本）** | 规范对齐 + 信任阶段 |
+| 12 | `consent-page.ts`：`clientIdentifierHost`（§16） | 反钓鱼 |
+| 13 | 测试矩阵（§13 全部条目，含 R2 新增 A–D 四组） | 验收 |
+| 14 | 文档：`REMOTE_MCP_PHASE_1_3_DESIGN.md` §7 补「已接入」状态 | 文档一致 |
 
 ### 12.1 C3c-3B 明确不包含
 
 DCR、`registration_endpoint`、`/mcp` 工具业务、Desktop 改动、无关 OAuth 重构、
 真实客户端联调（属 1.3.3）、**以及 `client_id_metadata_document_supported` 的声明**。
+
+**3B 的两道额外闸门（R2）**：① 迁移 `0005`（`metadata_version`）落地前，任何
+`mcp_oauth_clients` 的 UPDATE 都还没有版本递增——**必须先加列再写 CAS**，否则
+CAS 谓词引用不存在的列；② Consent 四条件与 Token 旧码策略（§8.3 / §8.4）必须与
+版本 CAS **同一批**接入，不得只接其一（只接 Consent 会漏掉「INVALID 被迟到成功
+复活」，只接 CAS 会漏掉「pending 授权穿过 INVALID」）。
 
 ### 12.2 与 1.3.3 的依赖关系（R1 修正）
 
@@ -751,6 +1114,11 @@ DCR、`registration_endpoint`、`/mcp` 工具业务、Desktop 改动、无关 OA
 
 列含义：`HTTP` = 期望响应；`DB` = `mcp_oauth_clients` 变化；`G` = Grant；
 `S/R` = Session / Refresh；`审计` = 产生的事件；`重试` = 是否允许下次再试。
+
+**共 71 条**：R1 冻结的 44 条（§13.1–§13.5）**原样保留**，R2 新增 27 条
+（§13.6–§13.9，编号 45–71）。每条新增用例都写明初始数据库状态、事务 A/B 的
+准确操作顺序、预期最终数据库状态、HTTP 返回、Grant / Session / Auth Code /
+Refresh Token 变化、审计事件、是否允许重试。
 
 ### 13.1 注册与缓存
 
@@ -817,7 +1185,7 @@ DCR、`registration_endpoint`、`/mcp` 工具业务、Desktop 改动、无关 OA
 | 39 | 两个客户端交替授权 | 各自 Session / Grant 正确 | 状态隔离 |
 | 40 | 文档获取失败时检查响应 | **没有任何 3xx 到 client** | [§6.1 MUST NOT] |
 | 41 | **CAS 精度**：JS Date 写入 → 读回 → CAS | 命中 1 行 | 真实 PG，非 mock |
-| 42 | **CAS 精度**：`now()` 写入 → 读回 → CAS | 命中 0 行（负向断言） | 证明禁止用 `now()` |
+| 42 | **CAS 精度**：`now()` 写入 → 读回 → CAS | 命中 0 行（负向断言） | 证明禁止用 `now()`（R2：该列已不作 CAS，此条降级为 `metadata_fetched_at` 写入纪律回归） |
 | 43 | **CAS 并发**：两个刷新持同一旧令牌 | 一个 1 行、一个 0 行，最终是新值 | 失败者不覆盖 |
 | 44 | 同意页展示 | `clientIdentifierHost` 与 `redirectHost` **各自独立** | 见 §16 |
 
@@ -826,6 +1194,64 @@ DCR、`registration_endpoint`、`/mcp` 工具业务、Desktop 改动、无关 OA
 - `token_endpoint_auth_method` 与 `..._methods_supported` 同时出现但不自洽 → terminal；
 - `client_id` 长度 2048 边界：2048 通过形态校验、2049 拒绝；
 - 预注册客户端**绝不**触发网络（注入的 fetch 计数断言为 0）。
+
+### 13.6 R2 新增 A：Cache CAS 与 INVALID 竞争（真实 PostgreSQL）
+
+列含义沿用 §13；`A/B` = 两个并发事务的准确操作顺序。**全部要求真实 PG + 行锁 +
+`pg_stat_activity` / `pg_blocking_pids` 断言，禁止 mock。**
+
+| # | 初始 DB | A / B 顺序 | 预期终态 | HTTP | G / S / C / R | 审计 | 重试 |
+|---|---|---|---|---|---|---|---|
+| 45 | cimd 行 `version=V`、FRESH、有 1 Grant 2 Session | A 读 V 发起成功抓取（未返回）→ B 读 V 抓到 mismatch → B `UPDATE version=V+1, expires=epoch WHERE version=V` 命中 → 撤销 → COMMIT → A 迟到，`UPDATE … WHERE version=V` | **A 命中 0 行**；行仍 INVALID（`version=V+1, expires=epoch`） | A 侧 302（其 authorize 已过）但**缓存不复活**；B 侧 400 | G/S 已被 B 撤销、不复活 | `mcp_client_id_mismatch` | 否 |
+| 46 | 同上 | B 读 V 发起 mismatch（未返回）→ A 读 V 成功抓取 → A `UPDATE version=V+1 … WHERE version=V` 命中 COMMIT → B 迟到，`UPDATE … WHERE version=V` | **B 命中 0 行** → **不撤销任何 Grant/Session**；行 FRESH | A 302 / B 400 | **G/S 完全不变**（CAS 拒绝的 mismatch 不得误撤） | 无 `mcp_client_id_mismatch` | 否 |
+| 47 | 同 45 | A 成功抓取 vs B **malformed document** terminal（不撤 Grant） | 恰好一个 `version+1`；若 B 先提交 → INVALID、G 不动；若 A 先提交 → FRESH、B 丢弃 | 各自按其结果 | 依谁先提交 | 对应 terminal 事件 / `refreshed` | 否 |
+| 48 | 行已 INVALID（`version=V+1, expires=epoch`） | 迟到的旧成功（持有 `version=V`）执行 `UPDATE … WHERE version=V` | **0 行**，`expires` 仍 `epoch` | — | 不变 | 无 | 否 |
+| 49 | 同 45 | mismatch 的 CAS 被拒（0 行）→ **不得撤销** | Grant/Session `revoked_at` 保持原值 | 400 | 不变 | 无 `mcp_client_id_mismatch` | 否 |
+| 50 | 行 `version=V` | 两个并发刷新（成功 vs 成功）持同一 `V` 各自 CAS | **恰好一个 1 行、一个 0 行**；`version=V+1` 只递增一次 | 各自 | 不变 | `mcp_cimd_refreshed` 恰 1 条 | 否 |
+
+**P1–P3 已在本轮实测**（见 §8.2）：P1 复现 R1 缺陷（迟到成功覆盖 INVALID）；
+P2 证明版本 CAS 使迟到成功命中 0 行；P3 证明并发单写者 + 真实行锁等待。
+
+### 13.7 R2 新增 B：Pending Consent 一致性
+
+| # | 初始 DB | 顺序 | 预期 | HTTP | G / S / C / R | 审计 | 重试 |
+|---|---|---|---|---|---|---|---|
+| 51 | pending auth_request；cimd 行 FRESH、Grant active | B 触发 mismatch → INVALID + 撤销 → COMMIT → A POST consent | 条件 2 拒绝 | **400** | **无新 Grant、不复活已撤 Grant、不加 Scope、无 auth code、无 302**；其它 client 不变 | `mcp_consent_metadata_invalid` | 否（删行） |
+| 52 | 同上（但 terminal 是 **malformed**，不撤 Grant） | B 标 INVALID → A POST | 条件 2 拒绝 | **400** | Grant **不**被撤（malformed 不撤）、无 code | `mcp_consent_metadata_invalid` | 否 |
+| 53 | pending（authorize 时 `version=V`） | B 刷新使 `version=V+1` 且结果 INVALID → A POST | 版本已变 + 条件 2 → 拒绝 | **400** | 同 51 | `mcp_consent_metadata_invalid` | 否 |
+| 54 | pending，GET 已渲染（行 FRESH） | **refresh 在 GET 与 POST 之间**删掉 A 的 `redirect_uri` → A POST | 条件 3 拒绝 | **400** | 无 code、无 Grant 变化 | `mcp_consent_metadata_invalid`（`condition=3`） | 否 |
+| 55 | 同上 | refresh 在 GET/POST 之间把 `grant_types` 改为不含 `authorization_code` → A POST | 条件 4 拒绝 | **400** | 同上 | 同上（`condition=4`） | 否 |
+| 56 | pending；INVALID 已发生且**已恢复 FRESH**（`version` 已两次递增，字段仍匹配） | A POST（旧 pending request） | 四条件当前值全过 → **通过** | **302** | Grant upsert（已撤 → `epoch+1`、`revoked_at=null`）+ 新 auth code | `mcp_consent_allowed` + `mcp_auth_code_issued` | — |
+| 57 | `no-cache` 文档（`ttl=0`）：authorize 时抓取成功 → 行 `expires=fetched_at`（STALE） | 登录 → GET（STALE，条件 2 过）→ POST（四条件过） | **完整授权走通** | GET 200 / POST **302** | Grant + auth code | `mcp_consent_allowed` | — |
+| 58 | pending；行 FRESH | **两用户**针对同一 client 并发 POST | 两两都成功（`FOR SHARE` 兼容、grant 行不同） | 两个 302 | 各自 Grant/code | 各 1 条 allowed | — |
+
+**53 是「metadata version 不一致」的落点**：方案 B 不存快照列，因此版本变化通过
+「变化是否触及授权相关字段」体现——触及（如 INVALID）即拒绝，未触及（仅
+`client_name` 变化）则放行。另加一条反向断言：`version` 递增但仅 `client_name`
+变化、行仍 FRESH → POST **通过**（证明四条件的精确性，不误伤）。
+
+### 13.8 R2 新增 C：Token Endpoint 对旧授权码
+
+| # | 初始 DB | 顺序 | 预期 | HTTP | G / S / C / R | 审计 | 重试 |
+|---|---|---|---|---|---|---|---|
+| 59 | 有效 metadata 下签发 code（60s 内） | 之后刷新发现 **mismatch** → INVALID + 撤销 Grant/Session → 用户用旧 code 兑换 | **失败**（Grant 已撤 → `createMcpSessionInTransaction` 拒） | **400 `invalid_grant`** | 无新 Session、无 Refresh；**不重建 Grant**；code 回滚未消费 | 无新增（mismatch 已记 `mcp_client_id_mismatch`） | 否 |
+| 60 | 同上，但 terminal 是 **malformed / SSRF**（INVALID，**不撤** Grant） | 用户用旧 code 兑换 | **成功**（信任阶段不同，§8.4） | **200** | 新 Session + Refresh（若声明 `refresh_token`） | `mcp_session_created` | — |
+| 61 | Grant 已被 mismatch 撤销 | 任何路径尝试兑换旧 code | 失败，**不得**通过重建 Grant 绕过 | 400 `invalid_grant` | 无 | 同 59 | 否 |
+| 62 | 客户端 `grant_types=["authorization_code"]`（**未声明** `refresh_token`），code 已签发 | 兑换成功 | 兑换成功但**响应无 `refresh_token`**；随后 refresh 端点为它返回 `unauthorized_client` | 200 / 401 | 有 Session、**无 Refresh 行** | `mcp_session_created` | — |
+| 63 | 同 62 | 用伪造的 refresh token 轮换 | **不得继续轮换**（未声明即不签发，自然无有效 token） | 401 `unauthorized_client` | 不变 | 无 | 否 |
+
+### 13.9 R2 新增 D：规范一致性（grant / response 与身份冲突）
+
+| # | 输入 | 预期 | 说明 |
+|---|---|---|---|
+| 64 | 文档缺 `grant_types`、缺 `response_types` | 允许；存 `["authorization_code"]`；**不签发 refresh token** | RFC 7591 §2 默认（§5.6） |
+| 65 | `grant_types` 与 AS 交集非空、`response_types` 与 AS 交集非空，但组合 `grant=[refresh_token]` / `response=[code]` | **拒绝**（terminal `document` → INVALID） | §5.6 规则 1；「不能因各自有受支持值就接受不兼容组合」 |
+| 66 | `grant=[authorization_code]` / `response=[token]` | `invalid_client` | §6 `response_types` 交集 ∅ |
+| 67 | `grant=[client_credentials]` / `response=[code]` | `invalid_client` | §6 `grant_types` 交集 ∅ |
+| 68 | `grant=[authorization_code]` / `response=[]`（空数组） | `invalid_client` | 空数组 ≠ 省略（§5.6 默认值表） |
+| 69 | CIMD 文档 `client_id` = AS issuer / MCP resource / 受信 peer | `client_id_conflict`，**无 DNS**（resolver 计数 0） | §3.2（既有，#29/#30 回归） |
+| 70 | **`pre_registered` 且 `client_id` 为 URL 形态、等于 issuer / resource / peer** | **拒绝 `client_id_conflict`**（R2 新增：不再按 `registration_source` 绕过） | §3.2 纪律 4 |
+| 71 | `pre_registered` **不透明** id（`brewphase-desktop`）authorize | 允许、**零网络**（fetch 计数 0） | §3.2 不透明豁免 |
 
 ---
 
@@ -842,13 +1268,24 @@ DCR、`registration_endpoint`、`/mcp` 工具业务、Desktop 改动、无关 OA
 | 7 | 真实客户端未联调 | 属 1.3.3；能力声明留到联调之后（§12.2） |
 | 8 | 迁移 0004 改 CHECK 需要锁表 | 表小、`ALTER TABLE … ADD CONSTRAINT` 秒级；维护窗口执行 |
 | 9 | 撤销 Grant 会让用户重选权限 | 这是**预期行为**（§5.4）；文案要说清「因为无法验证该应用」 |
-| 10 | CAS 依赖「只写 JS Date」这条纪律 | 由 §8.2 的负向测试（#42）钉住；若有人改用 `now()` 会立刻转红 |
+| 10 | CAS 依赖「只写 JS Date」这条纪律 | **R2 已解除**：CAS 令牌改为 `metadata_version`（整数），精度不再是前提；`metadata_fetched_at` 只服务 floor 与取证（§8.2） |
+| 11 | **R2 新增**：Consent 放行 STALE，可能基于「最近一次抓取」的 `redirect_uris` 完成授权 | 授权请求自身有 10 分钟 TTL，且 authorize 成功时行必为 FRESH → 数据最多 `ttl + 10min` 旧；`redirect_uris` 由条件 3 实时复核；`no-cache` 必须放行 STALE（§8.3） |
+| 12 | **R2 新增**：非 mismatch 的 terminal 后，已签发的旧 auth code 仍可兑换（≤60s） | 信任阶段不同（§8.4）：consent 已验四条件、code 绑定签发时的 redirect_uri + PKCE；且与「INVALID 不撤 Refresh Token」一致。窗口仅 60 秒 |
+| 13 | **R2 新增**：`metadata_version` 迁移 0005 与 0004 同属 3B，两次 ALTER | 0004 改 CHECK（秒级锁表）、0005 加列（metadata 级、瞬时）；表小，合并到一个维护窗口执行 |
 
 **未决**：无。初版遗留的三个待拍板项已在 R1 关闭（见 §17）：
 
 1. `client_id_mismatch` 是否撤销 Grant → **撤销**（§5.3）。
 2. 迁移 0004 → **接受**（§11）。
 3. 生产是否允许继承宿主机代理变量 → **允许，但必须显式解析 + 脱敏记录**（§9.2）。
+
+R2 关闭的决策（见 §17 R2 表）：
+
+4. CAS 令牌 → **`metadata_version`**（新增列，迁移 0005；R1 的 `metadata_fetched_at` 方案被推翻）。
+5. Consent 是否存 metadata 版本快照 → **不存**（方案 B：四条件实时复核；完整性论证见 §8.3）。
+6. 非 mismatch terminal 后旧授权码 → **允许兑换**（信任阶段不同，§8.4）。
+7. `[refresh_token]`/`[code]` 组合 → **拒绝**（§5.6）。
+8. 预注册 URL id 的身份冲突 → **照查**（按形态不按来源，§3.2）。
 
 ---
 
@@ -864,13 +1301,17 @@ DCR、`registration_endpoint`、`/mcp` 工具业务、Desktop 改动、无关 OA
 | `mcp_cimd_fetch_transient` | transient（含冷却命中） | `clientId`, `kind`, `retryAfterMs?` | 不写完整错误栈 |
 | `mcp_cimd_document_invalid` | JSON / 字段非法 | `clientId`, `field` | 不写文档、不写 redirect_uri 全文 |
 | `mcp_cimd_unsupported_client` | 共享密钥 / 非 none / 私钥材料 | `clientId`, `reason` | 不写密钥内容 |
-| `mcp_cimd_unsupported_grant` | 交集为空 | `clientId`, `declaredGrantCount`, `declaredResponseCount` | 只记数量，不记原始数组 |
+| `mcp_cimd_unsupported_grant` | 交集为空 **或交叉不一致（R2）** | `clientId`, `declaredGrantCount`, `declaredResponseCount`, `reason`（`empty_intersection` / `inconsistent_combination`） | 只记数量与枚举，不记原始数组 |
 | `mcp_cimd_http_invalid` | 3xx / 非 200 / Content-Type / 超限 | `clientId`, `status`, `kind` | 不含响应体 |
 | `mcp_cimd_ssrf_blocked` | 命中特殊用途地址 | `clientId`, `address` | 地址是取证必需，不是凭据 |
 | `mcp_cimd_tls_failure` | 目标 TLS 失败 | `clientId`, `code` | 不含证书内容 |
 | `mcp_cimd_no_store_rejected` | `no-store` | `clientId` | 项目策略 |
 | `mcp_cimd_client_id_conflict` | §3.2 身份冲突 | `clientId`, `matched`（`issuer` / `resource` / `peer`） | `matched` 是枚举，不回显受信值 |
 | `mcp_client_id_mismatch` | §5.3 身份失效 | `clientId`, `reason`, `revokedGrantCount`, `revokedSessionCount` | **唯一**的 mismatch 事件 |
+| `mcp_consent_metadata_invalid` | **R2 新增**：Consent GET / POST 因四条件失败（INVALID / 字段变化）被拒 | `rid`, `clientId`, `stage`（`consent` / `consent_submit`）, `condition`（1–4） | `user_id` 可取（行内已有）；说明「授权请求因 metadata invalid 被拒」 |
+
+> `mcp_consent_metadata_invalid` 是 `auth_events.event_type` 的**新取值**；
+> 该列是 text 且无 CHECK，**加取值不需要迁移**（与既有 `mcp_consent_*` 同理）。
 
 **命名冲突的消歧（初版遗留）**：
 
@@ -951,3 +1392,17 @@ interface ConsentView {
 | 9 | §13：验收矩阵从 22 条扩到 44 条（新增撤销、竞态、冷却、默认值、身份冲突、CAS 精度、同意页展示） | 新判据需要可验收 |
 | 10 | §14：三个未决项全部关闭 | 复审已拍板 |
 | 11 | §3 / §3.1：判定顺序改为「**先查库、再判形态**」；512 从 authorize 的预检查降为创建时约束 | 初稿把形态校验放在查库之前，而预注册 `client_id` 本来就不是 URL → 会把**所有预注册客户端**拒掉（复审时发现的 High） |
+
+### R2（2026-11-20，基线 `0ffd0cf`）
+
+| # | 修订 | 原因 |
+|---|---|---|
+| 1 | **§8.1 / §8.2（推翻 R1 D13）**：唯一 CAS 令牌从 `metadata_fetched_at` 改为新增列 **`metadata_version`**；`metadata_fetched_at` 降级为 floor / 取证时间戳；INVALID 必须 `version+1` | R1 只改 `expires_at` 不推进令牌 → **迟到成功可把已提交的 INVALID 复活成 FRESH**（P1 实测复现）；方案 A 复合 CAS 在同毫秒 / 时钟回拨下无法结构性保证「只有一个写入者」（P3） |
+| 2 | **§8.3（High）**：Consent 判据由三条件扩为**四条件**，新增 **`metadata_cache_expires_at ≠ epoch`（INVALID）**；明确 **STALE 放行、只拒 INVALID**；新增七个时序 S1–S7 与 no-cache 完整流程 | terminal INVALID 不清 `redirect_uris` / `grant_types` 也不删行 → R1 三条件全过、待处理授权照常签发 |
+| 3 | **§8.4（新增）**：Token Endpoint 对旧授权码的五情况策略；明确 **pending consent 与已签发 code 是不同信任阶段**；非 mismatch 的 terminal **不阻断**兑换、不查 INVALID / 版本；mismatch 由 Grant 撤销天然拦截 | 任务书 §4 要求给出唯一策略，且「不能把所有 terminal 粗暴升级为全量撤销」 |
+| 4 | **§5.6（新增）**：`grant_types` / `response_types` 交叉一致性（RFC 7591 §2.1）；默认值先于检查；`[refresh_token]/[code]` 拒绝 | 两数组各自有受支持值 ≠ 组合兼容；任务书 §5 表 |
+| 5 | **§3.2 纪律 4（修订）**：身份冲突检查按 **client_id 形态**（URL 形态一律查）而非 `registration_source` | 预注册 URL id 等于 issuer / resource 仍会 token confusion；任务书 §6 |
+| 6 | **§11 / §12（修订）**：数据模型增补迁移 `0005`（`metadata_version`）；3B 任务表重排（版本 CAS、四条件、交叉检查、旧码策略） | 落实上述决策；迁移本轮只提出不实施 |
+| 7 | **§13（扩展）**：44 → **71 条**，新增 A（CAS 竞争 6）、B（Consent 8）、C（Token 5）、D（规范 8）四组 | 任务书 §8 要求；每条含初始态 / 事务顺序 / 终态 / HTTP / G·S·C·R / 审计 / 重试 |
+| 8 | **§8.3 锁序 / §8.4**：补四条反向路径检查与终端 `clients → grants → sessions` 顺序；P4/P5/P6 真实 PG 交错实测 | 任务书 §7 要求真实事务交错，不只写「没有死锁」 |
+| 9 | **§14（新增风险 11–13）**、**§15**（`mcp_consent_metadata_invalid` 事件、`mcp_cimd_unsupported_grant` 增 `reason`） | 新判据需要审计落点与风险记录 |

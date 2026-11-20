@@ -1602,3 +1602,32 @@ C3c-2 完成（**未接入授权流程**），安全加固见 §33。
 
 设计（v2）：`cloud/docs/design/phase-1.3.1-c3c-3a-cimd-authorize-integration-contract.md`；
 R1 审查：`cloud/docs/reviews/phase-1.3.1-c3c-3a-r1-design-review.md`。
+
+---
+
+## 37. Phase 1.3.1-C3c-3A-R2：缓存失效与待处理授权一致性（已完成）
+
+基线 `0ffd0cf`。第三轮独立设计审查，**两个 High 关闭**：
+
+| # | 级别 | 问题 | 修法 |
+|---|---|---|---|
+| F1 | High | **INVALID 可被迟到的成功刷新复活**：R1 CAS 只比 `metadata_fetched_at`，terminal INVALID 不推进令牌 → 迟到成功 CAS 仍命中（真实 PG **P1 复现**） | 唯一 CAS 令牌改为新增列 **`metadata_version`**（迁移 0005）；每条 UPDATE `version+1`；CAS 0 行一律丢弃 |
+| F2 | High | **Consent 不查 INVALID**：R1 三条件在 terminal 后仍全过 | 扩为**四条件**（新增 `≠ epoch`）；**STALE 放行、只拒 INVALID** |
+
+**其余**：Token 旧码策略（三信任阶段；非 mismatch 不阻断、mismatch 由 Grant 撤销拦截，
+兑换不写 `mcp_grants`）；grant/response 交叉一致性（`[refresh_token]/[code]` 拒绝、
+缺省按 RFC 7591 §2）；身份冲突按**形态**不按 `registration_source`（预注册 URL id
+也查）；Consent 选定**方案 B**（不存版本快照，四条件实时复核）；terminal 写
+`fetched_at=now` 起算 floor；审计新增 `mcp_consent_metadata_invalid`。
+
+**真实 PG 实测 P0–P7（临时探针已删）**：P1 复现缺陷、P2 证明修复、P3 单写者 +
+真实行锁等待、P4/P5/P6 锁序无死锁、P7 迁移 0004 必需。
+
+**锁序**：终端 `clients → grants → sessions`；Consent `auth_requests → clients →
+grants → codes`；`metadata_version` 不引入新边。
+
+验收矩阵 44 → **71 条**（A：CAS 竞争 6、B：Consent 8、C：Token 5、D：规范 8）。
+数据模型增补迁移 **`0005`（只提出不实施）**。
+
+设计（v3）：`cloud/docs/design/phase-1.3.1-c3c-3a-cimd-authorize-integration-contract.md`；
+R2 审查：`cloud/docs/reviews/phase-1.3.1-c3c-3a-r2-design-review.md`。

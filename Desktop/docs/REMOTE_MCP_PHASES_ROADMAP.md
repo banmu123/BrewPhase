@@ -1678,6 +1678,62 @@ SNI 换成 IP、删 IPv6 白名单、IPv4 私有段漏判、JWK oth、503/429 �
 
 **范围**：无生产逻辑改动、无迁移、无依赖、未改 Desktop、未声明能力。
 
+### 3.26 1.3.1-C3c-3A-R2 已完成（缓存失效与待处理授权一致性，第三轮审查）
+
+对 `0ffd0cf` 的设计做第三轮独立审查。**没有生产逻辑改动**：只改设计文档与审查报告；
+真实 PostgreSQL 临时探针执行后已删除，测试库写入已清理。
+
+**两个 High 级设计缺陷**：
+
+| # | 级别 | 问题 | 修法 |
+|---|---|---|---|
+| F1 | High | **INVALID 可被迟到的成功刷新复活**：R1 CAS 只比 `metadata_fetched_at`，而 terminal INVALID 只改 `expires_at`、**不推进令牌** → 迟到成功 CAS 仍命中，把已提交的 INVALID 写回 FRESH（真实 PG **P1 复现**） | 唯一 CAS 令牌改为新增列 **`metadata_version`**（迁移 0005）；每条 `mcp_oauth_clients` 的 UPDATE 必须 `version+1`；CAS 0 行**一律丢弃**（成功与 terminal 同） |
+| F2 | High | **Consent 不查 INVALID**：R1 三条件（行存在 / redirect ∈ 注册表 / `grant_types` 含 `authorization_code`）在 terminal 后**仍全过**——INVALID 不清 `redirect_uris`、不删行 → 待处理授权照常签发 | 判据扩为**四条件**（新增 `metadata_cache_expires_at ≠ epoch`）；**STALE 放行、只拒 INVALID**（否则 `no-cache` 永远走不完） |
+
+**其余修订**：
+
+- **Token 旧码策略（§8.4）**：明确**三个信任阶段**——pending consent（严格四条件）、
+  已签发 code（结构校验）、已签发凭据（不受非 mismatch INVALID 影响）。非 mismatch
+  terminal（malformed / SSRF）**不阻断**旧 code 兑换、不查 INVALID / 版本；mismatch
+  由 Grant 撤销**天然拦截**（兑换不写 `mcp_grants`，无「重建 Grant 绕过撤销」路径）。
+- **grant / response 交叉一致性（§5.6）**：RFC 7591 §2.1；缺省 `["authorization_code"]`
+  / `["code"]`；**`[refresh_token]/[code]` 拒绝**（两数组各自有受支持值 ≠ 组合兼容）；
+  空数组 ≠ 省略。
+- **身份冲突按形态不按来源（§3.2）**：URL 形态的**预注册** id 也过 §10.1 比对；
+  不透明 id 豁免。不再凭 `registration_source` 绕过 token confusion 检查。
+- **Consent 方案选定（任务书 §3.2 唯一选择）**：**方案 B**——不存
+  `mcp_auth_requests.metadata_version` 快照，四条件实时复核。附完整性论证
+  （四条件覆盖全部授权有效性列）与 `no-cache` 完整授权流程。
+- **terminal 写 `metadata_fetched_at = now`**（起算 floor）；transient 与冷却拒绝不写。
+- **审计**：新增 `mcp_consent_metadata_invalid`；`mcp_cimd_unsupported_grant` 增 `reason`。
+
+**真实 PostgreSQL 实测（P0–P7，临时探针已删）**：
+
+| 探针 | 证明 |
+|---|---|
+| P1 | **复现 F1**：R1 式 INVALID（不推进令牌）后，迟到成功 CAS **命中 1 行 → FRESH** |
+| P2 | **修复生效**：版本 CAS 下迟到成功 **命中 0 行 → INVALID 存活** |
+| P3 | 并发单写者：第二事务真正在等行锁（`pg_blocking_pids`），提交后 `tx1=1, tx2=0` |
+| P4 | Consent `FOR SHARE` 被终端排他锁阻塞；提交后读到 `expires=epoch`；**无死锁** |
+| P5 | 兑换在 grant 行上等待终端、读到已撤 Grant；**无死锁** |
+| P6 | 同一 client 两用户并发 Consent 均成功；**无死锁** |
+| P7 | 当前 CHECK **拒绝** `client_id_mismatch` → 迁移 0004 必需 |
+
+**锁序**：终端 `clients → grants → sessions`；Consent `auth_requests → clients →
+grants → codes`；兑换 `auth_codes → grants → sessions`。四条反向路径（client→auth_request、
+session→grant、`FOR SHARE`/`UPDATE` 环）全部排除；`metadata_version` 不引入新边。
+
+**验收矩阵**：44 → **71 条**（新增 A：CAS 竞争 6、B：Consent 8、C：Token 5、
+D：规范 8）；A 组全部要求真实 PG + 行锁 + `pg_stat_activity` 断言，禁止 mock。
+
+**数据模型**：迁移 `0005`（`metadata_version BIGINT NOT NULL DEFAULT 1`，**无回填**）
+**本轮只提出不实施**；0004 / 0005 都属 3B。
+
+**范围**：无生产逻辑改动、无测试改动、无迁移文件、无依赖、未改 Desktop、
+未声明能力、44 条旧矩阵原样保留、未回退远程提交。
+
+**R2 报告**：`cloud/docs/reviews/phase-1.3.1-c3c-3a-r2-design-review.md`。
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、
