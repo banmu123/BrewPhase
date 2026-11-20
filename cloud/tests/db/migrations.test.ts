@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
+import { eq, sql } from "drizzle-orm";
 import { fileURLToPath } from "node:url";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createDb, runMigrations } from "../../src/db/client.js";
+import { mcpOauthClients } from "../../src/db/schema.js";
 import { TEST_DATABASE_URL } from "../helpers/env.js";
 
 /** 六张既有账号体系表的完整结构快照（列名 + 类型 + 可空性）。 */
@@ -499,6 +501,197 @@ describe("Phase 1.2B.1 migration (mcp_grants.epoch)", () => {
         select epoch from mcp_grants where user_id = ${userId}`;
       expect(after[0]?.epoch).toBe(1);
 
+      await handle.sql`delete from users where id = ${userId}`;
+    } finally {
+      await handle.close();
+    }
+  });
+});
+
+/**
+ * Phase 1.3.1-C3c-3B-1 的迁移（`0004` / `0005`）。
+ *
+ * - `0004`：`mcp_sessions_revoked_reason_check` 增 `client_id_mismatch`
+ *   （C3c-3A §5.3 的 mismatch 撤销语义要求该取值可写）。
+ * - `0005`：`mcp_oauth_clients` 加 `metadata_version BIGINT NOT NULL DEFAULT 1`
+ *   + `CHECK (metadata_version >= 1)`——R2 的**唯一 CAS 令牌**（设计 §8.1）。
+ *
+ * 这一组回答三个问题：
+ *   1) 加列前已存在的行拿到什么默认值（必须是 1，不是 NULL / 0）；
+ *   2) 版本 CHECK 真的拦得住 0 / 负数，且 `bigint` 经 Drizzle `mode:"number"`
+ *      读回是 **JS number**（不是 string / bigint）——运行时类型必须与
+ *      `epoch`、`generation` 等其它计数一致；
+ *   3) `client_id_mismatch` 成为合法撤销原因，旧值仍可用、非法值仍被拒。
+ */
+describe("Phase 1.3.1-C3c-3B-1 migrations (0004 / 0005)", () => {
+  /** 只保留前 N 个迁移的临时目录（复用 1.2B.1 的做法，刻意不跨 describe 共享）。 */
+  function makePartialMigrationsDir(keep: number): string {
+    const journal = JSON.parse(
+      readFileSync(join(MIGRATIONS_FOLDER, "meta", "_journal.json"), "utf8"),
+    ) as { entries: { idx: number; tag: string }[] };
+    const entries = journal.entries.filter((entry) => entry.idx < keep);
+    expect(entries).toHaveLength(keep);
+    const dir = mkdtempSync(join(tmpdir(), `brewphase-migrations-${keep}-`));
+    mkdirSync(join(dir, "meta"), { recursive: true });
+    for (const entry of entries) {
+      copyFileSync(join(MIGRATIONS_FOLDER, `${entry.tag}.sql`), join(dir, `${entry.tag}.sql`));
+    }
+    writeFileSync(
+      join(dir, "meta", "_journal.json"),
+      JSON.stringify({ ...journal, entries }, null, 2),
+    );
+    return dir;
+  }
+
+  async function snapshotColumns(
+    handle: ReturnType<typeof createDb>,
+    table: string,
+  ): Promise<string[]> {
+    const rows = await handle.sql<{ column_name: string; data_type: string; is_nullable: string; column_default: string | null }[]>`
+      select column_name, data_type, is_nullable, column_default
+        from information_schema.columns
+       where table_schema = 'public' and table_name = ${table}
+       order by column_name`;
+    return rows.map(
+      (r) => `${r.column_name}|${r.data_type}|${r.is_nullable}|${r.column_default ?? ""}`,
+    );
+  }
+
+  it("0005 加列后，迁移前已存在的 client 行 metadata_version = 1，且只多一列", async () => {
+    const dbName = "brewphase_cloud_r2_0005_test";
+    await admin`drop database if exists ${admin(dbName)}`;
+    await admin`create database ${admin(dbName)}`;
+    const url = TEST_DATABASE_URL.replace(/\/[^/]+$/, `/${dbName}`);
+    // keep=5 → idx 0..4 = 0000..0004：0004 已应用、0005 尚未应用。
+    const partialDir = makePartialMigrationsDir(5);
+    const handle = createDb(url);
+    try {
+      await runMigrations(handle.db, partialDir);
+
+      const before = await snapshotColumns(handle, "mcp_oauth_clients");
+      // 0005 尚未应用：这一列还不存在。
+      expect(before.some((col) => col.startsWith("metadata_version|"))).toBe(false);
+
+      // 造一条「迁移前就存在」的 client（此时还不能写 metadata_version）。
+      await handle.sql`
+        insert into mcp_oauth_clients (client_id, client_name, redirect_uris, registration_source)
+        values ('legacy-client', 'Legacy Client', array['https://a/cb'], 'pre_registered')`;
+
+      await runMigrations(handle.db, MIGRATIONS_FOLDER);
+
+      const rows = await handle.db
+        .select({ metadataVersion: mcpOauthClients.metadataVersion, clientName: mcpOauthClients.clientName })
+        .from(mcpOauthClients)
+        .where(eq(mcpOauthClients.clientId, "legacy-client"));
+      // 旧行拿到 DEFAULT 1（不是 NULL / 0），且原有数据一字不丢。
+      // 经 Drizzle 列映射器（`mode: "number"`）读回是 JS number。
+      expect(rows[0]?.clientName).toBe("Legacy Client");
+      expect(rows[0]?.metadataVersion).toBe(1);
+      expect(typeof rows[0]?.metadataVersion).toBe("number");
+
+      // 只多一列，其余逐字不变（顺序无关：snapshotColumns 已按列名排序）。
+      const after = await snapshotColumns(handle, "mcp_oauth_clients");
+      const added = after.filter((col) => !before.includes(col));
+      expect(added).toHaveLength(1);
+      expect(added[0]).toContain("metadata_version|bigint|NO|1");
+      expect(after.filter((col) => !col.startsWith("metadata_version|"))).toEqual(before);
+    } finally {
+      await handle.close();
+      rmSync(partialDir, { recursive: true, force: true });
+      await admin`drop database if exists ${admin(dbName)}`;
+    }
+  });
+
+  it("metadata_version：bigint 映射为 JS number；默认 1、CHECK 拒 0/负数、版本 CAS 单写者", async () => {
+    const handle = createDb(migratedUrl);
+    try {
+      /**
+       * bigint 的**实际**映射（任务书要求实测，2026-11-20）：
+       *
+       * - 裸 postgres.js 读 `int8` → **字符串** `"1"`；
+       * - Drizzle 列映射器（`bigint(..., { mode: "number" })`）→ **JS number** `1`。
+       *
+       * 结论：**生产读路径必须走 Drizzle**（`db.select` / `returning`），否则
+       * `version === 1` 这类比较会因为 `"1" !== 1` 而**静默失败**——这正是任务书
+       * 要求「明确 number 还是 bigint、避免运行时类型不一致」的落点。
+       */
+      const rawInserted = await handle.sql<{ metadata_version: unknown }[]>`
+        insert into mcp_oauth_clients (client_id, client_name, redirect_uris, registration_source)
+        values ('v-default', 'V', array['https://a/cb'], 'pre_registered')
+        returning metadata_version`;
+      expect(rawInserted[0]?.metadata_version).toBe("1");
+      expect(typeof rawInserted[0]?.metadata_version).toBe("string");
+
+      const viaDrizzle = await handle.db
+        .select({ v: mcpOauthClients.metadataVersion })
+        .from(mcpOauthClients)
+        .where(eq(mcpOauthClients.clientId, "v-default"));
+      expect(viaDrizzle[0]?.v).toBe(1);
+      expect(typeof viaDrizzle[0]?.v).toBe("number");
+
+      // CHECK 拒绝 0 与负数（「绕过 CAS 直接把版本写小」必须写不进去）。
+      for (const bad of [0, -1]) {
+        await expect(
+          handle.sql`
+            insert into mcp_oauth_clients
+              (client_id, client_name, redirect_uris, registration_source, metadata_version)
+            values (${`v-bad-${bad}`}, 'V', array['https://a/cb'], 'pre_registered', ${bad})`,
+        ).rejects.toThrow(/mcp_oauth_clients_metadata_version_check/);
+      }
+
+      // 版本 CAS 的形状（Drizzle 条件 UPDATE，WHERE 值是 JS number）：
+      // 这就是 3B 将写进 cimd-registry 的语句。
+      const updated = await handle.db
+        .update(mcpOauthClients)
+        .set({ metadataVersion: sql`metadata_version + 1` })
+        .where(eq(mcpOauthClients.metadataVersion, 1))
+        .returning({ v: mcpOauthClients.metadataVersion });
+      expect(updated).toHaveLength(1);
+      expect(updated[0]?.v).toBe(2);
+
+      // 同一旧版本再 CAS → 0 行（并发只有一个写入者，R2 §8.1）。
+      const again = await handle.db
+        .update(mcpOauthClients)
+        .set({ metadataVersion: sql`metadata_version + 1` })
+        .where(eq(mcpOauthClients.metadataVersion, 1))
+        .returning({ v: mcpOauthClients.metadataVersion });
+      expect(again).toHaveLength(0);
+
+      await handle.sql`delete from mcp_oauth_clients where client_id like 'v-%'`;
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it("0004：client_id_mismatch 成为合法撤销原因，旧值仍可用、非法值仍被拒", async () => {
+    const handle = createDb(migratedUrl);
+    try {
+      const userRows = await handle.sql<{ id: string }[]>`
+        insert into users (display_name) values ('r2-0004') returning id`;
+      const userId = userRows[0]?.id as string;
+      const grantRows = await handle.sql<{ id: string }[]>`
+        insert into mcp_grants (user_id, client_id, client_name, scopes, resource)
+        values (${userId}, 'chatgpt', 'ChatGPT', array['records:read'], 'https://gw.example/mcp')
+        returning id`;
+      const grantId = grantRows[0]?.id as string;
+
+      const insertSession = (reason: string) => handle.sql`
+        insert into mcp_sessions
+          (user_id, grant_id, client_id, issued_scope, resource, absolute_expires_at, revoked_reason)
+        values (${userId}, ${grantId}, 'chatgpt', array['records:read'],
+                'https://gw.example/mcp', now() + interval '90 days', ${reason})`;
+
+      // 0004 之前就合法的四个原因必须继续可写（不改变既有撤销语义）。
+      for (const reason of ["user_revoke", "grant_revoked", "refresh_reuse", "client_revoke"]) {
+        await insertSession(reason);
+      }
+      // 0004 新增的第五个原因。
+      await insertSession("client_id_mismatch");
+
+      // 非法原因仍然被 CHECK 拒绝。
+      await expect(insertSession("because")).rejects.toThrow(/mcp_sessions_revoked_reason_check/);
+
+      // 删用户会级联清掉 grant 与 session，避免污染同一库上的其它断言。
       await handle.sql`delete from users where id = ${userId}`;
     } finally {
       await handle.close();

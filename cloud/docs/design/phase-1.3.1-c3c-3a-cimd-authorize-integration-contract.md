@@ -965,6 +965,100 @@ consent」是**两个不同的信任阶段**（任务书 §4）：
 
 **R2 明确不复核缓存 INVALID / metadata 版本**，理由与完整策略见 **§8.4**。
 
+### 8.5 C3c-3B-1 冻结的三个实施边界（R2 后续实施说明）
+
+以下三条是 C3c-3A-R2 留下的**歧义**，必须在 C3c-3B-1 编码前冻结。
+它们是 C3c-3B-2（registry / consent / token 接入）的直接输入，后续阶段照此执行。
+
+#### 边界一：CAS 失败后的请求处理
+
+R2 §8.1 规定「CAS 0 行 → 丢弃本次结果」，但没有说清**失败方的当前请求**怎么收场。
+
+| 情形 | 数据库动作 | 当前请求的处置 |
+|---|---|---|
+| **成功刷新 CAS 失败**（0 行） | **不写任何东西**；若需重读，只以**数据库当前行**为权威状态，**绝不合并 / 使用失败请求携带的旧 metadata** | **fail-closed**：返回**可重试的暂时性错误（503 transient）**；**不创建授权请求**、不使用自身抓取结果继续授权 |
+| **mismatch CAS 失败**（0 行） | **不撤销** Grant / Session、**不写** `mcp_client_id_mismatch` 成功审计 | 按**自身抓取结果**拒绝当前请求（400 terminal）；**不得污染已经获胜的数据库状态** |
+| **行已删除**（0 行且重读无行） | 不写 | 判定为「注册行已消失」→ authorize 层按未注册处理（400）；**不重新 INSERT、不重试写** |
+| **版本已变化**（0 行且重读到新版本） | 不写 | 同「成功刷新失败」：丢弃自身结果，**503 fail-closed** |
+| **数据库异常**（连接 / 约束 / 超时） | **整事务 ROLLBACK** | 500（固定文案，不泄 SQL / 表名）；**不得**留下半成品状态 |
+
+**为什么成功刷新失败必须 503、而不是「用自己抓的结果继续」**：那个结果对应的是
+**已经过时的版本**。用它建授权请求等于把「我以为的当前状态」当成权威——而权威只
+可能是数据库当前行（任务书 §二.1）。503 让客户端重试，重试会基于**新版本**重新
+抓取，拿到真正权威的状态。
+
+**为什么 mismatch 失败仍按自身结果拒绝（400）而不是 503**：mismatch 的结论是
+「这份文档自称属于别的 client」，它对**当前这次请求**依然成立（我们刚抓到它），
+所以拒绝当前请求是诚实的；但它**不拥有失效权**（CAS 0 行 = 别人已用更新版本确认
+了状态），因此一个字节都不写。
+
+**测试矩阵落点**：#45（成功 CAS 失败 → 503）、#46（mismatch CAS 失败 → 400 且
+零撤销）、#72（行已删除）、#73（数据库异常）、#74（重读只作权威、不合并旧结果）。
+
+#### 边界二：Consent POST 失败时的事务边界
+
+R2 §8.3 规定四条件复核，但没有说清**失败分支的持久化语义**。
+
+1. **顺序**：四条件检查必须**先于** Grant upsert 与授权码插入——任何一条不满足，
+   就根本不进入写入阶段。
+2. **零副作用**：因 metadata invalid 被拒绝时，**不产生** Grant、**不产生**授权码、
+   **不产生** Session。
+3. **持久化语义**：删除 pending auth request 与写入 `mcp_consent_metadata_invalid`
+   审计**必须真正提交**。**禁止**「在一个事务里删行 + 写审计，然后把该事务整体
+   rollback」——那会把删除与审计一起吞掉：授权请求永远留在表里（用户每次重试都
+   撞同一堵墙），审计里也查不到它为什么被拒。
+4. **推荐实现**：校验失败分支在**持有必要锁**（`mcp_auth_requests` `FOR UPDATE` →
+   `mcp_oauth_clients` `FOR SHARE`）的情况下，**只执行**「清理授权请求 + 写审计」，
+   然后**提交**这次拒绝；**不执行**任何 Grant / Code 写入。
+5. **数据库异常仍然正常 rollback**（第 4 条只针对「校验不通过」这条路径；连接断 /
+   约束冲突不得被当成「拒绝已提交」）。
+
+**为什么不能「先写拒绝、再回滚」**：Consent POST 的失败出口目前有两种语义——
+`csrf_mismatch` 是「删行 + 审计 + 400」（要提交），`not_found` / `expired` 是
+「回滚 + 400」。若把 metadata invalid 也塞进「回滚」那类，删行与审计会一起消失。
+
+**测试落点**（C3c-3B-2 补）：auth request 最终被删除；审计记录持久存在；无授权码；
+Grant / Session 逐字段不变；并发 POST 不会重复消费同一个授权请求。
+
+#### 边界三：ABSENT 首次 terminal 失败的抓取频率
+
+R2 §4.1 的 30 秒 fetch floor 依赖 `metadata_fetched_at`，而 ABSENT（首次、无注册
+行）抓取失败**不写行**——因此 **ABSENT 不受 30 秒 floor 保护**。任务书 §二.3 要求
+先查现有限流，**不得默认 ABSENT 已受保护**。
+
+**结论：Cloud OAuth authorize 入口已有可靠的按 IP 限流。**
+
+| 维度 | 实际情况 |
+|---|---|
+| **位置** | `routes/mcp-oauth.ts` 的 `limiter`（`rateLimit({ name: "mcp-oauth", ... })`），挂在 `GET /mcp/oauth/authorize`、`/login`、`/callback/:provider`、`GET|POST /mcp/oauth/consent` |
+| **粒度** | **按客户端 IP**（`clientKey()`：`TRUST_PROXY` 关闭时只用 socket 地址；开启时从 `X-Forwarded-For` 右端跳过 `TRUST_PROXY_HOPS` 取值，且必须是合法 IP 字面量，否则回退 socket 地址） |
+| **窗口 / 上限** | 固定窗口 `rateLimit.windowMs`（默认 **60 000 ms**）内最多 `rateLimit.maxAuthorize`（默认 **30** 次）；可用 `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX_AUTHORIZE` 配置 |
+| **多实例语义** | **进程内 `Map`**（`rate-limit.ts` 的 `buckets`），**不跨实例共享**。当前部署由启动断言强制 `GATEWAY_EXPECTED_REPLICAS = 1`（单实例），因此它是**全局限流**；Phase 1.4 解除单副本时**必须**换成共享存储（接口不变） |
+| **桶上限** | `maxBuckets = DEFAULT_MAX_BUCKETS = 10 000`；超限来源进入**按端点共享**的 overflow 桶，内存不会被无限建桶打爆 |
+
+**因此**：ABSENT 首次 terminal 失败的出网频率，**按来源 IP 被限死在 30 次 / 60 秒**。
+这不是 30 秒 floor（后者按 `client_id`），但足以挡住「单 IP 反复用不存在的
+client_id 打抓取」的放大。
+
+**残留风险（明确记录，不在本阶段处理）**：拥有大量源 IP 的攻击者在聚合上可超过
+30 次 / 分钟，此时只受 `maxBuckets` 的 overflow 桶约束。要按 `client_id` 收敛，
+需要一个**最小负面结果冷却**。
+
+**设计好的最小冷却（本阶段只定策略、不实现——`cimd-registry.ts` 属 C3c-3B-2，
+届时才有调用点）**：
+
+| 项 | 设计 |
+|---|---|
+| 形态 | 进程内 `Map<clientId, terminalAt>`，TTL 30 秒（与 fetch floor 同值） |
+| 存什么 | **只存时间戳与「发生过 terminal」这一事实**——**绝不存响应内容**，因此不违反 `no-store`（§6） |
+| 判定 | ABSENT + terminal 失败后 30 秒内，同一 `client_id` 直接返回 terminal，**不发起第二次抓取** |
+| 为什么允许进程内 | 与 `rate-limit.ts` 同一类：**短生命周期的运行态运营数据**，不是授权状态或会话存储（规格禁止的是用内存保存授权 / 会话这类必须持久化的状态） |
+| 多实例 | 与限流同语义：单实例下即全局；Phase 1.4 需共享存储 |
+| **本阶段** | **不实现**（无调用点）；C3c-3B-2 落地 registry 时按上表实现并补测试 |
+
+**三条纪律**：① **不得**默认 ABSENT 已受 30 秒 floor 保护；② **不得**为了冷却把
+`no-store` 的响应内容存下来；③ **不得**在本阶段未经评估就加缓存表。
+
 ---
 
 ## 9. 环境变量与代理
@@ -1064,22 +1158,27 @@ R1 的结论是「迁移只改约束（`DROP CONSTRAINT` + `ADD CONSTRAINT`）�
 
 ## 12. C3c-3B 实施任务拆分（顺序即依赖）
 
-| # | 任务 | 产出 |
-|---|---|---|
-| 1 | `env.ts`：`outboundProxy` 解析 + 启动脱敏日志 + `mcpTrustedPeerIdentifiers`；`createCimdDeps` 去掉默认参数 | 配置入口唯一化 |
-| 2 | `proxy-fetch.ts`：`ca` → `caOverride`（命名 + 注释 + 测试跟随） | 语义修正 |
-| 3 | 迁移 `0004_mcp_session_revoked_reason.sql`：CHECK 增加 `client_id_mismatch` | 数据模型（P7 已证当前 CHECK 拒绝） |
-| 4 | **迁移 `0005_mcp_metadata_version.sql`（R2 新增）**：`mcp_oauth_clients` 加 `metadata_version BIGINT NOT NULL DEFAULT 1`（可选 `CHECK >= 1`），**无回填** | 唯一 CAS 令牌（§8.1 / §8.2） |
-| 5 | `cimd.ts`：`conflictsWithTrustedIdentifier()`（纯函数）；`grantTypes` 缺省 `["authorization_code"]`；`responseTypes` 缺省 `["code"]`；**§5.6 规则 1 交叉一致性检查** | 判据、默认值、交叉约束 |
-| 6 | `cimd-registry.ts`（新）：`resolveClientForAuthorize()`——长度 → 形态 → 身份冲突（**URL 形态，含预注册**，§3.2）→ 查行 → 缓存四态 → floor → 抓取 → 注册 / **版本 CAS** | 纯逻辑 + 注入 deps |
-| 7 | `sessions.ts`：`revokeMcpGrantsAndSessionsByClient()`（Grant → Session，epoch + 1，单条聚合审计），**必须与版本 CAS 同一事务**（CAS 命中 1 行才撤） | 撤销语义（§8.1） |
-| 8 | `consent-flow.ts`：GET / POST **四条件**复核（POST 内 `FOR SHARE`）+ 失败删 auth request + 审计 `mcp_consent_metadata_invalid` | 关闭 §8.3 的竞态与 **INVALID 缺口** |
-| 9 | `authorize-flow.ts`：未注册 → 调 #6；错误映射 `invalid_client`；显式异常类型（transient / terminal） | 接入点 |
-| 10 | `routes/mcp-oauth.ts`：HTML 错误页（不重定向）+ 审计事件（§15 命名） | 用户可见行为 |
-| 11 | token 端点：`invalid_client` / 503 映射；**未声明 `refresh_token` 的客户端不签发 refresh token**，refresh 端点为它返回 `unauthorized_client`；**旧授权码按 §8.4（不查 INVALID / 版本）** | 规范对齐 + 信任阶段 |
-| 12 | `consent-page.ts`：`clientIdentifierHost`（§16） | 反钓鱼 |
-| 13 | 测试矩阵（§13 全部条目，含 R2 新增 A–D 四组） | 验收 |
-| 14 | 文档：`REMOTE_MCP_PHASE_1_3_DESIGN.md` §7 补「已接入」状态 | 文档一致 |
+> **C3c-3B-1 已完成 #1–#5（配置收口、TLS 语义、迁移 0004、迁移 0005、`cimd.ts`
+> 纯校验）与 #14（文档）。#6–#13 属 C3c-3B-2 及之后——`cimd-registry.ts`、
+> Grant/Session 联动撤销、Consent 四条件、authorize 接入、HTML 错误页、
+> token gating、同意页身份展示均**尚未实现**。**
+
+| # | 任务 | 产出 | 状态 |
+|---|---|---|---|
+| 1 | `env.ts`：`outboundProxy` 解析 + 启动脱敏日志 + `mcpTrustedPeerIdentifiers`；`createCimdDeps` 去掉默认参数 | 配置入口唯一化 | ✅ C3c-3B-1 |
+| 2 | `proxy-fetch.ts`：`ca` → `caOverride`（命名 + 注释 + 调用方 + 测试跟随） | 语义修正 | ✅ C3c-3B-1 |
+| 3 | 迁移 `0004_mcp_session_revoked_reason.sql`：CHECK 增加 `client_id_mismatch` | 数据模型（P7 已证当前 CHECK 拒绝） | ✅ C3c-3B-1 |
+| 4 | **迁移 `0005_mcp_metadata_version.sql`（R2 新增）**：`mcp_oauth_clients` 加 `metadata_version BIGINT NOT NULL DEFAULT 1`（`CHECK >= 1`），**无回填** | 唯一 CAS 令牌（§8.1 / §8.2） | ✅ C3c-3B-1 |
+| 5 | `cimd.ts`：`conflictsWithTrustedIdentifier()` / `isUrlShapedClientId()` / `clientIdConflictsWithTrusted()`（纯函数）；`grantTypes` 缺省 `["authorization_code"]`；`responseTypes` 缺省 `["code"]`；**§5.6 规则 1 交叉一致性检查**；`fetchClientMetadataDocument` 支持 `trustedIdentifiers`（DNS 之前） | 判据、默认值、交叉约束、身份冲突 | ✅ C3c-3B-1 |
+| 6 | `cimd-registry.ts`（新）：`resolveClientForAuthorize()`——长度 → 形态 → 身份冲突（**URL 形态，含预注册**，§3.2）→ 查行 → 缓存四态 → floor → 抓取 → 注册 / **版本 CAS**；**边界一（§8.5）的 CAS 失败处置** | 纯逻辑 + 注入 deps | ⬜ C3c-3B-2 |
+| 7 | `sessions.ts`：`revokeMcpGrantsAndSessionsByClient()`（Grant → Session，epoch + 1，单条聚合审计），**必须与版本 CAS 同一事务**（CAS 命中 1 行才撤） | 撤销语义（§8.1） | ⬜ C3c-3B-2 |
+| 8 | `consent-flow.ts`：GET / POST **四条件**复核（POST 内 `FOR SHARE`）+ 失败删 auth request + 审计 `mcp_consent_metadata_invalid`；**边界二（§8.5）的提交语义** | 关闭 §8.3 的竞态与 **INVALID 缺口** | ⬜ C3c-3B-2 |
+| 9 | `authorize-flow.ts`：未注册 → 调 #6；错误映射 `invalid_client`；显式异常类型（transient / terminal） | 接入点 | ⬜ C3c-3B-2 |
+| 10 | `routes/mcp-oauth.ts`：HTML 错误页（不重定向）+ 审计事件（§15 命名） | 用户可见行为 | ⬜ C3c-3B-2 |
+| 11 | token 端点：`invalid_client` / 503 映射；**未声明 `refresh_token` 的客户端不签发 refresh token**，refresh 端点为它返回 `unauthorized_client`；**旧授权码按 §8.4（不查 INVALID / 版本）** | 规范对齐 + 信任阶段 | ⬜ C3c-3B-2 |
+| 12 | `consent-page.ts`：`clientIdentifierHost`（§16） | 反钓鱼 | ⬜ C3c-3B-2 |
+| 13 | 测试矩阵（§13 全部条目，含 R2 新增 A–D 四组与 §13.10） | 验收 | 🟡 3B-1 完成迁移 / CIMD / 配置三组；其余随 #6–#12 |
+| 14 | 文档：本文件（含 §8.5 后续实施说明）+ R2/3B-1 审查报告 + 路线图 / 索引 | 文档一致 | ✅ C3c-3B-1 |
 
 ### 12.1 C3c-3B 明确不包含
 
@@ -1202,8 +1301,8 @@ Refresh Token 变化、审计事件、是否允许重试。
 
 | # | 初始 DB | A / B 顺序 | 预期终态 | HTTP | G / S / C / R | 审计 | 重试 |
 |---|---|---|---|---|---|---|---|
-| 45 | cimd 行 `version=V`、FRESH、有 1 Grant 2 Session | A 读 V 发起成功抓取（未返回）→ B 读 V 抓到 mismatch → B `UPDATE version=V+1, expires=epoch WHERE version=V` 命中 → 撤销 → COMMIT → A 迟到，`UPDATE … WHERE version=V` | **A 命中 0 行**；行仍 INVALID（`version=V+1, expires=epoch`） | A 侧 302（其 authorize 已过）但**缓存不复活**；B 侧 400 | G/S 已被 B 撤销、不复活 | `mcp_client_id_mismatch` | 否 |
-| 46 | 同上 | B 读 V 发起 mismatch（未返回）→ A 读 V 成功抓取 → A `UPDATE version=V+1 … WHERE version=V` 命中 COMMIT → B 迟到，`UPDATE … WHERE version=V` | **B 命中 0 行** → **不撤销任何 Grant/Session**；行 FRESH | A 302 / B 400 | **G/S 完全不变**（CAS 拒绝的 mismatch 不得误撤） | 无 `mcp_client_id_mismatch` | 否 |
+| 45 | cimd 行 `version=V`、FRESH、有 1 Grant 2 Session | A 读 V 发起成功抓取（未返回）→ B 读 V 抓到 mismatch → B `UPDATE version=V+1, expires=epoch WHERE version=V` 命中 → 撤销 → COMMIT → A 迟到，`UPDATE … WHERE version=V` | **A 命中 0 行**；行仍 INVALID（`version=V+1, expires=epoch`） | **A → 503 transient（fail-closed、可重试；不建授权请求、不使用自身抓取结果）**；B → 400 | G/S 已被 B 撤销、不复活 | `mcp_client_id_mismatch` | **A 侧可重试**（B 侧否） |
+| 46 | 同上 | B 读 V 发起 mismatch（未返回）→ A 读 V 成功抓取 → A `UPDATE version=V+1 … WHERE version=V` **命中并 COMMIT**（A 赢得该版本）→ B 迟到，`UPDATE … WHERE version=V` | **B 命中 0 行** → **不撤销任何 Grant/Session、不写 mismatch 成功审计**；行 FRESH | **A → 302（它赢得 CAS，正常使用自己的结果）**；**B → 400（按自身 mismatch 结果拒绝当前请求，但零 DB 写入）** | **G/S 完全不变**（CAS 拒绝的 mismatch 不得误撤） | 无 `mcp_client_id_mismatch` | 否 |
 | 47 | 同 45 | A 成功抓取 vs B **malformed document** terminal（不撤 Grant） | 恰好一个 `version+1`；若 B 先提交 → INVALID、G 不动；若 A 先提交 → FRESH、B 丢弃 | 各自按其结果 | 依谁先提交 | 对应 terminal 事件 / `refreshed` | 否 |
 | 48 | 行已 INVALID（`version=V+1, expires=epoch`） | 迟到的旧成功（持有 `version=V`）执行 `UPDATE … WHERE version=V` | **0 行**，`expires` 仍 `epoch` | — | 不变 | 无 | 否 |
 | 49 | 同 45 | mismatch 的 CAS 被拒（0 行）→ **不得撤销** | Grant/Session `revoked_at` 保持原值 | 400 | 不变 | 无 `mcp_client_id_mismatch` | 否 |
@@ -1252,6 +1351,20 @@ P2 证明版本 CAS 使迟到成功命中 0 行；P3 证明并发单写者 + 真
 | 69 | CIMD 文档 `client_id` = AS issuer / MCP resource / 受信 peer | `client_id_conflict`，**无 DNS**（resolver 计数 0） | §3.2（既有，#29/#30 回归） |
 | 70 | **`pre_registered` 且 `client_id` 为 URL 形态、等于 issuer / resource / peer** | **拒绝 `client_id_conflict`**（R2 新增：不再按 `registration_source` 绕过） | §3.2 纪律 4 |
 | 71 | `pre_registered` **不透明** id（`brewphase-desktop`）authorize | 允许、**零网络**（fetch 计数 0） | §3.2 不透明豁免 |
+
+### 13.10 R2-3B-1 追加：CAS 失败后的确定性处置（边界一）
+
+对应 §8.5 边界一。编号接在 71 之后，**不重排** §13.6–§13.9 的既有编号。
+
+| # | 初始 DB | 顺序 | 预期 | HTTP | G / S / C / R | 审计 | 重试 |
+|---|---|---|---|---|---|---|---|
+| 72 | cimd 行 `version=V`，随后**注册行被删除** | A 读 V 发起成功抓取（未返回）→ 行被删 → A 迟到，`UPDATE … WHERE client_id=c AND version=V` | **0 行**；重读**无行** → 判定为「注册行已消失」，**不重新 INSERT、不重试写** | **400**（authorize 层按未注册 / 行不存在） | 无变化 | 无 | 否 |
+| 73 | cimd 行 `version=V` | A 读 V → 抓取成功 → CAS UPDATE 期间**数据库异常**（连接断 / 约束冲突） | **整事务 ROLLBACK**，库里不留半成品（`version` 不变、无授权请求） | **500**（固定文案，不泄 SQL / 表名） | 无变化 | 无（或仅 `mcp_audit_failed` 类） | 是 |
+| 74 | cimd 行 `version=V` | A 读 V → 抓取成功 → CAS 0 行（B 已推进到 V+1）→ A **重读当前行** | 重读结果**只作为权威状态**用于诊断 / 分支，**绝不与 A 自身的抓取结果合并**，也**不用它继续授权** | **503 transient**（fail-closed） | 无变化 | 无 | 是 |
+
+**74 的判据**：失败请求携带的 metadata 对应的是**过时版本**。任何「拿重读到的新行
++ 自己抓的旧文档拼一拼」的实现都必须转红——权威只能是数据库当前行，而当前行的
+结论应通过**重新发起一次抓取**（基于新版本）得到，不是复用旧结果。
 
 ---
 
@@ -1406,3 +1519,18 @@ interface ConsentView {
 | 7 | **§13（扩展）**：44 → **71 条**，新增 A（CAS 竞争 6）、B（Consent 8）、C（Token 5）、D（规范 8）四组 | 任务书 §8 要求；每条含初始态 / 事务顺序 / 终态 / HTTP / G·S·C·R / 审计 / 重试 |
 | 8 | **§8.3 锁序 / §8.4**：补四条反向路径检查与终端 `clients → grants → sessions` 顺序；P4/P5/P6 真实 PG 交错实测 | 任务书 §7 要求真实事务交错，不只写「没有死锁」 |
 | 9 | **§14（新增风险 11–13）**、**§15**（`mcp_consent_metadata_invalid` 事件、`mcp_cimd_unsupported_grant` 增 `reason`） | 新判据需要审计落点与风险记录 |
+
+### C3c-3B-1（2026-11-20，基线 `3b0ff0a`）
+
+本阶段是**实施**轮（基础设施 / 迁移 / CIMD 纯校验层），不是设计推翻。
+对设计正文的修订如下：
+
+| # | 修订 | 原因 |
+|---|---|---|
+| 1 | **§8.5（新增）**：冻结三个实施边界——① CAS 失败后的请求处理（成功刷新失败 → 503 fail-closed 不建授权请求；mismatch 失败 → 400 但零撤销；行已删除 / 版本变化 / DB 异常各自的确定处置）；② Consent POST 失败分支的持久化语义（清理 + 审计必须**提交**，禁止整体 rollback）；③ ABSENT 首次 terminal 失败的抓取频率（**不受 30 秒 floor 保护**，由 authorize 按 IP 限流兜底 + 设计好的最小负面冷却） | R2 留下的三处歧义，任务书 §二要求编码前冻结 |
+| 2 | **§13.6 #45 / #46 修正**：#45 迟到成功的 HTTP 由「302」改为「**503 transient（fail-closed、不建授权请求、不使用自身抓取结果）**」；#46 明确 A 是**赢得 CAS** 才 302、B 是**按自身结果 400 但零 DB 写入** | #45 原文一边规定 CAS 失败、一边让该请求用自身结果返回 302，自相矛盾 |
+| 3 | **§13.10（新增）**：#72（行已删除）、#73（数据库异常）、#74（重读只作权威、不合并旧结果） | 边界一要求的确定性处置需要可验收用例 |
+| 4 | **§9.2 / §10.2 / §11 / §12 状态更新**：`outboundProxy`、`mcpTrustedPeerIdentifiers`、`caOverride`、迁移 0004 / 0005、`cimd.ts` 纯校验**已在本阶段落地** | 从「设计」变为「已实现」，供 3B-2 直接引用 |
+
+**本阶段未改**：§3 / §4 / §5 / §6 / §7 / §8.1–§8.4 / §13.1–§13.9 的判据与语义
+（R2 冻结结论原样保留）。

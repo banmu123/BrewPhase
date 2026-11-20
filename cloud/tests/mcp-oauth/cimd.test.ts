@@ -4,9 +4,12 @@ import {
   CIMD_MAX_BODY_BYTES,
   CIMD_MAX_TTL_MS,
   classifyHttpStatus,
+  clientIdConflictsWithTrusted,
+  conflictsWithTrustedIdentifier,
   fetchClientMetadataDocument,
   isJsonContentType,
   isPubliclyRoutableAddress,
+  isUrlShapedClientId,
   parseCimdCachePolicy,
   resolveCimdHost,
   validateClientIdentifierUrl,
@@ -722,13 +725,26 @@ describe("Document 校验", () => {
       reason: "document",
       detail: "response_types",
     });
-    // 有交集时放行。
-    const h = harness({
-      response: jsonResponse({
-        doc: { ...VALID_DOC, grant_types: ["refresh_token"], response_types: ["code"] },
-      }),
+  });
+
+  /**
+   * RFC 7591 §2.1 交叉一致性（R2 §5.6）。
+   *
+   * 这条曾经断言 `grant=[refresh_token] / response=[code]` **放行**——那只看了
+   * 「两个数组各自都有受支持值」。R2 推翻了它：`response` 含 `code` 而 `grant`
+   * 缺 `authorization_code` 是自相矛盾的组合（code 只能由 authorization_code
+   * grant 产生），必须拒绝。
+   */
+  it("refresh_token + code 是不兼容组合，必须拒绝（RFC 7591 §2.1）", async () => {
+    await expectDocumentRejected(
+      { ...VALID_DOC, grant_types: ["refresh_token"], response_types: ["code"] },
+      { reason: "document", detail: "inconsistent grant_types/response_types" },
+    );
+    // 声明了 refresh_token 但 response 省略 → 默认 ["code"]，同样不兼容。
+    await expectDocumentRejected({ ...VALID_DOC, grant_types: ["refresh_token"] }, {
+      reason: "document",
+      detail: "inconsistent grant_types/response_types",
     });
-    expect((await fetchClientMetadataDocument(CLIENT_ID, h.deps)).ok).toBe(true);
   });
 
   it("非法 JSON / 非对象文档 → terminal", async () => {
@@ -999,7 +1015,10 @@ describe("validateCimdDocument 直测", () => {
     const result = validateCimdDocument(VALID_DOC, CLIENT_ID);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.metadata.grantTypes).toEqual(["authorization_code", "refresh_token"]);
+    // RFC 7591 §2：`grant_types` 省略时缺省 **只有** `authorization_code`
+    // （R2 §5.6 推翻了旧的 `["authorization_code","refresh_token"]`——
+    //  refresh_token 必须显式声明才签发）。
+    expect(result.metadata.grantTypes).toEqual(["authorization_code"]);
   });
 
   it("只读不写：不修改入参", () => {
@@ -1007,5 +1026,176 @@ describe("validateCimdDocument 直测", () => {
     const snapshot = JSON.stringify(doc);
     validateCimdDocument(doc, CLIENT_ID);
     expect(JSON.stringify(doc)).toBe(snapshot);
+  });
+});
+
+/**
+ * RFC 7591 §2 缺省值 + §2.1 交叉一致性（R2 设计 §5.6）。
+ *
+ * 关键区分：**省略字段**走缺省值；**空数组 `[]`** 是「声明了但为空」，
+ * 按 [ID §6] 交集为空拒绝——两者绝不能混（混了就等于用缺省值把空数组洗白）。
+ */
+describe("grant_types / response_types 缺省值与交叉一致性（R2 §5.6）", () => {
+  async function expectDocRejected(doc: unknown, detail: string): Promise<void> {
+    await expectFailure(CLIENT_ID, { response: jsonResponse({ doc }) }, {
+      kind: "terminal",
+      reason: "document",
+      detail,
+    });
+  }
+
+  function validate(doc: unknown) {
+    return validateCimdDocument(doc as Record<string, unknown>, CLIENT_ID);
+  }
+
+  it("两个字段都省略 → 缺省 grant=[authorization_code]、response=[code]", () => {
+    const result = validate(VALID_DOC);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.metadata.grantTypes).toEqual(["authorization_code"]);
+  });
+
+  it("空数组 ≠ 省略：[] 按交集为空拒绝，不被缺省值洗白", async () => {
+    await expectDocRejected({ ...VALID_DOC, grant_types: [] }, "grant_types");
+    await expectDocRejected({ ...VALID_DOC, response_types: [] }, "response_types");
+  });
+
+  it("只声明 authorization_code → 允许，且不自动带上 refresh_token", () => {
+    const result = validate({
+      ...VALID_DOC,
+      grant_types: ["authorization_code"],
+      response_types: ["code"],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // 未显式声明 refresh_token ⇒ 不在 grantTypes 里 ⇒ 下游不签发 refresh token
+    //（设计 §12 #11 的 gating 判据）。
+    expect(result.metadata.grantTypes).toEqual(["authorization_code"]);
+    expect(result.metadata.grantTypes).not.toContain("refresh_token");
+  });
+
+  it("authorization_code + refresh_token 显式同时声明 → 允许并原样保留", () => {
+    const result = validate({
+      ...VALID_DOC,
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.metadata.grantTypes).toEqual(["authorization_code", "refresh_token"]);
+  });
+
+  it("空交集：不支持的 grant 与不支持的 response 各自拒绝", async () => {
+    await expectDocRejected({ ...VALID_DOC, grant_types: ["client_credentials"] }, "grant_types");
+    await expectDocRejected({ ...VALID_DOC, response_types: ["token"] }, "response_types");
+  });
+});
+
+/**
+ * [ID §10.1] 身份冲突检查（R2 设计 §3.2）。
+ *
+ * 两条纪律必须同时成立：
+ *   1) 按 **client_id 形态**适用，**不按 `registration_source`**——预注册的
+ *      URL id 同样要比对；
+ *   2) 检查发生在 **DNS 与网络请求之前**（`resolve` / `request` 都不被调用）。
+ */
+describe("身份冲突检查（R2 §3.2 / [ID §10.1]）", () => {
+  const ISSUER = "https://cloud.example.com";
+  const RESOURCE = "https://cloud.example.com/mcp";
+  const PEER = "https://other-as.example.com/client.json";
+
+  it("conflictsWithTrustedIdentifier：原始字符串逐字符比较，不做归一化", () => {
+    expect(conflictsWithTrustedIdentifier(ISSUER, [ISSUER])).toBe(true);
+    expect(conflictsWithTrustedIdentifier(RESOURCE, [ISSUER, RESOURCE])).toBe(true);
+    expect(conflictsWithTrustedIdentifier(PEER, [PEER])).toBe(true);
+    // 不补默认端口：`:443` 与不带端口不是同一个值（§10.1 简单字符串比较）。
+    expect(conflictsWithTrustedIdentifier("https://cloud.example.com:443/mcp", [RESOURCE])).toBe(false);
+    // 不折叠大小写。
+    expect(conflictsWithTrustedIdentifier("https://CLOUD.example.com/mcp", [RESOURCE])).toBe(false);
+    // 不去尾斜杠。
+    expect(conflictsWithTrustedIdentifier(`${RESOURCE}/`, [RESOURCE])).toBe(false);
+    expect(conflictsWithTrustedIdentifier(PEER, [])).toBe(false);
+  });
+
+  it("isUrlShapedClientId：只认含 scheme:// 的值", () => {
+    expect(isUrlShapedClientId(CLIENT_ID)).toBe(true);
+    expect(isUrlShapedClientId(ISSUER)).toBe(true);
+    expect(isUrlShapedClientId(RESOURCE)).toBe(true);
+    expect(isUrlShapedClientId("brewphase-desktop")).toBe(false);
+    expect(isUrlShapedClientId("client.example.com/oauth/client.json")).toBe(false);
+  });
+
+  it("预注册 URL 形态 id 等于 issuer / resource / peer → 冲突（不按来源绕过）", () => {
+    // 这正是「不能仅凭 registration_source 就跳过 token confusion 检查」的落点：
+    // 这些值都可能出现在 `pre_registered` 行里，但仍然必须拒。
+    expect(clientIdConflictsWithTrusted(ISSUER, [ISSUER])).toBe(true);
+    expect(clientIdConflictsWithTrusted(RESOURCE, [ISSUER, RESOURCE])).toBe(true);
+    expect(clientIdConflictsWithTrusted(PEER, [ISSUER, RESOURCE, PEER])).toBe(true);
+  });
+
+  it("不透明预注册 id → 不做 URL 形式身份比较（允许通过）", () => {
+    expect(clientIdConflictsWithTrusted("brewphase-desktop", [ISSUER, RESOURCE, PEER])).toBe(false);
+    expect(clientIdConflictsWithTrusted("dcr-abc123", [ISSUER, RESOURCE, PEER])).toBe(false);
+  });
+
+  it("URL 形态但不等于任何受信标识符 → 放行", () => {
+    expect(clientIdConflictsWithTrusted(CLIENT_ID, [ISSUER, RESOURCE, PEER])).toBe(false);
+  });
+
+  it("fetch：client_id 等于 MCP resource → client_id_conflict，且 DNS / 网络都不发生", async () => {
+    const h = harness();
+    const outcome = await fetchClientMetadataDocument(RESOURCE, h.deps, {
+      trustedIdentifiers: [ISSUER, RESOURCE, PEER],
+    });
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.kind).toBe("terminal");
+    expect(outcome.reason).toBe("client_id_conflict");
+    // 关键断言：一个必然被拒的值不该打开 DNS / 连接面（§3.2 纪律 2、§10.7）。
+    expect(h.resolve).not.toHaveBeenCalled();
+    expect(h.request).not.toHaveBeenCalled();
+  });
+
+  it("fetch：client_id 等于受信 peer → 同样在 DNS 之前拒绝", async () => {
+    const h = harness();
+    const outcome = await fetchClientMetadataDocument(PEER, h.deps, {
+      trustedIdentifiers: [ISSUER, RESOURCE, PEER],
+    });
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.reason).toBe("client_id_conflict");
+    expect(h.resolve).not.toHaveBeenCalled();
+    expect(h.request).not.toHaveBeenCalled();
+  });
+
+  it("fetch：信任列表非空但不匹配 → 正常走 DNS 与抓取", async () => {
+    const h = harness();
+    const outcome = await fetchClientMetadataDocument(CLIENT_ID, h.deps, {
+      trustedIdentifiers: [ISSUER, RESOURCE, PEER],
+    });
+    expect(outcome.ok).toBe(true);
+    expect(h.resolve).toHaveBeenCalledTimes(1);
+    expect(h.request).toHaveBeenCalledTimes(1);
+  });
+
+  it("fetch：不传 trustedIdentifiers → 不做冲突检查（保持既有行为）", async () => {
+    const h = harness();
+    const outcome = await fetchClientMetadataDocument(CLIENT_ID, h.deps);
+    expect(outcome.ok).toBe(true);
+    expect(h.resolve).toHaveBeenCalledTimes(1);
+  });
+
+  it("fetch：issuer 形态（纯 origin，无路径）先被 URL 形态校验拒绝", async () => {
+    // issuer 是纯 origin（path = `/`），不满足 Client Identifier URL 的
+    // 「路径不得为 /」——它到不了冲突检查，但同样必须被拒（reason 不同而已）。
+    const h = harness();
+    const outcome = await fetchClientMetadataDocument(ISSUER, h.deps, {
+      trustedIdentifiers: [ISSUER],
+    });
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.reason).toBe("client_id_url");
+    expect(h.resolve).not.toHaveBeenCalled();
+    expect(h.request).not.toHaveBeenCalled();
   });
 });

@@ -1631,3 +1631,36 @@ grants → codes`；`metadata_version` 不引入新边。
 
 设计（v3）：`cloud/docs/design/phase-1.3.1-c3c-3a-cimd-authorize-integration-contract.md`；
 R2 审查：`cloud/docs/reviews/phase-1.3.1-c3c-3a-r2-design-review.md`。
+
+---
+
+## 38. Phase 1.3.1-C3c-3B-1：基础设施、迁移与 CIMD 纯校验层（已完成）
+
+基线 `3b0ff0a`。**实施轮**：未接入 authorize / consent / token，**未实现**
+`cimd-registry.ts`，**未声明** CIMD 能力，**未改** Desktop。
+
+**三个边界冻结**（设计 §8.5，3B-2 照做）：
+
+- **CAS 失败**：成功刷新失败 → **503 fail-closed**（不建授权请求、不用自身结果）；
+  mismatch 失败 → **400 但零 DB 写入**；行已删除 → 400 不重新 INSERT；DB 异常 →
+  rollback；重读**只以 DB 当前行为权威**。
+- **Consent POST 失败**：四条件先于写入；metadata invalid **零副作用**；**删行 +
+  审计必须提交**（禁止整体 rollback）；DB 异常仍 rollback。
+- **ABSENT terminal**：**不受 30 秒 floor 保护**；已有 authorize 按 IP 限流
+  （默认 30 次 / 60 秒、进程内 Map、单实例全局、`maxBuckets` 10000）；最小负面冷却
+  只存时间戳、**不存 `no-store` 内容**，**3B-2 实现**。
+
+**交付**：`Env.outboundProxy` + `mcpTrustedPeerIdentifiers`（唯一解析点、启动脱敏日志、
+fail-fast 格式校验）；`ca` → **`caOverride`**；迁移 **0004**（`revoked_reason` +
+`client_id_mismatch`）与 **0005**（`metadata_version BIGINT DEFAULT 1` + `CHECK>=1`，
+无回填）；`cimd.ts` 缺省值 + 交叉一致性 + 身份冲突三纯函数（**DNS 之前**）。
+
+**bigint 映射实测**：裸 postgres.js → **字符串 `"1"`**；Drizzle `mode:"number"` →
+**JS number `1`**；**生产读路径必须走 Drizzle**，否则 `=== 1` 静默失败。
+
+**测试**：**1397 passed / 66 files**（基线 1355 → **+42**）；新增 env-proxy(16) +
+迁移(3) + CIMD(12)；修订 3 条既有断言（R2 契约要求、**非弱化**）。
+`.update(mcpOauthClients)` 扫描 0 处（尚无 UPDATE 路径）。
+
+设计（v3 + §8.5）：`cloud/docs/design/phase-1.3.1-c3c-3a-cimd-authorize-integration-contract.md`；
+3B-1 报告：`cloud/docs/reviews/phase-1.3.1-c3c-3b-1-foundation-review.md`。

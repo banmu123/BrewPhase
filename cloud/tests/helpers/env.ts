@@ -1,5 +1,6 @@
 import type { Env } from "../../src/env.js";
 import { DEFAULT_MAX_BUCKETS } from "../../src/security/rate-limit.js";
+import { directOutboundProxy } from "../../src/net/proxy-fetch.js";
 
 export const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL ??
@@ -53,6 +54,11 @@ export function makeTestEnv(overrides: TestEnvOverrides = {}): Env {
     trustProxy: false,
     trustProxyHops: 1,
     logLevel: "error",
+
+    // 测试默认直连：绝不继承执行机器的 `HTTPS_PROXY`（R2v-F10 的根因）。
+    // 需要代理语义的用例显式覆盖这两项。
+    outboundProxy: directOutboundProxy(),
+    mcpTrustedPeerIdentifiers: [],
 
     gateway: {
       // 单实例约束（协议 §12.2）。测试里恒为 1：多实例没有实现，

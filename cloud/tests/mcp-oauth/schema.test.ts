@@ -379,7 +379,7 @@ describe("CHECK 约束", () => {
     ).rejects.toThrow(/mcp_auth_requests_provider_check/);
   });
 
-  it("sessions：revoked_reason 只能是四个已知原因，且绝对期限必须晚于起点", async () => {
+  it("sessions：revoked_reason 只能是五个已知原因，且绝对期限必须晚于起点", async () => {
     const userId = await seedUser(sql);
     const grantId = await seedGrant(sql, userId);
 
@@ -397,8 +397,14 @@ describe("CHECK 约束", () => {
                   ${MCP_RESOURCE}, now() - interval '1 day')`,
     ).rejects.toThrow(/mcp_sessions_absolute_expiry_check/);
 
-    // 四个已知原因都能写
-    for (const reason of ["user_revoke", "grant_revoked", "refresh_reuse", "client_revoke"]) {
+    // 五个已知原因都能写（`client_id_mismatch` 由迁移 0004 加入，C3c-3A §5.3）。
+    for (const reason of [
+      "user_revoke",
+      "grant_revoked",
+      "refresh_reuse",
+      "client_revoke",
+      "client_id_mismatch",
+    ]) {
       await seedSession(sql, { userId, grantId, revokedAt: new Date(), revokedReason: reason });
     }
   });

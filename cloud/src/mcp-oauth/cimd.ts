@@ -1,7 +1,7 @@
 import dns from "node:dns/promises";
 import { performance } from "node:perf_hooks";
 import net from "node:net";
-import { requestPinnedHttps } from "../net/proxy-fetch.js";
+import { requestPinnedHttps, type OutboundProxy } from "../net/proxy-fetch.js";
 
 /**
  * CIMD（Client ID Metadata Document）严格抓取器（Phase 1.3.1-C3c-2）。
@@ -68,6 +68,8 @@ export type CimdFailureReason =
   | "too_large"
   | "json"
   | "client_id_mismatch"
+  /** [ID §10.1]：client_id 等于 issuer / resource / 受信 AS·RS 标识符（设计 §3.2）。 */
+  | "client_id_conflict"
   | "document"
   | "unsupported_client";
 
@@ -274,6 +276,63 @@ export function validateClientIdentifierUrl(raw: string): UrlCheck {
 }
 
 /* -------------------------------------------------------------------------- *
+ * Client Identifier URL 的身份冲突检查（[ID §10.1]，设计 §3.2）
+ * -------------------------------------------------------------------------- */
+
+/**
+ * `client_id` 是否为 **URL 形态**（含 `scheme://`）。
+ *
+ * [ID §10.1] 的对象是 Client Identifier URL；不透明 id（`brewphase-desktop`
+ * 这类随机串）在构造上不可能等于 URL 形态的 issuer / resource / 受信 AS·RS
+ * 标识符，因此**不经过**身份比对（设计 §3.2 纪律 4）。
+ *
+ * 判据是**原始字符串**里有没有 `scheme://`——不做 WHATWG 解析，因为
+ * `https://h/a/..` 这类值在解析后看不出问题（C3c-1-R1 / C3c-2 的同一个教训）。
+ */
+export function isUrlShapedClientId(clientId: string): boolean {
+  return /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(clientId);
+}
+
+/**
+ * [ID §10.1] 身份冲突比较：`client_id` 是否等于某个受信标识符。
+ *
+ * **纯函数**：不读 env、不发网络、不写库——受信列表由调用方注入
+ * （生产是 `Env.mcpTrustedPeerIdentifiers` + issuer + MCP resource）。
+ *
+ * **原始字符串逐字符比较**：不做大小写折叠、不补默认端口、不去尾斜杠。
+ * §10.1 明确要求 RFC 3986 §6.2.1 的简单字符串比较；在这里做归一化反而会
+ * 造出「被拒绝的字符串」与「当成自己的字符串」两套判据（设计 §3.2 纪律 1）。
+ */
+export function conflictsWithTrustedIdentifier(
+  clientId: string,
+  trusted: readonly string[],
+): boolean {
+  return trusted.some((identifier) => identifier === clientId);
+}
+
+/**
+ * [ID §10.1] 身份冲突的**完整判定**（设计 §3.2 纪律 4）：按 client_id **形态**
+ * 适用，**不按 `registration_source`**。
+ *
+ * - URL 形态（含 `scheme://`，**包括人工预注册的 URL id**）→ 逐字符比较；
+ * - 不透明 id（`brewphase-desktop` 这类）→ 跳过（构造上不可能等于 URL 形态的
+ *   受信标识符；[ID §10.1] 的对象也是 Client Identifier URL）。
+ *
+ * 返回 `true` 表示必须拒绝（terminal `client_id_conflict`）。**不能仅凭
+ * `registration_source` 就绕过 token confusion 检查**——预注册 URL id 若等于
+ * issuer / resource / 受信 AS·RS 同样必须拒。
+ *
+ * 这是 fetch 路径与（C3c-3B-2 的）registry 共用的同一个谓词。
+ */
+export function clientIdConflictsWithTrusted(
+  clientId: string,
+  trusted: readonly string[],
+): boolean {
+  if (!isUrlShapedClientId(clientId)) return false;
+  return conflictsWithTrustedIdentifier(clientId, trusted);
+}
+
+/* -------------------------------------------------------------------------- *
  * SSRF：地址分类
  * -------------------------------------------------------------------------- */
 
@@ -436,7 +495,7 @@ export interface CimdFetcherDeps {
 }
 
 /** 生产依赖：真实 DNS + 固定目标 HTTPS 请求。 */
-export function createCimdDeps(env: NodeJS.ProcessEnv = process.env): CimdFetcherDeps {
+export function createCimdDeps(proxy: OutboundProxy): CimdFetcherDeps {
   return {
     resolve: resolveCimdHost,
     request: async (input) => {
@@ -447,7 +506,9 @@ export function createCimdDeps(env: NodeJS.ProcessEnv = process.env): CimdFetche
         maxBodyBytes: CIMD_MAX_BODY_BYTES,
         connectTimeoutMs: input.connectTimeoutMs,
         totalTimeoutMs: input.totalTimeoutMs,
-        env,
+        proxy,
+        // 刻意**不**设置 `caOverride`：生产入口必须走系统默认 CA 信任链
+        // （设计 §10.2）。信任锚覆盖只属于测试注入。
       });
       return {
         status: response.status,
@@ -705,24 +766,54 @@ export function validateCimdDocument(doc: Record<string, unknown>, clientId: str
     if (!check.ok) return docFail("document", `redirect_uri "${uri}": ${check.detail}`);
   }
 
-  // 草案 §6：grant_types / response_types 与 AS 支持集求交集，空交集必须拒绝。
-  const grantTypes = readStringArray(doc.grant_types);
-  if (grantTypes === "invalid") return docFail("document", "grant_types must be a string array");
-  if (grantTypes !== null && !grantTypes.some((type) => SUPPORTED_GRANT_TYPES.has(type))) {
+  // RFC 7591 §2 的缺省值（设计 §5.6）：**只有省略字段**才走默认。
+  // 空数组 `[]` 是「声明了但为空」——交集必空，按 §6 拒绝；两者不可混。
+  const declaredGrantTypes = readStringArray(doc.grant_types);
+  if (declaredGrantTypes === "invalid") {
+    return docFail("document", "grant_types must be a string array");
+  }
+  const grantTypes = declaredGrantTypes ?? ["authorization_code"];
+
+  const declaredResponseTypes = readStringArray(doc.response_types);
+  if (declaredResponseTypes === "invalid") {
+    return docFail("document", "response_types must be a string array");
+  }
+  const responseTypes = declaredResponseTypes ?? ["code"];
+
+  // 草案 §6：两个数组**各自**与 AS 支持集求交集，空交集必须拒绝。
+  if (!grantTypes.some((type) => SUPPORTED_GRANT_TYPES.has(type))) {
     return docFail("document", "grant_types has no supported value");
   }
-
-  const responseTypes = readStringArray(doc.response_types);
-  if (responseTypes === "invalid") return docFail("document", "response_types must be a string array");
-  if (responseTypes !== null && !responseTypes.some((type) => SUPPORTED_RESPONSE_TYPES.has(type))) {
+  if (!responseTypes.some((type) => SUPPORTED_RESPONSE_TYPES.has(type))) {
     return docFail("document", "response_types has no supported value");
+  }
+
+  /**
+   * RFC 7591 §2.1 交叉一致性（设计 §5.6，[项目策略] terminal）。
+   *
+   * `response_types` 含 `code` ⇒ `grant_types` 必须含 `authorization_code`
+   * （「vice versa」方向）。只声明 `refresh_token`、`response` 走默认 `["code"]`
+   * 的文档自相矛盾：code 只能由 `authorization_code` grant 产生，而它没有任何
+   * 取得首个 code 的途径——**不能因为两个数组各自都有受支持值就放行**。
+   *
+   * 反向（`grant` 含 `authorization_code` ⇒ `response` 含 `code`）对本项目被
+   * 上面的 response 交集检查 subsume：AS 的 `response_types_supported` 只有
+   * `"code"`，`response` 不含 `code` 时交集必空，已经先拒了。
+   */
+  if (responseTypes.includes("code") && !grantTypes.includes("authorization_code")) {
+    return docFail(
+      "document",
+      'inconsistent grant_types/response_types: response_types has "code" but grant_types lacks "authorization_code"',
+    );
   }
 
   const metadata: CimdClientMetadata = {
     clientId,
     clientName,
     redirectUris,
-    grantTypes: grantTypes ?? ["authorization_code", "refresh_token"],
+    // 只声明 `authorization_code` 时不自动带上 `refresh_token`：是否签发
+    // refresh token 由 `grant_types` 是否**显式**含它决定（设计 §12 #11）。
+    grantTypes: [...grantTypes],
     tokenEndpointAuthMethod: "none",
   };
   if (typeof doc.client_uri === "string") metadata.clientUri = doc.client_uri;
@@ -785,10 +876,26 @@ export function parseCimdCachePolicy(cacheControl: string | string[] | undefined
  */
 export async function fetchClientMetadataDocument(
   clientId: string,
-  deps: CimdFetcherDeps = createCimdDeps(),
+  deps: CimdFetcherDeps,
+  options: { trustedIdentifiers?: readonly string[] } = {},
 ): Promise<CimdOutcome> {
   const urlCheck = validateClientIdentifierUrl(clientId);
   if (!urlCheck.ok) return terminal("client_id_url", urlCheck.detail);
+
+  /**
+   * [ID §10.1] 身份冲突检查：**必须在 DNS 之前**（设计 §3.2 纪律 2）。
+   *
+   * 走到这里 `clientId` 已通过 Client Identifier URL 形态校验，因此它必然是
+   * URL 形态——不透明 id（预注册的 `brewphase-desktop` 这类）根本到不了这里，
+   * 由 registry 在查库后按形态分流（设计 §3.2 纪律 4）。
+   *
+   * 一个必然被拒的值不该打开 DNS / 连接面：那既是 SSRF 面（§10.7），也是
+   * 「先联网再发现不该抓」的无谓外泄。
+   */
+  const trusted = options.trustedIdentifiers;
+  if (trusted && trusted.length > 0 && clientIdConflictsWithTrusted(clientId, trusted)) {
+    return terminal("client_id_conflict", "client_id equals a trusted identifier");
+  }
 
   const url = new URL(clientId);
   const budget = deps.totalTimeoutMs ?? CIMD_TOTAL_TIMEOUT_MS;

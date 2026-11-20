@@ -6,7 +6,7 @@ import { createLogger } from "./logger.js";
 import { createDb } from "./db/client.js";
 import { mcpAuthCodes, mcpAuthRequests, mcpDevices, oauthCodes, oauthTransactions } from "./db/schema.js";
 import { loadEnv } from "./env.js";
-import { resolveProviderFetch } from "./net/proxy-fetch.js";
+import { describeOutboundProxy, resolveProviderFetch } from "./net/proxy-fetch.js";
 import { createProviders } from "./oauth/providers.js";
 import { respondError, AppError } from "./security/errors.js";
 import { routeAuth } from "./routes/auth.js";
@@ -21,10 +21,19 @@ import { resolveMcpOAuthEnablement } from "./mcp-oauth/enablement.js";
 export function createContextFromProcessEnv(): AppContext {
   const env = loadEnv(process.env);
   const logger = createLogger(env.logLevel);
+  /**
+   * 启动时记录一次出网代理状态（设计 §9.2）。
+   *
+   * 用 `describeOutboundProxy` 脱敏：http(s) 只输出 `scheme://host:port`，
+   * 协议不可用时只输出协议名——**绝不**输出 userinfo / 密码 / token。
+   * 记在这里（上下文装配）而不是 `loadEnv`：`loadEnv` 保持纯函数，
+   * 测试反复调用它不会刷屏；生产入口每进程只走一次。
+   */
+  logger.info("outbound_proxy", { proxy: describeOutboundProxy(env.outboundProxy) });
   return {
     env,
     db: createDb(env.databaseUrl),
-    providers: createProviders(env, resolveProviderFetch(process.env)),
+    providers: createProviders(env, resolveProviderFetch(env.outboundProxy)),
     logger,
     keyRing: createKeyRing(env.jwtSigningKey, env.jwtSigningKeyPrevious),
   };

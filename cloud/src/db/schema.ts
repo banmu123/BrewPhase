@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   check,
   index,
@@ -377,6 +378,24 @@ export const mcpOauthClients = pgTable(
       withTimezone: true,
       mode: "date",
     }),
+    /**
+     * **唯一 CAS 令牌**（R2，设计 §8.1 / §8.2）：任何改变元数据状态的 UPDATE
+     * （成功刷新 / terminal INVALID / mismatch）都必须 `metadata_version + 1`，
+     * 并以 `WHERE metadata_version = $旧值` 作为条件——0 行即「别人先写了」，
+     * 本次结果一律丢弃。
+     *
+     * **`mode: "number"`**：SQL 类型是 `BIGINT`，但这是一个从 1 起、每次 +1 的
+     * 计数器，永不会接近 `Number.MAX_SAFE_INTEGER`。用 JS `number` 而不是
+     * `bigint` 是为了与项目里其它计数（`epoch`、`generation`）保持同一运行时
+     * 类型——避免「有的地方是 number、有的地方是 bigint」导致的隐式转换与
+     * `===` 比较踩坑。Drizzle 的 `mode: "number"` 在读回时做 `Number(value)`，
+     * 因此无论驱动返回字符串还是数字都得到 JS number。
+     *
+     * **不再是 `metadata_fetched_at`**：R1 用时间戳当令牌，而 terminal INVALID
+     * 不推进它，留下「迟到成功复活 INVALID」的窗口（R2 实测 P1）。整数版本
+     * 无精度、无时钟回拨耦合。
+     */
+    metadataVersion: bigint("metadata_version", { mode: "number" }).notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -399,6 +418,8 @@ export const mcpOauthClients = pgTable(
       "mcp_oauth_clients_grant_types_check",
       sql`${t.grantTypes} <@ ARRAY['authorization_code', 'refresh_token']::text[]`,
     ),
+    // 版本只能递增（设计 §8.1）：0 / 负数意味着「有人绕过 CAS 直接写列」。
+    check("mcp_oauth_clients_metadata_version_check", sql`${t.metadataVersion} >= 1`),
   ],
 );
 
@@ -550,7 +571,7 @@ export const mcpSessions = pgTable(
     index("mcp_sessions_absolute_expires_idx").on(t.absoluteExpiresAt),
     check(
       "mcp_sessions_revoked_reason_check",
-      sql`${t.revokedReason} is null or ${t.revokedReason} in ('user_revoke', 'grant_revoked', 'refresh_reuse', 'client_revoke')`,
+      sql`${t.revokedReason} is null or ${t.revokedReason} in ('user_revoke', 'grant_revoked', 'refresh_reuse', 'client_revoke', 'client_id_mismatch')`,
     ),
     // 绝对上限必须晚于起点。反过来的行意味着「出生即过期」，
     // 那不该是数据，而该是插入代码里的 bug。

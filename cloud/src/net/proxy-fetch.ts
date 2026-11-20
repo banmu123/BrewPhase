@@ -58,15 +58,82 @@ export function shouldBypassProxy(hostname: string, noProxy: string | undefined)
   return false;
 }
 
+/* ------------------------------------------------------------------------- *
+ * 已解析的出网代理配置（Phase 1.3.1-C3c-3B-1，设计 §9.2）
+ *
+ * 由 `loadEnv()` **唯一**从环境变量解析一次；Provider fetch 与 CIMD pinned
+ * 请求都消费这个结构。业务代码不再各自读 `process.env`——那正是 R2v-F10 的
+ * 根因（直连用例被宿主机 `HTTPS_PROXY` 静默劫持），也会产生「provider 能通、
+ * CIMD 不能」的分裂配置。
+ * ------------------------------------------------------------------------- */
+
+/** 代理协议形态（由 `loadEnv` 解析得出）。 */
+export type OutboundProxyScheme = "http" | "https" | "unsupported";
+
+export interface OutboundProxy {
+  /**
+   * 配置的代理地址**原文**（可能含 userinfo）；`null` = 未配置任何代理变量。
+   * 保留原文是为了 CONNECT 认证时能取到账号口令；消费方一律经
+   * `parseProxyUrl()` 解析，不直接拼接。
+   */
+  url: string | null;
+  /** `NO_PROXY` 原文（逗号分隔；匹配时大小写不敏感）。 */
+  noProxy: string;
+  /**
+   * 协议形态。**只有 `url !== null` 时有意义。**
+   *
+   * `unsupported` = 配置了代理但协议不可用（如 `socks5://`）：
+   * Provider 告警后回退直连；CIMD **必须失败**——「代理配错就直连」会让
+   * DNS Pinning 在无人察觉的情况下失效。
+   */
+  scheme: OutboundProxyScheme;
+}
+
+/** 未配置代理的规范值（测试与「直连」分支用）。 */
+export function directOutboundProxy(noProxy = ""): OutboundProxy {
+  return { url: null, noProxy, scheme: "http" };
+}
+
+/**
+ * 代理配置的**脱敏**描述，用于启动日志（设计 §9.2）。
+ *
+ * 绝不输出 userinfo / 密码 / token：http(s) 只输出 `scheme://host:port`
+ * （与 `resolveProviderFetch` 的日志纪律一致）。协议不可用时**只输出协议名**，
+ * 连主机名都不带——那种配置本身就可疑，没有理由把它完整写进日志。
+ */
+export function describeOutboundProxy(proxy: OutboundProxy): string {
+  if (!proxy.url) return "not configured (direct)";
+  if (proxy.scheme === "unsupported") {
+    const match = /^([A-Za-z][A-Za-z0-9+.-]*):\/\//.exec(proxy.url);
+    const scheme = match?.[1] ?? "unknown";
+    return `unsupported scheme "${scheme}" (provider connects directly; CIMD fetches fail closed)`;
+  }
+  const parsed = parseProxyUrl(proxy.url);
+  if (!parsed) {
+    return `unparseable ${proxy.scheme} proxy (provider connects directly; CIMD fetches fail closed)`;
+  }
+  const port = parsed.port || (parsed.protocol === "https:" ? "443" : "80");
+  const noProxyNote = proxy.noProxy.trim() ? `; no_proxy=${proxy.noProxy.trim()}` : "";
+  return `${parsed.protocol}//${parsed.hostname}:${port}${noProxyNote}`;
+}
+
 /**
  * 代理连接的附加选项。
  *
- * 刻意**只有** `ca`：没有 `rejectUnauthorized`，也没有任何关闭证书校验的通道。
- * 它只影响「到代理那一跳」，目标服务器的证书校验不受影响。
+ * 刻意**只有** `caOverride`：没有 `rejectUnauthorized`，也没有任何关闭证书校验
+ * 的通道。它只影响「到代理那一跳」，目标服务器的证书校验不受影响。
  */
 export interface TunnelOptions {
-  /** 附加信任锚（私有 CA / 测试证书）。 */
-  ca?: string | string[];
+  /**
+   * 信任锚**覆盖**（私有 CA / 测试证书），**仅测试注入**。
+   *
+   * 按 Node 官方文档（`tls.createSecureContext` 的 `ca` 条目），指定 `ca` 会
+   * **完全替换**默认信任链，而不是像 `NODE_EXTRA_CA_CERTS` 那样追加
+   * （"If specified, the default list would be completely replaced (instead of
+   * being concatenated)"）。名字里的 `Override` 就是在表达这个「替换」语义——
+   * 读成「追加」会让人误以为系统默认 CA 仍然生效。
+   */
+  caOverride?: string | string[];
   /**
    * 中止信号。总预算耗尽时由调用方触发：**建连阶段的 socket 不属于任何
    * request**，只 destroy request 管不到它，必须自己收。
@@ -105,7 +172,7 @@ function connectToProxy(proxy: URL, timeoutMs: number, options: TunnelOptions): 
           port: endpoint.port,
           // IP 字面量不能作为 SNI（RFC 6066），证书按 IP SAN 校验。
           ...(net.isIP(endpoint.host) === 0 ? { servername: endpoint.host } : {}),
-          ca: options.ca,
+          ca: options.caOverride,
         })
       : net.connect({ host: endpoint.host, port: endpoint.port });
 
@@ -393,31 +460,38 @@ export function createProxyFetch(proxy: URL): typeof fetch {
 }
 
 /**
- * 按环境选择 Provider 出网的 fetch。
+ * 按**已解析的**代理配置选择 Provider 出网的 fetch（设计 §9.2）。
  *
  * 未配置代理 → 原生 fetch（默认行为，一行不变）。
  * 配了代理 → 走隧道；`NO_PROXY` 命中的主机仍直连。
+ * 协议不可用（`unsupported`）→ 告警后**回退直连**（Provider 的既有语义；
+ * CIMD 走 `resolvePinnedProxy`，那里是硬失败）。
+ *
+ * `proxy` 是必传参数：不再从 `process.env` 兜底，漏传在类型层就编译不过。
  */
 export function resolveProviderFetch(
-  env: NodeJS.ProcessEnv = process.env,
+  proxy: OutboundProxy,
   baseFetch: typeof fetch = fetch,
 ): typeof fetch {
-  const raw = env.HTTPS_PROXY ?? env.https_proxy ?? env.HTTP_PROXY ?? env.http_proxy ?? "";
-  if (!raw.trim()) return baseFetch;
+  if (!proxy.url) return baseFetch;
 
-  const proxy = parseProxyUrl(raw);
-  if (!proxy) {
+  if (proxy.scheme === "unsupported") {
     // 不支持的类型（例如 socks5://）：明确回退直连，不假装成功。
     console.warn("[net] unsupported proxy URL for provider traffic; using a direct connection");
     return baseFetch;
   }
+  const parsed = parseProxyUrl(proxy.url);
+  if (!parsed) {
+    console.warn("[net] unsupported proxy URL for provider traffic; using a direct connection");
+    return baseFetch;
+  }
 
-  const noProxy = env.NO_PROXY ?? env.no_proxy;
+  const noProxy = proxy.noProxy;
   console.info(
-    `[net] provider traffic goes through proxy ${proxy.hostname}:${proxy.port || (proxy.protocol === "https:" ? 443 : 80)}`,
+    `[net] provider traffic goes through proxy ${parsed.hostname}:${parsed.port || (parsed.protocol === "https:" ? 443 : 80)}`,
   );
 
-  const proxied = createProxyFetch(proxy);
+  const proxied = createProxyFetch(parsed);
   const routed: typeof fetch = (input, init) => {
     let hostname: string;
     try {
@@ -474,28 +548,35 @@ export function pinnedLookup(
 }
 
 /**
- * CIMD 的代理选择。
+ * CIMD 的代理选择（消费 `loadEnv` 解析好的 `OutboundProxy`）。
  *
  * 与 `resolveProviderFetch` 的关键差别：**不支持的类型必须抛错**。那里可以先
  * 告警再直连，因为「直连 Google」并不会把请求送到一个本该被拦住的地方；而
  * CIMD 的 client_id 由对端提供，一旦「代理配错了就直连」，DNS Pinning 就在
  * 无人察觉的情况下失效了。
+ *
+ * 判定顺序：未配置 → 直连；协议不可用 → **抛错**（先于 `NO_PROXY`，避免
+ * 「socks5 + NO_PROXY 命中」被当成合法直连）；`NO_PROXY` 命中 → 直连；其余 →
+ * 解析出代理 URL。
  */
 export function resolvePinnedProxy(
   hostname: string,
-  env: NodeJS.ProcessEnv = process.env,
+  proxy: OutboundProxy,
 ): URL | null {
-  const raw = env.HTTPS_PROXY ?? env.https_proxy ?? env.HTTP_PROXY ?? env.http_proxy ?? "";
-  if (!raw.trim()) return null;
-
-  const proxy = parseProxyUrl(raw);
-  if (!proxy) {
+  if (!proxy.url) return null;
+  if (proxy.scheme === "unsupported") {
     throw new Error(
       "[net] unsupported proxy URL for pinned request; refusing to bypass the proxy",
     );
   }
-  if (shouldBypassProxy(hostname, env.NO_PROXY ?? env.no_proxy)) return null;
-  return proxy;
+  if (shouldBypassProxy(hostname, proxy.noProxy)) return null;
+  const parsed = parseProxyUrl(proxy.url);
+  if (!parsed) {
+    throw new Error(
+      "[net] unsupported proxy URL for pinned request; refusing to bypass the proxy",
+    );
+  }
+  return parsed;
 }
 
 /**
@@ -663,7 +744,11 @@ export interface PinnedRequestOptions {
   maxBodyBytes: number;
   connectTimeoutMs?: number;
   totalTimeoutMs?: number;
-  env?: NodeJS.ProcessEnv;
+  /**
+   * 已解析的出网代理（`loadEnv` 唯一解析点）。**必传**：漏传会静默直连，
+   * 正是 R2v-F10（直连用例被宿主机 `HTTPS_PROXY` 劫持）的根因。
+   */
+  proxy: OutboundProxy;
   /**
    * 信任锚**覆盖**（私有 CA / 测试证书），对**代理那一跳与目标那一跳**都生效。
    *
@@ -671,12 +756,12 @@ export interface PinnedRequestOptions {
    * 指定 `ca` 会**完全替换**默认信任链，而不是像 `NODE_EXTRA_CA_CERTS` 那样
    * 追加（"If specified, the default list would be completely replaced
    * (instead of being concatenated)"）。所以这个字段一旦设置，调用方就同时
-   * 失去了对公共 CA 的信任——它只应作为测试注入使用。
+   * 失去了对公共 CA 的信任——`Override` 的名字正是在表达这层「替换」语义。
    *
    * 无论如何都不改变「必须验证」：没有 `rejectUnauthorized` 字段，也没有任何
-   * 关闭校验的入口。C3c-3B 将把它重命名为 `caOverride` 并从生产入口移除。
+   * 关闭校验的入口。**仅测试注入**，生产入口（`createCimdDeps`）不设置它。
    */
-  ca?: string | string[];
+  caOverride?: string | string[];
 }
 
 export interface PinnedResponse {
@@ -710,12 +795,12 @@ export async function requestPinnedHttps(options: PinnedRequestOptions): Promise
     maxBodyBytes,
     connectTimeoutMs = PINNED_CONNECT_TIMEOUT_MS,
     totalTimeoutMs = PINNED_TOTAL_TIMEOUT_MS,
-    env = process.env,
-    ca,
+    proxy: outboundProxy,
+    caOverride,
   } = options;
 
   const port = Number(url.port || 443);
-  const proxy = resolvePinnedProxy(url.hostname, env);
+  const proxy = resolvePinnedProxy(url.hostname, outboundProxy);
 
   return await new Promise<PinnedResponse>((resolve, reject) => {
     let settled = false;
@@ -760,7 +845,7 @@ export async function requestPinnedHttps(options: PinnedRequestOptions): Promise
       // 证书校验与 SNI 都按原始域名做，绝不改成 IP。
       servername: url.hostname,
       rejectUnauthorized: true,
-      ca,
+      ca: caOverride,
     };
 
     if (proxy) {
@@ -778,11 +863,11 @@ export async function requestPinnedHttps(options: PinnedRequestOptions): Promise
           proxy,
           { host: authorityHost(pinnedAddress, addressFamily), port },
           connectTimeoutMs,
-          { ca, signal: controller.signal },
+          { caOverride, signal: controller.signal },
         )
           .then((socket) => {
             // 隧道之上按**目标域名**做 TLS：SNI、证书校验、信任锚都按目标来。
-            const secure = tls.connect({ socket, servername: url.hostname, ca });
+            const secure = tls.connect({ socket, servername: url.hostname, ca: caOverride });
             let handshaking = true;
             // R2 复审（F9）：隧道交出之后、TLS 握手完成之前，socket 既不属于
             // request（callback 还没回调），abort 监听也已被 openTunnel 的

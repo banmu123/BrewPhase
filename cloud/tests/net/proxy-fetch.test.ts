@@ -6,6 +6,7 @@ import net from "node:net";
 import { describe, expect, it } from "vitest";
 import {
   createProxyFetch,
+  directOutboundProxy,
   openTunnel,
   parseProxyUrl,
   requestPinnedHttps,
@@ -198,7 +199,7 @@ describe("openTunnel 的 HTTPS 代理（R1-1）", () => {
         new URL(proxy.url),
         { host: "93.184.216.34", port: 443 },
         2000,
-        { ca: TEST_CERT },
+        { caOverride: TEST_CERT },
       );
       // 代理侧看到的是 CONNECT，说明握手完成之后才发的请求。
       expect(proxy.seen).toEqual(["93.184.216.34:443"]);
@@ -402,11 +403,11 @@ describe("目标侧 TLS 与 SNI / Host（R2-1 端到端）", () => {
         pinnedAddress: "127.0.0.1",
         addressFamily: 4,
         maxBodyBytes: 5 * 1024,
-        ca: TEST_CERT,
+        caOverride: TEST_CERT,
         totalTimeoutMs: 4000,
-        // 显式清空代理环境：env 缺省是 process.env，任何配了 HTTPS_PROXY 的
-        // 机器都会把「直连」测试偷换成「经系统代理」，直连分支从此无人测到。
-        env: {},
+        // 显式传直连代理：proxy 是必传参数，任何配了宿主机 HTTPS_PROXY 的
+        // 机器都不会把「直连」测试偷换成「经系统代理」，直连分支从此有人测到。
+        proxy: directOutboundProxy(),
       });
       expect(response.status).toBe(200);
       expect(response.body.toString("utf8")).toBe('{"ok":true}');
@@ -428,7 +429,7 @@ describe("目标侧 TLS 与 SNI / Host（R2-1 端到端）", () => {
           addressFamily: 4,
           maxBodyBytes: 5 * 1024,
           totalTimeoutMs: 4000,
-          env: {},
+          proxy: directOutboundProxy(),
           // 不传 ca：自签名证书必须被拒。
         }),
       ).rejects.toMatchObject({ code: expect.stringMatching(/CERT|VERIFY/) });
@@ -447,9 +448,9 @@ describe("目标侧 TLS 与 SNI / Host（R2-1 端到端）", () => {
         pinnedAddress: "127.0.0.1",
         addressFamily: 4,
         maxBodyBytes: 5 * 1024,
-        ca: TEST_CERT,
+        caOverride: TEST_CERT,
         totalTimeoutMs: 4000,
-        env: { HTTPS_PROXY: proxy.url },
+        proxy: { url: proxy.url, noProxy: "", scheme: "http" },
       });
       expect(response.status).toBe(200);
       // CONNECT 的目标是 pinned IP，不是域名。
@@ -473,7 +474,7 @@ describe("目标侧 TLS 与 SNI / Host（R2-1 端到端）", () => {
           addressFamily: 4,
           maxBodyBytes: 5 * 1024,
           totalTimeoutMs: 2000,
-          env: { HTTPS_PROXY: proxy.url },
+          proxy: { url: proxy.url, noProxy: "", scheme: "http" },
         }),
       ).rejects.toMatchObject({ code: expect.stringMatching(/CERT|VERIFY/) });
       expect(proxy.seen).toEqual([]);
@@ -496,9 +497,9 @@ describe("目标侧 TLS 与 SNI / Host（R2-1 端到端）", () => {
           pinnedAddress: "127.0.0.1",
           addressFamily: 4,
           maxBodyBytes: 5 * 1024,
-          ca: TEST_CERT,
+          caOverride: TEST_CERT,
           totalTimeoutMs: 4000,
-          env: { HTTPS_PROXY: proxy.url },
+          proxy: { url: proxy.url, noProxy: "", scheme: "http" },
         }),
       ).rejects.toMatchObject({
         code: expect.stringMatching(/CERT|ALTNAME|VERIFY|TLS/),
@@ -533,7 +534,7 @@ describe("目标侧 TLS 与 SNI / Host（R2-1 端到端）", () => {
           // 连接超时故意长于总预算：由总定时器先触发。
           connectTimeoutMs: 5_000,
           totalTimeoutMs: 150,
-          env: { HTTPS_PROXY: `http://127.0.0.1:${proxyPort}` },
+          proxy: { url: `http://127.0.0.1:${proxyPort}`, noProxy: "", scheme: "http" },
         }),
       ).rejects.toThrow(/timed out \(total\)/);
 
@@ -571,7 +572,7 @@ describe("各阶段超时（R2-2）", () => {
           connectTimeoutMs: 120,
           // 总预算远大于连接超时，确保是 CONNECT 阶段先超时。
           totalTimeoutMs: 4_000,
-          env: { HTTPS_PROXY: `http://127.0.0.1:${proxyPort}` },
+          proxy: { url: `http://127.0.0.1:${proxyPort}`, noProxy: "", scheme: "http" },
         }),
       ).rejects.toThrow(/proxy CONNECT timed out after 120ms/);
 
@@ -598,7 +599,7 @@ describe("各阶段超时（R2-2）", () => {
         connectTimeoutMs: 150,
         // 总预算远大于连接超时：若不是连接超时生效，会报 timed out (total)。
         totalTimeoutMs: 5_000,
-        env: { HTTPS_PROXY: "http://192.0.2.1:81" },
+        proxy: { url: "http://192.0.2.1:81", noProxy: "", scheme: "http" },
       }),
     ).rejects.toThrow(/proxy connection timed out after 150ms/);
   });
@@ -622,10 +623,10 @@ describe("各阶段超时（R2-2）", () => {
           pinnedAddress: "127.0.0.1",
           addressFamily: 4,
           maxBodyBytes: 5 * 1024,
-          ca: TEST_CERT,
+          caOverride: TEST_CERT,
           connectTimeoutMs: 1_000,
           totalTimeoutMs: 300,
-          env: {}, // 直连路径：必须与环境代理隔离（理由见上文）。
+          proxy: directOutboundProxy(), // 直连路径：必须与环境代理隔离（理由见上文）。
         }),
       ).rejects.toThrow(/timed out \(total\)/);
     } finally {
@@ -673,7 +674,7 @@ describe("各阶段超时（R2-2）", () => {
           // 连接超时故意远大于总预算：由总定时器先触发，且触发点落在 TLS 握手窗口。
           connectTimeoutMs: 10_000,
           totalTimeoutMs: 300,
-          env: { HTTPS_PROXY: `http://127.0.0.1:${proxyPort}` },
+          proxy: { url: `http://127.0.0.1:${proxyPort}`, noProxy: "", scheme: "http" },
         }),
       ).rejects.toThrow(/timed out \(total\)/);
 
@@ -754,18 +755,23 @@ describe("Provider 通道的代理协议一致性", () => {
 describe("resolveProviderFetch", () => {
   const baseFetch = (() => Promise.resolve(new Response("direct"))) as typeof fetch;
 
-  it("没有任何代理变量时返回原生 fetch（默认行为不变）", () => {
-    expect(resolveProviderFetch({}, baseFetch)).toBe(baseFetch);
-    expect(resolveProviderFetch({ HTTPS_PROXY: "  " }, baseFetch)).toBe(baseFetch);
+  it("未配置代理时返回原生 fetch（默认行为不变）", () => {
+    expect(resolveProviderFetch(directOutboundProxy(), baseFetch)).toBe(baseFetch);
+    expect(resolveProviderFetch(directOutboundProxy(".example.com"), baseFetch)).toBe(baseFetch);
   });
 
-  it("不支持的代理类型回退直连", () => {
-    expect(resolveProviderFetch({ HTTPS_PROXY: "socks5://127.0.0.1:1080" }, baseFetch)).toBe(baseFetch);
+  it("不支持的代理类型回退直连（Provider 语义；CIMD 走 resolvePinnedProxy 硬失败）", () => {
+    expect(
+      resolveProviderFetch(
+        { url: "socks5://127.0.0.1:1080", noProxy: "", scheme: "unsupported" },
+        baseFetch,
+      ),
+    ).toBe(baseFetch);
   });
 
   it("配了代理时 Provider 主机走隧道，NO_PROXY 命中的主机仍直连", async () => {
     const proxied = resolveProviderFetch(
-      { HTTPS_PROXY: "http://127.0.0.1:1", NO_PROXY: "127.0.0.1" },
+      { url: "http://127.0.0.1:1", noProxy: "127.0.0.1", scheme: "http" },
       baseFetch,
     );
     expect(proxied).not.toBe(baseFetch);

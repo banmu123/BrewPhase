@@ -1734,6 +1734,44 @@ D：规范 8）；A 组全部要求真实 PG + 行锁 + `pg_stat_activity` 断�
 
 **R2 报告**：`cloud/docs/reviews/phase-1.3.1-c3c-3a-r2-design-review.md`。
 
+### 3.27 1.3.1-C3c-3B-1 已完成（基础设施、迁移与 CIMD 纯校验层）
+
+实施轮（**非设计推翻**）。基线 `3b0ff0a`。**未接入** authorize / consent / token，
+**未实现** `cimd-registry.ts`，**未声明** CIMD 能力，**未改** Desktop。
+
+**三个边界在编码前冻结**（写入设计 §8.5，3B-2 直接照做）：
+
+| 边界 | 结论 |
+|---|---|
+| **CAS 失败后** | 成功刷新 CAS 失败 → **503 fail-closed、不建授权请求、不用自身结果**；mismatch CAS 失败 → **400 按自身结果拒绝但零 DB 写入**（不撤销、不写成功审计）；行已删除 → 400、不重新 INSERT；DB 异常 → 整事务 rollback。重读**只以数据库当前行为权威**，不合并失败请求的旧 metadata |
+| **Consent POST 失败** | 四条件**先于** Grant / Code 写入；metadata invalid 拒绝**零副作用**；**删行 + 审计必须提交**（禁止整体 rollback 吞掉两者）；DB 异常仍 rollback |
+| **ABSENT terminal 频率** | **不受 30 秒 floor 保护**；已有 authorize **按 IP 限流**（`mcp-oauth` 桶，默认 30 次 / 60 秒、`clientKey` 归因、进程内 Map、`GATEWAY_EXPECTED_REPLICAS=1` 单实例即全局、`maxBuckets=10000` overflow）；最小负面冷却（只存时间戳、**不存 `no-store` 内容**）**只定策略、3B-2 实现** |
+
+**交付**：
+
+| 项 | 落点 |
+|---|---|
+| 配置收口 | `env.ts` 的 `Env.outboundProxy`（`HTTPS > https > HTTP > http`、`NO_PROXY`、大小写冲突告警、socks5 → `unsupported`）+ `Env.mcpTrustedPeerIdentifiers`（fail-fast 格式校验）；启动日志经 `describeOutboundProxy` 脱敏（http(s) 只 `host:port`，unsupported 只协议名）；`createCimdDeps(proxy)` 去默认参数；`resolveProviderFetch` / `resolvePinnedProxy` / `PinnedRequestOptions.proxy` 全部消费统一配置，`process.env` 只剩 `loadEnv` 一个入口 |
+| TLS 语义 | `TunnelOptions.ca` / `PinnedRequestOptions.ca` → **`caOverride`**（表达 Node 的**替换**语义）；校验强度不变、无关闭校验入口；`createCimdDeps` 不设置 `caOverride` |
+| 迁移 0004 | `mcp_sessions_revoked_reason_check` 增 `client_id_mismatch`（保留全部旧值）；journal idx 4 + 快照 |
+| 迁移 0005 | `mcp_oauth_clients` 加 `metadata_version BIGINT NOT NULL DEFAULT 1` + `CHECK >= 1`；**无回填**；journal idx 5 + 快照 |
+| Drizzle Schema | `metadataVersion: bigint(..., { mode: "number" })` — **实测**：裸 postgres.js 读回**字符串 `"1"`**、Drizzle 列映射读回 **JS number `1`**；**生产读路径必须走 Drizzle**，否则 `=== 1` 静默失败 |
+| `cimd.ts` 纯校验 | `conflictsWithTrustedIdentifier` / `isUrlShapedClientId` / `clientIdConflictsWithTrusted`；grant 缺省 `["authorization_code"]`、response 缺省 `["code"]`、**空数组 ≠ 省略**、**§5.6 交叉一致性**（`[refresh_token]/[code]` 拒）；`fetchClientMetadataDocument` 支持 `trustedIdentifiers`（**DNS 之前**）；`CimdFailureReason` + `client_id_conflict` |
+
+**测试**：新增 `tests/env/env-proxy.test.ts`（16 条）+ 迁移 describe（3 条）+
+CIMD 2 describe（12 条）；修订 3 条既有断言（**均为 R2 契约要求、非弱化**）。
+
+**门禁（实测）**：`tsc --noEmit` ✅ · `eslint src tests` ✅ ·
+`vitest run` **1397 passed / 66 files**（基线 1355 / 65 → **+42 / +1**）·
+`drizzle-kit generate` 两次产出 0004/0005 + journal + 快照 ·
+`.update(mcpOauthClients)` 扫描 **0 处**（尚无 UPDATE 路径，3B-2 补守卫）·
+Desktop 无改动 · `discovery.ts` 未改（**未声明能力**）。
+
+**范围**：无 authorize / consent / token 生产逻辑改动、无 `cimd-registry.ts`、
+无新依赖、未改 Desktop、未声明 `client_id_metadata_document_supported`。
+
+**报告**：`cloud/docs/reviews/phase-1.3.1-c3c-3b-1-foundation-review.md`。
+
 ### 3.5 风险
 
 - **客户端注册方式未验证**（DCR 是否必需、是否支持 CIMD、是否发送 `resource`、

@@ -5,6 +5,7 @@ import {
   PINNED_REQUEST_HEADERS,
   authorityHost,
   declaredLengthExceeds,
+  directOutboundProxy,
   pinnedLookup,
   readPinnedResponse,
   readResponseBody,
@@ -273,32 +274,57 @@ describe("pinnedLookup（DNS Pinning）", () => {
 
 describe("resolvePinnedProxy", () => {
   it("没有代理配置 → 直连", () => {
-    expect(resolvePinnedProxy("client.example.com", {})).toBeNull();
+    expect(resolvePinnedProxy("client.example.com", directOutboundProxy())).toBeNull();
   });
 
-  it("配置代理 → 走代理（大小写变量名都认）", () => {
-    expect(resolvePinnedProxy("client.example.com", { HTTPS_PROXY: "http://127.0.0.1:7900" })?.port).toBe(
-      "7900",
-    );
-    expect(resolvePinnedProxy("client.example.com", { https_proxy: "http://127.0.0.1:7901" })?.port).toBe(
-      "7901",
-    );
+  it("配置代理 → 走代理（http / https 都认）", () => {
+    expect(
+      resolvePinnedProxy("client.example.com", {
+        url: "http://127.0.0.1:7900",
+        noProxy: "",
+        scheme: "http",
+      })?.port,
+    ).toBe("7900");
+    expect(
+      resolvePinnedProxy("client.example.com", {
+        url: "https://127.0.0.1:7901",
+        noProxy: "",
+        scheme: "https",
+      })?.port,
+    ).toBe("7901");
   });
 
   it("NO_PROXY 命中 → 直连", () => {
     expect(
       resolvePinnedProxy("client.example.com", {
-        HTTPS_PROXY: "http://127.0.0.1:7900",
-        NO_PROXY: ".example.com",
+        url: "http://127.0.0.1:7900",
+        noProxy: ".example.com",
+        scheme: "http",
       }),
     ).toBeNull();
   });
 
   it("不支持的代理类型必须抛错，绝不静默绕过", () => {
     // Provider 通道在这种情况下会回退直连；CIMD 不行——那等于 DNS Pinning 失效。
-    expect(() => resolvePinnedProxy("client.example.com", { HTTPS_PROXY: "socks5://127.0.0.1:1080" })).toThrow(
-      /refusing to bypass the proxy/,
-    );
+    expect(() =>
+      resolvePinnedProxy("client.example.com", {
+        url: "socks5://127.0.0.1:1080",
+        noProxy: "",
+        scheme: "unsupported",
+      }),
+    ).toThrow(/refusing to bypass the proxy/);
+  });
+
+  it("socks5 + NO_PROXY 命中仍然抛错（协议不可用先于 NO_PROXY 判定）", () => {
+    // 判定顺序：协议不可用**先于** NO_PROXY。否则「代理配错 + 恰好命中
+    // NO_PROXY」会被当成合法直连，DNS Pinning 在无人察觉下失效。
+    expect(() =>
+      resolvePinnedProxy("client.example.com", {
+        url: "socks5://127.0.0.1:1080",
+        noProxy: ".example.com",
+        scheme: "unsupported",
+      }),
+    ).toThrow(/refusing to bypass the proxy/);
   });
 });
 

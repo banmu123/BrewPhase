@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { DEFAULT_MAX_BUCKETS } from "./security/rate-limit.js";
+import { parseProxyUrl, type OutboundProxy } from "./net/proxy-fetch.js";
 
 /**
  * 统一环境变量入口。所有配置必须经过这里校验，禁止在业务代码里直接读 process.env。
@@ -57,6 +58,24 @@ const rawSchema = z.object({
   // 可信代理层数：XFF 右端跳过 N 个条目后取客户端 IP（默认 1 = 单层反代）
   TRUST_PROXY_HOPS: z.coerce.number().int().min(1).max(5).default(1),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+
+  /**
+   * 出网代理（设计 §9.2）：**只在这里解析一次**，业务代码不再读 `process.env`。
+   * 四个变量按 `HTTPS_PROXY > https_proxy > HTTP_PROXY > http_proxy` 取第一个非空值；
+   * `NO_PROXY` 同理（`NO_PROXY > no_proxy`）。大小写同时存在且不一致时大写胜出并告警。
+   */
+  HTTPS_PROXY: z.string().optional(),
+  https_proxy: z.string().optional(),
+  HTTP_PROXY: z.string().optional(),
+  http_proxy: z.string().optional(),
+  NO_PROXY: z.string().optional(),
+  no_proxy: z.string().optional(),
+
+  /**
+   * 受信 AS / RS 标识符（逗号分隔），只用于 [ID §10.1] 身份冲突检查（设计 §3.2）。
+   * 来自配置、不来自任何网络输入；格式在 `loadEnv` 里 fail-fast 校验。
+   */
+  MCP_TRUSTED_PEER_IDENTIFIERS: z.string().default(""),
 
   /**
    * 期望的 Gateway 副本数（协议 §12.2）。
@@ -132,6 +151,17 @@ export type Env = {
   /** XFF 右端跳过的可信代理条目数（1 = 单层反代）。 */
   trustProxyHops: number;
   logLevel: "debug" | "info" | "warn" | "error";
+
+  /**
+   * 出网代理（设计 §9.2）。由 `loadEnv()` **唯一**解析；Provider fetch 与
+   * CIMD pinned 请求都消费它，业务代码不再各自读 `process.env`。
+   */
+  outboundProxy: OutboundProxy;
+  /**
+   * 受信 AS / RS 标识符（[ID §10.1] 身份冲突检查的比较对象）。
+   * 只来自配置；每个条目必须是绝对 http(s) URL，否则启动即拒绝。
+   */
+  mcpTrustedPeerIdentifiers: readonly string[];
 
   /** Remote MCP 单实例约束与 WSS 主机白名单（协议 §12.2）。 */
   gateway: {
@@ -261,6 +291,81 @@ function enforceProductionSecrets(
       `[env] refusing to start in production:\n  - ${problems.join("\n  - ")}`,
     );
   }
+}
+
+/**
+ * 解析出网代理（设计 §9.2）。
+ *
+ * **只在这里读代理环境变量**：`resolveProviderFetch` / `resolvePinnedProxy`
+ * / `createCimdDeps` 全部消费返回值，不再各自读 `process.env`。
+ *
+ * 优先级与现行 `resolveProviderFetch` 一致：
+ * `HTTPS_PROXY > https_proxy > HTTP_PROXY > http_proxy`，`NO_PROXY > no_proxy`。
+ * 大小写同时出现且**取值不同**时大写胜出并告警一次——「配了小写以为生效、
+ * 实际被大写盖掉」是最难查的一类代理故障。
+ *
+ * 解析失败（如 `socks5://`）不抛错：记为 `scheme: "unsupported"`，由消费方
+ * 决定处置（Provider 告警后直连；CIMD 硬失败）。
+ */
+function resolveOutboundProxy(input: Record<string, string | undefined>): OutboundProxy {
+  const warnCaseConflict = (upper: string, lower: string): void => {
+    const hi = input[upper];
+    const lo = input[lower];
+    if (hi === undefined || lo === undefined) return;
+    if (hi.trim() === lo.trim()) return;
+    warn(`${upper} and ${lower} are both set and differ — ${upper} wins`);
+  };
+  warnCaseConflict("HTTPS_PROXY", "https_proxy");
+  warnCaseConflict("HTTP_PROXY", "http_proxy");
+
+  const pick = (...names: string[]): string | undefined => {
+    for (const name of names) {
+      const value = input[name];
+      if (value !== undefined && value.trim() !== "") return value;
+    }
+    return undefined;
+  };
+
+  const raw = pick("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy");
+  const noProxy = pick("NO_PROXY", "no_proxy") ?? "";
+  if (!raw) return { url: null, noProxy, scheme: "http" };
+
+  const parsed = parseProxyUrl(raw);
+  if (!parsed) return { url: raw, noProxy, scheme: "unsupported" };
+  return { url: raw, noProxy, scheme: parsed.protocol === "https:" ? "https" : "http" };
+}
+
+/**
+ * 解析受信 AS / RS 标识符（[ID §10.1] 身份冲突检查的比较对象）。
+ *
+ * **fail-fast**：格式错误的条目永远匹配不上任何 client_id，于是「你以为配了
+ * 防护、实际一条都没生效」——那比启动失败危险得多。
+ *
+ * 每个条目必须是**绝对 http(s) URL**（与 issuer / MCP resource 同形）。
+ * 回显取值：这些是公开标识符（不是凭据），且操作者需要看到自己写错了什么。
+ */
+function parseTrustedPeerIdentifiers(raw: string): string[] {
+  const entries = raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  for (const entry of entries) {
+    let url: URL;
+    try {
+      url = new URL(entry);
+    } catch {
+      throw new Error(
+        `[env] MCP_TRUSTED_PEER_IDENTIFIERS entry is not an absolute URL: "${entry}"`,
+      );
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error(
+        `[env] MCP_TRUSTED_PEER_IDENTIFIERS entry must be an http(s) URL: "${entry}"`,
+      );
+    }
+  }
+  return entries;
 }
 
 export function loadEnv(input: Record<string, string | undefined>): Env {
@@ -396,6 +501,11 @@ export function loadEnv(input: Record<string, string | undefined>): Env {
     trustProxy: parsed.TRUST_PROXY,
     trustProxyHops: parsed.TRUST_PROXY_HOPS,
     logLevel: parsed.LOG_LEVEL,
+
+    // 代理与受信标识符都在这里**显式**解析一次（设计 §9.2）；启动日志由
+    // `createContextFromProcessEnv()` 记录（脱敏，见 `describeOutboundProxy`）。
+    outboundProxy: resolveOutboundProxy(input),
+    mcpTrustedPeerIdentifiers: parseTrustedPeerIdentifiers(parsed.MCP_TRUSTED_PEER_IDENTIFIERS),
 
     gateway: {
       expectedReplicas: parsed.GATEWAY_EXPECTED_REPLICAS,
