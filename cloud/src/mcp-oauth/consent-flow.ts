@@ -139,6 +139,15 @@ export interface ConsentRequest {
   redirectUri: string;
   /** 只取 host：同意页要显示「回到哪里」，但不必暴露内部查询参数。 */
   redirectHost: string;
+  /**
+   * 回调的**纯 Origin**（`scheme://host[:port]`），供同意页 CSP 的 `form-action`
+   * 使用；解析不出或是非 http(s) 的自定义 scheme 时为空串。
+   *
+   * 与 `redirectHost` 的区别：CSP source 必须带 scheme（且要能和 `origin`
+   * 逐字相等），只给 host 拼出来的 `form-action 127.0.0.1:6276` 是无效 source，
+   * 会被浏览器忽略——那就白修了。
+   */
+  redirectOrigin: string;
   /** 客户端**请求**的 scope（已按 `MCP_SCOPES` 定序、剔除未知值）。 */
   requestedScopes: McpScope[];
   resource: string;
@@ -255,6 +264,21 @@ function hostOf(redirectUri: string): string {
   }
 }
 
+/**
+ * 回调的纯 Origin，给同意页的 CSP `form-action` 用。
+ *
+ * `URL.origin` 对非 http(s) 的自定义 scheme 返回字符串 `"null"`（不是 `null`），
+ * 那不是可用的 CSP source——直接归一成空串，让调用方退回只允许 `'self'`。
+ */
+function originOf(redirectUri: string): string {
+  try {
+    const origin = new URL(redirectUri).origin;
+    return origin === "null" ? "" : origin;
+  } catch {
+    return "";
+  }
+}
+
 export async function loadConsentRequest(
   db: Database,
   input: { rid: string; bindingHash: string; now: Date },
@@ -314,6 +338,7 @@ export async function loadConsentRequest(
       clientIdentifierHost: clientIdentifierDisplay(row.clientId),
       redirectUri: row.redirectUri,
       redirectHost: hostOf(row.redirectUri),
+      redirectOrigin: originOf(row.redirectUri),
       requestedScopes,
       resource: row.resource,
       state: row.state,

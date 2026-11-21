@@ -61,7 +61,12 @@ import {
   type RegistryFailure,
 } from "../mcp-oauth/cimd-registry.js";
 import { syncGrantToOnlineDevice } from "../mcp-oauth/grant-sync.js";
-import { AUTH_PAGE_HEADERS, renderErrorPage, renderLoginPage } from "../mcp-oauth/login-page.js";
+import {
+  AUTH_PAGE_HEADERS,
+  authPageHeaders,
+  renderErrorPage,
+  renderLoginPage,
+} from "../mcp-oauth/login-page.js";
 
 /**
  * MCP 浏览器授权路由（Phase 1.3.1-C2a：authorize / login / callback）。
@@ -849,7 +854,11 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
         })),
       }),
       200,
-      AUTH_PAGE_HEADERS,
+      // 同意页的表单 POST 会 302 回**跨 Origin** 的回调地址；Chromium 把
+      // `form-action 'self'` 也套用到那次重定向上，不放行就会 `ERR_ABORTED`
+      // 把页面钉在原地（Allow / Deny 一起卡死）。放行的 Origin 来自
+      // authorize 阶段已与预注册 redirect_uris 逐字符比对过的值。
+      authPageHeaders({ formActionOrigin: loaded.request.redirectOrigin }),
     );
   });
 

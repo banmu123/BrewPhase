@@ -30,22 +30,90 @@ const PROVIDER_LABELS: Record<ProviderName, string> = {
 };
 
 /**
+ * 一个可写进 CSP `form-action` 的 source 所允许的形态。
+ *
+ * 只收纯 Origin：`scheme://host[:port]`，host 限 ASCII 主机名字符或方括号
+ * IPv6 字面量，端口限数字。刻意**不用** reg-name 的完整字符集（`!'()*+,;=`
+ * 等子定界符）——其中的 `'` 会打断 CSP 自己的引号语法，`=`、`;` 会让解析器
+ * 提前结束该 directive。宁可对极少数带子定界符的主机名退回 `'self'`
+ * （fail-closed，跳转被拦），也不往安全头里放一个能改变 CSP 语义的字符。
+ */
+const CSP_FORM_ACTION_SOURCE =
+  /^https?:\/\/(?:[A-Za-z0-9._~-]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]+)?$/;
+
+/**
+ * 把一个候选 Origin 写成 CSP `form-action` 的**单个 source**，不合法就返回空。
+ *
+ * 两道闸，缺一不可：
+ *
+ * 1. **round-trip**：`new URL(x).origin === x`。这挡掉带 path / query /
+ *    fragment 的串（会被 `origin` 规范化掉）、挡掉非 http(s) 自定义 scheme
+ *    （`origin` 是字符串 `"null"`，不是可用 source）、也挡掉解析失败的串。
+ * 2. **字符白名单**：round-trip 单独不够——URL 解析器会**原样保留 host 里的
+ *    双引号**（`new URL('https://a.example"').origin` 等于它自己），那种串
+ *    照样能通过第 1 道闸。白名单把引号、空白、CR/LF 全部拒掉。
+ *
+ * 返回值已保证只含白名单字符，可以直接拼进 header。
+ */
+function cspFormActionSource(origin: string | undefined): string {
+  if (!origin) return "";
+  if (!/^https?:\/\//i.test(origin)) return "";
+  if (!CSP_FORM_ACTION_SOURCE.test(origin)) return "";
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return "";
+  }
+  if (parsed.origin !== origin) return "";
+  return origin;
+}
+
+/**
  * 授权页的响应头。
  *
  * - `no-store`：授权页不能被任何缓存留存（它带着 `rid`）；
  * - `no-referrer`：跳去 Provider 时不把 `rid` 放进 Referer；
  * - `DENY`：不允许被第三方站点 iframe（点击劫持）；
  * - CSP：只允许同源样式与表单，`default-src 'none'` 让任何意外注入都失效。
+ *
+ * ## `formActionOrigin`：同意页为什么需要它
+ *
+ * 同意页是**原生表单 POST**，服务端 302 回客户端注册的 `redirect_uri`。
+ * Chromium 把 `form-action` 也套用到「表单提交后的这次重定向」上——回调与
+ * Cloud 不同源（哪怕只差一个端口）时，导航会被中止（`net::ERR_ABORTED`，
+ * 页面留在原地），于是**授权码已签发却永远到不了客户端**：Allow 与 Deny
+ * 两条路径一起卡死，看起来像授权逻辑坏了，其实是这一行 CSP。
+ *
+ * 所以同意页必须把**本次已验证的回调 Origin** 放进来。它来自 authorize 阶段
+ * 与预注册 `redirect_uris` **逐字符比对过**的 `redirect_uri`，不是用户输入；
+ * 这里再过一遍 `cspFormActionSource` 规范化，不合法就退回只允许 `'self'`
+ * （fail-closed：宁可跳转被拦，也不往安全头里塞没验过的东西）。
+ *
+ * 登录页与错误页没有跨 Origin 的表单提交，不传这个参数即可。
  */
-export const AUTH_PAGE_HEADERS: Record<string, string> = {
-  "Cache-Control": "no-store",
-  Pragma: "no-cache",
-  "Referrer-Policy": "no-referrer",
-  "X-Frame-Options": "DENY",
-  "X-Content-Type-Options": "nosniff",
-  "Content-Security-Policy":
-    "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
-};
+export function authPageHeaders(
+  options: { readonly formActionOrigin?: string } = {},
+): Record<string, string> {
+  const extra = cspFormActionSource(options.formActionOrigin);
+  const formAction = extra ? `'self' ${extra}` : "'self'";
+  return {
+    "Cache-Control": "no-store",
+    Pragma: "no-cache",
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": `default-src 'none'; style-src 'unsafe-inline'; form-action ${formAction}; base-uri 'none'; frame-ancestors 'none'`,
+  };
+}
+
+/**
+ * 默认授权页响应头（登录页、错误页）：`form-action` 只允许同源。
+ *
+ * 保持为**常量**而非每次重建，是因为这些页面没有跨 Origin 表单提交——
+ * 见 `authPageHeaders` 的注释。
+ */
+export const AUTH_PAGE_HEADERS: Record<string, string> = authPageHeaders();
 
 /**
  * 页面外壳（登录页与同意页共用）。

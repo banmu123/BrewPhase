@@ -69,6 +69,24 @@ describe("正常展示", () => {
     expect(parsed.scopes.some((scope) => scope.disabled)).toBe(false);
   });
 
+  it("CSP 的 form-action 放行本次已验证的回调 Origin（否则 302 被浏览器中止）", async () => {
+    // 回调 `https://client.example/callback` 与 Cloud 不同源：Chromium 把
+    // `form-action 'self'` 也套用到表单提交后的那次 302 上，只写 'self' 会让
+    // 页面钉在同意页（`net::ERR_ABORTED`），授权码签发了却到不了客户端。
+    const flow = await startConsentFlow(h);
+    const res = await consent(flow.rid, flow.cookie);
+    expect(res.status).toBe(200);
+
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("form-action 'self' https://client.example");
+    // 其余指令一字不动：放宽的只有 form-action 这一项。
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("base-uri 'none'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    // 放行的是 Origin，不带 path——回调地址的路径不进安全头。
+    expect(csp).not.toContain("/callback");
+  });
+
   it("每个 scope 都有可理解的说明，并且只描述读取", async () => {
     const flow = await startConsentFlow(h);
     const html = await (await consent(flow.rid, flow.cookie)).text();
