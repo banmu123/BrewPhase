@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import type { KeyObject } from "node:crypto";
 import { createPrivateKey, generateKeyPairSync, randomBytes, sign as cryptoSign } from "node:crypto";
 import { eq } from "drizzle-orm";
+import { redact } from "../../src/logger.js";
 import { mcpDevices, mcpGrants, users } from "../../src/db/schema.js";
 import { sha256Hex } from "../../src/security/crypto.js";
 import { signAccessToken } from "../../src/sessions/jwt.js";
@@ -312,6 +313,304 @@ describe("A. Upgrade 预检（失败必须是 HTTP 响应，不是 close frame�
       expect(logs.some((line) => line.includes("link_established"))).toBe(true);
       expect(logs.some((line) => line.includes(device.deviceToken))).toBe(false);
       expect(logs.some((line) => line.includes("bp_dev_"))).toBe(false);
+    } finally {
+      await h.close();
+    }
+  });
+});
+
+// MARK: - A2. Upgrade 日志（Phase 1.3.3-A-R1）
+
+/**
+ * 捕获一次 Upgrade 尝试产生的 `link_upgrade_rejected` / `link_upgrade_accepted`。
+ *
+ * 只包 `warn` 与 `info` 两个方法：预检拒绝走 `warn`、接受走 `info`，
+ * 其余级别（error）保持原样，免得断言把「真的出错了」也一起吞掉。
+ */
+async function captureUpgradeLogs(
+  run: () => Promise<void>,
+  h: LinkHarness,
+): Promise<Array<{ event: string; fields: Record<string, unknown> }>> {
+  const captured: Array<{ event: string; fields: Record<string, unknown> }> = [];
+  const originalWarn = h.ctx.logger.warn;
+  const originalInfo = h.ctx.logger.info;
+  // 按事件名分流后**转发给原实现**：只截走这两类事件，不吞掉其它日志。
+  h.ctx.logger.warn = ((event: string, fields?: Record<string, unknown>) => {
+    if (event === "link_upgrade_rejected") captured.push({ event, fields: fields ?? {} });
+    originalWarn.call(h.ctx.logger, event, fields);
+  }) as typeof h.ctx.logger.warn;
+  h.ctx.logger.info = ((event: string, fields?: Record<string, unknown>) => {
+    if (event === "link_upgrade_accepted") captured.push({ event, fields: fields ?? {} });
+    originalInfo.call(h.ctx.logger, event, fields);
+  }) as typeof h.ctx.logger.info;
+  try {
+    await run();
+  } finally {
+    h.ctx.logger.warn = originalWarn;
+    h.ctx.logger.info = originalInfo;
+  }
+  return captured;
+}
+
+/** 断言：日志字段是**白名单**，不含任何凭据或请求原文。 */
+function expectNoSecrets(fields: Record<string, unknown>, token: string): void {
+  const serialized = JSON.stringify(fields);
+  expect(serialized).not.toContain(token);
+  expect(serialized).not.toContain("bp_dev_");
+  // 注意不能断言「不含 authorization 字样」——脱敏规则是按**键名**命中的，
+  // 所以字段名刻意写成 `bearerHeaderPresent`（避开 `SENSITIVE_KEY_PATTERN`）。
+  // 这里查的是**值**：任何形如 `Bearer <凭据>` 的串都不该出现。
+  expect(serialized).not.toMatch(/Bearer\s+\S/);
+  // 不记录 URL（含 query）
+  expect(serialized).not.toContain("/device-link?");
+  expect(serialized).not.toContain("token=");
+  // 只允许白名单键，杜绝将来有人往 fields 里塞 headers / url
+  expect(Object.keys(fields).sort()).toEqual([
+    "bearerFormatValid",
+    "bearerHeaderPresent",
+    "credShapeValid",
+    "expectedSubprotocolPresent",
+    "hostAllowed",
+    "hostPresent",
+    "method",
+    "originAllowed",
+    "originPresent",
+    "reason",
+    "stage",
+    "status",
+  ]);
+  // 字段名必须避开 logger 的 SENSITIVE_KEY_PATTERN，否则 boolean 会被整条
+  // 换成 "[redacted]"（实测踩过：`authorizationPresent` / `tokenShapeValid`）。
+  // 必须过一遍**真实** `redact()`——捕获 wrapper 拦在 redact 之前，
+  // 直接断言 fields 是空过的。
+  const redacted = JSON.stringify(redact(fields));
+  expect(redacted).not.toContain("[redacted]");
+}
+
+describe("A2. Upgrade 日志（拒绝必须留下证据，且不泄漏凭据）", () => {
+  it("host_not_allowed → link_upgrade_rejected 含 stage/status/reason", async () => {
+    const h = await createLinkHarness({ logLevel: "warn" });
+    try {
+      const device = await seedDevice(h);
+      const logs = await captureUpgradeLogs(async () => {
+        const conn = await connect(h, {
+          token: device.deviceToken,
+          headers: { host: "evil.example.com" },
+        });
+        expect(conn.ok).toBe(false);
+        if (!conn.ok) expect(conn.rejection.status).toBe(403);
+      }, h);
+
+      expect(logs).toHaveLength(1);
+      const { event, fields } = logs[0]!;
+      expect(event).toBe("link_upgrade_rejected");
+      expect(fields.stage).toBe("host");
+      expect(fields.status).toBe(403);
+      expect(fields.reason).toBe("host_not_allowed");
+      expect(fields.method).toBe("GET");
+      expect(fields.hostPresent).toBe(true);
+      expect(fields.hostAllowed).toBe(false);
+      expectNoSecrets(fields, device.deviceToken);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("origin_not_allowed → stage=origin，originPresent=true / originAllowed=false", async () => {
+    const h = await createLinkHarness({ logLevel: "warn", corsOrigins: ["https://cloud.brewphase.app"] });
+    try {
+      const device = await seedDevice(h);
+      const logs = await captureUpgradeLogs(async () => {
+        const conn = await connect(h, { token: device.deviceToken, origin: "https://evil.example.com" });
+        expect(conn.ok).toBe(false);
+        if (!conn.ok) expect(conn.rejection.status).toBe(403);
+      }, h);
+
+      expect(logs).toHaveLength(1);
+      const { fields } = logs[0]!;
+      expect(fields.stage).toBe("origin");
+      expect(fields.status).toBe(403);
+      expect(fields.reason).toBe("origin_not_allowed");
+      expect(fields.originPresent).toBe(true);
+      expect(fields.originAllowed).toBe(false);
+      expectNoSecrets(fields, device.deviceToken);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("subprotocol_required → stage=subprotocol，expectedSubprotocolPresent=false", async () => {
+    const h = await createLinkHarness({ logLevel: "warn" });
+    try {
+      const device = await seedDevice(h);
+      const logs = await captureUpgradeLogs(async () => {
+        const conn = await connect(h, { token: device.deviceToken, protocols: ["chat"] });
+        expect(conn.ok).toBe(false);
+        if (!conn.ok) expect(conn.rejection.status).toBe(400);
+      }, h);
+
+      expect(logs).toHaveLength(1);
+      const { fields } = logs[0]!;
+      expect(fields.stage).toBe("subprotocol");
+      expect(fields.status).toBe(400);
+      expect(fields.reason).toBe("subprotocol_required");
+      expect(fields.expectedSubprotocolPresent).toBe(false);
+      expectNoSecrets(fields, device.deviceToken);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("unauthorized（token 形态错误）→ stage=token，区分「没有 Authorization」与「形态不对」", async () => {
+    const h = await createLinkHarness({ logLevel: "warn" });
+    try {
+      const device = await seedDevice(h);
+
+      // a) 完全没带 Authorization
+      const missing = await captureUpgradeLogs(async () => {
+        const conn = await connect(h, { token: null });
+        expect(conn.ok).toBe(false);
+        if (!conn.ok) expect(conn.rejection.status).toBe(401);
+      }, h);
+      expect(missing).toHaveLength(1);
+      expect(missing[0]!.fields.stage).toBe("token");
+      expect(missing[0]!.fields.status).toBe(401);
+      expect(missing[0]!.fields.reason).toBe("unauthorized");
+      expect(missing[0]!.fields.bearerHeaderPresent).toBe(false);
+      expect(missing[0]!.fields.bearerFormatValid).toBe(false);
+      expect(missing[0]!.fields.credShapeValid).toBe(false);
+
+      // b) 带了 Bearer 但形态不对 —— 三个布尔必须与 a) 不同
+      const malformed = await captureUpgradeLogs(async () => {
+        const conn = await connect(h, { token: "not-a-token" });
+        expect(conn.ok).toBe(false);
+        if (!conn.ok) expect(conn.rejection.status).toBe(401);
+      }, h);
+      expect(malformed).toHaveLength(1);
+      expect(malformed[0]!.fields.bearerHeaderPresent).toBe(true);
+      expect(malformed[0]!.fields.bearerFormatValid).toBe(true);
+      expect(malformed[0]!.fields.credShapeValid).toBe(false);
+      expectNoSecrets(malformed[0]!.fields, device.deviceToken);
+      expect(JSON.stringify(malformed[0]!.fields)).not.toContain("not-a-token");
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("query_not_allowed → stage=query（日志里没有 query 原文）", async () => {
+    const h = await createLinkHarness({ logLevel: "warn" });
+    try {
+      const device = await seedDevice(h);
+      const secret = "SUPERSECRETQUERYVALUE";
+      const logs = await captureUpgradeLogs(async () => {
+        const conn = await connect(h, {
+          token: device.deviceToken,
+          url: `ws://127.0.0.1:${h.server.port}/device-link?leak=${secret}`,
+        });
+        expect(conn.ok).toBe(false);
+        if (!conn.ok) expect(conn.rejection.status).toBe(400);
+      }, h);
+
+      expect(logs).toHaveLength(1);
+      expect(logs[0]!.fields.stage).toBe("query");
+      expect(logs[0]!.fields.reason).toBe("query_not_allowed");
+      // URL query 绝不进日志 —— 这是「token 不放 URL」的另一半保证
+      expect(JSON.stringify(logs[0]!.fields)).not.toContain(secret);
+      expect(JSON.stringify(logs[0]!.fields)).not.toContain("leak");
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("path_not_found → stage=path", async () => {
+    const h = await createLinkHarness({ logLevel: "warn" });
+    try {
+      const device = await seedDevice(h);
+      const logs = await captureUpgradeLogs(async () => {
+        const conn = await connect(h, {
+          token: device.deviceToken,
+          url: `ws://127.0.0.1:${h.server.port}/device`,
+        });
+        expect(conn.ok).toBe(false);
+        if (!conn.ok) expect(conn.rejection.status).toBe(404);
+      }, h);
+
+      expect(logs).toHaveLength(1);
+      expect(logs[0]!.fields.stage).toBe("path");
+      expect(logs[0]!.fields.status).toBe(404);
+      expect(logs[0]!.fields.reason).toBe("not_found");
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("Upgrade 成功 → link_upgrade_accepted（与 rejected 配对区分「没到」和「被拒」）", async () => {
+    const h = await createLinkHarness({ logLevel: "info" });
+    try {
+      const device = await seedDevice(h);
+      const logs = await captureUpgradeLogs(async () => {
+        const conn = await connect(h, { token: device.deviceToken });
+        expect(conn.ok).toBe(true);
+        if (conn.ok) {
+          conn.ws.send(JSON.stringify(buildHello({ device_id: device.deviceId })));
+          await waitForConnection(h, device.deviceId);
+          conn.ws.close(1000);
+          await conn.closeInfo;
+        }
+      }, h);
+
+      const accepted = logs.filter((l) => l.event === "link_upgrade_accepted");
+      expect(accepted).toHaveLength(1);
+      expect(accepted[0]!.fields.method).toBe("GET");
+      expect(JSON.stringify(accepted[0]!.fields)).not.toContain("bp_dev_");
+      // 成功路径不产生 rejected
+      expect(logs.filter((l) => l.event === "link_upgrade_rejected")).toHaveLength(0);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("既有状态码与响应体语义不变（日志是纯增量）", async () => {
+    const h = await createLinkHarness({ logLevel: "warn" });
+    try {
+      const device = await seedDevice(h);
+      const cases: Array<{ expect: number; run: () => Promise<{ ok: boolean; rejection?: { status: number } }> }> = [
+        { expect: 404, run: () => connect(h, { token: device.deviceToken, url: `ws://127.0.0.1:${h.server.port}/device` }) },
+        { expect: 403, run: () => connect(h, { token: device.deviceToken, headers: { host: "evil.example.com" } }) },
+        { expect: 400, run: () => connect(h, { token: device.deviceToken, protocols: ["chat"] }) },
+        { expect: 401, run: () => connect(h, { token: null }) },
+      ];
+      for (const c of cases) {
+        const res = await c.run();
+        expect(res.ok, `expected rejection ${c.expect}`).toBe(false);
+        if (!res.ok) expect(res.rejection!.status).toBe(c.expect);
+      }
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("日志字段是白名单：不含 Host / Origin 原文，也不含 Authorization", async () => {
+    const h = await createLinkHarness({ logLevel: "warn", corsOrigins: ["https://cloud.brewphase.app"] });
+    try {
+      const device = await seedDevice(h);
+      const logs = await captureUpgradeLogs(async () => {
+        // 伪造 Host 触发拒绝，Host 原文绝不能出现在日志里
+        const conn = await connect(h, {
+          token: device.deviceToken,
+          headers: { host: "super-secret-host.internal" },
+        });
+        expect(conn.ok).toBe(false);
+      }, h);
+
+      expect(logs).toHaveLength(1);
+      const serialized = JSON.stringify(logs[0]!.fields);
+      expect(serialized).not.toContain("super-secret-host.internal");
+      expect(serialized).not.toContain("127.0.0.1"); // Host 原文（含端口）不记
+      expect(serialized).not.toContain("cloud.brewphase.app"); // Origin 原文不记
+      // 但布尔仍在（诊断价值靠它们）
+      expect(logs[0]!.fields.hostPresent).toBe(true);
+      expect(logs[0]!.fields.hostAllowed).toBe(false);
     } finally {
       await h.close();
     }

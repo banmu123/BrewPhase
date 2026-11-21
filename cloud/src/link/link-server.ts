@@ -385,7 +385,117 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
 
   // MARK: - Upgrade 预检
 
-  const rejectUpgrade = (socket: Duplex, status: number, message: string): void => {
+  /**
+   * 拒绝发生在哪一步。与 `link_upgrade_rejected.stage` 一一对应，
+   * 让「请求死在哪个检查」在日志里可以直接分组统计。
+   */
+  type UpgradeStage =
+    | "lifecycle"
+    | "path"
+    | "query"
+    | "host"
+    | "origin"
+    | "subprotocol"
+    | "token";
+
+  /**
+   * Upgrade 预检的**观测快照**。
+   *
+   * 全部是布尔与枚举：回答「有没有」「过没过」，**不保存任何请求头原文**。
+   * 这是刻意的——`Authorization` 就在同一批头里，只要结构里留一个 `headers`
+   * 引用或 `host` 原文，迟早会有人把它顺手打进日志（安全 §3.2.1）。
+   * `token` 是唯一例外：它复用于 `tokenBySocket`，**绝不进日志字段**。
+   *
+   * ## 字段名必须避开 `logger.redact()` 的敏感键名
+   *
+   * `SENSITIVE_KEY_PATTERN = /(token|code|secret|authorization|password|...)` 会
+   * 把**键名**命中的字段整体替换成 `"[redacted]"`——布尔值也不例外。所以这里
+   * 用 `bearerHeader` / `cred` 而不是 `authorization` / `token`：否则
+   * `authorizationPresent: true` 会记成 `"[redacted]"`，一个纯存在性标记被
+   * 当成凭据抹掉，诊断信息就白写了。
+   */
+  interface UpgradeProbe {
+    method: string;
+    hostPresent: boolean;
+    /** `null` = 白名单为空，host 检查本轮未执行。 */
+    hostAllowed: boolean | null;
+    originPresent: boolean;
+    /** `null` = 请求没带 Origin（原生客户端），origin 检查本轮未执行。 */
+    originAllowed: boolean | null;
+    expectedSubprotocolPresent: boolean;
+    /** `Authorization` 头是否存在（只记有无，不记内容）。 */
+    bearerHeaderPresent: boolean;
+    bearerFormatValid: boolean;
+    /** `bp_dev_` 形态是否合法（不是「库里有没有」，那属于握手第 2 步）。 */
+    credShapeValid: boolean;
+    /** 仅用于握手，**不进日志**。 */
+    token: string;
+  }
+
+  /**
+   * 一次性读取预检所需的头并归一成布尔。
+   *
+   * 纯读取、无副作用，因此必须**不改变任何检查的顺序与判定**：下面的
+   * `handleUpgrade` 仍然按 lifecycle → path → host → origin → subprotocol →
+   * token 逐条拒绝，只是判定依据改用这里已经算好的值（表达式与原先逐字相同）。
+   */
+  const probeUpgrade = (req: IncomingMessage): UpgradeProbe => {
+    const host = normalizeHost(req.headers.host ?? "");
+    const origin = req.headers.origin;
+    const originPresent = typeof origin === "string" && origin.length > 0;
+    const offered = String(req.headers["sec-websocket-protocol"] ?? "")
+      .split(",")
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0);
+    const auth = req.headers.authorization;
+    const bearerFormatValid = typeof auth === "string" && auth.startsWith("Bearer ");
+    const token = bearerFormatValid ? (auth as string).slice(7).trim() : "";
+    return {
+      method: req.method ?? "",
+      hostPresent: host.length > 0,
+      hostAllowed: allowedHosts.length > 0 ? host.length > 0 && allowedHosts.includes(host) : null,
+      originPresent,
+      originAllowed: originPresent ? allowedOrigins.has((origin as string).toLowerCase()) : null,
+      expectedSubprotocolPresent: offered.includes(REMOTE_WS_SUBPROTOCOL),
+      bearerHeaderPresent: typeof auth === "string" && auth.length > 0,
+      bearerFormatValid,
+      credShapeValid: DEVICE_TOKEN_PATTERN.test(token),
+      token,
+    };
+  };
+
+  /** 只挑**允许记录**的字段。刻意逐字段列举，不展开 probe——展开会带上 `token`。 */
+  const upgradeLogFields = (
+    stage: UpgradeStage,
+    status: number,
+    reason: string,
+    probe: UpgradeProbe,
+  ): Record<string, unknown> => ({
+    stage,
+    status,
+    reason,
+    method: probe.method,
+    hostPresent: probe.hostPresent,
+    hostAllowed: probe.hostAllowed,
+    originPresent: probe.originPresent,
+    originAllowed: probe.originAllowed,
+    expectedSubprotocolPresent: probe.expectedSubprotocolPresent,
+    bearerHeaderPresent: probe.bearerHeaderPresent,
+    bearerFormatValid: probe.bearerFormatValid,
+    credShapeValid: probe.credShapeValid,
+  });
+
+  const rejectUpgrade = (
+    socket: Duplex,
+    status: number,
+    message: string,
+    stage: UpgradeStage,
+    probe: UpgradeProbe,
+  ): void => {
+    // 先记日志再回响应：`socket.destroy()` 之后这条证据就没了。
+    // 只记布尔与枚举——不记 Host / Origin 原文、不记 Authorization、不记 URL
+    // （`req.url` 含 query，而 query 是被明令禁止记录的泄漏面）。
+    ctx.logger.warn("link_upgrade_rejected", upgradeLogFields(stage, status, message, probe));
     if (socket.destroyed) return;
     // 最小 HTTP 响应。**不回显任何请求头**（Authorization 就在里面）。
     const body = `${JSON.stringify({ error: message })}\n`;
@@ -401,7 +511,8 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
   };
 
   const handleUpgrade = (req: IncomingMessage, socket: Duplex, head: Buffer): void => {
-    if (!accepting) return rejectUpgrade(socket, 503, "shutting_down");
+    const probe = probeUpgrade(req);
+    if (!accepting) return rejectUpgrade(socket, 503, "shutting_down", "lifecycle", probe);
 
     // ---- path：精确匹配，且**不接受查询串** ----
     //
@@ -411,8 +522,8 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
     const suffixAt = rawUrl.search(/[?#]/);
     const pathname = suffixAt === -1 ? rawUrl : rawUrl.slice(0, suffixAt);
     const suffix = suffixAt === -1 ? "" : rawUrl.slice(suffixAt);
-    if (pathname !== REMOTE_LINK_PATH) return rejectUpgrade(socket, 404, "not_found");
-    if (suffix.length > 0) return rejectUpgrade(socket, 400, "query_not_allowed");
+    if (pathname !== REMOTE_LINK_PATH) return rejectUpgrade(socket, 404, "not_found", "path", probe);
+    if (suffix.length > 0) return rejectUpgrade(socket, 400, "query_not_allowed", "query", probe);
 
     // ---- Host ----
     //
@@ -421,24 +532,21 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
     //
     // 比较忽略端口：端口不是安全边界（连接已经落在监听者身上），
     // DNS rebinding 的判据是 hostname。
-    if (allowedHosts.length > 0) {
-      const host = normalizeHost(req.headers.host ?? "");
-      if (!host || !allowedHosts.includes(host)) return rejectUpgrade(socket, 403, "host_not_allowed");
+    if (allowedHosts.length > 0 && probe.hostAllowed !== true) {
+      return rejectUpgrade(socket, 403, "host_not_allowed", "host", probe);
     }
 
     // ---- Origin ----
-    const origin = req.headers.origin;
-    if (typeof origin === "string" && origin.length > 0 && !allowedOrigins.has(origin.toLowerCase())) {
-      return rejectUpgrade(socket, 403, "origin_not_allowed");
+    //
+    // 没有 Origin（原生客户端，如 Electron `net.WebSocket`）→ `originAllowed`
+    // 为 `null`，放行；有 Origin 却不在白名单 → `false`，拒绝。
+    if (probe.originPresent && probe.originAllowed !== true) {
+      return rejectUpgrade(socket, 403, "origin_not_allowed", "origin", probe);
     }
 
     // ---- 子协议 ----
-    const offered = String(req.headers["sec-websocket-protocol"] ?? "")
-      .split(",")
-      .map((part) => part.trim())
-      .filter((part) => part.length > 0);
-    if (!offered.includes(REMOTE_WS_SUBPROTOCOL)) {
-      return rejectUpgrade(socket, 400, "subprotocol_required");
+    if (!probe.expectedSubprotocolPresent) {
+      return rejectUpgrade(socket, 400, "subprotocol_required", "subprotocol", probe);
     }
 
     // ---- token 形态 ----
@@ -446,12 +554,13 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
     // 只做形态检查（无状态、同步）。哈希查库属于握手第 2 步：它要读数据库，
     // 而 upgrade 阶段没有连接上下文可以做超时与审计，把 IO 放这里会让
     // 一个慢查询卡住整个 upgrade 队列。
-    const auth = req.headers.authorization;
-    const token = typeof auth === "string" && auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-    if (!DEVICE_TOKEN_PATTERN.test(token)) return rejectUpgrade(socket, 401, "unauthorized");
+    if (!probe.credShapeValid) return rejectUpgrade(socket, 401, "unauthorized", "token", probe);
 
     wss.handleUpgrade(req, socket, head, (ws) => {
-      tokenBySocket.set(ws, token);
+      // 与 `link_upgrade_rejected` 配对：两者都没有 = 请求根本没到 Cloud
+      // （DNS / 端口 / 反代路径问题，而非 token 问题）。
+      ctx.logger.info("link_upgrade_accepted", { method: probe.method });
+      tokenBySocket.set(ws, probe.token);
       wss.emit("connection", ws);
     });
   };

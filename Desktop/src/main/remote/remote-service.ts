@@ -1351,8 +1351,14 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
           onFrame: handleFrame,
           onClose: handleClose,
           onError: (message) => {
+            // 保留**最近一次**连接错误：这是设置页 `lastError` 的唯一来源，
+            // 也是 R1 排障时区分「没连」与「连了被拒」的客户端侧证据。
             link.lastError = message
             log(`[remote] socket error: ${message}`)
+            // 必须 publish：`onClose` 之后虽然会再 publish 一次，但「构造
+            // 成功、握手前出错」这类路径不一定走到它——不发的话渲染进程
+            // 会一直显示上一次的旧状态。
+            publish()
           },
           onOversizedFrame: (bytes) => {
             // 协议 §2.2：单帧超过上限 → close 4009。不解析、不回显内容。

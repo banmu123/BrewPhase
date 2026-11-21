@@ -62,6 +62,10 @@ export const remote = {
   inflight: 'In flight',
   cache: 'Result cache',
   lastClose: 'Last close',
+  lastError: 'Last error',
+  noError: 'None',
+  reconnectAttempt: 'Reconnect attempts',
+  lastErrorHint: 'Why the most recent connection attempt failed; cleared after a successful handshake.',
   scopeLabels: {
     records: 'records and notes',
     tags: 'tags',

@@ -20,7 +20,9 @@ import {
 } from '../../src/main/remote/device-identity'
 import { computeRequestHash } from '../../src/main/remote/request-handler'
 import { startMockGateway, publicKeyOf, MOCK_DEVICE_TOKEN, type MockGateway } from '../helpers/mock-gateway'
-import { testWebSocketFactory } from '../helpers/ws-client'
+import { testWebSocketFactory, type TestWebSocket } from '../helpers/ws-client'
+import type { WebSocketFactory } from '../../src/main/remote/link-client'
+import { buildStatus, createLinkState } from '../../src/main/remote/link-state'
 import { REMOTE_CHANNELS, type RemoteGrant } from '../../src/shared/contracts/remote'
 
 /**
@@ -148,6 +150,15 @@ function makeService(overrides: {
   baseDir?: string
   cloudOrigin?: string
   onChanged?: (status: unknown) => void
+  /**
+   * 覆盖 WebSocket 工厂（Phase 1.3.3-A-R1）。
+   *
+   * `lastError` 的来源之一是 `onError`，而它只能由真实的 socket 事件驱动。
+   * 注入一个「先失败、后成功」的工厂，才能在同一个 service 实例上验证
+   * 「错误被保留 → 握手成功后被清除」这条完整链路，而不是靠两个实例各自
+   * 起始为 null 来假装测过。
+   */
+  webSocketFactory?: WebSocketFactory
 } = {}): RemoteService {
   return createRemoteService({
     db: handle.db,
@@ -158,7 +169,7 @@ function makeService(overrides: {
     secretBox: memoryBox(),
     // 测试环境没有 electron.net，而带 Authorization 头的连接必须有人真的把头发出去。
     // 这个工厂是一个最小 WS 客户端（真发头、真掩码、真关闭握手）。
-    webSocketFactory: testWebSocketFactory,
+    webSocketFactory: overrides.webSocketFactory ?? testWebSocketFactory,
     clientVersion: '0.1.4-test',
     onChanged: overrides.onChanged as never,
     log: () => undefined
@@ -1050,5 +1061,168 @@ describe('畸形帧：协议 §2.2 要求「必须回话」', () => {
     await waitForDiagnosis(service, (d) => d.lastCloseCode === 4009, 5_000)
     expect(service.diagnose().lastCloseReason).toContain('shape invalid')
     expect(service.status().linkState).not.toBe('online')
+  })
+})
+
+// MARK: - lastError 生命周期（Phase 1.3.3-A-R1）
+
+/**
+ * 造一个「立刻失败」的 socket 替身。
+ *
+ * 真实的连接失败在 Electron `net.WebSocket` 上表现为 `onerror` + `onclose(1006)`；
+ * 这里复刻这个顺序，而不是只调 `onerror`——只调 `onerror` 会漏掉
+ * `onClose → scheduleReconnect` 这条真正决定「还会不会重试」的路径，
+ * 于是测出来的行为与真实断连不一致。
+ */
+function makeFailingSocket(reason: string): TestWebSocket {
+  const socket: TestWebSocket = {
+    readyState: 0,
+    protocol: '',
+    send: () => undefined,
+    close: () => undefined,
+    onopen: null,
+    onmessage: null,
+    onerror: null,
+    onclose: null
+  }
+  queueMicrotask(() => {
+    socket.onerror?.({})
+    socket.readyState = 3
+    socket.onclose?.({ code: 1006, reason, wasClean: false })
+  })
+  return socket
+}
+
+/** 前 `failCount` 次连接失败，之后委托给真实测试客户端。 */
+function flakyFactory(failCount: number, reason: string): WebSocketFactory {
+  let attempts = 0
+  return (url, options) => {
+    attempts += 1
+    if (attempts <= failCount) return makeFailingSocket(reason)
+    return testWebSocketFactory(url, options)
+  }
+}
+
+describe('lastError 生命周期（R1 可观测性）', () => {
+  it('onError 后 lastError 进入 RemoteStatus，并经 onChanged 广播给渲染进程', async () => {
+    gateway = await startMockGateway({ allowedTools: ALL_TOOLS, grantEpoch: 1 })
+    gatewayUrl = gateway.url
+    const { paths } = await seedDevice()
+    await enableSwitch(paths)
+
+    // 永远失败：错误必须**停在**状态里，不会被随后的成功握手清掉。
+    const broadcast: Array<{ lastError: string | null; linkState: string }> = []
+    service = makeService({
+      webSocketFactory: () => makeFailingSocket('connection refused'),
+      onChanged: (s) => {
+        const status = s as { lastError: string | null; linkState: string }
+        broadcast.push({ lastError: status.lastError, linkState: status.linkState })
+      }
+    })
+    await service.start()
+
+    const status = await waitForStatus(service, (s) => s.lastError !== null)
+    // 这是 transport 的固定文案（link-client.ts 的 `events.onError('websocket error')`）。
+    expect(status.lastError).toBe('websocket error')
+
+    // 必须真的广播出去了：只写进主进程状态、不 publish 的话，设置页永远看不到。
+    expect(broadcast.some((b) => b.lastError === 'websocket error')).toBe(true)
+
+    // 错误不是只出现一瞬：退避期间仍然可读（用户正是在这个窗口里需要看到它）。
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(service.status().lastError).toBe('websocket error')
+    expect(service.diagnose().lastError).toBe('websocket error')
+
+    await service.stop()
+  })
+
+  it('先失败后成功：错误被保留，握手成功后被清空', async () => {
+    gateway = await startMockGateway({ allowedTools: ALL_TOOLS, grantEpoch: 1 })
+    gatewayUrl = gateway.url
+    const { paths } = await seedDevice()
+    await enableSwitch(paths)
+
+    service = makeService({ webSocketFactory: flakyFactory(1, 'flaky first attempt') })
+    await service.start()
+
+    // 1) 第一次连接失败 → 错误可见
+    const failed = await waitForStatus(service, (s) => s.lastError !== null)
+    expect(failed.lastError).toBe('websocket error')
+    expect(failed.linkState).not.toBe('online')
+
+    // 2) 退避（首档 500–1000ms）后重连成功 → 错误必须被 hello_ok 清掉
+    const recovered = await waitForStatus(
+      service,
+      (s) => s.linkState === 'online' && s.lastError === null,
+      8_000
+    )
+    expect(recovered.lastError).toBeNull()
+    expect(recovered.linkState).toBe('online')
+
+    // 诊断页同步（不是只有 status 清了、diagnosis 还留着旧值）
+    expect(service.diagnose().lastError).toBeNull()
+
+    await service.stop()
+  })
+
+  it('旧 socket 迟到的 onerror 不会覆盖新连接的状态', async () => {
+    gateway = await startMockGateway({ allowedTools: ALL_TOOLS, grantEpoch: 1 })
+    gatewayUrl = gateway.url
+    const { paths } = await seedDevice()
+    await enableSwitch(paths)
+
+    // 第一次失败、第二次成功；失败的 onerror 必须因代际不符被丢弃，
+    // 否则它会把已经 online 的新连接状态盖成「有错」。
+    service = makeService({ webSocketFactory: flakyFactory(1, 'stale socket') })
+    await service.start()
+
+    const online = await waitForStatus(
+      service,
+      (s) => s.linkState === 'online' && s.lastError === null,
+      8_000
+    )
+    expect(online.linkState).toBe('online')
+
+    // 再等一个退避窗口，确认没有迟到的错误把状态改回去。
+    await new Promise((resolve) => setTimeout(resolve, 1_200))
+    const settled = service.status()
+    expect(settled.linkState).toBe('online')
+    expect(settled.lastError).toBeNull()
+
+    await service.stop()
+  })
+
+  it('buildStatus 把 link.lastError 原样带进 RemoteStatus（不加工、不截断）', () => {
+    const link = createLinkState()
+    link.lastError = 'websocket error'
+    const status = buildStatus({
+      link,
+      enabled: true,
+      deviceId: 'dev-1',
+      boundUserId: USER,
+      needsReauth: false,
+      cloudOrigin: 'http://127.0.0.1:3000',
+      verdict: { serviceable: true, reason: null },
+      grants: [],
+      grantEpoch: 0,
+      audit: { consecutiveFailures: 0, totalFailures: 0, lastFailureAt: null }
+    })
+    expect(status.lastError).toBe('websocket error')
+
+    link.lastError = null
+    expect(
+      buildStatus({
+        link,
+        enabled: true,
+        deviceId: 'dev-1',
+        boundUserId: USER,
+        needsReauth: false,
+        cloudOrigin: 'http://127.0.0.1:3000',
+        verdict: { serviceable: true, reason: null },
+        grants: [],
+        grantEpoch: 0,
+        audit: { consecutiveFailures: 0, totalFailures: 0, lastFailureAt: null }
+      }).lastError
+    ).toBeNull()
   })
 })

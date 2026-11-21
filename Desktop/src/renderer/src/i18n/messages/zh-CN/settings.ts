@@ -62,6 +62,10 @@ export const remote = {
   inflight: '在途请求',
   cache: '结果缓存',
   lastClose: '最近关闭',
+  lastError: '最近错误',
+  noError: '无',
+  reconnectAttempt: '重连次数',
+  lastErrorHint: '最近一次连接尝试的失败原因；成功握手后会清空。',
   scopeLabels: {
     records: '记录与笔记',
     tags: '标签',

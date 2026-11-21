@@ -3,6 +3,7 @@ import type { RemoteDiagnosis, RemoteScope, RemoteStatus } from '@shared/contrac
 import { REMOTE_SCOPES } from '@shared/contracts/remote'
 import { useI18n } from '../../i18n'
 import { api } from '../../shared/api'
+import { formatLastError, shouldHighlightLastError } from './remote-error-view'
 
 /**
  * 设置页「远程访问」面板（Phase 1.1B）。
@@ -159,7 +160,26 @@ export function RemoteAccessPanel(): React.JSX.Element {
             <dt>{copy.lastActive}</dt>
             <dd>{status.lastPongAt ? formatDateTime(status.lastPongAt) : copy.never}</dd>
           </div>
+          {/* 最近错误：主进程 `RemoteStatus.lastError`，成功握手后被清空。
+              空状态显示「无」，绝不显示 null / undefined。 */}
+          <div data-testid="remote-last-error">
+            <dt>{copy.lastError}</dt>
+            <dd>{formatLastError(status.lastError, copy.noError)}</dd>
+          </div>
+          <div>
+            <dt>{copy.reconnectAttempt}</dt>
+            <dd>{status.reconnectAttempt}</dd>
+          </div>
         </dl>
+      )}
+
+      {/* ---- 最近连接错误（开关开着且确实有错才提示） ---- */}
+      {status && shouldHighlightLastError({ enabled: status.enabled, lastError: status.lastError }) && (
+        <div className="settings-callout" data-tone="warning" data-testid="remote-last-error-callout">
+          <p className="settings-callout__title">{copy.lastError}</p>
+          <p className="settings-callout__body">{status.lastError}</p>
+          <p className="settings-callout__body">{copy.lastErrorHint}</p>
+        </div>
       )}
 
       {/* ---- 阻塞原因 / 需要重新配对 ---- */}
@@ -280,6 +300,15 @@ export function RemoteAccessPanel(): React.JSX.Element {
                   ? copy.never
                   : `${diagnosis.lastCloseCode}${diagnosis.lastCloseReason ? ` · ${diagnosis.lastCloseReason}` : ''}`}
               </dd>
+            </div>
+            {/* 诊断区同样给出最近错误：关掉开关时状态区可能已不再展示它。 */}
+            <div data-testid="diagnosis-last-error">
+              <dt>{copy.lastError}</dt>
+              <dd>{formatLastError(diagnosis.lastError, copy.noError)}</dd>
+            </div>
+            <div>
+              <dt>{copy.reconnectAttempt}</dt>
+              <dd>{diagnosis.reconnectAttempt}</dd>
             </div>
           </dl>
         </div>
