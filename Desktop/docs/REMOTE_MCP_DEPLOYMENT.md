@@ -115,8 +115,39 @@ location / {
 | `DATABASE_URL` | — | 必填 |
 | `GATEWAY_EXPECTED_REPLICAS` | `1` | **`> 1` 拒绝启动**；非正整数按环境校验失败 |
 | `GATEWAY_ALLOWED_HOSTS` | 空（从 `BASE_URL` 推导） | 逗号分隔；留空不是「不校验」而是回退推导 |
-| `CORS_ORIGINS` | 空 | 同时用于 HTTP CORS 与 **WSS 的 Origin 白名单**。原生客户端不发 Origin，所以留空不影响 Desktop |
+| `CORS_ORIGINS` | 空 | **仅控制普通 HTTP CORS**（`app.use` 的 ACAO）。**WSS 的 Origin 白名单是 `BASE_URL` 的 Origin ∪ `CORS_ORIGINS`**——见 §5.1。留空不影响 Desktop 连 WSS，因为 Desktop 连的正是 `BASE_URL` 自己 |
 | `LOG_LEVEL` | `info` | 连接事件在 `info` |
+
+### 5.1 Origin 白名单：WSS 与 HTTP CORS 是两套
+
+**WSS Upgrade 的 Origin 白名单 = `BASE_URL` 的 Origin ∪ `CORS_ORIGINS`**，
+由 `resolveWebSocketAllowedOrigins(baseUrl, corsOrigins)` 构造（生产入口
+`src/index.ts` 与测试夹具调用同一个函数）。
+
+为什么 BASE_URL 要自动进白名单：**Electron 主进程的 `net.WebSocket` 会发送
+Origin，值为目标 Cloud URL 自身的 Origin**。R1 用真实 Electron 45 抓握手头
+确认了这一点——旧文档「原生客户端不发 Origin」的假设已被推翻。只给
+`CORS_ORIGINS`（默认空）会让 Desktop 的每次 Upgrade 都被 403：真实设备
+`2951ba0a` 拿到凭据后 15 分钟内被拒 16 次，全部 `stage=origin`，而 Host、
+子协议、Bearer 形态全部通过。
+
+要点：
+
+- **精确比对**：无通配、无后缀匹配、端口与 scheme 都参与比对。
+  `https://example.com` 不匹配 `https://evil.example.com`，
+  `:3000` 不匹配 `:3001`。
+- **配置非法即启动失败**：`BASE_URL` 或 `CORS_ORIGINS` 里混进通配、
+  path、query、fragment、非 http(s) scheme，一律抛错——不静默丢弃
+  （那会变成「配了没生效」），更不退化成放行所有。
+- **不修改 `ctx.env.corsOrigins`**：BASE_URL Origin 只进 WSS 白名单。
+- **普通 HTTP CORS 仍然只由 `CORS_ORIGINS` 控制**（`app.ts` 的
+  `corsMiddleware`）。因此 `CORS_ORIGINS` 留空时，用 BASE_URL Origin 请求
+  普通 HTTP 路由**不会**拿到 `Access-Control-Allow-Origin`——这是刻意的，
+  修 Desktop 不能顺带扩大 HTTP 的允许来源。
+
+`Origin` 不是设备身份认证：真正的设备身份仍由 `device_token`、数据库状态、
+Ed25519 hello 签名与 nonce 共同验证。不带 Origin 的请求按既有规则放行进入
+后续认证。
 
 ---
 

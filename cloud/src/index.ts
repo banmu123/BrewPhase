@@ -1,6 +1,6 @@
 import { createApp, createContextFromProcessEnv, startSweep } from "./app.js";
 import { loadLocalEnvFile } from "./env-file.js";
-import { createLinkServer } from "./link/index.js";
+import { createLinkServer, resolveWebSocketAllowedOrigins } from "./link/index.js";
 import { startCloudServer } from "./server.js";
 
 /**
@@ -40,14 +40,21 @@ async function main(): Promise<void> {
    * WSS 接入层。**必须在 `createApp` 之前造好并挂到 ctx 上**：路由层
    * （suspend / revoke）需要 `ctx.link` 才能在持久化之后清理连接。
    *
-   * 主机白名单来自 env（显式配置，或从 `BASE_URL` 推导）。Origin 白名单复用
-   * `CORS_ORIGINS`：浏览器能连的源与能发 CORS 请求的源应当是同一个集合，
-   * 分成两份配置迟早会出现「CORS 放行了但 WS 连不上」。
+   * 主机白名单来自 env（显式配置，或从 `BASE_URL` 推导）。
+   *
+   * **Origin 白名单 = `BASE_URL` 的 Origin ∪ `CORS_ORIGINS`**（`resolveWebSocketAllowedOrigins`）。
+   * Electron 主进程的 `net.WebSocket` 会发送目标 Cloud URL 自己的 Origin
+   * （R1 真实抓包确认），所以只给 `CORS_ORIGINS` 会让 Desktop 必被 403——
+   * 那正是设备 `2951ba0a` 拿到凭据却连不上的根因。
+   *
+   * 这里**只影响 WSS**：普通 HTTP CORS 仍然只吃 `ctx.env.corsOrigins`
+   * （见 `app.ts` 的 `corsMiddleware`），不能因为修 Desktop 就把 HTTP 的
+   * 允许来源也扩了。
    */
   const link = createLinkServer({
     ctx,
     allowedHosts: ctx.env.gateway.allowedHosts,
-    allowedOrigins: ctx.env.corsOrigins,
+    allowedOrigins: resolveWebSocketAllowedOrigins(ctx.env.baseUrl, ctx.env.corsOrigins),
   });
   ctx.link = link;
   ctx.instanceId = link.instanceId;

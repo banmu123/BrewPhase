@@ -17,6 +17,7 @@ export {
   type LinkServer,
   type LinkServerOptions,
 } from "./link-server.js";
+export { resolveWebSocketAllowedOrigins } from "./allowed-origins.js";
 export { admitDevice, type AdmissionFailure, type AdmissionOutcome, type AdmittedDevice } from "./admission.js";
 export {
   createMemoryConnectionRegistry,

@@ -502,7 +502,7 @@ Upgrade 是**普通 HTTP 请求**，所以它的失败是 HTTP 状态码，不�
 | path 精确等于 `/device-link` | 404 | 前缀/尾斜杠都不接受 |
 | **path 带任何 query** | 400 | 见下 |
 | `Host` 命中配置白名单 | 403 | **只看 `Host`，不看 `X-Forwarded-Host`** |
-| `Origin`（若存在）命中白名单 | 403 | 不存在则放行（原生客户端） |
+| `Origin`（若存在）命中白名单 | 403 | 白名单 = `BASE_URL` 的 Origin ∪ `CORS_ORIGINS`，**精确比对**；不存在则放行进入后续认证 |
 | `Sec-WebSocket-Protocol` 含 `brewphase.remote.v1` | 400 | |
 | `Authorization` 形态匹配 `^bp_dev_…` | 401 | 只做形态，**不查库**（见下） |
 
@@ -525,8 +525,21 @@ Upgrade 是**普通 HTTP 请求**，所以它的失败是 HTTP 状态码，不�
 |---|---|---|
 | 自定义 header 送达 | ✅ 服务端收到完整 `Bearer` | ❌ 标准 API 无此能力 |
 | 子协议送达 | ✅ | ✅ |
+| **`Origin` 头** | ✅ **会发送**，值为目标 URL 自身的 Origin | ✅（浏览器上下文同样发送） |
 | 服务端发起的 4xxx close code | ✅ 精确到达（需完整关闭握手） | ✅ |
 | TLS 失败时的行为 | `net::ERR_INSECURE_RESPONSE`，**服务端连 header 都收不到** | 同 |
+
+> **Origin 的假设修正（Phase 1.3.3-A-R1/R2）**：早期 Spike 认为
+> `net.WebSocket` 不发 Origin，据此把 WSS 白名单直接等于 `CORS_ORIGINS`
+> （默认空）。R1 用真实设备 `2951ba0a` 诊断时抓到 15 分钟 16 次
+> `stage=origin` 的 403，随后用独立 Electron 45 进程抓握手头复核：
+> **`origin: <目标 Cloud URL 自身 Origin>` 确实存在**。因此 WSS 白名单改为
+> `BASE_URL Origin ∪ CORS_ORIGINS`（`resolveWebSocketAllowedOrigins`），
+> 见 DEPLOYMENT §5.1。表中其余结论未变。
+>
+> 仍然不带 Origin 的请求按既有规则放行进入后续认证——Origin 只挡浏览器
+> 上下文，**不是设备身份**（那由 `device_token` + 数据库状态 + Ed25519
+> 签名 + nonce 决定）。
 
 因此实现是 **fail-closed** 的：需要自定义头却拿不到 `electron.net` 时直接抛错，
 **绝不静默退回全局 WebSocket**。那种「退回」会让设备认证在测试里等于没做，

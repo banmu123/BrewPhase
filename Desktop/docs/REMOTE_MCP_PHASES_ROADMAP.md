@@ -547,6 +547,9 @@ cloud/tests/{mcp-devices,link}/*.test.ts
 | **1.3.1-C3c-3B** | CIMD Registry 接入生产链路（Registry / 四条件 / Token 约束 / 同意页身份） | ✅ **已完成**（§3.27–§3.30：3B-1 / 3B-2 / 3B-2-R1 / 3B-3） | ✅ 已完成 |
 | **1.3.1-C3c-3B-3-R1** | Consent 拒绝路径并发锁收尾（deny / 空 scope 补 `FOR SHARE`，P2） | ✅ **已完成**（closeout：`phase-1.3.1-c3c-3b-3-r1-closeout.md`） | ✅ 已完成 |
 | **1.3.2** | Streamable HTTP 与工具服务 | `POST /mcp`（dual-era）、Bearer + audience + grant 回查、8 个只读工具、错误面、日志纪律 | ✅ **已完成**（见 §3.32） |
+| **1.3.3-A** | 真实客户端联调（Inspector 优先） | CSP `form-action` 跨 Origin 302 修复 + Discovery/OAuth/双时代/tools/list/Scope/R2 实测 | ⏳ **进行中**（Inspector 端到端已通；`tools/call` 真实数据、R2 断连、`coffee:read` 单授权、closeout 报告未完成） |
+| **1.3.3-A-R1** | WSS 连接可观测性补齐 | `link_upgrade_rejected` / `link_upgrade_accepted` 日志 + Desktop 展示 `lastError`；**定位根因**：`stage=origin` 被拒 16 次 | ✅ 已完成（见 INDEX §46） |
+| **1.3.3-A-R2** | 修 Electron WSS Origin 白名单 | WSS 白名单 = `BASE_URL Origin ∪ CORS_ORIGINS`；HTTP CORS 不扩大；恶意 Origin 仍 403 | ✅ 代码与测试已完成 · **真实设备验收 `NOT VERIFIED`** |
 | **1.3.3** | 真实客户端联调 | Inspector、ChatGPT、Grok、refresh 行为、撤销/离线/异常恢复、回填 `NOT VERIFIED` | 待真实客户端验收 |
 
 ### 3.1 范围（1.3.1 + 1.3.2）

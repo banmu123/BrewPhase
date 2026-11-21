@@ -3,6 +3,7 @@ import { createApp } from "../../src/app.js";
 import type { AppContext } from "../../src/context.js";
 import {
   createLinkServer,
+  resolveWebSocketAllowedOrigins,
   type LinkLifecycleHooks,
   type LinkServer,
 } from "../../src/link/index.js";
@@ -93,8 +94,10 @@ export async function createLinkHarness(
     // 空数组会关掉 Host 校验；测试要验证 Host 拒绝，所以默认给一个真名。
     // 注意比较时端口会被剥掉（见 normalizeHost），所以这里只写 hostname。
     allowedHosts: allowedHosts ?? ["127.0.0.1"],
-    // Origin 白名单复用 CORS_ORIGINS（与生产入口同一条规则）。
-    allowedOrigins: env.corsOrigins,
+    // Origin 白名单与生产入口**同一个函数**（`resolveWebSocketAllowedOrigins`）：
+    // BASE_URL Origin ∪ CORS_ORIGINS。两边各手写一份拼接逻辑，迟早会出现
+    // 「测试放行、生产拒绝」——R1 那个根因就是白名单只给了 CORS_ORIGINS。
+    allowedOrigins: resolveWebSocketAllowedOrigins(env.baseUrl, env.corsOrigins),
     nonces: new NonceStore(),
     heartbeatMs,
     idleTimeoutMs,

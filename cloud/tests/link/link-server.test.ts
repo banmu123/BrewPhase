@@ -245,7 +245,7 @@ describe("A. Upgrade 预检（失败必须是 HTTP 响应，不是 close frame�
     }
   });
 
-  it("Origin 不在白名单 → 403；没有 Origin（原生客户端）→ 放行", async () => {
+  it("Origin 不在白名单 → 403；显式配置的 Origin → 放行；没有 Origin → 放行", async () => {
     const h = await createLinkHarness({ corsOrigins: ["https://cloud.brewphase.app"] });
     try {
       const device = await seedDevice(h);
@@ -257,7 +257,9 @@ describe("A. Upgrade 预检（失败必须是 HTTP 响应，不是 close frame�
       expect(good.ok).toBe(true);
       if (good.ok) good.ws.close(1000);
 
-      // Electron net.WebSocket 不发 Origin
+      // 不带 Origin：按既有规则放行进入后续认证（不是 Electron 的常态——
+      // Electron `net.WebSocket` 会发 Origin，见 R1 抓包）。这里覆盖的是
+      // 「Origin 头缺失」这一分支本身。
       const native = await connect(h, { token: device.deviceToken });
       expect(native.ok).toBe(true);
       if (native.ok) native.ws.close(1000);
@@ -611,6 +613,155 @@ describe("A2. Upgrade 日志（拒绝必须留下证据，且不泄漏凭据）"
       // 但布尔仍在（诊断价值靠它们）
       expect(logs[0]!.fields.hostPresent).toBe(true);
       expect(logs[0]!.fields.hostAllowed).toBe(false);
+    } finally {
+      await h.close();
+    }
+  });
+});
+
+// MARK: - A3. WSS Origin 白名单（Phase 1.3.3-A-R2）
+
+/**
+ * `BASE_URL Origin ∪ CORS_ORIGINS` 的**真实 Upgrade** 验收。
+ *
+ * 背景：R1 用真实设备 `2951ba0a` 证明 Electron `net.WebSocket` 会发 Origin，
+ * 而白名单只给了 `CORS_ORIGINS`（默认空）→ 15 分钟 16 次 `stage=origin`。
+ * 这一组钉住修复后的四条行为，全部走真实 HTTP Upgrade + Ed25519 握手，
+ * **不只断言 101**。
+ */
+describe("A3. WSS Origin 白名单（BASE_URL 自动放行 + 恶意 Origin 仍拒绝）", () => {
+  /** 测试 Env 的 BASE_URL 固定为 `http://127.0.0.1:3999`。 */
+  const baseOrigin = (h: LinkHarness): string => new URL(h.ctx.env.baseUrl).origin;
+
+  it("A. corsOrigins 为空时 BASE_URL Origin 自动放行，并完成 hello + 验签 + hello_ok", async () => {
+    // 关键前提：**显式空** CORS——修复前这条必然 403，这就是 R1 的根因。
+    const h = await createLinkHarness({ corsOrigins: [] });
+    try {
+      const origin = baseOrigin(h);
+      expect(origin).toBe("http://127.0.0.1:3999");
+      const device = await seedDevice(h);
+
+      const conn = await connect(h, { token: device.deviceToken, origin });
+      if (!conn.ok) throw new Error(`BASE_URL Origin 应被放行，却收到 ${conn.rejection.status}`);
+
+      // 不止 101：真的走完 hello 与 Ed25519 验签。
+      conn.ws.send(JSON.stringify(buildHello({ device_id: device.deviceId })));
+      const helloOk = await conn.next((f) => f.type === "hello_ok");
+      expect(helloOk.type).toBe("hello_ok");
+      await waitForConnection(h, device.deviceId);
+      expect(h.link.registry.lookupByDevice(device.deviceId)).toBeTruthy();
+      conn.ws.close(1000);
+      await conn.closeInfo;
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("B. 显式配置的额外 Origin 仍可用，且不影响 BASE_URL Origin 的放行", async () => {
+    const h = await createLinkHarness({ corsOrigins: ["https://extra.example"] });
+    try {
+      const device = await seedDevice(h);
+
+      const extra = await connect(h, { token: device.deviceToken, origin: "https://extra.example" });
+      if (!extra.ok) throw new Error(`配置里的额外 Origin 应放行，却收到 ${extra.rejection.status}`);
+      extra.ws.send(JSON.stringify(buildHello({ device_id: device.deviceId })));
+      expect((await extra.next((f) => f.type === "hello_ok")).type).toBe("hello_ok");
+      extra.ws.close(1000);
+      await extra.closeInfo;
+
+      // 追加项不能挤掉 BASE_URL Origin。
+      const base = await connect(h, { token: device.deviceToken, origin: baseOrigin(h) });
+      if (!base.ok) throw new Error(`追加 CORS 后 BASE_URL Origin 反而被拒：${base.rejection.status}`);
+      base.ws.send(JSON.stringify(buildHello({ device_id: device.deviceId })));
+      expect((await base.next((f) => f.type === "hello_ok")).type).toBe("hello_ok");
+      base.ws.close(1000);
+      await base.closeInfo;
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("C. 恶意 Origin 一律 403，且拒绝日志仍是 stage=origin", async () => {
+    const h = await createLinkHarness({ logLevel: "warn", corsOrigins: ["https://extra.example"] });
+    try {
+      const device = await seedDevice(h);
+      const evil: Array<[string, string]> = [
+        ["不同域名", "https://evil.example.com"],
+        ["子域名冒充", "https://extra.example.evil.com"],
+        ["不同端口", "http://127.0.0.1:3998"],
+        ["不同 Scheme", "https://127.0.0.1:3999"],
+      ];
+      for (const [label, origin] of evil) {
+        const logs = await captureUpgradeLogs(async () => {
+          const conn = await connect(h, { token: device.deviceToken, origin });
+          expect(conn.ok, `${label}(${origin}) 必须被拒`).toBe(false);
+          if (!conn.ok) expect(conn.rejection.status).toBe(403);
+        }, h);
+        expect(logs, label).toHaveLength(1);
+        expect(logs[0]!.event).toBe("link_upgrade_rejected");
+        expect(logs[0]!.fields.stage, label).toBe("origin");
+        expect(logs[0]!.fields.reason, label).toBe("origin_not_allowed");
+        expect(logs[0]!.fields.originAllowed, label).toBe(false);
+      }
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("D. 不带 Origin → 保持既有行为放行，且仍需通过 token + Ed25519 才能 online", async () => {
+    const h = await createLinkHarness({ corsOrigins: [] });
+    try {
+      const device = await seedDevice(h);
+
+      // a) 不带 Origin 放行进 Upgrade
+      const conn = await connect(h, { token: device.deviceToken });
+      if (!conn.ok) throw new Error(`不带 Origin 应放行，却收到 ${conn.rejection.status}`);
+
+      // b) 但身份认证一步不省：签名必须真的过。
+      conn.ws.send(JSON.stringify(buildHello({ device_id: device.deviceId })));
+      expect((await conn.next((f) => f.type === "hello_ok")).type).toBe("hello_ok");
+
+      // c) 负例：签名错的 hello 仍被 4001——「放行 Origin」没有顺带放行认证。
+      const device2 = await seedDevice(h);
+      const conn2 = await connect(h, { token: device2.deviceToken });
+      if (!conn2.ok) throw new Error("第二条连接应放行");
+      const good = buildHello({ device_id: device2.deviceId });
+      const flipped = Buffer.from(good.sig, "base64url");
+      flipped[0] = (flipped[0] ?? 0) ^ 0xff;
+      conn2.ws.send(JSON.stringify({ ...good, sig: flipped.toString("base64url") }));
+      const closed = await conn2.closeInfo;
+      expect(closed.code).toBe(REMOTE_CLOSE.UNAUTHORIZED);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("E. HTTP CORS 没有被扩大：BASE_URL Origin 不因 WSS 白名单而拿到 ACAO", async () => {
+    // corsOrigins 为空 → WSS 白名单含 BASE_URL Origin，HTTP CORS 必须仍然为空。
+    const h = await createLinkHarness({ corsOrigins: [] });
+    try {
+      const origin = baseOrigin(h);
+      const resp = await fetch(`http://127.0.0.1:${h.server.port}/health`, {
+        headers: { origin },
+      });
+      expect(resp.status).toBe(200);
+      // WSS 放行了它，HTTP 不能顺带放行——这正是「两份白名单必须分离」。
+      expect(resp.headers.get("access-control-allow-origin")).toBeNull();
+
+      // 反向对照：显式配置进 CORS_ORIGINS 后，HTTP 才给 ACAO（既有行为不变）。
+      const withCors = await createLinkHarness({ corsOrigins: [origin] });
+      try {
+        const allowed = await fetch(`http://127.0.0.1:${withCors.server.port}/health`, {
+          headers: { origin },
+        });
+        expect(allowed.headers.get("access-control-allow-origin")).toBe(origin);
+        const denied = await fetch(`http://127.0.0.1:${withCors.server.port}/health`, {
+          headers: { origin: "https://evil.example.com" },
+        });
+        expect(denied.headers.get("access-control-allow-origin")).toBeNull();
+      } finally {
+        await withCors.close();
+      }
     } finally {
       await h.close();
     }

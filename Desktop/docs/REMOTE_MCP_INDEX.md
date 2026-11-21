@@ -1905,3 +1905,78 @@ SDK 为唯一新依赖 · **CIMD 能力仍未声明** · GitHub CI 未配置（�
 声明 · GitHub CI 未配置（**不声称通过**）。
 
 报告：`cloud/docs/reviews/phase-1.3.2-r2-closeout.md`。
+
+---
+
+## 46. Phase 1.3.3-A-R1/R2：WSS Origin 假设修正与白名单修复（R2 已交付，真实设备验收 NOT VERIFIED）
+
+基线 `54abcfb`（R2）。这一节记录一个**被真实实验推翻的既有假设**及其修复。
+
+### 根因（R1 诊断，真实设备证据）
+
+设备 `2951ba0a` 走完 register → confirm → credentials → `device.json` 落盘，
+但 `last_seen_at` 恒为 NULL、`connection_count` 恒为 0，十分钟零成功连接。
+
+R1 补齐 `rejectUpgrade()` 日志后，15 分钟内抓到 **16 次
+`link_upgrade_rejected stage=origin`**，间隔 62–72s（backoff 封顶 + 抖动，
+即稳定的重连循环）。字段显示：
+
+```
+originPresent=true  originAllowed=false          ← 唯一失败项
+hostAllowed=true  expectedSubprotocolPresent=true
+bearerHeaderPresent=true  bearerFormatValid=true  credShapeValid=true
+```
+
+**Host、子协议、Bearer 形态、device_token 形态全部通过，只有 Origin 被拒。**
+因为 `CORS_ORIGINS` 默认空 → `allowedOrigins` 空集 → 任何携带 Origin 的
+Upgrade 必 403。
+
+### 被推翻的假设
+
+| 出处 | 原说法 | 实测 |
+|---|---|---|
+| `link-server.ts` 注释 | Electron `net.WebSocket` **不发** Origin（Spike 已确认） | **发**，值为目标 Cloud URL 自身 Origin |
+| `REMOTE_MCP_DEPLOYMENT.md` | 原生客户端不发 Origin，`CORS_ORIGINS` 留空不影响 Desktop | 留空 → Desktop 必被 403 |
+
+证据：R1 用独立 Electron 45 进程 + 一次性服务器抓真实握手头，得到
+`origin: http://127.0.0.1:3999`；对照实验——带 Origin → 403，不带 → 101。
+
+### 修复（R2）
+
+新增纯函数 `cloud/src/link/allowed-origins.ts` 的
+`resolveWebSocketAllowedOrigins(baseUrl, corsOrigins)`：
+
+- **WSS 白名单 = `BASE_URL` 的 Origin ∪ `CORS_ORIGINS`**，去重、精确比对；
+- 用 `URL.origin` 归一化（小写、去默认端口），与浏览器发出的 Origin 形态一致；
+- **非法配置启动即抛**：通配、path、query、fragment、非 http(s)、userinfo、
+  空 BASE_URL 一律失败——不静默丢弃，更不退化成放行所有；
+- 不修改传入的 `corsOrigins`；生产入口 `src/index.ts` 与测试夹具
+  `tests/helpers/link-server.ts` 调**同一个函数**（避免两份拼接逻辑漂移）。
+
+**HTTP CORS 未被扩大**：`app.ts` 的 `corsMiddleware` 仍只吃
+`ctx.env.corsOrigins`。`CORS_ORIGINS` 留空时，用 BASE_URL Origin 请求普通
+HTTP 路由**不会**拿到 ACAO（测试 A3-E 钉住）。
+
+**Origin 不是设备身份**：真正的身份仍由 `device_token` + 数据库状态 +
+Ed25519 hello 签名 + nonce 验证；不带 Origin 的请求按既有规则放行进入后续
+认证（测试 A3-D 同时断言签名错仍 4001）。
+
+### 测试与门禁
+
+- `tests/link/allowed-origins.test.ts`（**新增**）：BASE_URL 自动放行、
+  合并不改入参、去重、归一化、非法 BASE_URL 抛错、通配/path/query/
+  fragment/userinfo 抛错、端口与 scheme 是身份的一部分、子域名不冒充。
+- `tests/link/link-server.test.ts` A3 组（**新增** 5 个真实 Upgrade 用例）：
+  A 空 CORS 下 BASE_URL Origin 完成 hello + Ed25519 + `hello_ok`；
+  B 额外 Origin 可用且不挤掉 BASE_URL；C 恶意 Origin（不同域名 / 子域名
+  冒充 / 不同端口 / 不同 scheme）全 403 且日志 `stage=origin`；
+  D 无 Origin 放行但签名错仍 4001；E HTTP CORS 未扩大。
+- 门禁：`tsc` ✅ · `eslint` ✅ · 全量 **1641 passed / 80 files** · `pnpm build` ✅。
+
+### 状态
+
+- **R1 诊断 + R2 代码与单元/集成测试：已完成。**
+- **真实设备 `2951ba0a` 端到端验收：`NOT VERIFIED`** —— 需部署新 dist 并
+  重启 Desktop 后观察 `link_upgrade_accepted` → `link_established`、
+  `connection_count` 0→1、`last_seen_at` 开始更新、`linkState=online`，
+  并跨两个心跳周期不掉线。**未完成前 1.3.3-A 不得标记为全部通过。**

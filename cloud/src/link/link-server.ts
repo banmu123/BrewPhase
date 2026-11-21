@@ -86,11 +86,17 @@ export interface LinkServerOptions {
   /** 允许的 `Host` 头（hostname 或 hostname:port）。空数组 = 不校验（**仅测试**）。 */
   allowedHosts: string[];
   /**
-   * 允许的 `Origin`。
+   * 允许的 `Origin`。**精确比对**，无通配、无后缀匹配。
    *
-   * Electron 主进程的 `net.WebSocket` **不发** Origin（Spike 已确认），
-   * 所以「没有 Origin」必须放行。而一旦有 Origin，它就代表浏览器上下文，
-   * 必须命中白名单——否则任何网页都能拿本地 device_token 去连。
+   * Electron 主进程的 `net.WebSocket` **会**发送 Origin，值为目标 Cloud URL
+   * 自身的 Origin（R1 用真实 Electron 45 抓握手头确认；旧注释里「不发 Origin」
+   * 的 Spike 结论已被推翻）。所以白名单必须包含 `BASE_URL` 的 Origin——
+   * 由调用方用 `resolveWebSocketAllowedOrigins(baseUrl, corsOrigins)` 构造。
+   *
+   * 没有 Origin 的请求仍然放行进入后续认证（Origin 不是身份：真正的设备
+   * 身份由 device_token、数据库状态、Ed25519 签名与 nonce 共同验证）；
+   * 而一旦有 Origin，它代表浏览器上下文——那些页面的 Origin 由浏览器强制
+   * 赋值、改不了，必须命中白名单，否则任何网页都能拿本地 device_token 去连。
    */
   allowedOrigins?: string[];
   registry?: ConnectionRegistry;
@@ -420,7 +426,7 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
     /** `null` = 白名单为空，host 检查本轮未执行。 */
     hostAllowed: boolean | null;
     originPresent: boolean;
-    /** `null` = 请求没带 Origin（原生客户端），origin 检查本轮未执行。 */
+    /** `null` = 请求没带 Origin，origin 检查本轮未执行（该请求按放行处理）。 */
     originAllowed: boolean | null;
     expectedSubprotocolPresent: boolean;
     /** `Authorization` 头是否存在（只记有无，不记内容）。 */
@@ -538,8 +544,10 @@ export function createLinkServer(options: LinkServerOptions): LinkServer {
 
     // ---- Origin ----
     //
-    // 没有 Origin（原生客户端，如 Electron `net.WebSocket`）→ `originAllowed`
-    // 为 `null`，放行；有 Origin 却不在白名单 → `false`，拒绝。
+    // 有 Origin（Electron `net.WebSocket` 一定发，值为目标 URL 自身 Origin；
+    // 浏览器页面也发）却不在白名单 → `originAllowed` 为 `false`，拒绝。
+    // 没有 Origin → `originAllowed` 为 `null`，放行进入后续认证——Origin 只挡
+    // 浏览器上下文，不是设备身份（那由 token + 数据库状态 + 签名 + nonce 决定）。
     if (probe.originPresent && probe.originAllowed !== true) {
       return rejectUpgrade(socket, 403, "origin_not_allowed", "origin", probe);
     }
