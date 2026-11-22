@@ -234,6 +234,11 @@ server.registerTool(tool.name, {
   `handler.ts:62-66,193`）；
 - Desktop 离线时远程读取返回 `DEVICE_OFFLINE`（非超时、非空结果）；
 - 授权由用户逐项勾选，最小权限 scope，可随时撤销。
+  **撤销单位是单个 Session**：`POST /mcp/oauth/revoke` 走 `revokeToken()` →
+  `revokeMcpSession({ sessionId })`，只 UPDATE `mcp_sessions` 中**那一行**
+  （`revoke-flow.ts:135` → `sessions.ts:867-876`）。它**不是**整个 Grant 的
+  用户级撤销——同一 Grant 下的其它 Session 不受影响；要撤销 Grant 本身需走
+  数据层的 Grant 撤销路径。不要把该端点描述成「一键撤销该用户对该应用的全部授权」。
 
 ---
 

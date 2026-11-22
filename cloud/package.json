@@ -18,7 +18,9 @@
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/scripts/migrate.ts",
-    "db:migrate:prod": "node dist/scripts/migrate.js"
+    "db:migrate:prod": "node dist/scripts/migrate.js",
+    "preflight:remote-mcp": "tsx src/scripts/preflight-remote-mcp.ts",
+    "preflight:remote-mcp:prod": "node dist/scripts/preflight-remote-mcp.js"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.4",

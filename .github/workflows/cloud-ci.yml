@@ -1,0 +1,228 @@
+# BrewPhase Cloud CI（Phase 1.3.3-A-R5）
+#
+# 触发：cloud/ 或本工作流本身变更。
+# 范围：typecheck → lint → test（真实 PostgreSQL 16）→ build → Docker build →
+#       部署产物校验（compose 可解析、Caddyfile 合法、镜像内迁移可执行）。
+#
+# 硬约束（写在这里以免后人「顺手加一步」）：
+#   - **不部署到任何服务器**：本工作流没有任何 ssh / scp / cloud deploy 步骤。
+#   - **不使用生产 Secret**：全部凭据都是 CI 内的临时测试值，只活在
+#     service container 里；workflow 中不出现 `secrets.*` 引用。
+#   - **测试必须连真实 PostgreSQL**：`cloud/tests/global-setup.ts` 会在数据库
+#     不可达时直接失败——绝不允许用 Mock 冒充（那正是 1.1B「假通过」的教训）。
+
+name: Cloud CI
+
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - 'cloud/**'
+      - '.github/workflows/cloud-ci.yml'
+  pull_request:
+    paths:
+      - 'cloud/**'
+      - '.github/workflows/cloud-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Typecheck · Lint · Test · Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloud
+
+    services:
+      # 与 cloud/vitest.config.ts 的默认 TEST_DATABASE_URL 对齐：
+      #   postgres://brewphase:brewphase@127.0.0.1:54329/brewphase_cloud_test
+      # 容器内 Postgres 仍监听 5432，映射到宿主 54329。
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: brewphase
+          POSTGRES_PASSWORD: brewphase
+          POSTGRES_DB: brewphase_cloud_test
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U brewphase -d brewphase_cloud_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      TEST_DATABASE_URL: postgres://brewphase:brewphase@127.0.0.1:54329/brewphase_cloud_test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 不写 version：pnpm/action-setup 会读 cloud/package.json 的
+      # `packageManager: pnpm@9.0.0`，保证与 pnpm-lock.yaml 的锁文件版本一致。
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: cloud/pnpm-lock.yaml
+
+      # --frozen-lockfile：lockfile 与 package.json 不一致时直接失败，
+      # 不允许 CI 悄悄重算依赖图。
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      # global-setup 会先对测试库跑迁移；数据库不可达 → 整个套件失败。
+      - name: Test (real PostgreSQL)
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      # 迁移资产必须随构建进 dist（生产迁移入口依赖它）
+      - name: Verify migration assets in dist
+        run: |
+          test -f dist/db/migrations/meta/_journal.json
+          test -f dist/scripts/migrate.js
+          test -f dist/scripts/preflight-remote-mcp.js
+          test -f dist/index.js
+          echo "dist entries present"
+
+  docker:
+    name: Docker image & deploy artifacts
+    runs-on: ubuntu-latest
+    needs: test
+    defaults:
+      run:
+        working-directory: cloud
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker build
+        run: docker build -t brewphase-cloud:ci .
+
+      # 运行镜像只带生产依赖：devDependencies 不该出现在生产层。
+      - name: Verify runtime image has no devDependencies
+        run: |
+          for p in typescript eslint vitest drizzle-kit tsx; do
+            if docker run --rm brewphase-cloud:ci sh -c "test -d node_modules/$p"; then
+              echo "::error::devDependency $p leaked into the runtime image"
+              exit 1
+            fi
+            echo "ok: $p absent"
+          done
+          for p in hono jose postgres ws zod; do
+            docker run --rm brewphase-cloud:ci sh -c "test -d node_modules/$p" \
+              || { echo "::error::runtime dependency $p missing"; exit 1; }
+            echo "ok: $p present"
+          done
+
+      # 迁移入口必须能在镜像内独立执行（用临时 Postgres，不碰任何生产库）
+      - name: Verify migrations run inside the image
+        run: |
+          docker run -d --name pg-mig \
+            -e POSTGRES_USER=brewphase -e POSTGRES_PASSWORD=brewphase \
+            -e POSTGRES_DB=brewphase_cloud_test -p 54330:5432 \
+            postgres:16-alpine
+          for i in $(seq 1 30); do
+            docker exec pg-mig pg_isready -U brewphase -d brewphase_cloud_test >/dev/null 2>&1 && break
+            sleep 2
+          done
+          # 连跑两次：迁移必须幂等
+          docker run --rm \
+            -e DATABASE_URL=postgres://brewphase:brewphase@host.docker.internal:54330/brewphase_cloud_test \
+            brewphase-cloud:ci node dist/scripts/migrate.js
+          docker run --rm \
+            -e DATABASE_URL=postgres://brewphase:brewphase@host.docker.internal:54330/brewphase_cloud_test \
+            brewphase-cloud:ci node dist/scripts/migrate.js
+          # 失败路径必须非零退出
+          if docker run --rm \
+            -e DATABASE_URL=postgres://brewphase:brewphase@host.docker.internal:54330/nope \
+            brewphase-cloud:ci node dist/scripts/migrate.js; then
+            echo "::error::migrate must fail on a missing database"
+            exit 1
+          fi
+          echo "migrate idempotent + fail-closed OK"
+          docker rm -f pg-mig
+
+      # 预检必须能失败：缺 MCP_BROWSER_SESSION_KEY 时 Remote MCP 是 404 而 /health 仍 200
+      - name: Verify preflight fails without MCP_BROWSER_SESSION_KEY
+        run: |
+          if docker run --rm \
+            -e NODE_ENV=production -e BASE_URL=https://ci.example.com \
+            -e DATABASE_URL=postgres://x@db/x \
+            -e JWT_SIGNING_KEY=0123456789abcdef0123456789abcdef \
+            -e SESSION_TOKEN_PEPPER=0123456789abcdef \
+            -e GOOGLE_CLIENT_ID=a -e GOOGLE_CLIENT_SECRET=b \
+            -e GITHUB_CLIENT_ID=c -e GITHUB_CLIENT_SECRET=d \
+            -e GATEWAY_EXPECTED_REPLICAS=1 \
+            brewphase-cloud:ci node dist/scripts/preflight-remote-mcp.js; then
+            echo "::error::preflight must fail when MCP_BROWSER_SESSION_KEY is missing"
+            exit 1
+          fi
+          echo "preflight fail-closed OK"
+
+      # 预检必须能通过（合法配置），且不输出任何 Secret 值
+      - name: Verify preflight passes on a valid configuration
+        run: |
+          out=$(docker run --rm \
+            -e NODE_ENV=production -e BASE_URL=https://ci.example.com \
+            -e DATABASE_URL=postgres://x@db/x \
+            -e JWT_SIGNING_KEY=0123456789abcdef0123456789abcdef \
+            -e SESSION_TOKEN_PEPPER=0123456789abcdef \
+            -e GOOGLE_CLIENT_ID=a -e GOOGLE_CLIENT_SECRET=b \
+            -e GITHUB_CLIENT_ID=c -e GITHUB_CLIENT_SECRET=d \
+            -e MCP_BROWSER_SESSION_KEY=9f8e7d6c5b4a39281706f5e4d3c2b1a0 \
+            -e GATEWAY_EXPECTED_REPLICAS=1 \
+            brewphase-cloud:ci node dist/scripts/preflight-remote-mcp.js)
+          echo "$out"
+          echo "$out" | grep -q "OK"
+          # 输出里不得出现任何密钥值
+          case "$out" in
+            *0123456789abcdef*|*9f8e7d6c5b4a3928*)
+              echo "::error::preflight leaked a secret"; exit 1;;
+          esac
+          echo "preflight OK + no secret leak"
+
+      # 部署产物语法与约束回归：单副本、db 不对外、Caddyfile 合法
+      - name: Validate deploy artifacts
+        working-directory: cloud/deploy
+        run: |
+          cp .env.production.example .env.production
+          resolved=$(POSTGRES_PASSWORD=ci-only-password docker compose -f compose.yaml config)
+          echo "compose config OK"
+          echo "$resolved" | grep -q 'published: "80"' \
+            || { echo "::error::caddy must publish 80"; exit 1; }
+          echo "$resolved" | grep -q 'published: "443"' \
+            || { echo "::error::caddy must publish 443"; exit 1; }
+          if echo "$resolved" | grep -q "replicas"; then
+            echo "::error::replicas must not be configured (single instance only)"
+            exit 1
+          fi
+          echo "$resolved" | grep -q "internal: true" \
+            || { echo "::error::db network must be internal"; exit 1; }
+          # cloud 与 db 都不得发布宿主端口（只有 caddy 能对外）
+          if echo "$resolved" | grep -A3 "container_name: brewphase-cloud" | grep -q "published:"; then
+            echo "::error::cloud must not publish ports"; exit 1
+          fi
+          echo "deploy constraints OK"
+          rm -f .env.production
+          docker run --rm -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine \
+            caddy validate --config /etc/caddy/Caddyfile 2>&1 | grep -q "Valid configuration" \
+            || { echo "::error::Caddyfile invalid"; exit 1; }
+          echo "caddyfile OK"

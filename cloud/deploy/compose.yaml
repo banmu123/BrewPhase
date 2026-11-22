@@ -1,0 +1,116 @@
+# BrewPhase Remote MCP — 单 VPS 生产编排（Phase 1.3.3-A-R5）
+#
+# 拓扑：Caddy(80/443, 终结 TLS) → cloud:3000(HTTP+WSS 同端口) → db:5432
+#
+# 三条硬约束（协议 §12.2 / 部署文档 §1）：
+#   1. **单副本**：WSS ConnectionRegistry 是进程内状态，多副本会让请求落到
+#      没有连接的实例上，表现成「设备明明在线却 DEVICE_OFFLINE」。
+#      因此 `GATEWAY_EXPECTED_REPLICAS=1`，且本文件**没有 `replicas` 字段**。
+#   2. **不引入 Redis**：共享路由表是 Phase 1.4，本轮不做。
+#   3. **只有 Caddy 对外开 80/443**：cloud 与 db 都不写 `ports:`。
+#
+# 网络分两层，是为了同时满足「Cloud 要能出网调 Google/GitHub」与
+# 「db 只对 Cloud 可达」：
+#   - `edge`（普通网络）：caddy + cloud。cloud 需要**出站** HTTPS 去换
+#     Provider token / 拉 JWKS / 抓 CIMD 文档，所以这条网络不能设 internal。
+#   - `data`（`internal: true`）：cloud + db。db 只挂这条，宿主与公网都无法
+#     直连它——「不对公网开放」靠**不发布端口** + internal 网络双重保证。
+#
+# cloud 在 `edge` 上同样**不发布端口**，所以公网无法绕过 Caddy 直连 3000。
+# （Docker 的容器 IP 对宿主可达是平台特性；真正的边界是「没有发布端口 +
+#   防火墙只放行 80/443」，见 deploy/README.md 的上线检查项。）
+
+name: brewphase
+
+services:
+  # ---- 反向代理 + TLS 终结：唯一对外暴露的服务 ----
+  caddy:
+    image: caddy:2-alpine
+    container_name: brewphase-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"      # ACME http-01 验证 + 自动跳转 HTTPS
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data        # 证书与 ACME 账户
+      - caddy_config:/config
+    depends_on:
+      - cloud
+    networks:
+      - edge
+    # Caddy 自己的就绪：能起来就说明配置文件合法（`caddy validate` 也已在 CI 跑）
+    healthcheck:
+      test: ["CMD", "caddy", "version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # ---- 应用：只听 3000，不发布到宿主 ----
+  cloud:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: brewphase-cloud:latest
+    container_name: brewphase-cloud
+    restart: unless-stopped
+    env_file:
+      - .env.production          # 仓库中只有 .env.production.example
+    environment:
+      # 双保险：即使 .env.production 写错，这里也钉死单副本与生产模式。
+      NODE_ENV: production
+      PORT: "3000"
+      GATEWAY_EXPECTED_REPLICAS: "1"
+      # 真实拓扑是「Caddy → cloud」单层，XFF 右端 1 条由 Caddy 追加。
+      # 只有在「3000 不可被绕过」的前提下才安全（见文件头第 3 条）。
+      TRUST_PROXY: "true"
+      TRUST_PROXY_HOPS: "1"
+      # 数据库在 compose 网络内用服务名解析，覆盖 .env.production 里可能的外部地址。
+      DATABASE_URL: postgres://${POSTGRES_USER:-brewphase}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/${POSTGRES_DB:-brewphase_cloud}
+    expose:
+      - "3000"                    # 仅文档作用；不等于发布端口
+    depends_on:
+      db:
+        condition: service_healthy   # 数据库健康后才启动（迁移由显式步骤执行）
+    networks:
+      - edge
+      - data
+    healthcheck:
+      # 与镜像内 HEALTHCHECK 同口径：/health 只代表进程存活
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ---- PostgreSQL 16：不发布任何端口，只在 internal 网络内可达 ----
+  db:
+    image: postgres:16-alpine
+    container_name: brewphase-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-brewphase}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:-brewphase_cloud}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - data                       # 只挂 internal 网络：宿主与公网都连不进来
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-brewphase} -d ${POSTGRES_DB:-brewphase_cloud}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    # 不写 ports / expose 到宿主 —— 这是「PostgreSQL 不对公网开放」的实现。
+
+networks:
+  edge:                             # caddy + cloud（cloud 需出站到 Google/GitHub）
+  data:
+    internal: true                  # cloud + db：无出站、无入站（除同网络容器）
+
+volumes:
+  pgdata:                           # 命名卷：容器重建不丢数据
+  caddy_data:
+  caddy_config:

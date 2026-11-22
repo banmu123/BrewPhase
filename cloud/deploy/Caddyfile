@@ -1,0 +1,77 @@
+# BrewPhase Remote MCP — Caddy 反向代理（Phase 1.3.3-A-R5）
+#
+# 校验：caddy validate --config /etc/caddy/Caddyfile（deploy/README.md 有本地命令）
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# 为什么只写一个站点块就够了
+# ─────────────────────────────────────────────────────────────────────────────
+# Caddy 的 **automatic HTTPS** 会自动：
+#   1. 为带主机名的站点申请并续期证书（ACME，http-01 走 80 端口）；
+#   2. 监听 :80 并把该主机名的请求 301 到 https；
+#   3. 证书到期前自动续期。
+# 因此**不需要**手写 `:80 { redir ... }` —— 手写反而可能抢在 ACME challenge
+# 处理器之前匹配 `/.well-known/acme-challenge/`，把验证请求重定向掉。
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# 访问日志：刻意**不开启**
+# ─────────────────────────────────────────────────────────────────────────────
+# OAuth 回调 URL 带一次性 `code` 与 `state`：
+#     /oauth/callback/google?code=…&state=…
+#     /mcp/oauth/callback/google?code=…&state=…
+# Caddy 的 access log 默认记录 `request.uri`（**含 query**），一旦开启就会把
+# 一次性凭据写进磁盘日志。所以本文件不加 `log` 指令（Caddy 默认不开 access log）。
+#
+# 审计改由**应用层**承担：Cloud 的 `http_request` 日志只记 `pathname`
+# （`src/app.ts:70-73` 取 `new URL(c.req.url).pathname`），天然不含 query，
+# 也不记任何请求头。要加代理侧日志，必须先证明不会记录 query。
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# 三条必须保持的透传行为
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. **Host 原样透传**：Cloud 的 WSS Host 白名单来自 `BASE_URL` 的 host
+#    （`GATEWAY_ALLOWED_HOSTS` 缺省推导），且**只看 `Host`、不看
+#    `X-Forwarded-Host`**（后者客户端可写）。Caddy 的 `reverse_proxy` 默认
+#    就透传原始 Host，因此这里**不写 `header_up Host`**——写了反而容易把
+#    占位符写错、把后端地址塞进去，那样所有 Upgrade 会 403 host_not_allowed。
+#    `deploy/smoke-test.mjs` 的 WSS 步骤会验证这一点。
+# 2. **WebSocket Upgrade**：Caddy 检测到 `Connection: Upgrade` 会自动按流式
+#    转发（等价于 `flush_interval -1`），三个头 `Upgrade` / `Connection` /
+#    `Sec-WebSocket-Protocol` 全部透传。子协议是 `brewphase.remote.v1` 的
+#    协商载体，被剥掉会得到 400 subprotocol_required。
+# 3. **超时不能掐长连接**：心跳 20s、空闲判定 60s（`REMOTE_HEARTBEAT_MS` /
+#    `REMOTE_IDLE_TIMEOUT_MS`）。`read_header_timeout` 只管收到请求头之前，
+#    `idle_timeout` 必须显著大于 60s，否则空闲的 WSS 会被代理提前断开——
+#    表现为「连上几秒就掉，然后无限重连」。
+#
+# 路由无需任何特殊规则：`/mcp`、`/mcp/oauth/*`、`/.well-known/*`、
+# `/mcp-devices/*`、`/device-link` 全部由 `reverse_proxy` 原样转发到同一个
+# 内部端口 3000（HTTP 与 WSS 共用端口，见 `src/server.ts`）。
+{
+	# ACME 账户邮箱：证书到期通知与账户恢复用。
+	email {$ACME_EMAIL:admin@example.com}
+
+	servers {
+		timeouts {
+			# 只覆盖「收到请求头之前」；正常请求不受影响。
+			# 注意 Caddy 的选项名是 `read_header` / `idle`（不是 nginx 风格的
+			# `read_header_timeout`），写错会被 `caddy validate` 直接拒绝。
+			read_header 30s
+			# 空闲连接上限：必须 > REMOTE_IDLE_TIMEOUT_MS(60s)，取 10 分钟留足余量。
+			idle 10m
+		}
+	}
+}
+
+# 公网域名站点。`{$BREWPHASE_DOMAIN}` 由 .env.production 提供。
+{$BREWPHASE_DOMAIN:api.phase.commitbrew.com} {
+	# HTTPS 站点：Caddy 自动申请证书、自动把 :80 的同域请求 301 到 https。
+	reverse_proxy cloud:3000 {
+		# 不设置 header_up Host：Caddy 默认透传原始 Host（见文件头第 1 条）。
+		#
+		# WebSocket 不需要额外指令：Caddy 识别 Upgrade 后自动流式转发，
+		# `Sec-WebSocket-Protocol` 等头原样带到 cloud:3000。
+		#
+		# 刻意不写重试类指令：`POST /mcp` 是带状态的 JSON-RPC，
+		# 对上游失败做重试会造成重复派发。
+	}
+}

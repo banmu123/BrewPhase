@@ -4,6 +4,10 @@
 > `REMOTE_MCP_PROTOCOL.md`，安全边界见 `REMOTE_MCP_SECURITY*.md`。
 >
 > 一句话总结：**必须单副本**。下面每一节都是在解释「为什么」以及「误配长什么样」。
+>
+> **可复现的部署流程**（Compose + Caddy + 预检 + 冒烟测试 + 备份恢复 +
+> 更新回滚）见 **`cloud/deploy/README.md`**；本文档讲的是这些配置背后的
+> 约束，两者配套阅读。
 
 ---
 
@@ -216,10 +220,22 @@ registry.clear()
 
 ## 8. 上线前自查
 
+- [ ] **`pnpm --dir cloud preflight:remote-mcp` 通过**（容器内等价命令：
+      `node dist/scripts/preflight-remote-mcp.js`）。它检查 `NODE_ENV=production`、
+      `BASE_URL` 公网 https 纯 Origin、四个密钥/凭据、`MCP_BROWSER_SESSION_KEY`
+      ≥32 字节且不等于 `JWT_SIGNING_KEY`、`GATEWAY_EXPECTED_REPLICAS=1`、
+      以及 `resolveMcpOAuthEnablement()` 通过——**缺 `MCP_BROWSER_SESSION_KEY`
+      时服务会照常启动、`/health` 照常 200，但 `/mcp`、`/.well-known/*`、
+      `/mcp/oauth/*` 全部 404**，这是最难查的一类故障。预检只输出变量名，
+      绝不打印 Secret 值。
+- [ ] **四个 Provider 回调地址**已在 Google / GitHub 控制台登记
+      （Desktop 登录两条 + Remote MCP 授权两条，见 `cloud/README.md`）。
 - [ ] `replicas: 1`，且 `maxSurge: 0`
 - [ ] `GATEWAY_EXPECTED_REPLICAS` 未设置或等于 `1`
 - [ ] `BASE_URL` 是公网 https 地址，且与反代透传的 `Host` 一致
 - [ ] 反代透传 `Upgrade` / `Connection` / `Sec-WebSocket-Protocol` / `Host`
 - [ ] `/ready` 里的 `instance_id` 在 LB 的所有后端上**只有一个值**
-- [ ] 迁移 `0001` / `0002` 已应用（`pnpm --dir cloud db:migrate:prod`）
+- [ ] 迁移已应用：`docker compose run --rm cloud node dist/scripts/migrate.js`
+      （由 Drizzle journal 驱动，**不写死版本号**；当前 `0000`–`0005`，
+      新增迁移无需改脚本。重复执行安全、只应用未执行的迁移）
 - [ ] 自定义 WSS 客户端能完成：Upgrade → hello → `hello_ok` → ping/pong → close 1001（停一次进程验证）
