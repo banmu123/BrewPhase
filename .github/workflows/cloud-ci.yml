@@ -19,10 +19,13 @@
 #     前显式 `unset` 同名 Shell 变量——否则 Shell 环境会覆盖 env 文件，
 #     「文件没被加载」的缺陷就会被掩盖。
 #   - **负向测试必须断言「错误码」，不能只看退出码**：统一走
-#     `expect_preflight_failure` / `expect_caddy_failure`（`if cmd` 判失败 +
-#     `grep -Fq "[code]"` 判原因 + Secret 泄漏扫描）。禁止用持续生效的
-#     `set +e` 包住整步，也禁止用 `! grep` 代替显式判断——bash 的 `-e` 对
-#     `!` 取反的命令不生效，那等于「找到问题也不失败」。
+#     `.github/scripts/ci-assertions.sh` 里的 `expect_preflight_failure` /
+#     `expect_failure_with_reason`。断言顺序固定为「扫 Secret → 判退出码 →
+#     判错误码/原因」，诊断输出一律脱敏。禁止用持续生效的 `set +e` 包住整步，
+#     也禁止用 `! grep` 代替显式判断——bash 的 `-e` 对 `!` 取反的命令不生效，
+#     那等于「找到问题也不失败」。
+#   - **Secret 名单只有一处**：`.github/scripts/ci-assertions.sh` 的
+#     `CI_TEST_SECRETS`。新增敏感环境变量时改那里，不要散落在 workflow 里。
 
 name: Cloud CI
 
@@ -33,10 +36,12 @@ on:
     paths:
       - 'cloud/**'
       - '.github/workflows/cloud-ci.yml'
+      - '.github/scripts/**'
   pull_request:
     paths:
       - 'cloud/**'
       - '.github/workflows/cloud-ci.yml'
+      - '.github/scripts/**'
   workflow_dispatch:
 
 permissions:
@@ -345,6 +350,62 @@ jobs:
           grep -q "POSTGRES_PASSWORD .*URL-safe, not a placeholder" /tmp/preflight-ok.log
           echo "preflight OK with the composed DATABASE_URL + matching BREWPHASE_DOMAIN"
 
+      # ── 5b. 断言库自检：证明「该失败时会失败」 ───────────────────────
+      # 负向测试最容易的退化是「永远通过」。这一段用**隔离的假命令**验证
+      # 断言库的判别力（不碰 Docker / PostgreSQL，也不冒充集成测试）。
+      - name: Assertion helpers must be able to fail
+        run: |
+          set -o pipefail
+          source "$GITHUB_WORKSPACE/.github/scripts/ci-assertions.sh"
+
+          fail() { echo "::error::$1"; exit 1; }
+
+          # (1) 预期错误码写错 → helper 必须失败
+          if expect_preflight_failure /tmp/self-code.log database_url_TYPO \
+              bash -c 'echo "[preflight:remote-mcp] FAILED"; echo "  - [database_url_missing] x"; exit 1'; then
+            fail "helper accepted a wrong expected error code"
+          fi
+          echo "ok: wrong expected code -> helper fails"
+
+          # (2) 命令意外成功 → helper 必须失败
+          if expect_preflight_failure /tmp/self-ok.log database_url_missing \
+              bash -c 'echo "all checks passed"; exit 0'; then
+            fail "helper accepted a successful preflight"
+          fi
+          echo "ok: unexpected success -> helper fails"
+
+          # (3) docker 基础设施错误（125）→ 不能被当成「预检正确拒绝」
+          #     注意日志里**含**预期错误码：仍必须因退出码不符而失败。
+          if expect_preflight_failure /tmp/self-infra.log database_url_missing \
+              bash -c 'echo "[preflight:remote-mcp] FAILED"; echo "  - [database_url_missing] x"; exit 125'; then
+            fail "helper accepted a docker infrastructure failure"
+          fi
+          echo "ok: infra failure (exit 125) -> helper fails"
+
+          # (4) 日志含 Secret → 必须失败，且 helper 自己不得把 Secret 回显出来
+          if expect_preflight_failure /tmp/self-leak.log database_url_missing \
+              bash -c 'echo "[preflight:remote-mcp] FAILED"; echo "  - [database_url_missing] x"; echo "value=ci_r5r3_pepper_0123456789"; exit 1' \
+              > /tmp/self-leak.out 2>&1; then
+            fail "helper accepted a leaking log"
+          fi
+          if grep -Fq "ci_r5r3_pepper_0123456789" /tmp/self-leak.out; then
+            fail "helper echoed the leaked secret to its own output"
+          fi
+          echo "ok: secret in log -> helper fails without echoing it"
+
+          # (5) 迁移日志泄漏 → assert_no_secret_in_log 必须失败
+          printf 'pw=7c1f0b9d4e2a6835fa91c0d7e5b32468\n' > /tmp/self-migrate.log
+          if assert_no_secret_in_log /tmp/self-migrate.log "self-test migration #2"; then
+            fail "assert_no_secret_in_log accepted a leaking log"
+          fi
+          echo "ok: leaking second-migration log -> assertion fails"
+
+          # 正向对照：干净日志必须通过（否则说明断言过激，会把正常构建判死）
+          printf 'pw=***\n' > /tmp/self-clean.log
+          assert_no_secret_in_log /tmp/self-clean.log "self-test clean log" \
+            || fail "assert_no_secret_in_log rejected a clean log"
+          echo "ok: clean log passes"
+
       # ── 6. 预检负例：缺项 / 弱口令 / 域名 / 数据库连接串 ────────────────
       # 这一段的教训（R5-R3.2）：原来是 `set +e` 包住整个步骤，中间十几个
       # `grep -q` 即便没匹配到也不会中断，最后一句 `exit 0` 把整步判成通过——
@@ -360,44 +421,8 @@ jobs:
         run: |
           set -o pipefail
 
-          TEST_SECRETS=(
-            "7c1f0b9d4e2a6835fa91c0d7e5b32468"
-            "ci_r5r3_jwt_key"
-            "ci_r5r3_mcp_key"
-            "ci_r5r3_google_secret"
-            "ci_r5r3_github_secret"
-          )
-
-          # 用法：expect_preflight_failure <日志> <错误码[,错误码…]> <命令…>
-          expect_preflight_failure() {
-            local log="$1"
-            local codes_csv="$2"
-            shift 2
-
-            if "$@" >"$log" 2>&1; then
-              echo "::error::preflight unexpectedly SUCCEEDED (expected failure: $codes_csv)"
-              cat "$log"
-              return 1
-            fi
-
-            local code
-            for code in ${codes_csv//,/ }; do
-              if ! grep -Fq "[$code]" "$log"; then
-                echo "::error::expected error code [$code] not found in preflight output"
-                cat "$log"
-                return 1
-              fi
-            done
-
-            local secret
-            for secret in "${TEST_SECRETS[@]}"; do
-              if grep -Fq "$secret" "$log"; then
-                echo "::error::preflight output leaked a test secret"
-                return 1
-              fi
-            done
-            return 0
-          }
+          # 断言库与 Secret 名单的唯一维护点（含 SESSION_TOKEN_PEPPER）。
+          source "$GITHUB_WORKSPACE/.github/scripts/ci-assertions.sh"
 
           run_pf() {
             docker compose --env-file .env.production run --rm --no-deps "$@" \
@@ -431,8 +456,8 @@ jobs:
           # 这里把两侧都换成含 `/` 的值，才真的能同时命中两个错误码。
           expect_preflight_failure /tmp/pf-neg.log postgres_password_unsafe_chars,database_url_invalid \
             run_pf \
-              -e POSTGRES_PASSWORD='ab/cdEfGhIjKlMnOpQrStUvWx' \
-              -e DATABASE_URL='postgres://brewphase:ab/cdEfGhIjKlMnOpQrStUvWx@db:5432/brewphase_cloud'
+              -e POSTGRES_PASSWORD="$CI_UNSAFE_TEST_PASSWORD" \
+              -e DATABASE_URL="postgres://brewphase:${CI_UNSAFE_TEST_PASSWORD}@db:5432/brewphase_cloud"
           echo "ok: URL-unsafe DB password -> exit 1 (unsafe_chars + invalid URL)"
 
           # (f) 口令两侧不一致（DATABASE_URL 与 POSTGRES_PASSWORD 各改一边）
@@ -495,16 +520,22 @@ jobs:
             node dist/scripts/migrate.js | tee /tmp/migrate-1.log
           docker compose --env-file .env.production run --rm cloud \
             node dist/scripts/migrate.js | tee /tmp/migrate-2.log
-          grep -q "\[migrate\] database migrations applied" /tmp/migrate-1.log
-          grep -q "\[migrate\] database migrations applied" /tmp/migrate-2.log
-          # 迁移日志不得出现口令。
+          source "$GITHUB_WORKSPACE/.github/scripts/ci-assertions.sh"
+
+          # 先扫 Secret，再判成功——顺序与负向断言一致：
+          # 万一日志里真的出现口令，什么都不输出也比先打印再报错好。
+          #
+          # 两份日志都要扫：第二次迁移同样会打印连接信息（至少回显
+          # DATABASE_URL 的解析结果），只查第一份等于默许第二份成为泄漏通道。
           # 注意不能写成 `! grep -q`：bash 的 `-e` 对 `!` 取反的命令不生效，
-          # 那等于「找到口令也不失败」——正是本阶段要清掉的一类假通过。
-          if grep -Fq "7c1f0b9d4e2a6835fa91c0d7e5b32468" /tmp/migrate-1.log; then
-            echo "::error::migration log leaked the database password"
-            exit 1
-          fi
-          echo "migrations applied twice (idempotent), no secret in output"
+          # 那等于「找到口令也不失败」——正是要清掉的一类假通过。
+          assert_no_secret_in_log /tmp/migrate-1.log "first migration"
+          assert_no_secret_in_log /tmp/migrate-2.log "second migration"
+
+          grep -Fq "[migrate] database migrations applied" /tmp/migrate-1.log
+          grep -Fq "[migrate] database migrations applied" /tmp/migrate-2.log
+
+          echo "migrations applied twice (idempotent), no secret in either log"
 
       # ── 8. Caddyfile：有变量必须通过，缺变量必须失败 ───────────────────
       # 走 compose run（而不是 docker run -e）：这样注入的正是 .env.production
@@ -520,27 +551,7 @@ jobs:
       - name: Caddyfile must fail when the domain or email is missing
         run: |
           set -o pipefail
-
-          # 与预检负例同一套纪律：`if cmd` 判退出码，再断言失败**原因**。
-          # 原来的 `set +e` + 裸 grep 会让「原因不对」也判成通过。
-          expect_caddy_failure() {
-            local log="$1"
-            local needle="$2"
-            shift 2
-
-            if "$@" >"$log" 2>&1; then
-              echo "::error::caddy validate unexpectedly SUCCEEDED (expected failure: $needle)"
-              tail -n 40 "$log"
-              return 1
-            fi
-
-            if ! grep -Fq "$needle" "$log"; then
-              echo "::error::caddy failed for an unexpected reason (want: $needle)"
-              tail -n 40 "$log"
-              return 1
-            fi
-            return 0
-          }
+          source "$GITHUB_WORKSPACE/.github/scripts/ci-assertions.sh"
 
           run_caddy() {
             docker compose --env-file .env.production run --rm --no-deps "$@" \
@@ -548,12 +559,12 @@ jobs:
           }
 
           # (a) 两个都缺 → `email ` 指令没有参数
-          expect_caddy_failure /tmp/caddy-both.log "wrong argument count" \
+          expect_failure_with_reason /tmp/caddy-both.log "wrong argument count" \
             run_caddy -e ACME_EMAIL= -e BREWPHASE_DOMAIN=
           echo "ok: missing ACME_EMAIL -> validate fails (wrong argument count)"
 
           # (b) 只缺域名（邮箱正常）→ 站点键为空，而不是启动到错误域名
-          expect_caddy_failure /tmp/caddy-domain.log "server block without any key" \
+          expect_failure_with_reason /tmp/caddy-domain.log "server block without any key" \
             run_caddy -e BREWPHASE_DOMAIN=
           echo "ok: missing BREWPHASE_DOMAIN -> validate fails (empty site key)"
 
