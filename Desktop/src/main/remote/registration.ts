@@ -310,8 +310,22 @@ export function createHttpDeviceRegistrar(options: HttpDeviceRegistrarOptions): 
       // 那条路径上「等用户点确认」才是常态。
       if (res.status === 202) return { ok: false, reason: 'pending', retryable: true }
       if (res.status === 410) return { ok: false, reason: 'expired', retryable: false }
-      if (res.status === 403 || res.status === 404 || res.status === 409) {
-        return { ok: false, reason: 'claim_rejected', retryable: false }
+      if (res.status === 403 || res.status === 404) return { ok: false, reason: 'claim_rejected', retryable: false }
+      if (res.status === 409) {
+        // 409 有**两种**含义，处置完全相反，必须按错误体的 `error` 分开：
+        //
+        // | `error` | 含义 | 处置 |
+        // |---|---|---|
+        // | `credentials_already_issued` | Token 已签发，这一方没拿到 | 一次性不可重试 → 撤销 + 重新配对 |
+        // | `invalid_device_state` 等 | 设备被暂停/状态冲突 | 同样不可重试，但设备可能还能救 |
+        //
+        // 混成一个 `claim_rejected` 会让「已经签发但没保存」被当成普通失败，
+        // 而那台设备会在 Cloud 上停成一个谁也用不了的 active。
+        // 读的是**错误码**而不是 description：description 是给人看的文案，
+        // 只有 `error` 才是协议字段。
+        return errorCode(res.body) === 'credentials_already_issued'
+          ? { ok: false, reason: 'credentials_already_issued', retryable: false }
+          : { ok: false, reason: 'claim_rejected', retryable: false }
       }
       if (res.status === 401) return { ok: false, reason: 'unauthorized', retryable: false }
       if (res.status !== 200) return { ok: false, reason: 'invalid_response', retryable: false }
@@ -440,6 +454,22 @@ function parseJson(text: string): unknown {
   } catch {
     return null
   }
+}
+
+/**
+ * 读 Cloud 统一错误体的 `error` 字段（`{ "error": "<code>", "error_description": … }`）。
+ *
+ * 形态不对一律返回 `null`——**不猜**。调用方把 `null` 当成「不是这个码」处理，
+ * 而不是当成「是这个码」：一个解析不出的响应体绝不能被解释成业务含义，
+ * 否则「Cloud 发了奇怪的东西」会伪装成一次正常的业务拒绝。
+ *
+ * 只读错误码，不读 `error_description`：后者是给人看的文案，且可能随版本变化；
+ * 只有 `error` 才是协议字段。
+ */
+function errorCode(body: unknown): string | null {
+  if (typeof body !== 'object' || body === null) return null
+  const value = (body as { error?: unknown }).error
+  return typeof value === 'string' ? value : null
 }
 
 /** `https://host` → `https://host`；`wss://host` → `https://host`。测试用 http。 */

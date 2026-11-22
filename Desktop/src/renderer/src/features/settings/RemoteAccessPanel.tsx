@@ -9,6 +9,13 @@ import { REMOTE_SCOPES } from '@shared/contracts/remote'
 import { useI18n } from '../../i18n'
 import { api } from '../../shared/api'
 import { formatLastError, shouldHighlightLastError } from './remote-error-view'
+import {
+  canStartPairing,
+  isPairingBusy,
+  pairingBlocker,
+  pairingButtonLabelKey,
+  pairingNoticeOf
+} from './remote-pairing-view'
 
 /**
  * 设置页「远程访问」面板（Phase 1.1B）。
@@ -118,9 +125,8 @@ export function RemoteAccessPanel(): React.JSX.Element {
     try {
       const result = await api.remote.confirmRegistration()
       setStatus(result.status)
-      setPairingNotice(
-        result.ok ? { kind: 'done' } : { kind: 'failed', reason: result.reason ?? 'invalid_response' }
-      )
+      // `ok` 只在主进程完成凭据落盘后才为 true（见 remote-pairing-view）。
+      setPairingNotice(pairingNoticeOf(result))
       setError(null)
     } catch (confirmError) {
       setError(confirmError instanceof Error ? confirmError.message : String(confirmError))
@@ -304,7 +310,8 @@ export function RemoteAccessPanel(): React.JSX.Element {
       <div className="settings-row__actions">
         <button
           className="button"
-          disabled={busy}
+          disabled={busy || !canStartPairing(status)}
+          data-testid="remote-register"
           onClick={() => void startPairing()}
         >
           {copy.register}
@@ -321,6 +328,19 @@ export function RemoteAccessPanel(): React.JSX.Element {
           {copy.forget}
         </button>
       </div>
+
+      {/* 禁用「配对新设备」时必须给出**可执行**的下一步，
+          否则用户只看到一个点不动的按钮（R5-R3.4.1 §9）。 */}
+      {pairingBlocker(status) === 'in_progress' && (
+        <p className="settings-hint" data-testid="remote-pairing-blocker">
+          {copy.pairingInProgress}
+        </p>
+      )}
+      {pairingBlocker(status) === 'already_paired' && (
+        <p className="settings-hint" data-testid="remote-pairing-blocker">
+          {copy.alreadyPaired}
+        </p>
+      )}
 
       {status?.pendingRegistration && (
         <div className="settings-callout" data-tone="warning" data-testid="remote-pending-device">
@@ -354,14 +374,21 @@ export function RemoteAccessPanel(): React.JSX.Element {
             <button
               className="button"
               data-variant="primary"
-              disabled={pairingAction !== null}
+              data-testid="remote-confirm-device"
+              disabled={isPairingBusy(status.pairingPhase, pairingAction)}
               onClick={() => void confirmPairing()}
             >
-              {pairingAction === 'confirm' ? copy.confirmingDevice : copy.confirmDevice}
+              {copy[
+                pairingButtonLabelKey({
+                  phase: status.pairingPhase,
+                  confirming: pairingAction === 'confirm'
+                })
+              ]}
             </button>
             <button
               className="button"
-              disabled={pairingAction !== null}
+              data-testid="remote-cancel-pairing"
+              disabled={isPairingBusy(status.pairingPhase, pairingAction)}
               onClick={() => void cancelPairing()}
             >
               {pairingAction === 'cancel' ? copy.cancellingPairing : copy.cancelPairing}

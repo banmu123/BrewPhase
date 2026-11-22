@@ -1196,6 +1196,7 @@ describe('lastError 生命周期（R1 可观测性）', () => {
     const link = createLinkState()
     link.lastError = 'websocket error'
     const status = buildStatus({
+      pairingPhase: 'idle',
       link,
       enabled: true,
       deviceId: 'dev-1',
@@ -1212,6 +1213,7 @@ describe('lastError 生命周期（R1 可观测性）', () => {
     link.lastError = null
     expect(
       buildStatus({
+        pairingPhase: 'idle',
         link,
         enabled: true,
         deviceId: 'dev-1',

@@ -439,7 +439,11 @@ describe('设备注册闭环（协议 §3，Mock 端点）', () => {
       claimSecret: registered.claimSecret
     })
     expect(again.ok).toBe(false)
-    if (!again.ok) expect(again.reason).toBe('claim_rejected')
+    // Cloud 回的是 `credentials_already_issued`（409 + 错误码），比笼统的
+    // `claim_rejected` 更有用：调用方据此知道「Token 已签发但这一方没拿到」
+    // ——那是一次性不可重试，必须撤销后重新配对，而不是继续轮询。
+    if (!again.ok) expect(again.reason).toBe('credentials_already_issued')
+    if (!again.ok) expect(again.retryable).toBe(false)
 
     // 拿到的 token 能真的用于 WSS 握手。
     gateway.trustDevicePublicKey(publicKey)

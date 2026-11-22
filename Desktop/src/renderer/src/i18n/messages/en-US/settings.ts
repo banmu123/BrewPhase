@@ -70,11 +70,18 @@ export const remote = {
   confirmDevice: 'Trust this device',
   cancelPairing: 'Cancel this pairing',
   confirmingDevice: 'Confirming…',
+  claimingCredentials: 'Confirmed. Claiming the device credential…',
+  savingCredential: 'Saving the credential…',
+  retryClaim: 'Retry claiming the credential',
   cancellingPairing: 'Cancelling…',
   pairingDone: 'Paired. The device credential is encrypted and stored.',
   pairingRevoked: 'Pairing cancelled; the pending device was revoked on the cloud.',
   pairingRevokePending:
     'Cancelled locally; the pending device could not be revoked and will expire on its own.',
+  /** "Pair a new device" must be disabled while a pairing or a device exists. */
+  pairingInProgress: 'A device pairing is already in progress. Confirm or cancel it first.',
+  alreadyPaired:
+    'This computer is already paired. To pair again, choose "Forget this device" first.',
   confirmFailures: {
     unauthorized: 'Your session has expired. Sign in to the Cloud account again.',
     invalid_code: 'That code is not correct. Check it and retry (too many failures invalidates the device).',
@@ -84,7 +91,18 @@ export const remote = {
     rate_limited: 'Too many attempts. Try again in a moment.',
     account_changed: 'The account changed during confirmation, so this pairing was discarded.',
     network: 'Network unavailable. Check your connection and retry; the device is still waiting for confirmation.',
-    invalid_response: 'The server returned an unexpected response. Try again later.'
+    invalid_response: 'The server returned an unexpected response. Try again later.',
+    claim_pending:
+      'The device is confirmed but its credential has not been claimed yet. Retry in a moment — the pairing is still valid.',
+    claim_network:
+      'The device is confirmed, but claiming the credential hit a network error. Check your connection and retry — the pairing is still valid.',
+    credentials_already_issued:
+      'The credential was issued in the cloud but never reached this computer (a credential can only be claimed once). To avoid leaving an unusable device behind, an attempt was made to revoke it — start "Pair a new device" again.',
+    credential_save_failed:
+      'The system secure storage could not write the credential. To avoid leaving an unusable device behind, an attempt was made to revoke it — check your keychain and pair again.',
+    credential_cleanup_failed:
+      'The credential could not be stored, and the device could not be revoked in the cloud either. Delete this device from the Cloud device list manually, then pair again.',
+    superseded: 'This pairing was cancelled, replaced, or discarded because the account changed.'
   },
   socket: 'Socket',
   inflight: 'In flight',

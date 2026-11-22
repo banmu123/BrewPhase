@@ -406,6 +406,43 @@ export const remotePendingRegistrationSchema = z.object({
 })
 export type RemotePendingRegistration = z.infer<typeof remotePendingRegistrationSchema>
 
+/**
+ * 配对流程进行到哪一步（R5-R3.4.1）。
+ *
+ * 放进 `RemoteStatus` 而不是只放在 `RemoteConfirmResult` 里：确认是一次
+ * **长 IPC**（confirm → claim → safeStorage 落盘），界面在等待期间必须能看到
+ * 「已确认，正在领取凭据」而不是一直停在「正在确认…」。主进程是唯一事实
+ * 来源，所以进度也走同一条 `remote:changed` 广播。
+ *
+ * **没有 `paired` 这个阶段**：配对完成时 `pendingRegistration` 已经变 null、
+ * `deviceId` 已经有值，界面靠这两者显示「配对完成」——一个可能滞留的进度
+ * 标记反而会在崩溃恢复后骗过界面。
+ */
+export const REMOTE_PAIRING_PHASES = [
+  /** 没有进行中的配对。 */
+  'idle',
+  /** 注册完成，等用户点确认。 */
+  'awaiting_confirm',
+  /** 正在请求 Cloud `confirm`。 */
+  'confirming',
+  /** Cloud 已确认，正在领取 `device_token`。 */
+  'claiming',
+  /** 已拿到凭据，正在写入系统安全存储。 */
+  'saving',
+  /** 已确认但凭据没领到（可重试）。 */
+  'claim_incomplete',
+  /** 终态失败：需要重新配对，或需要人工处理。 */
+  'failed'
+] as const
+export type RemotePairingPhase = (typeof REMOTE_PAIRING_PHASES)[number]
+
+/** 处于「进行中」的阶段：这些阶段里确认 / 取消 / 重新注册都必须禁用。 */
+export const REMOTE_BUSY_PAIRING_PHASES: readonly RemotePairingPhase[] = [
+  'confirming',
+  'claiming',
+  'saving'
+]
+
 /** 设置页可见的远程状态。**不含任何凭据**。 */
 export const remoteStatusSchema = z.object({
   /** 用户可见的总开关（持久化在 local_state）。 */
@@ -421,6 +458,15 @@ export const remoteStatusSchema = z.object({
    * 配对过程中被关闭再打开，那时唯一的真相来源就是主进程状态。
    */
   pendingRegistration: remotePendingRegistrationSchema.nullable(),
+  /**
+   * 配对进行到哪一步（R5-R3.4.1）。
+   *
+   * `idle` 表示没有配对流程在跑；有 `pendingRegistration` 时至少是
+   * `awaiting_confirm`。**`paired` 不是一个阶段**——配对完成时
+   * `pendingRegistration` 已经变 null、`deviceId` 已经有值，界面靠这两者
+   * 加 `pairingNotice` 显示「配对完成」，而不是靠一个可能滞留的进度标记。
+   */
+  pairingPhase: z.enum(REMOTE_PAIRING_PHASES),
   /** `boundUserId` 与当前登录用户不匹配：需要解绑或换账户。 */
   needsReauth: z.boolean(),
   /**
@@ -528,8 +574,17 @@ export const REMOTE_REGISTRATION_FAILURES = [
   'invalid_public_key',
   /** 用户还没在 Web 端确认（可继续轮询）。 */
   'pending',
-  /** `claim_secret` 不匹配 / 已领取 / 设备不在 pending。 */
+  /** `claim_secret` 不匹配 / 设备不在 pending / 状态不允许领取。 */
   'claim_rejected',
+  /**
+   * Cloud **已经把 `device_token` 签发出去了，但这一方没有拿到**。
+   *
+   * 与 `claim_rejected` 分开是因为处置完全不同：领取是一次性的
+   * （`token_issued_at IS NULL` 是原子守卫），重试一万次也拿不到同一枚明文
+   * Token。唯一正确的动作是**撤销这台设备后重新配对**——把它混进
+   * `claim_rejected` 会让「已经签发但没保存」和「压根没签发」走同一条重试路径。
+   */
+  'credentials_already_issued',
   /** 等待用户在 Web 端确认期间超时。 */
   'expired',
   'cancelled',
@@ -565,6 +620,20 @@ export type RemoteRegistrationTicket = z.infer<typeof remoteRegistrationTicketSc
  * | `account_changed` | 确认期间换了账户，本次配对作废 |
  * | `network` | 检查网络后重试（设备仍是 pending，确认码还有效） |
  * | `invalid_response` | 对端不是预期协议，记录日志 |
+ *
+ * 下面五个是**确认成功之后**、凭据领取阶段的失败（R5-R3.4.1）。
+ * 它们与上面的分界线很硬：`ok: true` 只在 `device_token` 已经写进安全存储
+ * 之后才成立，所以「Cloud 确认通过但本地没有可用凭据」必须有自己的原因码——
+ * 否则界面会显示「配对完成」，而设备其实连不上。
+ *
+ * | 原因 | 用户该做什么 |
+ * |---|---|
+ * | `claim_pending` | 设备已确认，凭据还没领到——重试即可（注册仍有效） |
+ * | `claim_network` | 同上，但原因是网络；检查连接后重试 |
+ * | `credentials_already_issued` | 凭据已被签发而本地没拿到（一次性，不可重试）→ 已撤销，重新配对 |
+ * | `credential_save_failed` | 系统安全存储写不进去 → 已撤销，重新配对 |
+ * | `credential_cleanup_failed` | 上面两种的撤销也失败了 → **需要人工处理** |
+ * | `superseded` | 配对在途中被取消 / 顶替 / 换账户，本次结果已作废 |
  */
 export const REMOTE_CONFIRM_FAILURES = [
   'unauthorized',
@@ -575,7 +644,13 @@ export const REMOTE_CONFIRM_FAILURES = [
   'rate_limited',
   'account_changed',
   'network',
-  'invalid_response'
+  'invalid_response',
+  'claim_pending',
+  'claim_network',
+  'credentials_already_issued',
+  'credential_save_failed',
+  'credential_cleanup_failed',
+  'superseded'
 ] as const
 export type RemoteConfirmFailure = (typeof REMOTE_CONFIRM_FAILURES)[number]
 

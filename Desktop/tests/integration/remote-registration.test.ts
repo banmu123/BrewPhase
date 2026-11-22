@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -124,6 +124,11 @@ function makeService(registrarFactory: Parameters<typeof createRemoteService>[0]
     onChanged: () => undefined,
     log: () => undefined
   })
+}
+
+/** 指向当前 Mock 网关的真实 HTTP registrar：走完整 register → confirm → claim 链路。 */
+function realRegistrar(): ReturnType<typeof createHttpDeviceRegistrar> {
+  return createHttpDeviceRegistrar({ origin: gatewayUrl, accessToken: async () => 'user-token' })
 }
 
 describe('Access token 必须每次现取', () => {
@@ -333,7 +338,7 @@ describe('账户切换 / 登出会让进行中的注册失效', () => {
     expect((await store.load()).status).toBe('empty')
   })
 
-  it('重新注册会顶替上一次（不会两个 claim 循环并行跑）', async () => {
+  it('pending 期间再次 register 必须被拒绝，不能静默顶替上一次', async () => {
     gateway = await startMockGateway({})
     gatewayUrl = gateway.url
 
@@ -341,17 +346,42 @@ describe('账户切换 / 登出会让进行中的注册失效', () => {
     service = makeService(hanging.factory)
     await service.start()
 
-    await service.register()
+    const first = await service.register()
     await waitFor(() => hanging.claimCalls() >= 1, 5_000)
     const callsBefore = hanging.claimCalls()
 
-    // 再点一次「配对新设备」
-    await service.register()
+    // 再点一次「配对新设备」→ 必须拒绝。旧实现是 `cancelRegistration('superseded')`：
+    // Cloud 上那台 pending 设备与用户手上的确认码会被一起丢掉，
+    // 而界面已经换成了新的一台——用户对着旧确认码点确认，只会 404。
+    await expect(service.register()).rejects.toThrow(/already in progress/)
+
+    // 第一次注册仍然是当前那次：deviceId 与确认码都没被换掉
+    const still = service.status().pendingRegistration
+    expect(still?.deviceId).toBe(first.deviceId)
+    expect(still?.confirmCode).toBe(first.confirmCode)
+    expect(service.status().pairingPhase).toBe('awaiting_confirm')
+
     hanging.release()
     await new Promise((resolve) => setTimeout(resolve, 1_400))
-
-    // 旧循环已取消；只有新循环继续（callsBefore + 至多 1 次新轮询）
+    // 没有第二条领取路径被造出来（仍然只有同一条在跑）
     expect(hanging.claimCalls()).toBeLessThanOrEqual(callsBefore + 1)
+  })
+
+  it('已有 deviceId 时再次 register 必须被拒绝（不覆盖 device.json）', async () => {
+    gateway = await startMockGateway({})
+    gatewayUrl = gateway.url
+    service = makeService(() => realRegistrar())
+    await service.start()
+
+    const ticket = await service.register()
+    const paired = await service.confirmRegistration()
+    expect(paired.ok).toBe(true)
+
+    // 每个 userData 目录只保存一份设备身份：再注册会把可用凭据顶掉，
+    // 用户会在毫无提示的情况下掉线。必须先走「忘记此设备」。
+    await expect(service.register()).rejects.toThrow(/already paired/)
+    expect(service.status().deviceId).toBe(ticket.deviceId)
+    expect(existsSync(deviceStorePaths(dir).devicePath)).toBe(true)
   })
 })
 
@@ -491,6 +521,7 @@ describe('Renderer 拿不到任何用户凭证', () => {
       'grants',
       'grantEpoch',
       'pendingRegistration',
+      'pairingPhase',
       'auditStatus'
     ])
 

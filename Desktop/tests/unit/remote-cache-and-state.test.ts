@@ -337,6 +337,7 @@ describe('buildStatus 不含凭据', () => {
   it('序列化后没有 token / 私钥 / 参数', () => {
     const link = createLinkState()
     const status = buildStatus({
+      pairingPhase: 'idle',
       link,
       enabled: false,
       deviceId: 'dev-1',

@@ -18,7 +18,10 @@ import {
   type RemoteGrantUpdate,
   type RemoteLinkState,
   type RemoteCancelResult,
+  type RemoteConfirmFailure,
   type RemoteConfirmResult,
+  type RemotePairingPhase,
+  type RemoteRegistrationFailure,
   type RemoteRegistrationTicket,
   type RemoteStatus,
   type RemoteUnserviceableReason
@@ -35,6 +38,7 @@ import {
   signHello,
   signRotation,
   writeRemoteState,
+  type DeviceSave,
   type DeviceStore,
   type HelloSigningInput,
   type RemoteSecretBox
@@ -110,6 +114,65 @@ const HANDSHAKE_DEADLINE_MS = 10_000
 
 /** 注册后轮询 `/credentials` 的间隔（协议 §3.4 建议 1s）。 */
 const REGISTRATION_POLL_MS = 1_000
+
+/**
+ * 一次进行中的设备注册（R5-R3.4.1 从 `createRemoteService` 里提出来）。
+ *
+ * 提出来的理由是**引用相等仍然是身份判据**，但类型要能被 `ClaimOutcome` 的
+ * 单飞句柄引用——把「谁在飞」写在类型里，比在注释里写更难被后人改错。
+ */
+export type PendingRegistration = {
+  deviceId: string
+  claimSecret: string
+  privateKey: import('node:crypto').KeyObject
+  userId: string
+  expiresAt: number
+  /**
+   * 展示信息。确认码只存在主进程内存里：界面通过 status 拿到它去显示，
+   * 但它不落盘、不进日志——它是「第二重同意」的凭据而不是数据。
+   */
+  confirmCode: string
+  deviceName: string
+  platform: string
+  accountLabel: string | null
+  cancelled: boolean
+  timer: NodeJS.Timeout | null
+}
+
+/**
+ * 一次凭据领取的结果（R5-R3.4.1）。
+ *
+ * ## 为什么不能是 `void`
+ *
+ * `confirmRegistration` 必须据此判断「配对到底成没成」。`void` 会把
+ * **三种完全不同的局面**压成同一个「跑完了」：
+ *
+ * | 结局 | 后果（修复前） |
+ * |---|---|
+ * | 202 还没到可领取的时候 | 显示「配对完成」，但本地没有凭据 |
+ * | 网络断了 | 同上，且 pending 被当成已处理 |
+ * | Token 已签发但没保存成功 | 同上，Cloud 上还留着一台 active 僵尸设备 |
+ *
+ * 所以每种结局都必须能被调用方分别看见、分别处置。
+ */
+export type ClaimOutcome =
+  /** 已领取**且已写进安全存储**（或本机早已持有同一台设备的凭据）。 */
+  | { state: 'claimed' }
+  /** Cloud 说还不能领（202）：注册仍然有效，下一轮继续；不落盘、不开 WSS。 */
+  | { state: 'pending' }
+  /** 网络等临时问题：可安全重试，注册与内存凭据都保留。 */
+  | { state: 'retryable_failure'; reason: RemoteRegistrationFailure }
+  /**
+   * 不可恢复（含「Token 已签发但本地没拿到」）。
+   *
+   * `revoked` = 是否成功把这台设备从 Cloud 撤掉。它是**如实报告**的依据：
+   * 撤销失败时调用方必须说「需要人工处理」，不能假装设备已经清理。
+   */
+  | { state: 'terminal_failure'; reason: RemoteRegistrationFailure; revoked: boolean }
+  /** 领取成功但 safeStorage 没写成（可用性 / 写入失败）。同样需要撤销。 */
+  | { state: 'save_failed'; reason: 'unavailable' | 'write-failed'; revoked: boolean }
+  /** 注册已被取消 / 顶替 / 换账户：这次结果作废，**不得改动任何状态**。 */
+  | { state: 'superseded' }
 
 export type RemoteServiceDeps = {
   db: Db
@@ -268,23 +331,40 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
    * 结构体本身还是 `pendingRegistration` 的「身份」：异步续作用引用相等来
    * 判断「这次轮询是否还属于当前那次注册」，比再引一个代数更不容易写错。
    */
-  let pendingRegistration: {
-    deviceId: string
-    claimSecret: string
-    privateKey: import('node:crypto').KeyObject
-    userId: string
-    expiresAt: number
-    /**
-     * 展示信息。确认码只存在主进程内存里：界面通过 status 拿到它去显示，
-     * 但它不落盘、不进日志——它是「第二重同意」的凭据而不是数据。
-     */
-    confirmCode: string
-    deviceName: string
-    platform: string
-    accountLabel: string | null
-    cancelled: boolean
-    timer: NodeJS.Timeout | null
-  } | null = null
+  let pendingRegistration: PendingRegistration | null = null
+
+  /**
+   * 配对进度（R5-R3.4.1）。界面据此把确认按钮显示成
+   * 「正在确认… / 已确认，正在领取凭据 / 凭据保存中 / 领取失败可重试」。
+   *
+   * **只有 `idle` 与 `awaiting_confirm` 会在没有 pending 时出现**：终态失败时
+   * `pendingRegistration` 已被清空，界面靠 `pairingNotice` 说清发生了什么，
+   * 进度标记本身不再假装还有流程在跑。
+   */
+  let pairingPhase: RemotePairingPhase = 'idle'
+
+  /**
+   * 在途的凭据领取（**单飞**）。
+   *
+   * 两条路径会发起领取：轮询定时器与用户点确认。Cloud 的领取是一次性的
+   * （`token_issued_at IS NULL` 是原子守卫），并发两个请求只有一个能拿到明文
+   * Token，另一个拿 409 —— 而失败路径会去撤销设备、成功路径又可能因为
+   * pending 已被清掉而丢弃结果。最终表现就是「Cloud 上设备已激活、本地却没有
+   * 凭据」，且 UI 显示配对完成。
+   *
+   * `claimFlightOwner` 是发起时的 `pendingRegistration` 引用：新注册 / 取消之后
+   * 引用变了，后续调用不会复用旧飞行；旧飞行完成时也进不了状态修改。
+   */
+  let claimFlight: Promise<ClaimOutcome> | null = null
+  let claimFlightOwner: PendingRegistration | null = null
+
+  /**
+   * 确认流程在途。它同时是**轮询的闸门**：确认期间不允许任何一条轮询领取
+   * 跑起来（否则确认后的那次一次性领取会被轮询抢先）。
+   */
+  let confirmInFlight = false
+  /** 确认的单飞句柄：两次并发 confirm 复用同一个结果，绝不打两次领取。 */
+  let confirmFlight: Promise<RemoteConfirmResult> | null = null
 
   /** `device_token` 的到期时刻（epoch 毫秒，Cloud 签发时给的）。`null` = 老凭据未知。 */
   let tokenExpiresAt: number | null = null
@@ -599,6 +679,7 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
             accountLabel: pendingRegistration.accountLabel
           }
         : null,
+      pairingPhase,
       audit: {
         consecutiveFailures: audit.consecutiveFailures,
         totalFailures: audit.totalFailures,
@@ -1269,12 +1350,134 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     // 显式抹掉内存里的 claim_secret（它是可换 token 的一次性秘密）。
     pending.claimSecret = ''
     pendingRegistration = null
+    // 已经没有流程在跑了：进度标记必须跟着归零，否则界面会永远停在
+    // 「正在领取凭据」上，而实际上什么都不会再发生。
+    pairingPhase = 'idle'
     log(`[remote] registration cancelled (${reason})`)
+  }
+
+  const setPairingPhase = (phase: RemotePairingPhase): void => {
+    if (pairingPhase === phase) return
+    pairingPhase = phase
+  }
+
+  /** 这次注册的凭据是否**已经躺在本机**（后台轮询先一步领成功并落盘）。 */
+  const isPairedWith = (pending: PendingRegistration): boolean =>
+    deviceId === pending.deviceId && deviceToken !== null && boundUserId === pending.userId
+
+  /**
+   * 领取失败后，用**当前用户身份**把这台设备从 Cloud 撤掉。
+   *
+   * 为什么必须撤：领取是一次性的，失败之后 Cloud 上可能已经停着一台
+   * `active` 设备，而本地永远拿不到它的 Token——那是谁也用不了的僵尸，
+   * 还会占掉用户的设备名额。
+   *
+   * 换过账户时**直接返回 false**：拿别人的身份去撤销既不可能成功，
+   * 更不能被算成「已清理」。
+   */
+  const revokeAfterFailedClaim = async (pending: PendingRegistration): Promise<boolean> => {
+    if (!registrar) return false
+    if (deps.currentUserId() !== pending.userId) return false
+    const result = await registrar.revoke({ deviceId: pending.deviceId })
+    if (!result.ok) log(`[remote] failed to revoke the device after a failed claim (${result.reason})`)
+    return result.ok
+  }
+
+  /**
+   * 落盘**之后**才发现注册已被取消 / 顶替：把这次写入撤掉。
+   *
+   * 不做的话会出现最坏的一种不一致：界面显示「已取消」，磁盘上却躺着一份
+   * 可用的 `device.json`，下次启动会直接把它当成已配对设备。
+   *
+   * 两条边界：
+   * 1. 没写进去就没什么可撤；
+   * 2. **现在生效的凭据是别的设备时绝不能删**（新注册已经落盘）——
+   *    这就是「不能删除另一个有效设备的凭据」。
+   *
+   * 撤销走 `store.forget()`：它先把代际号 +1 再删，顺带让任何仍在途的写入
+   * 失效。**不绕过 DeviceStore 的代际保护**，也不另造一套存储机制。
+   */
+  const discardSavedCredential = async (pending: PendingRegistration, saved: DeviceSave): Promise<void> => {
+    if (!saved.ok) return
+    if (deviceId !== null && deviceId !== pending.deviceId) return
+    const forgotten = await store.forget()
+    deviceId = null
+    boundUserId = null
+    deviceToken = null
+    privateKey = null
+    deviceOrigin = null
+    tokenExpiresAt = null
+    if (!forgotten.ok) {
+      // 收敛失败必须如实说：磁盘上可能还留着一份凭据。
+      link.lastError = `forget failed: ${forgotten.reason}`
+      log('[remote] failed to discard the credential written by a cancelled registration')
+      return
+    }
+    log('[remote] discarded the credential written by a cancelled registration')
+  }
+
+  /**
+   * 领取走到不可恢复的一步（R5-R3.4.1 §6C）。
+   *
+   * 关键区分：**Token 已经签发但这一方没拿到**（`credentials_already_issued`）
+   * 与「压根没签发」处置相同——撤销 + 清掉本地临时凭据 + 提示重新配对，
+   * 但**绝不重试**：重试永远拿不到同一枚明文 Token。
+   */
+  const failTerminalClaim = async (
+    pending: PendingRegistration,
+    reason: RemoteRegistrationFailure
+  ): Promise<ClaimOutcome> => {
+    const revoked = await revokeAfterFailedClaim(pending)
+    // 撤销要打一次网络往返：那期间注册可能已被取消 / 顶替。那时这次失败
+    // 已经不属于当前状态——不改 needsReauth、不打 blocked、不动 phase，
+    // 也绝不 `cancelRegistration()`（它会清掉**新**注册的 pending）。
+    if (pendingRegistration !== pending || pending.cancelled) {
+      log('[remote] claim failure arrived after the registration was replaced; state left untouched')
+      return { state: 'superseded' }
+    }
+    // 无论撤销成没成，本地临时凭据（claim_secret + 内存私钥）都必须清掉：
+    // 它们换不出任何东西了，留着只会让人以为还能再试一次。
+    cancelRegistration(`claim ${reason}`)
+    needsReauth = true
+    link.lastError = `device registration failed: ${reason}`
+    if (link.state !== 'blocked') transition(link, 'blocked', `registration ${reason}`)
+    log(`[remote] claim failed (${reason}); revoked=${revoked ? 'yes' : 'no'}`)
+    publish()
+    return { state: 'terminal_failure', reason, revoked }
+  }
+
+  /**
+   * 领取成功但 safeStorage 没写成（R5-R3.4.1 §7）。
+   *
+   * 凭据**已经签发**了，本地却存不下 → 立刻撤销，否则用户会看到一个
+   * 「UI 显示成功、本地却用不了」的设备。同样**不重试**：一次性 claim
+   * 已经被消费，重试只会拿到 409。
+   */
+  const failSave = async (
+    pending: PendingRegistration,
+    reason: 'unavailable' | 'write-failed'
+  ): Promise<ClaimOutcome> => {
+    const revoked = await revokeAfterFailedClaim(pending)
+    // 同 failTerminalClaim：撤销的网络往返期间状态可能已经换了主人。
+    if (pendingRegistration !== pending || pending.cancelled) {
+      log('[remote] save failure arrived after the registration was replaced; state left untouched')
+      return { state: 'superseded' }
+    }
+    cancelRegistration(`save ${reason}`)
+    needsReauth = true
+    link.lastError = `device credential save failed: ${reason}`
+    if (link.state !== 'blocked') transition(link, 'blocked', 'device credential save failed')
+    log(`[remote] failed to persist the new device credential (${reason}); revoked=${revoked ? 'yes' : 'no'}`)
+    publish()
+    return { state: 'save_failed', reason, revoked }
   }
 
   const scheduleClaimPoll = (): void => {
     const pending = pendingRegistration
     if (!pending || pending.cancelled) return
+    // 确认流程在跑：它自己会在结束时恢复轮询。这里再排一个定时器，
+    // 只会造出第二条与确认并行的领取路径——而领取是一次性的。
+    if (confirmInFlight) return
     if (Date.now() >= pending.expiresAt) {
       cancelRegistration('expired')
       needsReauth = true
@@ -1284,21 +1487,68 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
       return
     }
     pending.timer = setTimeout(() => {
-      if (pendingRegistration === pending) void claimOnce()
+      if (pendingRegistration !== pending) return
+      // 轮询是**后台**路径：没有调用方接住它，抛出去就是一次
+      // unhandledRejection（在 Electron 主进程里足以让整个应用弹错误框）。
+      // 记日志并继续排下一轮——`scheduleClaimPoll` 自己会按 expiresAt 收口，
+      // 所以这条兜底最多转到注册过期为止。
+      void claimOnce('poll').catch((error: unknown) => {
+        log(`[remote] background claim failed: ${error instanceof Error ? error.message : String(error)}`)
+        if (pendingRegistration === pending) scheduleClaimPoll()
+      })
     }, REGISTRATION_POLL_MS)
   }
 
-  const claimOnce = async (): Promise<void> => {
+  const releaseClaim = (owner: PendingRegistration): void => {
+    if (claimFlightOwner !== owner) return
+    claimFlight = null
+    claimFlightOwner = null
+  }
+
+  /**
+   * 领取一次凭据（**单飞**）。
+   *
+   * `initiator` 决定谁让路：轮询在确认期间直接返回 `superseded`，绝不与
+   * 确认抢同一枚一次性 Token；确认则总是等在途那次落定之后再发自己的。
+   *
+   * 同一个 `pendingRegistration` 的第二次调用**复用在途 Promise**——
+   * 这就是「定时轮询与手动确认共享同一个 in-flight」的实现。
+   */
+  const claimOnce = (initiator: 'poll' | 'confirm'): Promise<ClaimOutcome> => {
     const pending = pendingRegistration
-    if (!pending || pending.cancelled) return
+    if (!pending || pending.cancelled) return Promise.resolve<ClaimOutcome>({ state: 'superseded' })
+    if (initiator === 'poll' && confirmInFlight) return Promise.resolve<ClaimOutcome>({ state: 'superseded' })
+    if (claimFlight && claimFlightOwner === pending) return claimFlight
+
+    const flight = runClaim(pending).then(
+      (outcome) => {
+        releaseClaim(pending)
+        return outcome
+      },
+      (error: unknown) => {
+        releaseClaim(pending)
+        throw error
+      }
+    )
+    claimFlight = flight
+    claimFlightOwner = pending
+    return flight
+  }
+
+  const runClaim = async (pending: PendingRegistration): Promise<ClaimOutcome> => {
     // 用闭包里的那个实例（由工厂按 configuredOrigin 构造）。
-    if (!registrar) return
+    if (!registrar) return { state: 'superseded' }
+    if (pending.cancelled || pendingRegistration !== pending) return { state: 'superseded' }
 
     // 注册期间用户换了账户：这次注册的绑定对象已经不存在了。
     if (deps.currentUserId() !== pending.userId) {
       cancelRegistration('account changed')
-      return
+      return { state: 'superseded' }
     }
+
+    // 本机已经持有这台设备的凭据（后台轮询先一步领成功）：**绝不**再发
+    // 第二次一次性领取——那只会拿到 409，然后把刚配好的设备撤销掉。
+    if (isPairedWith(pending)) return { state: 'claimed' }
 
     const result = await registrar.claim({ deviceId: pending.deviceId, claimSecret: pending.claimSecret })
     // await 期间可能被 forget / 新注册 / 账户切换取代。三种都要拦：
@@ -1306,31 +1556,35 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     // 2. 自己被标了 cancelled
     // 3. **登录用户变了**——引用可能还是同一个对象（没人动过它），
     //    但身份已经不是发起注册的那个人了
-    if (pendingRegistration !== pending || pending.cancelled) return
+    if (pendingRegistration !== pending || pending.cancelled) return { state: 'superseded' }
     if (deps.currentUserId() !== pending.userId) {
       cancelRegistration('account changed')
-      return
+      return { state: 'superseded' }
     }
 
     if (!result.ok) {
       if (result.retryable) {
         scheduleClaimPoll()
-        return
+        // 202（还没到可领取的时候）与网络抖动都要继续轮询，但**结局不同**：
+        // 前者是「流程正常、还没轮到」，后者是「这次没问到」。混成一个
+        // `void` 会让确认按钮无法区分「稍后再试」与「网络断了」。
+        return result.reason === 'pending'
+          ? { state: 'pending' }
+          : { state: 'retryable_failure', reason: result.reason }
       }
-      cancelRegistration(result.reason)
-      needsReauth = true
-      link.lastError = `device registration failed: ${result.reason}`
-      if (link.state !== 'blocked') transition(link, 'blocked', `registration ${result.reason}`)
-      publish()
-      return
+      return await failTerminalClaim(pending, result.reason)
     }
 
     // 最后一次身份确认：`store.save` 是异步的（要等 safeStorage 加密），
     // 期间切换账户的话，这份凭据属于「上一个人」，绝不能落盘。
     if (deps.currentUserId() !== pending.userId) {
       cancelRegistration('account changed before save')
-      return
+      return { state: 'superseded' }
     }
+
+    // 界面必须能看到「凭据保存中」：这正是 safeStorage 加密的窗口。
+    setPairingPhase('saving')
+    publish()
 
     // 落盘（safeStorage 密文）。save 内部会比对代际号，forget 之后这里会失败。
     const saved = await store.save({
@@ -1343,18 +1597,34 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
       // Cloud 给的到期时间：主动轮换的唯一判据（协议 §3.4 的 expires_at）。
       tokenExpiresAt: result.expiresAt
     })
-    if (pendingRegistration !== pending) return
 
-    pendingRegistration = null
-    if (!saved.ok) {
-      needsReauth = true
-      link.lastError = `device credential save failed: ${saved.reason}`
-      if (link.state !== 'blocked') transition(link, 'blocked', 'device credential save failed')
-      log('[remote] failed to persist the new device credential')
-      publish()
-      return
+    // 落盘期间被取消 / 顶替 / 换账户：把这次写入撤掉（见 discardSavedCredential）。
+    // **账户复核必须再做一次**：`store.save` 里的 encrypt 是异步的，
+    // 上面那次身份检查之后到写盘之间足够用户切一次账户——那份凭据属于
+    // 「上一个人」，绝不能留在他的目录里。
+    const replaced = pendingRegistration !== pending || pending.cancelled
+    const accountChanged = deps.currentUserId() !== pending.userId
+    if (replaced || accountChanged) {
+      await discardSavedCredential(pending, saved)
+      if (accountChanged && !replaced) cancelRegistration('account changed after save')
+      if (accountChanged) log('[remote] discarded a credential written for the previous account')
+      return { state: 'superseded' }
     }
 
+    if (!saved.ok) {
+      // 代际号对不上 = 有人（forget / 下一轮配对）已经接管了存储，这次写入
+      // 本来就被拒绝 → 归为 superseded，不要当成「保存失败」去撤销设备。
+      if (saved.reason === 'stale-generation') {
+        cancelRegistration('storage generation moved on')
+        return { state: 'superseded' }
+      }
+      return await failSave(pending, saved.reason)
+    }
+
+    pendingRegistration = null
+    // 这次注册已经收尾：把它自己排的轮询定时器撤掉，别留一个只会空转的回调。
+    if (pending.timer) clearTimeout(pending.timer)
+    pending.timer = null
     deviceId = pending.deviceId
     boundUserId = pending.userId
     deviceToken = result.deviceToken
@@ -1362,9 +1632,223 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     deviceOrigin = configuredOrigin
     tokenExpiresAt = result.expiresAt
     needsReauth = false
+    // 上一次失败留下的错误必须在这里清掉，否则配对成功之后
+    // 「最近错误」还挂着「凭据没领到」。
+    link.lastError = null
+    setPairingPhase('idle')
     if (link.state === 'blocked') transition(link, 'idle')
     log('[remote] device credential acquired and stored')
     publish()
+    return { state: 'claimed' }
+  }
+
+  /** 构造一个失败结果。**不改 phase**：进度由真正改动状态的那一方负责。 */
+  const confirmFailure = (reason: RemoteConfirmFailure): RemoteConfirmResult => ({
+    ok: false,
+    reason,
+    status: publish()
+  })
+
+  /** `claim` 的失败原因 → 界面上的一句话（两者是不同的枚举，不能直接透传）。 */
+  const claimFailureToConfirmFailure = (reason: RemoteRegistrationFailure): RemoteConfirmFailure => {
+    switch (reason) {
+      case 'pending':
+        return 'claim_pending'
+      case 'network':
+        return 'claim_network'
+      case 'credentials_already_issued':
+        return 'credentials_already_issued'
+      case 'expired':
+        return 'expired'
+      case 'unauthorized':
+        return 'unauthorized'
+      // `claim_rejected` 覆盖 403/404 与「状态不允许领取」：对用户来说都是
+      // 「这台设备现在领不了，重新配对」，与 confirm 阶段的 `device_state`
+      // 是同一句话。
+      case 'claim_rejected':
+        return 'device_state'
+      // 下面几个只可能出现在 register 的结果里，claim 不会返回。
+      // 兜底给 `invalid_response`：宁可说「对端返回了无法识别的响应」，
+      // 也不能凭空编一个原因让用户照着做。
+      default:
+        return 'invalid_response'
+    }
+  }
+
+  /**
+   * 把领取结局翻译成界面能分别解释的确认结果。
+   *
+   * **`ok: true` 只在 `claimed` 出现**——也就是 `device_token` 已经写进安全
+   * 存储之后。Cloud 的 confirm 通过本身**永远不构成**「配对完成」。
+   */
+  const mapClaimOutcome = (
+    outcome: ClaimOutcome
+  ): { ok: boolean; reason: RemoteConfirmFailure | null } => {
+    switch (outcome.state) {
+      case 'claimed':
+        return { ok: true, reason: null }
+      case 'pending':
+        return { ok: false, reason: 'claim_pending' }
+      case 'retryable_failure':
+        return {
+          ok: false,
+          reason:
+            outcome.reason === 'network'
+              ? 'claim_network'
+              : claimFailureToConfirmFailure(outcome.reason)
+        }
+      case 'save_failed':
+        // 撤销也失败 → 必须让界面说「需要人工处理」，不能显示成「已清理」。
+        return {
+          ok: false,
+          reason: outcome.revoked ? 'credential_save_failed' : 'credential_cleanup_failed'
+        }
+      case 'terminal_failure':
+        if (outcome.reason === 'credentials_already_issued') {
+          return {
+            ok: false,
+            reason: outcome.revoked ? 'credentials_already_issued' : 'credential_cleanup_failed'
+          }
+        }
+        return { ok: false, reason: claimFailureToConfirmFailure(outcome.reason) }
+      case 'superseded':
+        return { ok: false, reason: 'superseded' }
+    }
+  }
+
+  const finishConfirm = (pending: PendingRegistration, outcome: ClaimOutcome): RemoteConfirmResult => {
+    const mapped = mapClaimOutcome(outcome)
+
+    if (outcome.state === 'superseded') {
+      // 取消 / 顶替 / 换账户发生在领取期间：这不是「这次确认失败」，而是
+      // 「这次确认已经不属于当前状态」——进度由对方负责，这里别覆盖。
+      return { ok: false, reason: mapped.reason, status: publish() }
+    }
+
+    if (mapped.ok) {
+      setPairingPhase('idle')
+      return { ok: true, reason: null, status: publish() }
+    }
+
+    // 领取失败之后、构造结果之前，注册可能已经**换成另一台**（用户重新配对）。
+    // 那时进度与错误都归对方管。
+    // 注意只判「换成了另一台」，不判 null：终态失败分支正是靠把自己这份
+    // pending 清成 null 来收尾的，把 null 也当成被顶替会把真实原因吞掉。
+    if (pendingRegistration !== null && pendingRegistration !== pending) {
+      return { ok: false, reason: 'superseded', status: publish() }
+    }
+
+    if (mapped.reason === 'claim_pending' || mapped.reason === 'claim_network') {
+      // 注册仍然有效：保留 pending 与内存凭据，**不落盘、不开 WSS**，
+      // 下一次轮询或再次点确认都能接着领（§6A / §6B）。
+      setPairingPhase('claim_incomplete')
+      link.lastError =
+        mapped.reason === 'claim_network'
+          ? 'device credential claim failed: network'
+          : 'device credentials are not claimable yet'
+      log(`[remote] device confirmed but credentials not claimed (${mapped.reason})`)
+      return { ok: false, reason: mapped.reason, status: publish() }
+    }
+
+    // 终态：runClaim 已经清掉本地临时凭据并（尽力）撤销了云端设备。
+    setPairingPhase('failed')
+    return { ok: false, reason: mapped.reason, status: publish() }
+  }
+
+  /**
+   * 用户点「确认信任这台设备」的完整流程（单飞在 `confirmRegistration` 上）。
+   *
+   * 顺序是硬的：**先确认，再领取凭据**。不能反过来赌确认已经生效——
+   * 那会把一个 202 当成「网络慢」反复重试，而用户其实还没点确认。
+   *
+   * 同样硬的是：**只有凭据真的落盘才返回 `ok: true`**。
+   * `ok`曾经在 `await claimOnce()` 之后无条件返回 true，于是「确认成功」
+   * 被当成了「配对完成」，而领取可能 202 / 断网 / 409 / 存储写失败。
+   */
+  const runConfirm = async (): Promise<RemoteConfirmResult> => {
+    const pending = pendingRegistration
+    if (!pending) return confirmFailure('expired')
+    if (!registrar) return confirmFailure('invalid_response')
+
+    // 账户在确认前被换掉：这次配对绑的是上一个人。
+    if (deps.currentUserId() !== pending.userId) {
+      cancelRegistration('account changed before confirm')
+      return confirmFailure('account_changed')
+    }
+    if (Date.now() >= pending.expiresAt) {
+      cancelRegistration('expired')
+      return confirmFailure('expired')
+    }
+
+    // ---- 1. 关上轮询闸门，等在途的那次领取落定 ----
+    // 不等它就直接 confirm 再领，会出现两条路径同时抢同一枚一次性 Token：
+    // 一个拿到明文、另一个拿 409 并去撤销设备（R5-R3.4.1 问题 2）。
+    confirmInFlight = true
+    if (pending.timer) {
+      clearTimeout(pending.timer)
+      pending.timer = null
+    }
+    try {
+      if (claimFlight) await claimFlight.catch(() => undefined)
+
+      // 等待期间可能被 forget / 新注册 / 账户切换取代。
+      // **先判账户**：凭据属于谁是身份问题，比「这次注册还在不在」更优先。
+      if (deps.currentUserId() !== pending.userId) {
+        cancelRegistration('account changed during confirm')
+        return confirmFailure('account_changed')
+      }
+      // 后台轮询已经把凭据领到手：Cloud 侧也已 active，直接算配对完成，
+      // **不再发第二次领取**（那会拿到 409 并把刚配好的设备撤销掉）。
+      // 这一条必须排在 `pendingRegistration !== pending` **之前**——领取成功
+      // 正是靠把 pending 置 null 来收尾的，先判引用会把成功读成「被顶替」。
+      if (isPairedWith(pending)) {
+        pendingRegistration = null
+        setPairingPhase('idle')
+        log('[remote] credentials were already claimed by the background poll')
+        return { ok: true, reason: null, status: publish() }
+      }
+      if (pendingRegistration !== pending || pending.cancelled) return confirmFailure('superseded')
+
+      // ---- 2. 请求 Cloud confirm ----
+      setPairingPhase('confirming')
+      publish()
+      const result = await registrar.confirm({
+        deviceId: pending.deviceId,
+        confirmCode: pending.confirmCode
+      })
+
+      if (pendingRegistration !== pending || pending.cancelled) return confirmFailure('superseded')
+      if (deps.currentUserId() !== pending.userId) {
+        cancelRegistration('account changed during confirm')
+        return confirmFailure('account_changed')
+      }
+
+      if (!result.ok) {
+        // 只有终态错误才丢弃这次注册；其余（码错、限流、网络）保留现场重试。
+        if (result.reason === 'expired' || result.reason === 'not_found' || result.reason === 'device_state') {
+          cancelRegistration(`confirm ${result.reason}`)
+          needsReauth = result.reason === 'device_state'
+          link.lastError = `device confirmation failed: ${result.reason}`
+          publish()
+        } else if (pendingRegistration) {
+          // 现场还在：进度退回「等你确认」，按钮不能一直停在「正在确认…」。
+          setPairingPhase('awaiting_confirm')
+          publish()
+        }
+        return { ok: false, reason: result.reason, status: publish() }
+      }
+
+      // ---- 3. Cloud 已确认 → 这时才允许领取 ----
+      log('[remote] device confirmed; claiming credentials')
+      setPairingPhase('claiming')
+      publish()
+      const outcome = await claimOnce('confirm')
+      return finishConfirm(pending, outcome)
+    } finally {
+      confirmInFlight = false
+      // 现场还在就恢复轮询：上面任何一条失败分支都不该让轮询永久停摆。
+      if (pendingRegistration) scheduleClaimPoll()
+    }
   }
 
   // MARK: - 生命周期
@@ -1542,10 +2026,34 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
         // 合法来源）。伪造一个「已注册」比报错更糟——用户会以为配对完成了。
         throw new Error('device registration is not wired to Cloud yet')
       }
+
+      // ---- 不允许静默顶替（R5-R3.4.1 §9）----
+      // 以前这里 `cancelRegistration('superseded')` 会把上一次配对直接扔掉：
+      // 确认码还在用户手上、Cloud 上还有一台 pending 设备，而界面已经换成了
+      // 新的一台。用户必须先完成当前配对，或明确走「取消 / 忘记设备」。
+      if (pendingRegistration) {
+        throw new Error('a device pairing is already in progress; confirm or cancel it first')
+      }
+      // 每个 userData 目录只保存**一份**设备身份：已有 device.json 时再注册
+      // 会把可用凭据顶掉（用户会莫名其妙掉线）。必须先「忘记此设备」。
+      if (deviceId !== null) {
+        throw new Error('this device is already paired; forget it before pairing again')
+      }
+
       const userId = deps.currentUserId()
       if (!userId) throw new Error('sign in before registering a device')
 
-      cancelRegistration('superseded')
+      // 让上一轮残留的领取先落定，避免旧注册的收尾去改动新注册的状态。
+      // （上面的守卫已经保证没有进行中的配对，这里等的只是收尾。）
+      if (claimFlight) await claimFlight.catch(() => undefined)
+      // 等待期间状态可能又变了（例如等待期间被 forget 掉）。
+      if (pendingRegistration) {
+        throw new Error('a device pairing is already in progress; confirm or cancel it first')
+      }
+      if (deviceId !== null) {
+        throw new Error('this device is already paired; forget it before pairing again')
+      }
+
       // 新密钥只存在内存里，领取成功后才会连 device_token 一起加密落盘。
       const { privateKey: newKey, publicKey } = generateDeviceKeyPair()
 
@@ -1571,6 +2079,7 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
         cancelled: false,
         timer: null
       }
+      setPairingPhase('awaiting_confirm')
       log('[remote] registration pending; waiting for the user to confirm')
       publish()
       // 轮询仍然保留：用户也可能在别处（以后的网页/手机端）确认，而 Desktop
@@ -1589,56 +2098,26 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     /**
      * 用户点「确认信任这台设备」。
      *
-     * 顺序是硬的：**先确认，再领取凭据**。不能反过来赌确认已经生效——
-     * 那会把一个 202 当成「网络慢」反复重试，而用户其实还没点确认。
+     * **单飞**：两次并发调用复用同一个结果。第二个调用若各走各的，会在第一次
+     * 已经领完之后**再领一次**——一次性领取拿到 409，失败路径随即把刚配好的
+     * 设备撤销掉。
      *
-     * 全部失败分支都要保留 `pendingRegistration`（除非是终态错误）：确认码
-     * 抄错一次不该让用户重新注册，他还剩 `MAX_CONFIRM_ATTEMPTS` 次机会。
+     * `ok: true` 的唯一条件是 `device_token` 已经写进安全存储（见 `runConfirm`）。
      */
     async confirmRegistration() {
-      const pending = pendingRegistration
-      if (!pending) return { ok: false as const, reason: 'expired' as const, status: publish() }
-      if (!registrar) return { ok: false as const, reason: 'invalid_response' as const, status: publish() }
-
-      // 账户在确认前被换掉：这次配对绑的是上一个人。
-      if (deps.currentUserId() !== pending.userId) {
-        cancelRegistration('account changed before confirm')
-        return { ok: false as const, reason: 'account_changed' as const, status: publish() }
-      }
-      if (Date.now() >= pending.expiresAt) {
-        cancelRegistration('expired')
-        return { ok: false as const, reason: 'expired' as const, status: publish() }
-      }
-
-      const result = await registrar.confirm({
-        deviceId: pending.deviceId,
-        confirmCode: pending.confirmCode
-      })
-
-      // await 期间可能被 forget / 新注册 / 账户切换取代。
-      if (pendingRegistration !== pending || pending.cancelled) {
-        return { ok: false as const, reason: 'account_changed' as const, status: publish() }
-      }
-      if (deps.currentUserId() !== pending.userId) {
-        cancelRegistration('account changed during confirm')
-        return { ok: false as const, reason: 'account_changed' as const, status: publish() }
-      }
-
-      if (!result.ok) {
-        // 只有终态错误才丢弃这次注册；其余（码错、限流、网络）保留现场重试。
-        if (result.reason === 'expired' || result.reason === 'not_found' || result.reason === 'device_state') {
-          cancelRegistration(`confirm ${result.reason}`)
-          needsReauth = result.reason === 'device_state'
-          link.lastError = `device confirmation failed: ${result.reason}`
-          publish()
+      if (confirmFlight) return confirmFlight
+      const flight = runConfirm().then(
+        (value) => {
+          confirmFlight = null
+          return value
+        },
+        (error: unknown) => {
+          confirmFlight = null
+          throw error
         }
-        return { ok: false as const, reason: result.reason, status: publish() }
-      }
-
-      log('[remote] device confirmed; claiming credentials')
-      // 确认已生效：立刻领取一次，不额外等一个轮询周期。
-      await claimOnce()
-      return { ok: true as const, reason: null, status: publish() }
+      )
+      confirmFlight = flight
+      return flight
     },
 
     /**
@@ -1647,17 +2126,24 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
      * 本地一定清干净（停轮询、抹 claim_secret、清 pending）。云端撤销是尽力
      * 而为：撤不成也要如实告诉界面 `revoked: false`——那台设备会停在 pending
      * 直到 `expiresAt` 被服务端清扫，而不是「从未存在过」。
+     *
+     * **必须等在途的领取落定再返回**：领取可能正在 safeStorage 里加密写入，
+     * 不等它就报「已取消」，界面会先说取消、几百毫秒后磁盘上又冒出一份凭据。
+     * 等到之后由 `discardSavedCredential` 把那次写入撤掉（代际号 +1 再删）。
      */
     async cancelRegistrationNow() {
       const pending = pendingRegistration
       if (!pending) return { revoked: true, status: publish() }
 
-      const deviceId = pending.deviceId
+      const deviceIdToRevoke = pending.deviceId
+      // 1. 先标记取消：新的领取立刻被拒，轮询停摆，进度归零。
       cancelRegistration('user cancelled')
-
+      // 2. 让在途的 claim/save 收尾（它会自己撤掉已经写进去的凭据）。
+      if (claimFlight) await claimFlight.catch(() => undefined)
+      // 3. 再撤销云端那台 pending 设备。
       let revoked = false
       if (registrar) {
-        const result = await registrar.revoke({ deviceId })
+        const result = await registrar.revoke({ deviceId: deviceIdToRevoke })
         revoked = result.ok
         if (!result.ok) {
           log(`[remote] failed to revoke the pending device (${result.reason})`)

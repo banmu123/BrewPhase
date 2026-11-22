@@ -69,10 +69,16 @@ export const remote = {
   confirmDevice: '确认信任这台设备',
   cancelPairing: '取消本次配对',
   confirmingDevice: '正在确认…',
+  claimingCredentials: '已确认，正在领取凭据…',
+  savingCredential: '凭据保存中…',
+  retryClaim: '重试领取凭据',
   cancellingPairing: '正在取消…',
   pairingDone: '配对完成，设备凭据已加密保存。',
   pairingRevoked: '已取消本次配对，云端设备已撤销。',
   pairingRevokePending: '本地已取消；云端设备未能撤销，它会在有效期结束后自动过期。',
+  /** 已有配对在跑 / 已有设备时，「配对新设备」必须先被禁用（不能静默顶替）。 */
+  pairingInProgress: '已有一台设备正在配对，请先确认或取消它。',
+  alreadyPaired: '这台电脑已经配对过设备。要重新配对，请先「忘记此设备」。',
   confirmFailures: {
     unauthorized: '登录状态已失效，请重新登录 Cloud 账户后再试。',
     invalid_code: '确认码不正确。请核对后重试（连续错误会使设备作废）。',
@@ -82,7 +88,16 @@ export const remote = {
     rate_limited: '操作太频繁，请稍后再试。',
     account_changed: '确认过程中账户发生了变化，本次配对已作废。',
     network: '网络不可用，请检查连接后重试。设备仍在等待确认。',
-    invalid_response: '服务端返回了无法识别的响应，请稍后重试。'
+    invalid_response: '服务端返回了无法识别的响应，请稍后重试。',
+    claim_pending: '设备已确认，但凭据尚未领取完成。请稍后重试——配对仍然有效。',
+    claim_network: '设备已确认，但领取凭据时网络异常。请检查连接后重试——配对仍然有效。',
+    credentials_already_issued:
+      '凭据已在云端签发，但本机没有拿到（领取只能进行一次）。为避免留下无法使用的设备，已尝试撤销它——请重新「配对新设备」。',
+    credential_save_failed:
+      '系统安全存储写入失败，凭据无法保存。为避免留下无法使用的设备，已尝试撤销它——请检查系统钥匙串/密钥环后重新配对。',
+    credential_cleanup_failed:
+      '这台设备的凭据没能安全保存，且云端设备也未能撤销。请到 Cloud 设备列表手动删除这台设备后重新配对。',
+    superseded: '这次配对已被取消、顶替或因账户变化作废。'
   },
   socket: 'Socket',
   inflight: '在途请求',

@@ -154,6 +154,11 @@ export function buildStatus(input: {
   audit: RemoteStatus['auditStatus']
   /** 有进行中的配对时由 RemoteService 传入；默认没有。 */
   pendingRegistration?: RemoteStatus['pendingRegistration']
+  /**
+   * 配对进度（R5-R3.4.1）。**必填**：默认值会让「忘了传」与「真的 idle」
+   * 长得一模一样，而这个字段恰恰是界面判断「能不能显示配对完成」的依据。
+   */
+  pairingPhase: RemoteStatus['pairingPhase']
 }): RemoteStatus {
   return {
     enabled: input.enabled,
@@ -161,6 +166,7 @@ export function buildStatus(input: {
     deviceId: input.deviceId,
     boundUserId: input.boundUserId,
     pendingRegistration: input.pendingRegistration ?? null,
+    pairingPhase: input.pairingPhase,
     needsReauth: input.needsReauth,
     blockedReason: input.link.blockedReason,
     serviceable: input.verdict.serviceable,
