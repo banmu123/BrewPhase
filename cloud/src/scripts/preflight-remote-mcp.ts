@@ -46,15 +46,70 @@ export type EnvInput = Record<string, string | undefined>;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
 
 /**
+ * 示例文件里的占位口令——它们出现在模板里是给「照抄不改」的人看的，
+ * 出现在生产配置里就是事故。命中即拒绝，且**不回显口令本身**。
+ */
+const PLACEHOLDER_SECRETS = new Set([
+  "change-me-strong-password",
+  "change-me",
+  "changeme",
+  "password",
+  "passw0rd",
+  "secret",
+  "postgres",
+  "brewphase",
+  "admin",
+  "example",
+  "123456",
+  "test",
+]);
+
+/**
+ * 解析 `postgres://user:pass@host:port/db`。
+ *
+ * 用 `new URL()` 而不是手写正则：非特殊 scheme 也会解析 authority，
+ * 于是 `username` / `password` / `hostname` / `port` 都由同一套 WHATWG
+ * 规则给出——与「拼接后再被别人解析」的行为一致，才能发现口令被改写。
+ *
+ * 口令里含 `/` 时 `new URL()` 直接抛错，这里返回 `null` 交给调用方报
+ * `database_url_invalid`（那正是预检要抓的配置错误）。
+ */
+function parsePostgresUrl(raw: string): { password?: string } | null {
+  try {
+    const url = new URL(raw.trim());
+    if (url.protocol !== "postgres:" && url.protocol !== "postgresql:") return null;
+    return { password: url.password === "" ? undefined : url.password };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 非公网用途的主机后缀（RFC 6761/6762 保留域 + 常见内网后缀）。
+ *
+ * 这些域名**不可能**是「公网部署」：`.local` 是 mDNS、`.internal` 是内网、
+ * `.test` 保留给测试、`localhost` 是本机。它们能通过 `new URL()` 解析，
+ * 也会通过 `assertIssuerBaseUrl`，所以必须在预检这一层单独挡掉——
+ * 否则一台配了 `https://brewphase.local` 的机器会「预检通过」，然后
+ * Provider 回调与证书签发全部失败。
+ */
+const NON_PUBLIC_SUFFIXES = [".local", ".internal", ".test", ".localhost", ".home", ".lan"];
+
+/**
  * 判断 `BASE_URL` 是否为「公网 HTTPS Origin」。
  *
  * - 必须是 `https://`（JWT `iss`、Provider 回调、Discovery issuer 全部来自它）；
  * - 必须是**纯 Origin**：没有 path（除单个 `/`）、没有 query、没有 fragment。
  *   带 path 的 issuer 会让 `/.well-known/*` 的拼接结果与实际路由对不上；
- * - host 不得是回环地址——回环意味着只有本机能访问，不是「公网部署」。
+ * - **拒绝 IP 字面量**（IPv4 与 IPv6）：公网部署必须有域名——裸 IP 拿不到
+ *   匹配的证书，Provider 控制台的回调登记也不该绑死一个会变的地址；
+ * - **拒绝非公网用途域名**（回环、`.local` / `.internal` / `.test` 等）。
  *
  * 注意尾斜杠：`loadEnv` 会 `replace(/\/+$/,"")` 归一，所以这里也允许
  * `https://host/`，不把它误判成「带 path」。
+ *
+ * DNS 是否真的解析、证书是否签得出来，由独立的部署检查负责
+ * （`deploy/README.md` 的 HTTPS 与 smoke test），预检不做网络请求。
  */
 function inspectBaseUrl(raw: string | undefined): PreflightProblem | null {
   if (!raw || raw.trim().length === 0) {
@@ -81,10 +136,34 @@ function inspectBaseUrl(raw: string | undefined): PreflightProblem | null {
   if (url.username || url.password) {
     return { code: "base_url_userinfo", message: "BASE_URL must not contain userinfo." };
   }
-  if (LOOPBACK_HOSTS.has(url.hostname.toLowerCase())) {
+
+  const hostname = url.hostname.toLowerCase();
+
+  // IP 字面量：IPv6 在 URL 里带方括号，IPv4 是点分十进制。
+  if (hostname.startsWith("[") || /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) {
+    return {
+      code: "base_url_ip_literal",
+      message:
+        "BASE_URL must use a public domain name, not an IP literal (no matching certificate, and Provider callbacks must not be bound to a mutable address).",
+    };
+  }
+  if (LOOPBACK_HOSTS.has(hostname)) {
     return {
       code: "base_url_not_public",
       message: "BASE_URL points at a loopback host; a public deployment needs a real hostname.",
+    };
+  }
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) {
+    return {
+      code: "base_url_not_public",
+      message: "BASE_URL points at a localhost name; a public deployment needs a real hostname.",
+    };
+  }
+  const badSuffix = NON_PUBLIC_SUFFIXES.find((suffix) => hostname.endsWith(suffix));
+  if (badSuffix) {
+    return {
+      code: "base_url_not_public",
+      message: `BASE_URL uses the reserved/non-public suffix "${badSuffix}"; a public deployment needs a real public hostname.`,
     };
   }
   return null;
@@ -116,6 +195,64 @@ export function checkRemoteMcpEnv(input: EnvInput): PreflightProblem[] {
   // ---- 3. 数据库 ----
   if (!input.DATABASE_URL || input.DATABASE_URL.trim().length === 0) {
     push("database_url_missing", "DATABASE_URL is not set.");
+  }
+
+  /**
+   * ---- 3b. PostgreSQL 口令 ----
+   *
+   * `compose.yaml` 用**字符串拼接**生成 `DATABASE_URL`：
+   *   postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+   * 没有 URL 编码，所以口令里只要有一个保留字符，拼出来的 URL 就不再指向
+   * 预期的库——实测 `openssl rand -base64 24` 会产出 `/`，`new URL()`
+   * 直接抛 `Invalid URL`；含 `@` 时更隐蔽：解析器会把口令**改写**成
+   * `ab%40cd`，看起来能解析、拿到的口令却不是配置里那个。
+   *
+   * 因此这里只接受 URL 安全子集，并拒绝占位口令。
+   */
+  const pgPassword = input.POSTGRES_PASSWORD;
+  if (!pgPassword || pgPassword.trim().length === 0) {
+    push(
+      "postgres_password_missing",
+      "POSTGRES_PASSWORD is not set — compose refuses to start without it, and preflight must not either.",
+    );
+  } else {
+    if (pgPassword.length < 16) {
+      push("postgres_password_too_short", "POSTGRES_PASSWORD must be at least 16 characters.");
+    }
+    // 只允许 URL 安全子集：字母数字 + `. _ ~ -`。这些字符不需要编码，
+    // 拼进 postgres:// URL 后 `new URL()` 解析出的口令与配置逐字相同。
+    if (!/^[A-Za-z0-9._~-]+$/.test(pgPassword)) {
+      push(
+        "postgres_password_unsafe_chars",
+        "POSTGRES_PASSWORD contains characters that break a hand-built postgres:// URL (allowed: A-Z a-z 0-9 . _ ~ -). Generate one with: openssl rand -hex 32",
+      );
+    }
+    if (PLACEHOLDER_SECRETS.has(pgPassword)) {
+      push(
+        "postgres_password_placeholder",
+        "POSTGRES_PASSWORD is a well-known placeholder — generate a real one with: openssl rand -hex 32",
+      );
+    }
+  }
+
+  // ---- 3c. DATABASE_URL 必须与 POSTGRES_PASSWORD 指向同一个口令 ----
+  //
+  // 这条把「Compose 注入的 DATABASE_URL」与「db 服务实际使用的口令」对上：
+  // 两者任一侧被改而另一侧没跟上，表现是服务起来但连不上库（或连到别的库），
+  // 而预检只看单个变量是发现不了的。
+  if (input.DATABASE_URL && pgPassword) {
+    const parsed = parsePostgresUrl(input.DATABASE_URL);
+    if (parsed === null) {
+      push(
+        "database_url_invalid",
+        "DATABASE_URL is not a parseable postgres:// URL.",
+      );
+    } else if (parsed.password !== undefined && parsed.password !== pgPassword) {
+      push(
+        "database_url_password_mismatch",
+        "DATABASE_URL password does not match POSTGRES_PASSWORD — the app would connect with a different credential than the database is configured with.",
+      );
+    }
   }
 
   // ---- 4/5. 基础密钥强度 ----
@@ -255,7 +392,8 @@ function printSummary(): void {
     "[preflight:remote-mcp] all checks passed:",
     "  NODE_ENV                       = production",
     "  BASE_URL                       = https origin (public host, no path/query/fragment)",
-    "  DATABASE_URL                   = set",
+    "  DATABASE_URL                   = set (parses, password matches POSTGRES_PASSWORD)",
+    "  POSTGRES_PASSWORD              = set (>=16 chars, URL-safe, not a placeholder)",
     "  JWT_SIGNING_KEY                = set (>=32 chars)",
     "  SESSION_TOKEN_PEPPER           = set (>=16 chars)",
     "  GOOGLE_CLIENT_ID / SECRET      = both set",

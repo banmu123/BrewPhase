@@ -1,15 +1,22 @@
-# BrewPhase Cloud CI（Phase 1.3.3-A-R5）
+# BrewPhase Cloud CI（Phase 1.3.3-A-R5-R3）
 #
 # 触发：cloud/ 或本工作流本身变更。
 # 范围：typecheck → lint → test（真实 PostgreSQL 16）→ build → Docker build →
-#       部署产物校验（compose 可解析、Caddyfile 合法、镜像内迁移可执行）。
+#       **真实环境文件加载**验证（临时 .env.production + Compose 结构断言 +
+#       镜像内预检三态 + 镜像内迁移幂等 + Caddyfile 正反向 validate）。
 #
 # 硬约束（写在这里以免后人「顺手加一步」）：
 #   - **不部署到任何服务器**：本工作流没有任何 ssh / scp / cloud deploy 步骤。
-#   - **不使用生产 Secret**：全部凭据都是 CI 内的临时测试值，只活在
-#     service container 里；workflow 中不出现 `secrets.*` 引用。
+#   - **不使用生产 Secret**：全部凭据都是 CI 内的临时测试值（非默认域名/邮箱/
+#     口令），只活在临时 `.env.production` 与 service container 里；
+#     workflow 中不出现 `secrets.*` 引用。
 #   - **测试必须连真实 PostgreSQL**：`cloud/tests/global-setup.ts` 会在数据库
 #     不可达时直接失败——绝不允许用 Mock 冒充（那正是 1.1B「假通过」的教训）。
+#   - **部署断言必须解析 Compose 结构**：用 `docker compose config --format json`
+#     + Python 断言，禁止 grep YAML 文本（字段顺序一变就会漂移成假通过）。
+#   - **部署命令与手册逐字一致**：全部带 `--env-file .env.production`，且执行
+#     前显式 `unset` 同名 Shell 变量——否则 Shell 环境会覆盖 env 文件，
+#     「文件没被加载」的缺陷就会被掩盖。
 
 name: Cloud CI
 
@@ -55,36 +62,25 @@ jobs:
           --health-timeout 5s
           --health-retries 12
 
-    env:
-      TEST_DATABASE_URL: postgres://brewphase:brewphase@127.0.0.1:54329/brewphase_cloud_test
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 不写 version：让 action 读 `cloud/package.json` 的
-      # `packageManager: pnpm@9.0.0`，与 pnpm-lock.yaml 的锁文件版本保持单一事实来源。
-      #
-      # `package_json_file` **必须显式给出**：仓库根没有 package.json（这是个
-      # monorepo，package.json 在 cloud/ 与 Desktop/ 下），而该 input 默认值是
-      # 相对仓库根的 `package.json`。漏写时 action 找不到 packageManager 就直接
-      # 失败在 "Setup pnpm" 这一步（实测：Cloud CI 首次运行即失败于此）。
-      # 注意 `working-directory` 只作用于 `run` 步骤，对 `uses` 步骤无效。
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
+          # working-directory 对 uses 步骤无效，所以显式指到 cloud/。
           package_json_file: cloud/package.json
+          # 不写 version：以 cloud/package.json 的 packageManager 为准（pnpm@9.0.0）。
 
-      - name: Setup Node 22
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: cloud/package.json
           cache: pnpm
           cache-dependency-path: cloud/pnpm-lock.yaml
 
-      # --frozen-lockfile：lockfile 与 package.json 不一致时直接失败，
-      # 不允许 CI 悄悄重算依赖图。
-      - name: Install
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
@@ -93,15 +89,14 @@ jobs:
       - name: Lint
         run: pnpm lint
 
-      # global-setup 会先对测试库跑迁移；数据库不可达 → 整个套件失败。
       - name: Test (real PostgreSQL)
         run: pnpm test
 
       - name: Build
         run: pnpm build
 
-      # 迁移资产必须随构建进 dist（生产迁移入口依赖它）
-      - name: Verify migration assets in dist
+      # 迁移资产必须随构建产物出现，否则运行镜像里没有 journal，迁移会静默 no-op。
+      - name: Verify migration assets are copied into dist
         run: |
           test -f dist/db/migrations/meta/_journal.json
           test -f dist/scripts/migrate.js
@@ -115,150 +110,364 @@ jobs:
     needs: test
     defaults:
       run:
-        working-directory: cloud
+        # 所有 compose 命令都在 deploy/ 下执行，与手册 `cd cloud/deploy` 一致。
+        working-directory: cloud/deploy
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Docker build
-        run: docker build -t brewphase-cloud:ci .
+      # ── 1. 临时生产配置 ────────────────────────────────────────────────
+      # 关键：这些值**刻意非默认**（域名/邮箱/口令都不是模板里的占位），
+      # 所以断言能区分「从文件读到了真值」与「回落到了默认值」。
+      - name: Create temporary .env.production from the committed template
+        run: |
+          test -f .env.production.example
+          cp .env.production.example .env.production
+          chmod 600 .env.production
+
+          # 填入**刻意非默认**的 CI 测试值（域名/邮箱/口令都不是模板占位），
+          # 这样断言能区分「从文件读到了真值」与「回落到了默认值」。
+          # 用 Python 而不是 sed -i：GNU/BSD 的 -i 语义不同，脚本要能在两边跑。
+          python3 - <<'PYEOF'
+          import pathlib, re
+
+          p = pathlib.Path(".env.production")
+          text = p.read_text()
+          updates = {
+              "ACME_EMAIL": "ci-bot@r5r3-deploy-check.example.org",
+              "BREWPHASE_DOMAIN": "api.r5r3-deploy-check.example.org",
+              "BASE_URL": "https://api.r5r3-deploy-check.example.org",
+              "POSTGRES_PASSWORD": "7c1f0b9d4e2a6835fa91c0d7e5b32468",
+              "JWT_SIGNING_KEY": "ci_r5r3_jwt_key_0123456789abcdefghijklmnop",
+              "SESSION_TOKEN_PEPPER": "ci_r5r3_pepper_0123456789",
+              "GOOGLE_CLIENT_ID": "ci-r5r3.apps.googleusercontent.com",
+              "GOOGLE_CLIENT_SECRET": "ci_r5r3_google_secret_0123456789",
+              "GITHUB_CLIENT_ID": "ci_r5r3_github_0123456789",
+              "GITHUB_CLIENT_SECRET": "ci_r5r3_github_secret_0123456789",
+              "MCP_BROWSER_SESSION_KEY": "ci_r5r3_mcp_key_0123456789abcdef",
+          }
+          for key, value in updates.items():
+              pattern = re.compile(rf"^{re.escape(key)}=.*$", re.M)
+              if pattern.search(text):
+                  text = pattern.sub(f"{key}={value}", text)
+              else:
+                  text = text.rstrip("\n") + f"\n{key}={value}\n"
+          p.write_text(text)
+          PYEOF
+
+          chmod 600 .env.production
+
+          # 模板里这些必须是空的——防止有人把 Secret 提交进模板。
+          # （POSTGRES_PASSWORD 例外：它是文档化的占位值，预检会拒绝它。）
+          for k in JWT_SIGNING_KEY SESSION_TOKEN_PEPPER MCP_BROWSER_SESSION_KEY \
+                   GOOGLE_CLIENT_SECRET GITHUB_CLIENT_SECRET ACME_EMAIL BREWPHASE_DOMAIN; do
+            if grep -E "^${k}=.+" .env.production.example >/dev/null; then
+              echo "::error::template .env.production.example has a value for $k"
+              exit 1
+            fi
+          done
+          # 生成的文件必须是 600，且绝不能进 Git。
+          # （用 Python 取权限：GNU/BSD 的 stat 参数不同。）
+          mode=$(python3 -c "import os; print(oct(os.stat('.env.production').st_mode)[-3:])")
+          test "$mode" = "600" || { echo "::error::.env.production mode is $mode, want 600"; exit 1; }
+          git -C ../.. check-ignore -q cloud/deploy/.env.production \
+            || { echo "::error::.env.production is not gitignored"; exit 1; }
+          echo "temporary .env.production created (mode 600, gitignored)"
+
+      # ── 2. Compose 解析（与手册逐字一致的命令） ────────────────────────
+      # 显式 unset 同名 Shell 变量：compose 的优先级是 Shell > env 文件，
+      # 不 unset 的话「文件没被加载」也会被掩盖——这正是 R5-R3 要堵的缺口。
+      - name: Unset shell credentials and validate Compose config
+        run: |
+          unset POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB \
+                JWT_SIGNING_KEY JWT_SIGNING_KEY_PREVIOUS SESSION_TOKEN_PEPPER \
+                GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET \
+                GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET \
+                MCP_BROWSER_SESSION_KEY ACME_EMAIL BREWPHASE_DOMAIN \
+                BASE_URL DATABASE_URL NODE_ENV PORT 2>/dev/null || true
+          test -z "${POSTGRES_PASSWORD:-}" || { echo "::error::POSTGRES_PASSWORD still set in shell"; exit 1; }
+          docker compose --env-file .env.production config --quiet
+          echo "compose config OK (all values came from .env.production)"
+
+      # ── 3. 结构断言：解析结果必须真的来自那个文件 ──────────────────────
+      - name: Resolve Compose config and assert deployment constraints
+        run: |
+          unset POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB \
+                JWT_SIGNING_KEY SESSION_TOKEN_PEPPER \
+                GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET \
+                GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET \
+                MCP_BROWSER_SESSION_KEY ACME_EMAIL BREWPHASE_DOMAIN \
+                BASE_URL DATABASE_URL 2>/dev/null || true
+          docker compose --env-file .env.production config --format json > /tmp/resolved.json
+          python3 - <<'PYEOF'
+          import json, re, urllib.parse
+
+          d = json.load(open("/tmp/resolved.json"))
+          svcs = d["services"]
+
+          # 读回 env 文件里的期望值，避免断言写死（写死 = 换个值就假通过）
+          env_file = {}
+          for line in open(".env.production"):
+              line = line.strip()
+              if line and not line.startswith("#") and "=" in line:
+                  k, v = line.split("=", 1)
+                  env_file[k] = v
+
+          # [1][2] Caddy 的两个变量必须来自 .env.production，且**只有**这两个。
+          caddy_env = svcs["caddy"].get("environment") or {}
+          assert set(caddy_env) == {"ACME_EMAIL", "BREWPHASE_DOMAIN"}, sorted(caddy_env)
+          assert caddy_env["ACME_EMAIL"] == env_file["ACME_EMAIL"], caddy_env["ACME_EMAIL"]
+          assert caddy_env["BREWPHASE_DOMAIN"] == env_file["BREWPHASE_DOMAIN"], caddy_env["BREWPHASE_DOMAIN"]
+          # 非默认值：确认断言本身不是在比默认值。
+          assert "example.com" not in caddy_env["BREWPHASE_DOMAIN"]
+          assert "admin@example.com" != caddy_env["ACME_EMAIL"]
+          assert not svcs["caddy"].get("env_file"), "caddy must not read the whole env file"
+          print("  [1][2] caddy gets exactly ACME_EMAIL + BREWPHASE_DOMAIN from .env.production")
+
+          # [3] Caddy 环境里不得出现任何 Secret（值也不能出现）。
+          blob = json.dumps(caddy_env)
+          for secret_name in ("JWT_SIGNING_KEY", "MCP_BROWSER_SESSION_KEY",
+                              "SESSION_TOKEN_PEPPER", "GOOGLE_CLIENT_SECRET",
+                              "GITHUB_CLIENT_SECRET", "POSTGRES_PASSWORD"):
+              assert secret_name not in caddy_env, f"caddy got {secret_name}"
+              assert secret_name not in blob
+              secret_value = env_file.get(secret_name, "")
+              if secret_value:
+                  assert secret_value not in blob, f"caddy leaked value of {secret_name}"
+          print("  [3] caddy has no JWT / MCP / provider / DB secrets")
+
+          # [4] DATABASE_URL 必须按 POSTGRES_* 正确解析出 host/port/db/user/口令。
+          cloud_env = svcs["cloud"].get("environment") or {}
+          db_env = svcs["db"].get("environment") or {}
+          url = cloud_env["DATABASE_URL"]
+          u = urllib.parse.urlparse(url)
+          assert u.scheme in ("postgres", "postgresql"), u.scheme
+          assert u.hostname == "db", u.hostname          # compose 服务名，不是 127.0.0.1
+          assert u.port == 5432, u.port
+          assert u.path == "/" + env_file["POSTGRES_DB"], u.path
+          assert u.username == env_file["POSTGRES_USER"], u.username
+          assert u.password == env_file["POSTGRES_PASSWORD"], "DATABASE_URL password mismatch"
+          # db 容器拿到的是同一套凭据。
+          assert db_env["POSTGRES_PASSWORD"] == env_file["POSTGRES_PASSWORD"]
+          assert db_env["POSTGRES_DB"] == env_file["POSTGRES_DB"]
+          print(f"  [4] DATABASE_URL -> {u.hostname}:{u.port}{u.path} (user+password match)")
+
+          # [5] Cloud 与 DB 不得发布宿主端口。
+          for name in ("cloud", "db"):
+              assert not svcs[name].get("ports"), f"{name} publishes host ports"
+          print("  [5] cloud/db publish no host ports")
+
+          # [6] DB 只挂 internal 网络。
+          assert d["networks"]["data"].get("internal") is True, "data network must be internal"
+          assert set(svcs["db"]["networks"]) == {"data"}, sorted(svcs["db"]["networks"])
+          print("  [6] db is on the internal network only")
+
+          # [7] 单副本：无 replicas 字段，且 GATEWAY_EXPECTED_REPLICAS=1。
+          assert "replicas" not in json.dumps(d), "compose must not define replicas"
+          assert cloud_env["GATEWAY_EXPECTED_REPLICAS"] == "1"
+          assert cloud_env["NODE_ENV"] == "production"
+          assert cloud_env["TRUST_PROXY"] == "true" and cloud_env["TRUST_PROXY_HOPS"] == "1"
+          print("  [7] single replica / NODE_ENV=production / single-layer proxy trust")
+
+          # [8] 只有 Caddy 对外 80/443。
+          published = {str(p.get("published")) for p in (svcs["caddy"].get("ports") or [])}
+          assert {"80", "443"} <= published, published
+          print("  [8] only caddy publishes 80/443")
+
+          # [9] cloud 必须等 db 健康（否则会连上一个还没就绪的库）。
+          assert svcs["cloud"]["depends_on"]["db"]["condition"] == "service_healthy"
+          print("  [9] cloud waits for db to be healthy")
+
+          # [10] 全部 secret 值不得出现在解析结果里（除 cloud/db 自己的 environment）。
+          allowed = {"cloud", "db"}
+          for name, svc in svcs.items():
+              if name in allowed:
+                  continue
+              svc_blob = json.dumps(svc)
+              for secret_name in ("JWT_SIGNING_KEY", "MCP_BROWSER_SESSION_KEY",
+                                  "SESSION_TOKEN_PEPPER", "GOOGLE_CLIENT_SECRET",
+                                  "GITHUB_CLIENT_SECRET", "POSTGRES_PASSWORD"):
+                  value = env_file.get(secret_name, "")
+                  if value:
+                      assert value not in svc_blob, f"{name} leaked {secret_name}"
+          print("  [10] no secret value leaked into any other service")
+          print("ALL COMPOSE ASSERTIONS PASSED")
+          PYEOF
+
+      # ── 4. 镜像构建（走 compose，与手册第 ③ 步一致） ──────────────────
+      - name: Docker build (same command as the runbook)
+        run: |
+          unset POSTGRES_PASSWORD 2>/dev/null || true
+          docker compose --env-file .env.production build cloud
 
       # 运行镜像只带生产依赖：devDependencies 不该出现在生产层。
       - name: Verify runtime image has no devDependencies
         run: |
           for p in typescript eslint vitest drizzle-kit tsx; do
-            if docker run --rm brewphase-cloud:ci sh -c "test -d node_modules/$p"; then
+            if docker run --rm brewphase-cloud:latest sh -c "test -d node_modules/$p"; then
               echo "::error::devDependency $p leaked into the runtime image"
               exit 1
             fi
             echo "ok: $p absent"
           done
           for p in hono jose postgres ws zod; do
-            docker run --rm brewphase-cloud:ci sh -c "test -d node_modules/$p" \
+            docker run --rm brewphase-cloud:latest sh -c "test -d node_modules/$p" \
               || { echo "::error::runtime dependency $p missing"; exit 1; }
             echo "ok: $p present"
           done
 
-      # 迁移入口必须能在镜像内独立执行（用临时 Postgres，不碰任何生产库）
-      #
-      # 用**共享 network + 服务名**而不是 host.docker.internal：后者是
-      # Docker Desktop（macOS/Windows）专有的，Linux runner 上默认不存在，
-      # 会直接 DNS 解析失败。共享 network 在两种平台行为一致。
-      - name: Verify migrations run inside the image
+      # ── 5. 预检：手册第 ④ 步的原样命令，必须通过 ──────────────────────
+      # 用 compose run（而不是 docker run --env-file）是为了拿到**最终注入
+      # 容器的** DATABASE_URL——它由 POSTGRES_* 拼成，手工 export 无法证明
+      # 部署配置正确。
+      - name: Run production preflight with the exact runbook command
         run: |
-          docker network create mig-net
-          docker run -d --name pg-mig --network mig-net \
-            -e POSTGRES_USER=brewphase -e POSTGRES_PASSWORD=brewphase \
-            -e POSTGRES_DB=brewphase_cloud_test \
-            postgres:16-alpine
-          for i in $(seq 1 30); do
-            docker exec pg-mig pg_isready -U brewphase -d brewphase_cloud_test >/dev/null 2>&1 && break
-            sleep 2
+          set -o pipefail
+          unset POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB \
+                JWT_SIGNING_KEY SESSION_TOKEN_PEPPER \
+                GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET \
+                GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET \
+                MCP_BROWSER_SESSION_KEY ACME_EMAIL BREWPHASE_DOMAIN \
+                BASE_URL DATABASE_URL 2>/dev/null || true
+          docker compose --env-file .env.production run --rm --no-deps cloud \
+            node dist/scripts/preflight-remote-mcp.js | tee /tmp/preflight-ok.log
+          # 预检必须真的看到 Compose 注入的 DATABASE_URL（不是空、不是宿主值）。
+          grep -q "DATABASE_URL                   = set (parses, password matches POSTGRES_PASSWORD)" /tmp/preflight-ok.log
+          grep -q "POSTGRES_PASSWORD              = set (>=16 chars, URL-safe, not a placeholder)" /tmp/preflight-ok.log
+          echo "preflight OK with the composed DATABASE_URL"
+
+      # ── 6. 预检负例：缺项 / 弱口令 / 保留字符都必须非零退出 ────────────
+      # 用 `-e` 覆盖模拟「配置缺失」，因为生产里这些值只可能来自 env 文件。
+      - name: Preflight must fail on missing or unsafe configuration
+        run: |
+          set +e
+          run_pf() {
+            docker compose --env-file .env.production run --rm --no-deps "$@" cloud \
+              node dist/scripts/preflight-remote-mcp.js > /tmp/pf-neg.log 2>&1
+            echo $?
+          }
+
+          # (a) 缺 MCP_BROWSER_SESSION_KEY → /mcp 会 404，必须拦下
+          e=$(run_pf -e MCP_BROWSER_SESSION_KEY=)
+          test "$e" = "1" || { echo "::error::preflight passed without MCP_BROWSER_SESSION_KEY (exit=$e)"; cat /tmp/pf-neg.log; exit 1; }
+          grep -q "mcp_browser_session_key_missing" /tmp/pf-neg.log
+          echo "ok: missing MCP_BROWSER_SESSION_KEY -> exit 1"
+
+          # (b) 缺 DATABASE_URL
+          e=$(run_pf -e DATABASE_URL=)
+          test "$e" = "1" || { echo "::error::preflight passed without DATABASE_URL (exit=$e)"; exit 1; }
+          grep -q "database_url_missing" /tmp/pf-neg.log
+          echo "ok: missing DATABASE_URL -> exit 1"
+
+          # (c) 弱口令（8 位）
+          e=$(run_pf -e POSTGRES_PASSWORD=shortpw)
+          test "$e" = "1" || { echo "::error::preflight passed with a weak DB password (exit=$e)"; exit 1; }
+          grep -q "postgres_password_too_short" /tmp/pf-neg.log
+          echo "ok: weak DB password -> exit 1"
+
+          # (d) 模板占位口令（照抄 .env.production.example 就上线）
+          e=$(run_pf -e POSTGRES_PASSWORD=change-me-strong-password)
+          test "$e" = "1" || { echo "::error::preflight passed with the placeholder password (exit=$e)"; exit 1; }
+          grep -q "postgres_password_placeholder" /tmp/pf-neg.log
+          echo "ok: placeholder DB password -> exit 1"
+
+          # (e) 含 URL 保留字符（openssl rand -base64 的典型产物）
+          e=$(run_pf -e POSTGRES_PASSWORD='ab/cdEfGhIjKlMnOpQrStUvWx')
+          test "$e" = "1" || { echo "::error::preflight passed with '/' in the DB password (exit=$e)"; exit 1; }
+          grep -q "postgres_password_unsafe_chars" /tmp/pf-neg.log
+          grep -q "database_url_invalid" /tmp/pf-neg.log
+          echo "ok: URL-unsafe DB password -> exit 1 (also rejects the unparseable URL)"
+
+          # (f) 口令两侧不一致（DATABASE_URL 与 POSTGRES_PASSWORD 各改一边）
+          e=$(run_pf -e POSTGRES_PASSWORD=aaaaaaaaaaaaaaaaaaaaaaaaaa)
+          test "$e" = "1" || { echo "::error::preflight passed on password mismatch (exit=$e)"; exit 1; }
+          grep -q "database_url_password_mismatch" /tmp/pf-neg.log
+          echo "ok: DATABASE_URL/POSTGRES_PASSWORD mismatch -> exit 1"
+
+          # 负例输出不得泄漏任何 Secret 值。
+          for s in 7c1f0b9d4e2a6835fa91c0d7e5b32468 ci_r5r3_jwt_key ci_r5r3_mcp_key \
+                   ci_r5r3_google_secret ci_r5r3_github_secret; do
+            if grep -q "$s" /tmp/pf-neg.log; then
+              echo "::error::preflight output leaked the secret value $s"
+              exit 1
+            fi
           done
-          MIG_URL=postgres://brewphase:brewphase@pg-mig:5432/brewphase_cloud_test
-          # 连跑两次：迁移必须幂等
-          docker run --rm --network mig-net -e DATABASE_URL="$MIG_URL" \
-            brewphase-cloud:ci node dist/scripts/migrate.js
-          docker run --rm --network mig-net -e DATABASE_URL="$MIG_URL" \
-            brewphase-cloud:ci node dist/scripts/migrate.js
-          # 失败路径必须非零退出
-          if docker run --rm --network mig-net \
-            -e DATABASE_URL=postgres://brewphase:brewphase@pg-mig:5432/nope \
-            brewphase-cloud:ci node dist/scripts/migrate.js; then
-            echo "::error::migrate must fail on a missing database"
+          echo "ok: no secret value in negative-case output"
+          exit 0
+
+      # ── 7. 真实 PostgreSQL：起 compose 的 db，跑手册第 ⑤ 步的迁移 ──────
+      # 这一步同时证明「DATABASE_URL 指向的 host/port/口令确实可用」——
+      # 前面的断言只证明字符串解析正确，这里证明它能真的连上。
+      - name: Start the compose database
+        run: |
+          unset POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB \
+                JWT_SIGNING_KEY SESSION_TOKEN_PEPPER \
+                GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET \
+                GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET \
+                MCP_BROWSER_SESSION_KEY ACME_EMAIL BREWPHASE_DOMAIN \
+                BASE_URL DATABASE_URL 2>/dev/null || true
+          docker compose --env-file .env.production up -d --wait db
+          docker compose --env-file .env.production ps
+
+      - name: Run migrations twice (idempotent, runbook command)
+        run: |
+          set -o pipefail
+          unset POSTGRES_PASSWORD DATABASE_URL 2>/dev/null || true
+          docker compose --env-file .env.production run --rm cloud \
+            node dist/scripts/migrate.js | tee /tmp/migrate-1.log
+          docker compose --env-file .env.production run --rm cloud \
+            node dist/scripts/migrate.js | tee /tmp/migrate-2.log
+          grep -q "\[migrate\] database migrations applied" /tmp/migrate-1.log
+          grep -q "\[migrate\] database migrations applied" /tmp/migrate-2.log
+          # 迁移日志不得出现口令。
+          ! grep -q "7c1f0b9d4e2a6835fa91c0d7e5b32468" /tmp/migrate-1.log
+          echo "migrations applied twice (idempotent), no secret in output"
+
+      # ── 8. Caddyfile：有变量必须通过，缺变量必须失败 ───────────────────
+      # 走 compose run（而不是 docker run -e）：这样注入的正是 .env.production
+      # 经 compose 解析后的那两个值，与生产启动路径完全一致。
+      - name: Caddyfile validates with the values from .env.production
+        run: |
+          set -o pipefail
+          docker compose --env-file .env.production run --rm --no-deps \
+            caddy caddy validate --config /etc/caddy/Caddyfile | tee /tmp/caddy-ok.log
+          grep -q "Valid configuration" /tmp/caddy-ok.log
+          echo "caddy validate OK for $(grep -E '^BREWPHASE_DOMAIN=' .env.production | cut -d= -f2-)"
+
+      - name: Caddyfile must fail when the domain or email is missing
+        run: |
+          set +e
+          # (a) 两个都缺
+          docker compose --env-file .env.production run --rm --no-deps \
+            -e ACME_EMAIL= -e BREWPHASE_DOMAIN= \
+            caddy caddy validate --config /etc/caddy/Caddyfile > /tmp/caddy-both.log 2>&1
+          e=$?
+          test "$e" != "0" || { echo "::error::caddy validate passed with no domain/email"; exit 1; }
+          grep -qE "wrong argument count|server block without any key" /tmp/caddy-both.log
+          echo "ok: missing ACME_EMAIL -> validate fails (exit=$e)"
+
+          # (b) 只缺域名（邮箱正常）：必须报「站点键为空」，而不是启动到错误域名
+          docker compose --env-file .env.production run --rm --no-deps \
+            -e BREWPHASE_DOMAIN= \
+            caddy caddy validate --config /etc/caddy/Caddyfile > /tmp/caddy-domain.log 2>&1
+          e=$?
+          test "$e" != "0" || { echo "::error::caddy validate passed with no BREWPHASE_DOMAIN"; exit 1; }
+          grep -q "server block without any key" /tmp/caddy-domain.log
+          echo "ok: missing BREWPHASE_DOMAIN -> validate fails (exit=$e)"
+
+          # Caddyfile 不得保留任何 env 变量兜底默认值（否则漏配会静默用错域名）。
+          if grep -qE '\{\$[A-Z_]+:' Caddyfile; then
+            echo "::error::Caddyfile still has a fallback default for an env var"
             exit 1
           fi
-          echo "migrate idempotent + fail-closed OK"
-          docker rm -f pg-mig
-          docker network rm mig-net
+          echo "ok: no env-var fallback defaults in Caddyfile"
+          exit 0
 
-      # 预检必须能失败：缺 MCP_BROWSER_SESSION_KEY 时 Remote MCP 是 404 而 /health 仍 200
-      - name: Verify preflight fails without MCP_BROWSER_SESSION_KEY
+      # ── 9. 清理 ────────────────────────────────────────────────────────
+      - name: Tear down the temporary stack
+        if: always()
         run: |
-          if docker run --rm \
-            -e NODE_ENV=production -e BASE_URL=https://ci.example.com \
-            -e DATABASE_URL=postgres://x@db/x \
-            -e JWT_SIGNING_KEY=0123456789abcdef0123456789abcdef \
-            -e SESSION_TOKEN_PEPPER=0123456789abcdef \
-            -e GOOGLE_CLIENT_ID=a -e GOOGLE_CLIENT_SECRET=b \
-            -e GITHUB_CLIENT_ID=c -e GITHUB_CLIENT_SECRET=d \
-            -e GATEWAY_EXPECTED_REPLICAS=1 \
-            brewphase-cloud:ci node dist/scripts/preflight-remote-mcp.js; then
-            echo "::error::preflight must fail when MCP_BROWSER_SESSION_KEY is missing"
-            exit 1
-          fi
-          echo "preflight fail-closed OK"
-
-      # 预检必须能通过（合法配置），且不输出任何 Secret 值
-      - name: Verify preflight passes on a valid configuration
-        run: |
-          out=$(docker run --rm \
-            -e NODE_ENV=production -e BASE_URL=https://ci.example.com \
-            -e DATABASE_URL=postgres://x@db/x \
-            -e JWT_SIGNING_KEY=0123456789abcdef0123456789abcdef \
-            -e SESSION_TOKEN_PEPPER=0123456789abcdef \
-            -e GOOGLE_CLIENT_ID=a -e GOOGLE_CLIENT_SECRET=b \
-            -e GITHUB_CLIENT_ID=c -e GITHUB_CLIENT_SECRET=d \
-            -e MCP_BROWSER_SESSION_KEY=9f8e7d6c5b4a39281706f5e4d3c2b1a0 \
-            -e GATEWAY_EXPECTED_REPLICAS=1 \
-            brewphase-cloud:ci node dist/scripts/preflight-remote-mcp.js)
-          echo "$out"
-          echo "$out" | grep -q "OK"
-          # 输出里不得出现任何密钥值
-          case "$out" in
-            *0123456789abcdef*|*9f8e7d6c5b4a3928*)
-              echo "::error::preflight leaked a secret"; exit 1;;
-          esac
-          echo "preflight OK + no secret leak"
-
-      # 部署产物语法与约束回归：单副本、db 不对外、仅 Caddy 对外、Caddyfile 合法
-      #
-      # 用 `config --format json` + python 而不是 grep YAML 文本：
-      # compose 的字段顺序不是契约，grep -A3 之类会随版本漂移成假通过/假失败。
-      - name: Validate deploy artifacts
-        working-directory: cloud/deploy
-        run: |
-          set -euo pipefail
-          cp .env.production.example .env.production
-          POSTGRES_PASSWORD=ci-only-password docker compose -f compose.yaml config \
-            --format json > /tmp/resolved-compose.json
-          echo "compose config OK"
-
-          python3 - <<'PY'
-          import json
-          d = json.load(open('/tmp/resolved-compose.json'))
-          svcs = d['services']
-
-          # 单副本：任何位置出现 replicas 都说明有人想跑多实例（Phase 1.4 之前禁止）
-          assert 'replicas' not in json.dumps(d), 'replicas must not be configured'
-
-          # 只有 Caddy 对外
-          published = {str(p.get('published')) for p in (svcs['caddy'].get('ports') or [])}
-          assert {'80', '443'} <= published, f'caddy must publish 80/443, got {published}'
-          for name in ('cloud', 'db'):
-              assert not svcs[name].get('ports'), f'{name} must not publish host ports'
-
-          # db 在 internal 网络：宿主与公网都不可达
-          assert d['networks']['data'].get('internal') is True, 'db network must be internal'
-          assert set(svcs['db'].get('networks', {})) == {'data'}, 'db must only join data network'
-
-          # 单副本 + 生产模式 + 代理信任边界钉死在 compose 里
-          env = svcs['cloud'].get('environment') or {}
-          assert env.get('GATEWAY_EXPECTED_REPLICAS') == '1', env.get('GATEWAY_EXPECTED_REPLICAS')
-          assert env.get('NODE_ENV') == 'production'
-          assert env.get('TRUST_PROXY') == 'true' and env.get('TRUST_PROXY_HOPS') == '1'
-          assert 'DATABASE_URL' in env
-
-          # cloud 必须等 db 健康才启动
-          dep = svcs['cloud'].get('depends_on', {}).get('db', {})
-          assert dep.get('condition') == 'service_healthy', dep
-
-          print('deploy constraints OK')
-          PY
-
+          docker compose --env-file .env.production down -v --remove-orphans || true
           rm -f .env.production
-          docker run --rm -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine \
-            caddy validate --config /etc/caddy/Caddyfile 2>&1 | grep -q "Valid configuration" \
-            || { echo "::error::Caddyfile invalid"; exit 1; }
-          echo "caddyfile OK"
+          echo "temporary stack removed"

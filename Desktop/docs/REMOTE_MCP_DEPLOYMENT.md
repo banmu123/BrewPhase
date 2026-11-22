@@ -220,9 +220,15 @@ registry.clear()
 
 ## 8. 上线前自查
 
-- [ ] **`pnpm --dir cloud preflight:remote-mcp` 通过**（容器内等价命令：
-      `node dist/scripts/preflight-remote-mcp.js`）。它检查 `NODE_ENV=production`、
-      `BASE_URL` 公网 https 纯 Origin、四个密钥/凭据、`MCP_BROWSER_SESSION_KEY`
+- [ ] **生产预检通过**，且是在 `cloud/deploy` 下用 Compose 注入的配置跑的：
+      `docker compose --env-file .env.production run --rm --no-deps cloud \
+       node dist/scripts/preflight-remote-mcp.js`
+      （**不要**用 `pnpm --dir cloud preflight:remote-mcp` 当权威结果——它读的是
+      当前 Shell 的变量，拿不到由 `POSTGRES_*` 拼出的 `DATABASE_URL`）。
+      它检查 `NODE_ENV=production`、`BASE_URL` 公网 https 纯 Origin（拒绝 IP
+      字面量与 `.local`/`.internal`/`.test` 等非公网后缀）、`DATABASE_URL` 可解析
+      且口令与 `POSTGRES_PASSWORD` 一致、`POSTGRES_PASSWORD` 为 URL 安全字符
+      （`A-Za-z0-9._~-`）且非占位值、四个密钥/凭据、`MCP_BROWSER_SESSION_KEY`
       ≥32 字节且不等于 `JWT_SIGNING_KEY`、`GATEWAY_EXPECTED_REPLICAS=1`、
       以及 `resolveMcpOAuthEnablement()` 通过——**缺 `MCP_BROWSER_SESSION_KEY`
       时服务会照常启动、`/health` 照常 200，但 `/mcp`、`/.well-known/*`、
@@ -235,7 +241,10 @@ registry.clear()
 - [ ] `BASE_URL` 是公网 https 地址，且与反代透传的 `Host` 一致
 - [ ] 反代透传 `Upgrade` / `Connection` / `Sec-WebSocket-Protocol` / `Host`
 - [ ] `/ready` 里的 `instance_id` 在 LB 的所有后端上**只有一个值**
-- [ ] 迁移已应用：`docker compose run --rm cloud node dist/scripts/migrate.js`
+- [ ] 迁移已应用：`docker compose --env-file .env.production run --rm cloud \
+      node dist/scripts/migrate.js`
       （由 Drizzle journal 驱动，**不写死版本号**；当前 `0000`–`0005`，
       新增迁移无需改脚本。重复执行安全、只应用未执行的迁移）
+- [ ] **每条 compose 命令都带 `--env-file .env.production`**（Compose 不会自动
+      读这个文件名；漏掉会因缺变量直接失败）
 - [ ] 自定义 WSS 客户端能完成：Upgrade → hello → `hello_ok` → ping/pong → close 1001（停一次进程验证）

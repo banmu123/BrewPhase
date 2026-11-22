@@ -204,18 +204,24 @@ cloud/deploy/
 
 ```bash
 pnpm build                      # tsc 编译 + 迁移文件复制到 dist/
-pnpm preflight:remote-mcp       # 部署前预检（生产模式必需，失败非零退出）
+pnpm preflight:remote-mcp       # 源码预检（读当前 Shell 环境，本地演练用）
 docker build -t brewphase-cloud .
 ```
+
+> `pnpm preflight:remote-mcp` 读的是**当前 Shell** 的变量，不是
+> `.env.production`；生产权威预检见下方「镜像内等价预检」（`compose run`）。
 
 多阶段 Dockerfile：全量依赖（编译用）→ TS 编译 → **仅生产依赖** → 运行镜像
 （非 root、只带 `dist/` 与生产 `node_modules/`）。运行镜像内不含
 typescript / eslint / vitest / drizzle-kit / tsx。
 
-镜像内等价预检（容器里没有 `pnpm` 与源码）：
+镜像内等价预检（容器里没有 `pnpm` 与源码）——**用 `compose run` 而不是
+`docker run --env-file`**，这样拿到的是 Compose 最终注入容器的
+`DATABASE_URL`（由 `POSTGRES_*` 拼成），与 `up` 用的是同一份配置：
 
 ```bash
-docker run --rm --env-file .env.production brewphase-cloud \
+cd deploy
+docker compose --env-file .env.production run --rm --no-deps cloud \
   node dist/scripts/preflight-remote-mcp.js
 ```
 
@@ -246,25 +252,37 @@ docker run --rm --env-file .env.production brewphase-cloud \
 openssl rand -base64 48   # JWT_SIGNING_KEY
 openssl rand -base64 48   # MCP_BROWSER_SESSION_KEY（必须与上者不同）
 openssl rand -base64 32   # SESSION_TOKEN_PEPPER
+openssl rand -hex 32      # POSTGRES_PASSWORD（必须 URL 安全，见 deploy/README.md §4）
 ```
 
 ### 部署步骤（Compose：Caddy + Cloud + PostgreSQL 16）
 
+> **所有 compose 命令都必须带 `--env-file .env.production`**——Compose 只自动
+> 读项目目录里名为 `.env` 的文件。漏掉会因缺变量直接失败（刻意 fail-closed）。
+> 完整运维命令见 [`deploy/README.md`](deploy/README.md)。
+
 ```bash
 cd deploy
 cp .env.production.example .env.production && chmod 600 .env.production
-$EDITOR .env.production          # 填入四个回调、密钥、数据库口令
+$EDITOR .env.production          # 填入四个回调、密钥、数据库口令（openssl rand -hex 32）
 
-pnpm --dir .. preflight:remote-mcp        # ① 预检（失败则到此为止）
+docker compose --env-file .env.production config --quiet   # ① 校验配置可解析
+docker compose --env-file .env.production build cloud      # ② 构建
+docker compose --env-file .env.production run --rm --no-deps cloud \
+  node dist/scripts/preflight-remote-mcp.js                # ③ 预检（失败则到此为止）
+docker compose --env-file .env.production run --rm cloud \
+  node dist/scripts/migrate.js                             # ④ 迁移（只应用未执行的）
+docker compose --env-file .env.production up -d            # ⑤ 启动（cloud 等 db healthy）
+docker compose --env-file .env.production ps               # ⑥ 三个容器 healthy、cloud 只有 1 个
 
-docker compose build cloud                # ② 构建
-docker compose run --rm cloud node dist/scripts/migrate.js   # ③ 迁移（只应用未执行的）
-docker compose up -d                      # ④ 启动（cloud 等 db healthy）
-docker compose ps                         # ⑤ 确认三个容器 healthy、cloud 只有 1 个
-
-node smoke-test.mjs https://your-domain   # ⑥ 冒烟：HTTP + Discovery + 未授权 MCP
-# ⑦ WSS 真机验收见 deploy/README.md §12
+curl -fsS https://your-domain/health && curl -fsS https://your-domain/ready   # ⑦ 分别请求
+node smoke-test.mjs https://your-domain   # ⑧ 冒烟：HTTP + Discovery + 未授权 MCP
+# ⑨ WSS 真机验收见 deploy/README.md §12
 ```
+
+> ③ 必须在 ④ 之前：预检没过就不要迁移、不要启动。
+> ⑦ 的 `/health`（进程存活）与 `/ready`（数据库可用）**不能互相替代**——
+> 容器 `healthy` 只代表 `/health` 200。
 
 - 只有 Caddy 发布 80/443；Cloud 与 PostgreSQL **不发布端口**
   （PostgreSQL 在 `internal: true` 网络内，宿主与公网均不可达）。

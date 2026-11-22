@@ -35,6 +35,17 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data        # 证书与 ACME 账户
       - caddy_config:/config
+    # 只注入 Caddy 真正需要的两个变量。
+    #
+    # 刻意**不给** `env_file: .env.production`：那会把 JWT 密钥、数据库口令、
+    # Provider Secret 一并交给一个反向代理进程——它只需要域名和证书联系邮箱。
+    # 用 `${VAR:?…}` 而不是 `${VAR:-默认值}`：缺配置时**启动即失败**，
+    # 而不是拿一个虚构邮箱/域名去签证书（Caddyfile 里也不再有默认值兜底）。
+    #
+    # 这两个值由 `--env-file .env.production` 提供（见 deploy/README.md）。
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL must be set in .env.production (certificate contact)}
+      BREWPHASE_DOMAIN: ${BREWPHASE_DOMAIN:?BREWPHASE_DOMAIN must be set in .env.production}
     depends_on:
       - cloud
     networks:

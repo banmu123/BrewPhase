@@ -21,7 +21,8 @@ function validEnv(overrides: Record<string, string | undefined> = {}): Record<st
   return {
     NODE_ENV: "production",
     BASE_URL: "https://api.phase.commitbrew.com",
-    DATABASE_URL: "postgres://user:pass@db.internal:5432/brewphase_cloud",
+    DATABASE_URL: "postgres://brewphase:REAL_TEST_PG_PASSWORD_0123456789@db:5432/brewphase_cloud",
+    POSTGRES_PASSWORD: "REAL_TEST_PG_PASSWORD_0123456789",
     JWT_SIGNING_KEY: "SENTINEL_JWT_KEY_0123456789abcdefghij",
     SESSION_TOKEN_PEPPER: "SENTINEL_PEPPER_0123456789",
     GOOGLE_CLIENT_ID: "SENTINEL_GOOGLE_ID.apps.googleusercontent.com",
@@ -47,7 +48,7 @@ function expectNoSecretLeak(problems: PreflightProblem[]): void {
     "SENTINEL_GOOGLE",
     "SENTINEL_GITHUB",
     "SENTINEL_MCP_BROWSER",
-    "postgres://user:pass",
+    "REAL_TEST_PG_PASSWORD",
   ]) {
     expect(blob, `预检输出泄漏了 ${sentinel}`).not.toContain(sentinel);
   }
@@ -82,8 +83,9 @@ describe("checkRemoteMcpEnv：基础项", () => {
     expect(
       codes(checkRemoteMcpEnv(validEnv({ BASE_URL: "https://api.example.com/#f" }))),
     ).toContain("base_url_not_origin");
+    // 127.0.0.1 同时满足「回环」与「IP 字面量」——报更精确的那一个。
     expect(codes(checkRemoteMcpEnv(validEnv({ BASE_URL: "https://127.0.0.1:3000" })))).toContain(
-      "base_url_not_public",
+      "base_url_ip_literal",
     );
     expect(codes(checkRemoteMcpEnv(validEnv({ BASE_URL: "https://localhost" })))).toContain(
       "base_url_not_public",
@@ -94,6 +96,92 @@ describe("checkRemoteMcpEnv：基础项", () => {
     expect(checkRemoteMcpEnv(validEnv({ BASE_URL: "https://api.phase.commitbrew.com/" }))).toEqual(
       [],
     );
+  });
+
+  it("BASE_URL 拒绝 IP 字面量（IPv4 / IPv6）——公网部署必须有域名", () => {
+    for (const bad of ["https://192.168.1.5", "https://10.0.0.1", "https://[fd00::1]", "https://8.8.8.8"]) {
+      const found = codes(checkRemoteMcpEnv(validEnv({ BASE_URL: bad })));
+      expect(found, bad).toContain("base_url_ip_literal");
+      // 不该被误报成「回环」或「带 path」——原因要指向真正的问题。
+      expect(found, bad).not.toContain("base_url_not_origin");
+    }
+  });
+
+  it("BASE_URL 拒绝非公网用途域名（localhost / .local / .internal / .test）", () => {
+    const cases: Array<[string, string]> = [
+      ["https://localhost", "base_url_not_public"],
+      ["https://api.localhost", "base_url_not_public"],
+      ["https://brewphase.local", "base_url_not_public"],
+      ["https://db.internal", "base_url_not_public"],
+      ["https://staging.test", "base_url_not_public"],
+      ["https://nas.home", "base_url_not_public"],
+      ["https://router.lan", "base_url_not_public"],
+    ];
+    for (const [bad, expected] of cases) {
+      const found = codes(checkRemoteMcpEnv(validEnv({ BASE_URL: bad })));
+      expect(found, bad).toContain(expected);
+    }
+    // 合法公网域名仍然通过（不能把检查做得过宽到拒绝一切）。
+    expect(checkRemoteMcpEnv(validEnv({ BASE_URL: "https://api.phase.commitbrew.com" }))).toEqual([]);
+    expect(checkRemoteMcpEnv(validEnv({ BASE_URL: "https://sub.domain.example.org" }))).toEqual([]);
+  });
+
+  it("POSTGRES_PASSWORD：缺失 / 过短 / 占位值 / 含 URL 保留字符", () => {
+    expect(codes(checkRemoteMcpEnv(validEnv({ POSTGRES_PASSWORD: undefined })))).toContain(
+      "postgres_password_missing",
+    );
+    expect(codes(checkRemoteMcpEnv(validEnv({ POSTGRES_PASSWORD: "" })))).toContain(
+      "postgres_password_missing",
+    );
+    expect(codes(checkRemoteMcpEnv(validEnv({ POSTGRES_PASSWORD: "x".repeat(15) })))).toContain(
+      "postgres_password_too_short",
+    );
+    // 示例文件里的占位口令：模板照抄不改就上线。
+    expect(
+      codes(checkRemoteMcpEnv(validEnv({ POSTGRES_PASSWORD: "change-me-strong-password" }))),
+    ).toContain("postgres_password_placeholder");
+    expect(codes(checkRemoteMcpEnv(validEnv({ POSTGRES_PASSWORD: "password" })))).toContain(
+      "postgres_password_placeholder",
+    );
+    // 含保留字符：`/` 会让 new URL() 直接抛错，`@` 会被改写成 %40。
+    for (const bad of ["ab/cd_password_01234567", "ab@cdpassword01234567", "ab:cdpassword01234567", "ab cd password 01234", "pass#word0123456789"]) {
+      expect(
+        codes(checkRemoteMcpEnv(validEnv({ POSTGRES_PASSWORD: bad }))),
+        bad,
+      ).toContain("postgres_password_unsafe_chars");
+    }
+    // URL 安全子集（含 base64url 的 - _）通过。
+    // 注意要同时改 DATABASE_URL：两侧口令必须一致，否则会正确地报 mismatch。
+    const urlSafe = "Ab3_-~.zXY0123456789";
+    expect(
+      checkRemoteMcpEnv(
+        validEnv({
+          POSTGRES_PASSWORD: urlSafe,
+          DATABASE_URL: `postgres://brewphase:${urlSafe}@db:5432/brewphase_cloud`,
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("DATABASE_URL 与 POSTGRES_PASSWORD 必须指向同一个口令", () => {
+    // 口令被改写 / 只改一侧：服务会用另一个凭据连库。
+    const mismatched = checkRemoteMcpEnv(
+      validEnv({ DATABASE_URL: "postgres://brewphase:OTHER_PASSWORD_0123456789@db:5432/x" }),
+    );
+    expect(codes(mismatched)).toContain("database_url_password_mismatch");
+
+    // 含 `/` 的口令拼进 URL 后无法解析 → 必须明确报 invalid，而不是假装成功。
+    const unparseable = checkRemoteMcpEnv(
+      validEnv({
+        POSTGRES_PASSWORD: "ab/cd_password_01234567",
+        DATABASE_URL: "postgres://brewphase:ab/cd_password_01234567@db:5432/x",
+      }),
+    );
+    expect(codes(unparseable)).toContain("postgres_password_unsafe_chars");
+    expect(codes(unparseable)).toContain("database_url_invalid");
+
+    // 完全一致 → 通过。
+    expect(checkRemoteMcpEnv(validEnv())).toEqual([]);
   });
 
   it("DATABASE_URL 缺失 → 拒绝", () => {

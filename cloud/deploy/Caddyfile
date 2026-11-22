@@ -48,7 +48,14 @@
 # 内部端口 3000（HTTP 与 WSS 共用端口，见 `src/server.ts`）。
 {
 	# ACME 账户邮箱：证书到期通知与账户恢复用。
-	email {$ACME_EMAIL:admin@example.com}
+	#
+	# **没有默认值**：`{$ACME_EMAIL}` 在变量缺失时会被替换成空串，
+	# 于是 `email` 变成无参数指令，`caddy validate` 直接报
+	# "wrong argument count or unexpected line ending after 'email'"。
+	# 这是刻意的第二道防线——第一道是 compose 的
+	# `${ACME_EMAIL:?…}`，它会先给出一句人话（"must be set in .env.production"）。
+	# 两道都在，才不会有人拿一个虚构邮箱去签生产证书。
+	email {$ACME_EMAIL}
 
 	servers {
 		timeouts {
@@ -62,8 +69,13 @@
 	}
 }
 
-# 公网域名站点。`{$BREWPHASE_DOMAIN}` 由 .env.production 提供。
-{$BREWPHASE_DOMAIN:api.phase.commitbrew.com} {
+# 公网域名站点。`{$BREWPHASE_DOMAIN}` 由 `--env-file .env.production` 注入。
+#
+# **没有默认值**：变量缺失时这里会变成空站点键，`caddy validate` 报
+# "server block without any key is global configuration"。同样是第二道防线
+# （第一道是 compose 的 `${BREWPHASE_DOMAIN:?…}`）——绝不能退回到
+# 「随便挑个域名把证书签了」，那会让生产服务挂在错误的主机名上。
+{$BREWPHASE_DOMAIN} {
 	# HTTPS 站点：Caddy 自动申请证书、自动把 :80 的同域请求 301 到 https。
 	reverse_proxy cloud:3000 {
 		# 不设置 header_up Host：Caddy 默认透传原始 Host（见文件头第 1 条）。
