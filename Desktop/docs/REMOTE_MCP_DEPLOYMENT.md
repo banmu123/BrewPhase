@@ -225,20 +225,25 @@ registry.clear()
        node dist/scripts/preflight-remote-mcp.js`
       （**不要**用 `pnpm --dir cloud preflight:remote-mcp` 当权威结果——它读的是
       当前 Shell 的变量，拿不到由 `POSTGRES_*` 拼出的 `DATABASE_URL`）。
-      它检查 `NODE_ENV=production`、`BASE_URL` 公网 https 纯 Origin（拒绝 IP
-      字面量与 `.local`/`.internal`/`.test` 等非公网后缀）、`DATABASE_URL` 可解析
-      且口令与 `POSTGRES_PASSWORD` 一致、`POSTGRES_PASSWORD` 为 URL 安全字符
-      （`A-Za-z0-9._~-`）且非占位值、四个密钥/凭据、`MCP_BROWSER_SESSION_KEY`
-      ≥32 字节且不等于 `JWT_SIGNING_KEY`、`GATEWAY_EXPECTED_REPLICAS=1`、
-      以及 `resolveMcpOAuthEnablement()` 通过——**缺 `MCP_BROWSER_SESSION_KEY`
+      它检查 `NODE_ENV=production`；`BASE_URL` 为公网 https 纯 Origin、**默认
+      443 端口**（拒绝 IP 字面量与 `.local`/`.internal`/`.test` 等非公网后缀）；
+      **`BREWPHASE_DOMAIN` 是裸主机名且与 `BASE_URL` 的 hostname 逐字一致**；
+      `DATABASE_URL` **逐段**匹配 Compose 的拼接结果（host=`db`、port=`5432`、
+      用户名/口令/库名分别等于 `POSTGRES_*`，且不带 query/fragment）；
+      `POSTGRES_PASSWORD` 为 URL 安全字符（`A-Za-z0-9._~-`）且非占位值；
+      四个密钥/凭据；`MCP_BROWSER_SESSION_KEY` ≥32 字节且不等于
+      `JWT_SIGNING_KEY`；`GATEWAY_EXPECTED_REPLICAS=1`；以及
+      `resolveMcpOAuthEnablement()` 通过——**缺 `MCP_BROWSER_SESSION_KEY`
       时服务会照常启动、`/health` 照常 200，但 `/mcp`、`/.well-known/*`、
       `/mcp/oauth/*` 全部 404**，这是最难查的一类故障。预检只输出变量名，
-      绝不打印 Secret 值。
+      绝不打印 Secret 值。完整的判据与失败码表以
+      `cloud/deploy/README.md` §6 为唯一来源，这里不复制第二份。
 - [ ] **四个 Provider 回调地址**已在 Google / GitHub 控制台登记
       （Desktop 登录两条 + Remote MCP 授权两条，见 `cloud/README.md`）。
 - [ ] `replicas: 1`，且 `maxSurge: 0`
 - [ ] `GATEWAY_EXPECTED_REPLICAS` 未设置或等于 `1`
-- [ ] `BASE_URL` 是公网 https 地址，且与反代透传的 `Host` 一致
+- [ ] `BASE_URL` 是公网 https 地址（**默认 443**，不带 `:8443` 之类的端口），
+      且 `BREWPHASE_DOMAIN`（Caddy 站点名）与它的 hostname **逐字一致**
 - [ ] 反代透传 `Upgrade` / `Connection` / `Sec-WebSocket-Protocol` / `Host`
 - [ ] `/ready` 里的 `instance_id` 在 LB 的所有后端上**只有一个值**
 - [ ] 迁移已应用：`docker compose --env-file .env.production run --rm cloud \

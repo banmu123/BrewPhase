@@ -21,8 +21,13 @@ function validEnv(overrides: Record<string, string | undefined> = {}): Record<st
   return {
     NODE_ENV: "production",
     BASE_URL: "https://api.phase.commitbrew.com",
+    // 与 compose 的 `${BREWPHASE_DOMAIN:?...}` 对齐：Caddy 用它签证书、定 Host，
+    // 必须与 BASE_URL 的 host 逐字一致。
+    BREWPHASE_DOMAIN: "api.phase.commitbrew.com",
     DATABASE_URL: "postgres://brewphase:REAL_TEST_PG_PASSWORD_0123456789@db:5432/brewphase_cloud",
+    POSTGRES_USER: "brewphase",
     POSTGRES_PASSWORD: "REAL_TEST_PG_PASSWORD_0123456789",
+    POSTGRES_DB: "brewphase_cloud",
     JWT_SIGNING_KEY: "SENTINEL_JWT_KEY_0123456789abcdefghij",
     SESSION_TOKEN_PEPPER: "SENTINEL_PEPPER_0123456789",
     GOOGLE_CLIENT_ID: "SENTINEL_GOOGLE_ID.apps.googleusercontent.com",
@@ -42,6 +47,10 @@ function codes(problems: PreflightProblem[]): string[] {
 /** 断言任何 Secret 哨兵都没被打印出来。 */
 function expectNoSecretLeak(problems: PreflightProblem[]): void {
   const blob = JSON.stringify(problems);
+  // 完整 URL 同样不能出现：它内含口令。
+  expect(blob, "预检输出泄漏了完整 DATABASE_URL").not.toContain(
+    "postgres://brewphase:REAL_TEST_PG_PASSWORD_0123456789@db",
+  );
   for (const sentinel of [
     "SENTINEL_JWT_KEY",
     "SENTINEL_PEPPER",
@@ -123,7 +132,14 @@ describe("checkRemoteMcpEnv：基础项", () => {
     }
     // 合法公网域名仍然通过（不能把检查做得过宽到拒绝一切）。
     expect(checkRemoteMcpEnv(validEnv({ BASE_URL: "https://api.phase.commitbrew.com" }))).toEqual([]);
-    expect(checkRemoteMcpEnv(validEnv({ BASE_URL: "https://sub.domain.example.org" }))).toEqual([]);
+    expect(
+      checkRemoteMcpEnv(
+        validEnv({
+          BASE_URL: "https://sub.domain.example.org",
+          BREWPHASE_DOMAIN: "sub.domain.example.org",
+        }),
+      ),
+    ).toEqual([]);
   });
 
   it("POSTGRES_PASSWORD：缺失 / 过短 / 占位值 / 含 URL 保留字符", () => {
@@ -348,5 +364,241 @@ describe("runRemoteMcpPreflight：三层裁决", () => {
   it("MCP 密钥缺失时，即便其它项全对也会失败", () => {
     const problems = runRemoteMcpPreflight(validEnv({ MCP_BROWSER_SESSION_KEY: undefined }));
     expect(codes(problems)).toEqual(["mcp_browser_session_key_missing"]);
+  });
+});
+
+describe("BASE_URL 与 BREWPHASE_DOMAIN 一致性", () => {
+  it("完全一致 → 通过（大小写、尾部根点、BASE_URL 尾斜杠都等价）", () => {
+    expect(checkRemoteMcpEnv(validEnv())).toEqual([]);
+    expect(
+      checkRemoteMcpEnv(validEnv({ BREWPHASE_DOMAIN: "API.Phase.CommitBrew.com" })),
+    ).toEqual([]);
+    // 根点（FQDN 的写法）只剥一个，语义相同。
+    expect(
+      checkRemoteMcpEnv(validEnv({ BREWPHASE_DOMAIN: "api.phase.commitbrew.com." })),
+    ).toEqual([]);
+    // loadEnv 会把 BASE_URL 的尾斜杠归一，这里不能误判成「带 path」。
+    expect(
+      checkRemoteMcpEnv(validEnv({ BASE_URL: "https://api.phase.commitbrew.com/" })),
+    ).toEqual([]);
+  });
+
+  it("不一致 → brewphase_domain_mismatch（不做后缀匹配）", () => {
+    const different = checkRemoteMcpEnv(
+      validEnv({ BREWPHASE_DOMAIN: "other.phase.commitbrew.com" }),
+    );
+    expect(codes(different)).toContain("brewphase_domain_mismatch");
+
+    // 「以同一域名结尾」不能通过：Caddy 会为这个更长的名字签证书，
+    // 而 OAuth 回调仍然指向短的那个，故障只在用户授权时出现。
+    const suffixTrap = checkRemoteMcpEnv(
+      validEnv({ BREWPHASE_DOMAIN: "evil-api.phase.commitbrew.com" }),
+    );
+    expect(codes(suffixTrap)).toContain("brewphase_domain_mismatch");
+
+    // 反方向同理：BASE_URL 是父域，域名是子域。
+    const parentTrap = checkRemoteMcpEnv(
+      validEnv({
+        BASE_URL: "https://phase.commitbrew.com",
+        BREWPHASE_DOMAIN: "api.phase.commitbrew.com",
+      }),
+    );
+    expect(codes(parentTrap)).toContain("brewphase_domain_mismatch");
+  });
+
+  it("缺失或空串 → brewphase_domain_missing", () => {
+    expect(codes(checkRemoteMcpEnv(validEnv({ BREWPHASE_DOMAIN: undefined })))).toContain(
+      "brewphase_domain_missing",
+    );
+    expect(codes(checkRemoteMcpEnv(validEnv({ BREWPHASE_DOMAIN: "" })))).toContain(
+      "brewphase_domain_missing",
+    );
+    expect(codes(checkRemoteMcpEnv(validEnv({ BREWPHASE_DOMAIN: "   " })))).toContain(
+      "brewphase_domain_missing",
+    );
+  });
+
+  it("带 scheme / 路径 / 端口 / userinfo / query → brewphase_domain_invalid", () => {
+    for (const bad of [
+      "https://api.phase.commitbrew.com",
+      "api.phase.commitbrew.com/path",
+      "api.phase.commitbrew.com:8443",
+      "user@api.phase.commitbrew.com",
+      "api.phase.commitbrew.com?x=1",
+      "api.phase.commitbrew.com#f",
+      "api phase commitbrew com",
+      "api..phase.commitbrew.com",
+      "-api.phase.commitbrew.com",
+      "api.phase.commitbrew.com-",
+      "api", // 单标签：ACME 不会给它签证书
+    ]) {
+      const found = codes(checkRemoteMcpEnv(validEnv({ BREWPHASE_DOMAIN: bad })));
+      expect(found, bad).toContain("brewphase_domain_invalid");
+    }
+  });
+
+  it("BASE_URL 带非默认端口 → base_url_port_unsupported（Compose 只发布 80/443）", () => {
+    const problems = checkRemoteMcpEnv(validEnv({ BASE_URL: "https://api.phase.commitbrew.com:8443" }));
+    expect(codes(problems)).toContain("base_url_port_unsupported");
+    // 不该被误报成「不是 origin」或「不是 https」——原因要指向真正的错。
+    expect(codes(problems)).not.toContain("base_url_not_origin");
+    expect(codes(problems)).not.toContain("base_url_not_https");
+  });
+
+  it("BASE_URL 显式 :443（与默认等价）→ 通过", () => {
+    expect(
+      checkRemoteMcpEnv(validEnv({ BASE_URL: "https://api.phase.commitbrew.com:443" })),
+    ).toEqual([]);
+  });
+});
+
+describe("DATABASE_URL 完整校验", () => {
+  it("完整连接信息一致 → 通过", () => {
+    expect(checkRemoteMcpEnv(validEnv())).toEqual([]);
+    // postgresql:// 是同一个 scheme 的别名。
+    expect(
+      checkRemoteMcpEnv(
+        validEnv({
+          DATABASE_URL:
+            "postgresql://brewphase:REAL_TEST_PG_PASSWORD_0123456789@db:5432/brewphase_cloud",
+        }),
+      ),
+    ).toEqual([]);
+    // 不写端口 = postgres 默认 5432，语义正确。
+    expect(
+      checkRemoteMcpEnv(
+        validEnv({
+          DATABASE_URL: "postgres://brewphase:REAL_TEST_PG_PASSWORD_0123456789@db/brewphase_cloud",
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("缺少用户名 / 密码 → 各自独立报错（不再因为 undefined 跳过）", () => {
+    const noUser = checkRemoteMcpEnv(
+      validEnv({
+        DATABASE_URL: "postgres://:REAL_TEST_PG_PASSWORD_0123456789@db:5432/brewphase_cloud",
+      }),
+    );
+    expect(codes(noUser)).toContain("database_url_user_missing");
+
+    const noPassword = checkRemoteMcpEnv(
+      validEnv({ DATABASE_URL: "postgres://brewphase@db:5432/brewphase_cloud" }),
+    );
+    expect(codes(noPassword)).toContain("database_url_password_missing");
+    // 关键：不能因为「解析不出 password」就当作匹配通过。
+    expect(codes(noPassword)).not.toContain("database_url_password_mismatch");
+  });
+
+  it("host / port / 库名 / 用户名 任一不符 → 各自独立报错", () => {
+    const badHost = codes(
+      checkRemoteMcpEnv(
+        validEnv({
+          DATABASE_URL:
+            "postgres://brewphase:REAL_TEST_PG_PASSWORD_0123456789@localhost:5432/brewphase_cloud",
+        }),
+      ),
+    );
+    expect(badHost).toContain("database_url_host_mismatch");
+
+    const badPort = codes(
+      checkRemoteMcpEnv(
+        validEnv({
+          DATABASE_URL:
+            "postgres://brewphase:REAL_TEST_PG_PASSWORD_0123456789@db:5433/brewphase_cloud",
+        }),
+      ),
+    );
+    expect(badPort).toContain("database_url_port_unsupported");
+
+    const badDb = codes(
+      checkRemoteMcpEnv(
+        validEnv({
+          DATABASE_URL: "postgres://brewphase:REAL_TEST_PG_PASSWORD_0123456789@db:5432/other_db",
+        }),
+      ),
+    );
+    expect(badDb).toContain("database_url_name_mismatch");
+
+    const badUser = codes(
+      checkRemoteMcpEnv(
+        validEnv({
+          DATABASE_URL:
+            "postgres://someone_else:REAL_TEST_PG_PASSWORD_0123456789@db:5432/brewphase_cloud",
+        }),
+      ),
+    );
+    expect(badUser).toContain("database_url_user_mismatch");
+  });
+
+  it("query / fragment 改变连接语义 → 拒绝", () => {
+    const withQuery = codes(
+      checkRemoteMcpEnv(
+        validEnv({
+          DATABASE_URL:
+            "postgres://brewphase:REAL_TEST_PG_PASSWORD_0123456789@db:5432/brewphase_cloud?sslmode=disable",
+        }),
+      ),
+    );
+    expect(withQuery).toContain("database_url_query_unexpected");
+
+    // `#` 会被 WHATWG 静默丢弃，必须查原始串才抓得到。
+    const withHash = codes(
+      checkRemoteMcpEnv(
+        validEnv({
+          DATABASE_URL:
+            "postgres://brewphase:REAL_TEST_PG_PASSWORD_0123456789@db:5432/brewphase_cloud#frag",
+        }),
+      ),
+    );
+    expect(withHash).toContain("database_url_hash_unexpected");
+  });
+
+  it("URL 格式错误 → database_url_invalid", () => {
+    expect(
+      codes(checkRemoteMcpEnv(validEnv({ DATABASE_URL: "not-a-postgres-url" }))),
+    ).toContain("database_url_invalid");
+    // http:// 不是 postgres scheme。
+    expect(
+      codes(
+        checkRemoteMcpEnv(
+          validEnv({ DATABASE_URL: "http://brewphase:pw@db:5432/brewphase_cloud" }),
+        ),
+      ),
+    ).toContain("database_url_invalid");
+  });
+
+  it("POSTGRES_USER / POSTGRES_DB 含 URL 不安全字符 → 拒绝", () => {
+    expect(
+      codes(checkRemoteMcpEnv(validEnv({ POSTGRES_USER: "brew@phase" }))),
+    ).toContain("postgres_user_unsafe_chars");
+    expect(
+      codes(checkRemoteMcpEnv(validEnv({ POSTGRES_DB: "brewphase/cloud" }))),
+    ).toContain("postgres_db_unsafe_chars");
+  });
+
+  it("POSTGRES_USER / POSTGRES_DB 缺失时按 compose 默认值（brewphase / brewphase_cloud）比对", () => {
+    // 未设置 → compose 用默认值，与 validEnv 的 DATABASE_URL 一致，不误报。
+    expect(
+      checkRemoteMcpEnv(validEnv({ POSTGRES_USER: undefined, POSTGRES_DB: undefined })),
+    ).toEqual([]);
+    // 空串同样回落默认值（`${VAR:-default}` 对空串生效）。
+    expect(checkRemoteMcpEnv(validEnv({ POSTGRES_USER: "", POSTGRES_DB: "" }))).toEqual([]);
+    // 非默认用户名但 URL 仍是 brewphase → 不一致。
+    expect(
+      codes(checkRemoteMcpEnv(validEnv({ POSTGRES_USER: "brewphase_prod" }))),
+    ).toContain("database_url_user_mismatch");
+  });
+
+  it("失败信息不含完整 URL 与口令", () => {
+    const problems = checkRemoteMcpEnv(
+      validEnv({
+        DATABASE_URL: "postgres://brewphase:WRONG_PASSWORD_0123456789@db:5432/brewphase_cloud",
+      }),
+    );
+    expect(codes(problems)).toContain("database_url_password_mismatch");
+    const blob = JSON.stringify(problems);
+    expect(blob).not.toContain("WRONG_PASSWORD_0123456789");
+    expect(blob).not.toContain("postgres://");
   });
 });

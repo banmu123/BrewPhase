@@ -161,6 +161,23 @@ required variable POSTGRES_PASSWORD is missing a value: …
 | 可选 | `LOG_LEVEL`、`RATE_LIMIT_*`、`HTTPS_PROXY`、`NO_PROXY` |
 | Caddy | `ACME_EMAIL`、`BREWPHASE_DOMAIN`（**必填，留空则 compose 启动即失败**） |
 
+**`BASE_URL` 与 `BREWPHASE_DOMAIN` 必须指向同一个名字**——这是本手册最容易配错、
+也最难在部署后发现问题的一条：
+
+| 变量 | 谁在用 | 用错的表现 |
+|---|---|---|
+| `BASE_URL` | JWT `iss`、Provider 回调前缀、Discovery `issuer`、WSS Host 白名单 | 回调 404、令牌 `iss` 与客户端记录不一致 |
+| `BREWPHASE_DOMAIN` | Caddy 申请证书、决定接受哪个 Host | 证书签给了另一个名字，或站点块根本不匹配 |
+
+两者不一致时 `/health` 与 HTTPS 检查**都能通过**，故障只在用户授权时出现。
+所以预检把「两者一致」做成硬判据（`brewphase_domain_mismatch`），并且：
+
+- `BASE_URL` **只能用默认 HTTPS 端口**（`compose.yaml` 只发布 80/443，
+  写 `:8443` 等于声明了一个没人监听的地址 → `base_url_port_unsupported`）；
+- `BREWPHASE_DOMAIN` 必须是**裸主机名**：不带 scheme / 路径 / query / fragment /
+  userinfo / 端口（→ `brewphase_domain_invalid`），且至少有两级标签
+  （单标签拿不到 ACME 证书）。
+
 ### 首次部署的完整顺序（7 步，按序执行）
 
 ```bash
@@ -237,9 +254,17 @@ docker compose --env-file .env.production run --rm --no-deps cloud \
 | 检查 | 失败码 |
 |---|---|
 | `NODE_ENV=production` | `node_env_not_production` |
-| `BASE_URL` 为**公网 https 纯 Origin**（无 path/query/fragment；拒绝 IP 字面量、回环、`.local`/`.internal`/`.test` 等非公网后缀） | `base_url_*` |
+| `BASE_URL` 为**公网 https 纯 Origin**（无 path/query/fragment、**默认 443 端口**；拒绝 IP 字面量、回环、`.local`/`.internal`/`.test` 等非公网后缀） | `base_url_missing` / `_invalid` / `_not_https` / `_not_origin` / `_userinfo` / `_ip_literal` / `_not_public` / `base_url_port_unsupported` |
+| `BREWPHASE_DOMAIN` 是裸主机名 | `brewphase_domain_missing` / `brewphase_domain_invalid` |
+| `BREWPHASE_DOMAIN` 与 `BASE_URL` 的 hostname 逐字一致（大小写不敏感，不做后缀匹配） | `brewphase_domain_mismatch` |
 | `DATABASE_URL` 已配置且可解析 | `database_url_missing` / `database_url_invalid` |
-| `DATABASE_URL` 的口令与 `POSTGRES_PASSWORD` 一致 | `database_url_password_mismatch` |
+| `DATABASE_URL` 必须含非空用户名 / 密码 | `database_url_user_missing` / `database_url_password_missing` |
+| `DATABASE_URL` 的 host 必须是 compose 服务名 `db` | `database_url_host_mismatch` |
+| `DATABASE_URL` 的端口必须是 5432（不写端口按默认 5432 处理） | `database_url_port_unsupported` |
+| `DATABASE_URL` 的库名 / 用户名分别与 `POSTGRES_DB` / `POSTGRES_USER` 一致 | `database_url_name_mismatch` / `database_url_user_mismatch` |
+| `DATABASE_URL` 的口令与 `POSTGRES_PASSWORD` 一致（**不会因为解析不出密码就跳过**） | `database_url_password_mismatch` |
+| `DATABASE_URL` 不带 query / fragment（`#` 会被 URL 解析器静默丢弃） | `database_url_query_unexpected` / `database_url_hash_unexpected` |
+| `POSTGRES_USER` / `POSTGRES_DB` 只含 URL 安全字符 | `postgres_user_unsafe_chars` / `postgres_db_unsafe_chars` |
 | `POSTGRES_PASSWORD` ≥16 字符 | `postgres_password_missing` / `_too_short` |
 | `POSTGRES_PASSWORD` 只含 URL 安全字符（`A-Za-z0-9._~-`） | `postgres_password_unsafe_chars` |
 | `POSTGRES_PASSWORD` 不是示例占位值 | `postgres_password_placeholder` |
@@ -253,6 +278,10 @@ docker compose --env-file .env.production run --rm --no-deps cloud \
 
 **预检只输出变量名与判定，绝不打印任何 Secret 的值**（测试
 `tests/scripts/preflight-remote-mcp.test.ts` 用哨兵值断言过）。
+
+`POSTGRES_USER` / `POSTGRES_DB` 未设置或为空时，预检按 `compose.yaml` 的
+`${VAR:-default}` 取默认值（`brewphase` / `brewphase_cloud`）后再比对——
+预检的判定与 Compose 的实际行为必须逐字一致，否则「预检通过但连错库」。
 
 **口令为什么按「URL 安全字符」卡**：`compose.yaml` 用字符串拼接生成
 `DATABASE_URL`，没有 URL 编码。`openssl rand -base64 24` 会产出 `/`，
@@ -276,9 +305,10 @@ docker compose --env-file .env.production build cloud
 多阶段：依赖安装 → TS 编译 → **仅生产依赖** → 运行镜像（**非 root**、只带
 `dist/`）。构建产物包含 `dist/db/migrations/`（由 `scripts/copy-assets.mjs` 复制）。
 
-> 也可以在 `cloud/` 下直接 `docker build -t brewphase-cloud:latest .`——
-> 但那样绕过了 compose 的 `image:` 命名与 build 配置，后续
-> `docker compose up` 可能去拉一个并不存在的远端镜像。**统一走 compose。**
+> **生产部署只推荐上面这条 compose 命令。** 在 `cloud/` 下直接
+> `docker build -t brewphase-cloud .` 只用于**本地开发 / 诊断**（例如想单独
+> 检查镜像层），它绕过了 compose 的 `image:` 命名与 build 参数，后续
+> `docker compose up` 可能去拉一个并不存在的远端镜像。
 
 ---
 

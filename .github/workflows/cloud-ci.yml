@@ -3,7 +3,8 @@
 # 触发：cloud/ 或本工作流本身变更。
 # 范围：typecheck → lint → test（真实 PostgreSQL 16）→ build → Docker build →
 #       **真实环境文件加载**验证（临时 .env.production + Compose 结构断言 +
-#       镜像内预检三态 + 镜像内迁移幂等 + Caddyfile 正反向 validate）。
+#       镜像内预检三态 + 域名/数据库一致性负例 + 镜像内迁移幂等 +
+#       Caddyfile 正反向 validate）。
 #
 # 硬约束（写在这里以免后人「顺手加一步」）：
 #   - **不部署到任何服务器**：本工作流没有任何 ssh / scp / cloud deploy 步骤。
@@ -332,10 +333,12 @@ jobs:
                 BASE_URL DATABASE_URL 2>/dev/null || true
           docker compose --env-file .env.production run --rm --no-deps cloud \
             node dist/scripts/preflight-remote-mcp.js | tee /tmp/preflight-ok.log
-          # 预检必须真的看到 Compose 注入的 DATABASE_URL（不是空、不是宿主值）。
-          grep -q "DATABASE_URL                   = set (parses, password matches POSTGRES_PASSWORD)" /tmp/preflight-ok.log
-          grep -q "POSTGRES_PASSWORD              = set (>=16 chars, URL-safe, not a placeholder)" /tmp/preflight-ok.log
-          echo "preflight OK with the composed DATABASE_URL"
+          # 预检必须真的看到 Compose 注入的 DATABASE_URL（不是空、不是宿主值），
+          # 并且域名与 BASE_URL 指向同一个名字。
+          grep -q "BREWPHASE_DOMAIN .*identical to the hostname of BASE_URL" /tmp/preflight-ok.log
+          grep -q "DATABASE_URL .*host=db, port=5432" /tmp/preflight-ok.log
+          grep -q "POSTGRES_PASSWORD .*URL-safe, not a placeholder" /tmp/preflight-ok.log
+          echo "preflight OK with the composed DATABASE_URL + matching BREWPHASE_DOMAIN"
 
       # ── 6. 预检负例：缺项 / 弱口令 / 保留字符都必须非零退出 ────────────
       # 用 `-e` 覆盖模拟「配置缺失」，因为生产里这些值只可能来自 env 文件。
@@ -384,6 +387,50 @@ jobs:
           test "$e" = "1" || { echo "::error::preflight passed on password mismatch (exit=$e)"; exit 1; }
           grep -q "database_url_password_mismatch" /tmp/pf-neg.log
           echo "ok: DATABASE_URL/POSTGRES_PASSWORD mismatch -> exit 1"
+
+          # (g) BREWPHASE_DOMAIN 与 BASE_URL 不一致 → Caddy 会签另一个名字的证书
+          e=$(run_pf -e BREWPHASE_DOMAIN=other.r5r3-deploy-check.example.org)
+          test "$e" = "1" || { echo "::error::preflight passed with a mismatched BREWPHASE_DOMAIN (exit=$e)"; cat /tmp/pf-neg.log; exit 1; }
+          grep -q "brewphase_domain_mismatch" /tmp/pf-neg.log
+          echo "ok: BREWPHASE_DOMAIN mismatch -> exit 1"
+
+          # (h) BREWPHASE_DOMAIN 不是裸主机名（带 scheme）→ 配置错误
+          e=$(run_pf -e BREWPHASE_DOMAIN=https://api.r5r3-deploy-check.example.org)
+          test "$e" = "1" || { echo "::error::preflight passed with a URL-shaped BREWPHASE_DOMAIN (exit=$e)"; exit 1; }
+          grep -q "brewphase_domain_invalid" /tmp/pf-neg.log
+          echo "ok: BREWPHASE_DOMAIN with scheme -> exit 1"
+
+          # (i) BASE_URL 带非默认端口 → compose 只发布 80/443
+          e=$(run_pf -e BASE_URL=https://api.r5r3-deploy-check.example.org:8443)
+          test "$e" = "1" || { echo "::error::preflight passed with BASE_URL on :8443 (exit=$e)"; exit 1; }
+          grep -q "base_url_port_unsupported" /tmp/pf-neg.log
+          echo "ok: BASE_URL :8443 -> exit 1"
+
+          # (j) DATABASE_URL 没有密码 → 必须失败（不能因为 undefined 跳过比较）
+          e=$(run_pf -e DATABASE_URL=postgres://brewphase@db:5432/brewphase_cloud)
+          test "$e" = "1" || { echo "::error::preflight passed with a password-less DATABASE_URL (exit=$e)"; exit 1; }
+          grep -q "database_url_password_missing" /tmp/pf-neg.log
+          echo "ok: DATABASE_URL without password -> exit 1"
+
+          # (k) DATABASE_URL 的 host 不是 compose 服务名
+          e=$(run_pf -e DATABASE_URL='postgres://brewphase:7c1f0b9d4e2a6835fa91c0d7e5b32468@localhost:5432/brewphase_cloud')
+          test "$e" = "1" || { echo "::error::preflight passed with host=localhost (exit=$e)"; exit 1; }
+          grep -q "database_url_host_mismatch" /tmp/pf-neg.log
+          echo "ok: DATABASE_URL host != db -> exit 1"
+
+          # (l) DATABASE_URL 的库名 / 用户名 / 端口各自不符
+          e=$(run_pf -e DATABASE_URL='postgres://brewphase:7c1f0b9d4e2a6835fa91c0d7e5b32468@db:5432/other_db')
+          test "$e" = "1" || { echo "::error::preflight passed with a wrong database name (exit=$e)"; exit 1; }
+          grep -q "database_url_name_mismatch" /tmp/pf-neg.log
+
+          e=$(run_pf -e DATABASE_URL='postgres://someone_else:7c1f0b9d4e2a6835fa91c0d7e5b32468@db:5432/brewphase_cloud')
+          test "$e" = "1" || { echo "::error::preflight passed with a wrong database user (exit=$e)"; exit 1; }
+          grep -q "database_url_user_mismatch" /tmp/pf-neg.log
+
+          e=$(run_pf -e DATABASE_URL='postgres://brewphase:7c1f0b9d4e2a6835fa91c0d7e5b32468@db:5433/brewphase_cloud')
+          test "$e" = "1" || { echo "::error::preflight passed with port 5433 (exit=$e)"; exit 1; }
+          grep -q "database_url_port_unsupported" /tmp/pf-neg.log
+          echo "ok: DATABASE_URL db/user/port mismatches -> exit 1"
 
           # 负例输出不得泄漏任何 Secret 值。
           for s in 7c1f0b9d4e2a6835fa91c0d7e5b32468 ci_r5r3_jwt_key ci_r5r3_mcp_key \

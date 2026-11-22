@@ -205,8 +205,16 @@ cloud/deploy/
 ```bash
 pnpm build                      # tsc 编译 + 迁移文件复制到 dist/
 pnpm preflight:remote-mcp       # 源码预检（读当前 Shell 环境，本地演练用）
-docker build -t brewphase-cloud .
 ```
+
+**生产构建只走 Compose**（`compose.yaml` 固定了镜像名与 build 参数）：
+
+```bash
+cd deploy && docker compose --env-file .env.production build cloud
+```
+
+在 `cloud/` 下直接 `docker build -t brewphase-cloud .` 仅供**本地开发 / 诊断**，
+不要用于生产：它绕过了 compose 的 `image:` 命名，后续 `up` 可能去拉远端镜像。
 
 > `pnpm preflight:remote-mcp` 读的是**当前 Shell** 的变量，不是
 > `.env.production`；生产权威预检见下方「镜像内等价预检」（`compose run`）。
@@ -235,14 +243,20 @@ docker compose --env-file .env.production run --rm --no-deps cloud \
 
 - `JWT_SIGNING_KEY`（≥32 字符）、`SESSION_TOKEN_PEPPER`（≥16 字符）——
   缺失或弱密钥时服务拒绝启动；
-- `BASE_URL` 必须是 https（JWT iss 同时来自它）；
+- `BASE_URL` 必须是 https 纯 Origin、**默认 443 端口**（compose 只发布 80/443），
+  且其 hostname 必须与 `BREWPHASE_DOMAIN`（Caddy 的站点名）**逐字一致**——
+  两者不一致时 `/health` 与证书检查都能通过，只有 OAuth 回调会 404；
 - Google / GitHub 两组凭据必须齐全；
 - `GATEWAY_EXPECTED_REPLICAS=1`（>1 拒绝启动）；
 - 数据库不可达时启动即失败（exit 1），不假装健康。
 
 **Remote MCP 额外要求**（`loadEnv` 不强制，但预检强制）：
 
-- `MCP_BROWSER_SESSION_KEY` ≥32 UTF-8 字节，且 **≠ `JWT_SIGNING_KEY`**。
+- `MCP_BROWSER_SESSION_KEY` ≥32 UTF-8 字节，且 **≠ `JWT_SIGNING_KEY`**；
+- `DATABASE_URL` 必须**逐段**与 Compose 的拼接结果一致：`postgres://` 或
+  `postgresql://`、非空用户名与密码、host=`db`、port=`5432`、库名=`POSTGRES_DB`、
+  用户名=`POSTGRES_USER`，且不带 query / fragment。完整的失败码表见
+  [`deploy/README.md`](deploy/README.md#6-remote-mcp-专用预检首次部署的第-步)。
   留空时服务照常启动、`/health` 照常 200，但 `/mcp`、`/.well-known/*`、
   `/mcp/oauth/*` **全部 404**（`app.ts` 打一条 `mcp_oauth_disabled` warn 就过去）。
 
