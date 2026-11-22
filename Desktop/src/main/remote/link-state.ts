@@ -152,12 +152,15 @@ export function buildStatus(input: {
   grants: RemoteStatus['grants']
   grantEpoch: number
   audit: RemoteStatus['auditStatus']
+  /** 有进行中的配对时由 RemoteService 传入；默认没有。 */
+  pendingRegistration?: RemoteStatus['pendingRegistration']
 }): RemoteStatus {
   return {
     enabled: input.enabled,
     linkState: input.link.state,
     deviceId: input.deviceId,
     boundUserId: input.boundUserId,
+    pendingRegistration: input.pendingRegistration ?? null,
     needsReauth: input.needsReauth,
     blockedReason: input.link.blockedReason,
     serviceable: input.verdict.serviceable,

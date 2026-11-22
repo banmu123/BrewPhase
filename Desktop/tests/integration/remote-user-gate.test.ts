@@ -407,8 +407,16 @@ describe('设备注册（RemoteService 门面）', () => {
     await service.start()
 
     const ticket = await service.register()
-    // 返回值只有三样：设备 id、确认码、过期时间。
-    expect(Object.keys(ticket).sort()).toEqual(['confirmCode', 'deviceId', 'expiresAt'])
+    // 返回值只有展示信息：设备 id / 名称 / 平台 / 确认码 / 过期时间 / 账户，
+    // 没有 claim_secret。
+    expect(Object.keys(ticket).sort()).toEqual([
+      'accountLabel',
+      'confirmCode',
+      'deviceId',
+      'deviceName',
+      'expiresAt',
+      'platform'
+    ])
     expect(ticket.confirmCode).toMatch(/^\d{6}$/)
 
     // 用户在 Web 端确认。

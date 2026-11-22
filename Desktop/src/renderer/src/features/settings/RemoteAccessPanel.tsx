@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { RemoteDiagnosis, RemoteScope, RemoteStatus } from '@shared/contracts/remote'
+import type {
+  RemoteConfirmFailure,
+  RemoteDiagnosis,
+  RemoteScope,
+  RemoteStatus
+} from '@shared/contracts/remote'
 import { REMOTE_SCOPES } from '@shared/contracts/remote'
 import { useI18n } from '../../i18n'
 import { api } from '../../shared/api'
@@ -33,7 +38,17 @@ export function RemoteAccessPanel(): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   /** 开启前的范围确认。null = 未在确认流程中。 */
   const [confirming, setConfirming] = useState(false)
-  const [pendingDevice, setPendingDevice] = useState<{ deviceId: string; confirmCode: string } | null>(null)
+  /**
+   * 配对动作的进行态。用一个字段而不是两个布尔：同一时刻只可能有一个动作
+   * 在跑，分开存就会出现「确认中点取消」这种不该有的组合。
+   */
+  const [pairingAction, setPairingAction] = useState<'confirm' | 'cancel' | null>(null)
+  const [pairingNotice, setPairingNotice] = useState<
+    | { kind: 'done' }
+    | { kind: 'cancelled'; revoked: boolean }
+    | { kind: 'failed'; reason: RemoteConfirmFailure }
+    | null
+  >(null)
 
   const load = useCallback(async () => {
     try {
@@ -75,6 +90,58 @@ export function RemoteAccessPanel(): React.JSX.Element {
       setError(diagnoseError instanceof Error ? diagnoseError.message : String(diagnoseError))
     } finally {
       setBusy(false)
+    }
+  }
+
+  /**
+   * 配对新设备：只发起注册。
+   *
+   * 刻意**不**在这里确认、也不在这里开开关——注册只产生一台 pending 设备，
+   * 用户还需要一步「确认信任这台设备」，远程访问开关也必须由他自己打开。
+   */
+  const startPairing = async (): Promise<void> => {
+    setPairingNotice(null)
+    setBusy(true)
+    try {
+      await api.remote.register()
+      setError(null)
+    } catch (registerError) {
+      setError(registerError instanceof Error ? registerError.message : String(registerError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const confirmPairing = async (): Promise<void> => {
+    setPairingAction('confirm')
+    setPairingNotice(null)
+    try {
+      const result = await api.remote.confirmRegistration()
+      setStatus(result.status)
+      setPairingNotice(
+        result.ok ? { kind: 'done' } : { kind: 'failed', reason: result.reason ?? 'invalid_response' }
+      )
+      setError(null)
+    } catch (confirmError) {
+      setError(confirmError instanceof Error ? confirmError.message : String(confirmError))
+    } finally {
+      setPairingAction(null)
+    }
+  }
+
+  const cancelPairing = async (): Promise<void> => {
+    setPairingAction('cancel')
+    setPairingNotice(null)
+    try {
+      const result = await api.remote.cancelRegistration()
+      setStatus(result.status)
+      // 本地取消一定成功；`revoked` 表示云端那台 pending 设备是否也撤掉了。
+      setPairingNotice({ kind: 'cancelled', revoked: result.revoked })
+      setError(null)
+    } catch (cancelError) {
+      setError(cancelError instanceof Error ? cancelError.message : String(cancelError))
+    } finally {
+      setPairingAction(null)
     }
   }
 
@@ -238,18 +305,7 @@ export function RemoteAccessPanel(): React.JSX.Element {
         <button
           className="button"
           disabled={busy}
-          onClick={async () => {
-            setBusy(true)
-            try {
-              const registration = await api.remote.register()
-              setPendingDevice({ deviceId: registration.deviceId, confirmCode: registration.confirmCode })
-              setError(null)
-            } catch (registerError) {
-              setError(registerError instanceof Error ? registerError.message : String(registerError))
-            } finally {
-              setBusy(false)
-            }
-          }}
+          onClick={() => void startPairing()}
         >
           {copy.register}
         </button>
@@ -266,12 +322,71 @@ export function RemoteAccessPanel(): React.JSX.Element {
         </button>
       </div>
 
-      {pendingDevice && (
-        <div className="settings-callout">
+      {status?.pendingRegistration && (
+        <div className="settings-callout" data-tone="warning" data-testid="remote-pending-device">
           <p className="settings-callout__title">{copy.pendingTitle}</p>
-          <p className="settings-callout__body">{copy.pendingBody}</p>
-          <p className="settings-code">{pendingDevice.confirmCode}</p>
-          <p className="settings-hint">{copy.pendingMockNote}</p>
+          <p className="settings-callout__body">{copy.pendingLead}</p>
+          <dl className="settings-facts">
+            <div>
+              <dt>{copy.pendingDevice}</dt>
+              <dd>{status.pendingRegistration.deviceName}</dd>
+            </div>
+            <div>
+              <dt>{copy.pendingPlatform}</dt>
+              <dd>{status.pendingRegistration.platform}</dd>
+            </div>
+            <div>
+              <dt>{copy.pendingAccount}</dt>
+              <dd>{status.pendingRegistration.accountLabel ?? copy.pendingAccountUnknown}</dd>
+            </div>
+            <div>
+              <dt>{copy.pendingExpires}</dt>
+              <dd>{formatDateTime(status.pendingRegistration.expiresAt)}</dd>
+            </div>
+          </dl>
+          <p className="settings-row__label">{copy.pendingCode}</p>
+          <p className="settings-code" data-testid="remote-pending-code">
+            {status.pendingRegistration.confirmCode}
+          </p>
+          <p className="settings-hint">{copy.pendingCodeHint}</p>
+          <p className="settings-hint">{copy.pendingTrustHint}</p>
+          <div className="settings-row__actions">
+            <button
+              className="button"
+              data-variant="primary"
+              disabled={pairingAction !== null}
+              onClick={() => void confirmPairing()}
+            >
+              {pairingAction === 'confirm' ? copy.confirmingDevice : copy.confirmDevice}
+            </button>
+            <button
+              className="button"
+              disabled={pairingAction !== null}
+              onClick={() => void cancelPairing()}
+            >
+              {pairingAction === 'cancel' ? copy.cancellingPairing : copy.cancelPairing}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {pairingNotice && (
+        <div
+          className="settings-callout"
+          data-tone={pairingNotice.kind === 'failed' ? 'danger' : undefined}
+          data-testid="remote-pairing-notice"
+        >
+          {pairingNotice.kind === 'done' && (
+            <p className="settings-callout__body">{copy.pairingDone}</p>
+          )}
+          {pairingNotice.kind === 'cancelled' && (
+            <p className="settings-callout__body">
+              {pairingNotice.revoked ? copy.pairingRevoked : copy.pairingRevokePending}
+            </p>
+          )}
+          {pairingNotice.kind === 'failed' && (
+            <p className="settings-callout__body">{copy.confirmFailures[pairingNotice.reason]}</p>
+          )}
         </div>
       )}
 

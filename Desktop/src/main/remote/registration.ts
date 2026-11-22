@@ -1,8 +1,10 @@
 import {
   REMOTE_DEVICE_TOKEN_PATTERN,
+  remoteDeviceConfirmResponseSchema,
   remoteDeviceCredentialsResponseSchema,
   remoteDeviceRegisterResponseSchema,
   remoteDeviceRotateResponseSchema,
+  type RemoteConfirmFailure,
   type RemoteRegistrationFailure,
   type RemoteRotationFailure
 } from '../../shared/contracts/remote'
@@ -56,6 +58,34 @@ export type DeviceClaimResult =
   | { ok: false; reason: RemoteRegistrationFailure; retryable: boolean }
 
 /**
+ * 用户确认一台 pending 设备（`POST /mcp-devices/:id/confirm`）。
+ *
+ * 这一步是「账号已登录」之外的**第二重同意**：它证明账号主人知道这台机器
+ * 正在被绑定。确认码只能把一台**已经持有 claim_secret** 的设备转成 active，
+ * 单独拿到它换不出 token——所以它是「人机确认」，不是凭据。
+ */
+export type DeviceConfirmInput = {
+  deviceId: string
+  /** 六位数字。**只在请求体里传**，不进 URL（会留在 access log 里）。 */
+  confirmCode: string
+}
+
+export type DeviceConfirmResult =
+  | { ok: true }
+  | { ok: false; reason: RemoteConfirmFailure }
+
+/**
+ * 撤销量子设备（`DELETE /mcp-devices/:id`）。
+ *
+ * 只用于「用户取消本次配对」：把那台 pending 设备标成 revoked，而不是在
+ * 本地假装配对没发生过——否则 Cloud 上会留下一台没人认领却还能被确认的
+ * 设备，直到 5 分钟后自然过期。
+ */
+export type DeviceRevokeResult =
+  | { ok: true }
+  | { ok: false; reason: 'unauthorized' | 'network' | 'invalid_response' }
+
+/**
  * 取一个**当前有效**的 user access token。
  *
  * 实现方是 `AccountService.accessToken()`：它会在临近过期时先刷新，
@@ -81,6 +111,10 @@ export type DeviceRegistrar = {
    * （协议 §3.4 的四条传输纪律）。
    */
   claim(input: { deviceId: string; claimSecret: string }): Promise<DeviceClaimResult>
+  /** 用户确认（pending → active）。已 active 时 Cloud 幂等返回 200。 */
+  confirm(input: DeviceConfirmInput): Promise<DeviceConfirmResult>
+  /** 撤销 pending 设备（用户取消配对时调用）。 */
+  revoke(input: { deviceId: string }): Promise<DeviceRevokeResult>
   /**
    * 轮换凭据（协议 §3.5）。
    *
@@ -172,6 +206,7 @@ export function createHttpDeviceRegistrar(options: HttpDeviceRegistrarOptions): 
     path: string,
     body: unknown,
     bearer: { kind: 'user' } | { kind: 'device'; token: string },
+    method: 'POST' | 'DELETE' = 'POST'
   ): Promise<{ status: number; body: unknown }> => {
     if (!fetchImpl) throw new Error('fetch is not available')
 
@@ -202,7 +237,7 @@ export function createHttpDeviceRegistrar(options: HttpDeviceRegistrarOptions): 
       if (token) headers.authorization = `Bearer ${token}`
 
       const res = await fetchImpl(`${httpOrigin(options.origin)}${path}`, {
-        method: 'POST',
+        method,
         headers,
         body: JSON.stringify(body),
         signal: controller.signal,
@@ -289,6 +324,66 @@ export function createHttpDeviceRegistrar(options: HttpDeviceRegistrarOptions): 
         return { ok: false, reason: 'invalid_response', retryable: false }
       }
       return { ok: true, deviceToken: parsed.data.device_token, expiresAt: parsed.data.expires_at }
+    },
+
+    /**
+     * 确认（pending → active）。
+     *
+     * 状态码要能区分「码抄错了」与「窗口过了」：前者还能再试一次，后者只能
+     * 重新配对。401/403 归 `unauthorized`（该重新登录），404 表示设备不存在
+     * 或不属于当前账户——确认期间换过账户时命中的就是它。
+     *
+     * 与 register/claim 同一条纪律：不缓存 token、`redirect: 'manual'`、
+     * 错误只按状态码归类且**不带任何请求内容**（错误对象里既不出现确认码，
+     * 也不出现响应体原文）。
+     */
+    async confirm(input) {
+      let res: { status: number; body: unknown }
+      try {
+        res = await call(`/mcp-devices/${encodeURIComponent(input.deviceId)}/confirm`, {
+          confirm_code: input.confirmCode
+        })
+      } catch (error) {
+        if (error instanceof AccessTokenUnavailableError) return { ok: false, reason: 'unauthorized' }
+        return { ok: false, reason: 'network' }
+      }
+
+      if (res.status === 401 || res.status === 403) return { ok: false, reason: 'unauthorized' }
+      if (res.status === 400) return { ok: false, reason: 'invalid_code' }
+      if (res.status === 404) return { ok: false, reason: 'not_found' }
+      if (res.status === 409) return { ok: false, reason: 'device_state' }
+      if (res.status === 410) return { ok: false, reason: 'expired' }
+      if (res.status === 429) return { ok: false, reason: 'rate_limited' }
+      if (res.status !== 200) return { ok: false, reason: 'invalid_response' }
+
+      const parsed = remoteDeviceConfirmResponseSchema.safeParse(res.body)
+      if (!parsed.success) return { ok: false, reason: 'invalid_response' }
+      return { ok: true }
+    },
+
+    /**
+     * 撤销 pending 设备（用户取消本次配对）。
+     *
+     * 404 对「取消」而言等价成功：那台设备已经不在（别人的、或已被清扫），
+     * 没有什么需要撤销的。其余失败如实返回，由调用方决定怎么向用户交代——
+     * 不能因为本地清理成功就假装云端也撤掉了。
+     */
+    async revoke(input) {
+      let res: { status: number; body: unknown }
+      try {
+        res = await callWithBearer(
+          `/mcp-devices/${encodeURIComponent(input.deviceId)}`,
+          {},
+          { kind: 'user' },
+          'DELETE'
+        )
+      } catch (error) {
+        if (error instanceof AccessTokenUnavailableError) return { ok: false, reason: 'unauthorized' }
+        return { ok: false, reason: 'network' }
+      }
+      if (res.status === 200 || res.status === 404) return { ok: true }
+      if (res.status === 401 || res.status === 403) return { ok: false, reason: 'unauthorized' }
+      return { ok: false, reason: 'invalid_response' }
     },
 
     /**

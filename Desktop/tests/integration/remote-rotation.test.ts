@@ -241,6 +241,12 @@ function fakeRegistrar(options: {
     claim: async () => {
       throw new Error('claim is not used in rotation tests')
     },
+    confirm: async () => {
+      throw new Error('confirm is not used in rotation tests')
+    },
+    revoke: async () => {
+      throw new Error('revoke is not used in rotation tests')
+    },
     rotate
   }
 

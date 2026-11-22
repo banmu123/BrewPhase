@@ -380,6 +380,32 @@ export const REMOTE_LINK_STATES = [
 ] as const
 export type RemoteLinkState = (typeof REMOTE_LINK_STATES)[number]
 
+/**
+ * 待确认设备的**展示信息**（Renderer 可见）。
+ *
+ * 这里刻意**没有** `claim_secret` 与私钥：那两个只存在于主进程内存里，
+ * 换 token 时也只在主进程与 Cloud 之间流动。确认码是给人念/抄的六位数字，
+ * 不属于凭据——它只能把一台**已经拿到 claim_secret** 的设备从 pending 转成
+ * active，单独拿到它换不出任何 token。
+ */
+export const remotePendingRegistrationSchema = z.object({
+  deviceId: z.string(),
+  /** 展示给用户的设备名（`hostname()` 或用户在系统里设置的名字）。 */
+  deviceName: z.string(),
+  platform: z.string(),
+  confirmCode: z.string().regex(/^\d{6}$/),
+  /** 毫秒时间戳（本地时钟）。相对量在注册时算出，避免与服务端时钟偏差。 */
+  expiresAt: z.number().int(),
+  /**
+   * 当前登录账户的可读标识（邮箱或 provider 名）。
+   *
+   * 用户在确认前必须能看见「这会把设备绑到哪个账号」——这是那一步唯一
+   * 需要他人工判断的信息。
+   */
+  accountLabel: z.string().nullable()
+})
+export type RemotePendingRegistration = z.infer<typeof remotePendingRegistrationSchema>
+
 /** 设置页可见的远程状态。**不含任何凭据**。 */
 export const remoteStatusSchema = z.object({
   /** 用户可见的总开关（持久化在 local_state）。 */
@@ -388,6 +414,13 @@ export const remoteStatusSchema = z.object({
   deviceId: z.string().nullable(),
   /** 本机绑定的 Cloud 用户；用于展示「当前绑定用户」。 */
   boundUserId: z.string().nullable(),
+  /**
+   * 正在等待用户确认的注册。`null` 表示没有进行中的配对。
+   *
+   * 放在 status 里而不是只从 `remote:register` 的返回值取：设置页可能在
+   * 配对过程中被关闭再打开，那时唯一的真相来源就是主进程状态。
+   */
+  pendingRegistration: remotePendingRegistrationSchema.nullable(),
   /** `boundUserId` 与当前登录用户不匹配：需要解绑或换账户。 */
   needsReauth: z.boolean(),
   /**
@@ -437,6 +470,8 @@ export const REMOTE_CHANNELS = {
   enable: 'remote:enable',
   disable: 'remote:disable',
   register: 'remote:register',
+  confirmRegistration: 'remote:confirm-registration',
+  cancelRegistration: 'remote:cancel-registration',
   forget: 'remote:forget',
   unbind: 'remote:unbind',
   diagnose: 'remote:diagnose',
@@ -503,13 +538,91 @@ export const REMOTE_REGISTRATION_FAILURES = [
 ] as const
 export type RemoteRegistrationFailure = (typeof REMOTE_REGISTRATION_FAILURES)[number]
 
-/** `remote:register` 的返回：**只有** 待确认信息，没有 claim_secret。 */
-export const remoteRegistrationTicketSchema = z.object({
-  deviceId: z.string(),
-  confirmCode: z.string().regex(/^\d{6}$/),
-  expiresAt: z.number().int()
-})
+/**
+ * `remote:register` 的返回：**只有** 待确认信息，没有 claim_secret。
+ *
+ * 与 `RemoteStatus.pendingRegistration` 是同一个形状：注册刚完成时从 IPC 拿到
+ * 一份，之后界面靠 `remote:changed` 广播里的 status 持续更新。
+ */
+export const remoteRegistrationTicketSchema = remotePendingRegistrationSchema
 export type RemoteRegistrationTicket = z.infer<typeof remoteRegistrationTicketSchema>
+
+// MARK: - 设备确认（HTTPS，`POST /mcp-devices/:id/confirm`）
+
+/**
+ * 确认失败原因（Client 侧归一化后的枚举；不是 Cloud 的错误码）。
+ *
+ * 每一类对应界面上**不同的一句话**，所以不能合并：
+ *
+ * | 原因 | 用户该做什么 |
+ * |---|---|
+ * | `unauthorized` | 重新登录 Cloud 账户 |
+ * | `invalid_code` | 重新核对手抄的六位数字（错够次数设备会被撤销） |
+ * | `expired` | 这次注册已过期，重新「配对新设备」 |
+ * | `not_found` | 设备不存在或不属于当前账户——换账户后重试 |
+ * | `device_state` | 设备已被撤销/暂停，不能再确认 |
+ * | `rate_limited` | 稍后再试 |
+ * | `account_changed` | 确认期间换了账户，本次配对作废 |
+ * | `network` | 检查网络后重试（设备仍是 pending，确认码还有效） |
+ * | `invalid_response` | 对端不是预期协议，记录日志 |
+ */
+export const REMOTE_CONFIRM_FAILURES = [
+  'unauthorized',
+  'invalid_code',
+  'expired',
+  'not_found',
+  'device_state',
+  'rate_limited',
+  'account_changed',
+  'network',
+  'invalid_response'
+] as const
+export type RemoteConfirmFailure = (typeof REMOTE_CONFIRM_FAILURES)[number]
+
+/** `POST /mcp-devices/:id/confirm` 请求体（`confirm_code` 是六位数字）。 */
+export const remoteDeviceConfirmRequestSchema = z
+  .object({
+    confirm_code: z.string().regex(/^\d{6}$/)
+  })
+  .strict()
+export type RemoteDeviceConfirmRequest = z.infer<typeof remoteDeviceConfirmRequestSchema>
+
+/** 确认响应：只有设备 id 与目标状态（已 active 时幂等返回 200）。 */
+export const remoteDeviceConfirmResponseSchema = z
+  .object({
+    device_id: z.string().min(1).max(128),
+    status: z.literal('active')
+  })
+  .strict()
+export type RemoteDeviceConfirmResponse = z.infer<typeof remoteDeviceConfirmResponseSchema>
+
+/**
+ * `remote:confirm-registration` 的结果。
+ *
+ * 带 `status` 是因为「确认成功」与「凭据领取成功」是两件事：confirm 通过后
+ * 主进程会立刻领取 token，但领取可能失败（网络 / 安全存储）。界面需要根据
+ * 最终状态决定显示「配对完成」还是「已确认，凭据未取到」。
+ */
+export const remoteConfirmResultSchema = z.object({
+  ok: z.boolean(),
+  reason: z.enum(REMOTE_CONFIRM_FAILURES).nullable(),
+  status: remoteStatusSchema
+})
+export type RemoteConfirmResult = z.infer<typeof remoteConfirmResultSchema>
+
+/**
+ * `remote:cancel-registration` 的结果。
+ *
+ * **本地取消一定成功**（清内存、停轮询、抹掉 claim_secret），云端撤销是尽力
+ * 而为：`revoked: false` 表示没撤成（未登录 / 网络不可达），那台设备仍是
+ * `pending`，会在 `expiresAt` 后由服务端清扫自动过期。界面必须如实说明，
+ * 不能显示成「已彻底删除」。
+ */
+export const remoteCancelResultSchema = z.object({
+  revoked: z.boolean(),
+  status: remoteStatusSchema
+})
+export type RemoteCancelResult = z.infer<typeof remoteCancelResultSchema>
 
 // MARK: - 设备凭据轮换（HTTPS，协议 §3.5 / 生命周期 §11.6）
 

@@ -17,6 +17,8 @@ import {
   type RemoteErrorCode,
   type RemoteGrantUpdate,
   type RemoteLinkState,
+  type RemoteCancelResult,
+  type RemoteConfirmResult,
   type RemoteRegistrationTicket,
   type RemoteStatus,
   type RemoteUnserviceableReason
@@ -114,6 +116,13 @@ export type RemoteServiceDeps = {
   services: ToolServices
   /** 当前登录的 Cloud 用户 id（没有则 null）。 */
   currentUserId(): string | null
+  /**
+   * 当前账户的可读标识（邮箱 / provider 名），用于「确认前让你看清绑到谁」。
+   *
+   * 返回 null 不影响配对——界面会退化成显示 userId 前几位。**不能**用它做
+   * 身份判定：身份的唯一来源是 `currentUserId()`（来自已验证的登录态）。
+   */
+  currentUserLabel?(): string | null
   /** 覆盖设备目录（测试用）；默认 `<userData>/remote` 的父目录。 */
   baseDir?: string
   /** 覆盖 Cloud 源。 */
@@ -159,6 +168,15 @@ export type RemoteService = {
    * `claim_secret` 与私钥绝不出主进程。
    */
   register(): Promise<RemoteRegistrationTicket>
+  /**
+   * 用户确认待确认设备（`remote:confirm-registration`）。
+   *
+   * 成功返回前已经完成凭据领取与落盘（`status.pendingRegistration` 会变 null）；
+   * 失败时除终态原因外都保留现场，可重试。
+   */
+  confirmRegistration(): Promise<RemoteConfirmResult>
+  /** 用户取消本次配对：本地清理 + 尽力撤销云端 pending 设备。 */
+  cancelRegistrationNow(): Promise<RemoteCancelResult>
   /** 忘记设备：先 +代际号再删凭据，尽力通知 Cloud。 */
   forget(): Promise<RemoteStatus>
   /** 解绑（`boundUserId` 不匹配时的出口）。 */
@@ -256,6 +274,14 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
     privateKey: import('node:crypto').KeyObject
     userId: string
     expiresAt: number
+    /**
+     * 展示信息。确认码只存在主进程内存里：界面通过 status 拿到它去显示，
+     * 但它不落盘、不进日志——它是「第二重同意」的凭据而不是数据。
+     */
+    confirmCode: string
+    deviceName: string
+    platform: string
+    accountLabel: string | null
     cancelled: boolean
     timer: NodeJS.Timeout | null
   } | null = null
@@ -533,8 +559,17 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
       blocked: link.state === 'blocked'
     })
 
-  const publish = (): void => {
-    deps.onChanged?.(service())
+  /**
+   * 广播当前状态，并把它返回给调用方。
+   *
+   * 返回快照而不是 `void`：确认/取消这类 IPC 既要把新状态推给所有窗口，
+   * 又要在响应里带一份——两处必须是**同一次**计算结果，否则界面会看到
+   * 一个「广播里已配对、响应里还 pending」的错位。
+   */
+  const publish = (): RemoteStatus => {
+    const snapshot = service()
+    deps.onChanged?.(snapshot)
+    return snapshot
   }
 
   const service = (): RemoteStatus =>
@@ -554,6 +589,16 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
         epoch: grant.epoch
       })),
       grantEpoch: grants.epoch,
+      pendingRegistration: pendingRegistration
+        ? {
+            deviceId: pendingRegistration.deviceId,
+            deviceName: pendingRegistration.deviceName,
+            platform: pendingRegistration.platform,
+            confirmCode: pendingRegistration.confirmCode,
+            expiresAt: pendingRegistration.expiresAt,
+            accountLabel: pendingRegistration.accountLabel
+          }
+        : null,
       audit: {
         consecutiveFailures: audit.consecutiveFailures,
         totalFailures: audit.totalFailures,
@@ -1504,8 +1549,9 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
       // 新密钥只存在内存里，领取成功后才会连 device_token 一起加密落盘。
       const { privateKey: newKey, publicKey } = generateDeviceKeyPair()
 
+      const deviceName = deps.deviceName ?? hostname()
       const result = await registrar.register({
-        name: deps.deviceName ?? hostname(),
+        name: deviceName,
         platform: process.platform,
         publicKey: encodeRawPublicKey(publicKey),
         appVersion: deps.clientVersion ?? safeAppVersion()
@@ -1518,13 +1564,107 @@ export function createRemoteService(deps: RemoteServiceDeps): RemoteService {
         privateKey: newKey,
         userId,
         expiresAt: result.expiresAt,
+        confirmCode: result.confirmCode,
+        deviceName,
+        platform: process.platform,
+        accountLabel: deps.currentUserLabel ? deps.currentUserLabel() : null,
         cancelled: false,
         timer: null
       }
       log('[remote] registration pending; waiting for the user to confirm')
       publish()
+      // 轮询仍然保留：用户也可能在别处（以后的网页/手机端）确认，而 Desktop
+      // 只负责把「确认已经生效」这件事收敛成凭据。本地点确认会更快一步。
       scheduleClaimPoll()
-      return { deviceId: result.deviceId, confirmCode: result.confirmCode, expiresAt: result.expiresAt }
+      return {
+        deviceId: result.deviceId,
+        deviceName,
+        platform: process.platform,
+        confirmCode: result.confirmCode,
+        expiresAt: result.expiresAt,
+        accountLabel: deps.currentUserLabel ? deps.currentUserLabel() : null
+      }
+    },
+
+    /**
+     * 用户点「确认信任这台设备」。
+     *
+     * 顺序是硬的：**先确认，再领取凭据**。不能反过来赌确认已经生效——
+     * 那会把一个 202 当成「网络慢」反复重试，而用户其实还没点确认。
+     *
+     * 全部失败分支都要保留 `pendingRegistration`（除非是终态错误）：确认码
+     * 抄错一次不该让用户重新注册，他还剩 `MAX_CONFIRM_ATTEMPTS` 次机会。
+     */
+    async confirmRegistration() {
+      const pending = pendingRegistration
+      if (!pending) return { ok: false as const, reason: 'expired' as const, status: publish() }
+      if (!registrar) return { ok: false as const, reason: 'invalid_response' as const, status: publish() }
+
+      // 账户在确认前被换掉：这次配对绑的是上一个人。
+      if (deps.currentUserId() !== pending.userId) {
+        cancelRegistration('account changed before confirm')
+        return { ok: false as const, reason: 'account_changed' as const, status: publish() }
+      }
+      if (Date.now() >= pending.expiresAt) {
+        cancelRegistration('expired')
+        return { ok: false as const, reason: 'expired' as const, status: publish() }
+      }
+
+      const result = await registrar.confirm({
+        deviceId: pending.deviceId,
+        confirmCode: pending.confirmCode
+      })
+
+      // await 期间可能被 forget / 新注册 / 账户切换取代。
+      if (pendingRegistration !== pending || pending.cancelled) {
+        return { ok: false as const, reason: 'account_changed' as const, status: publish() }
+      }
+      if (deps.currentUserId() !== pending.userId) {
+        cancelRegistration('account changed during confirm')
+        return { ok: false as const, reason: 'account_changed' as const, status: publish() }
+      }
+
+      if (!result.ok) {
+        // 只有终态错误才丢弃这次注册；其余（码错、限流、网络）保留现场重试。
+        if (result.reason === 'expired' || result.reason === 'not_found' || result.reason === 'device_state') {
+          cancelRegistration(`confirm ${result.reason}`)
+          needsReauth = result.reason === 'device_state'
+          link.lastError = `device confirmation failed: ${result.reason}`
+          publish()
+        }
+        return { ok: false as const, reason: result.reason, status: publish() }
+      }
+
+      log('[remote] device confirmed; claiming credentials')
+      // 确认已生效：立刻领取一次，不额外等一个轮询周期。
+      await claimOnce()
+      return { ok: true as const, reason: null, status: publish() }
+    },
+
+    /**
+     * 用户点「取消本次配对」。
+     *
+     * 本地一定清干净（停轮询、抹 claim_secret、清 pending）。云端撤销是尽力
+     * 而为：撤不成也要如实告诉界面 `revoked: false`——那台设备会停在 pending
+     * 直到 `expiresAt` 被服务端清扫，而不是「从未存在过」。
+     */
+    async cancelRegistrationNow() {
+      const pending = pendingRegistration
+      if (!pending) return { revoked: true, status: publish() }
+
+      const deviceId = pending.deviceId
+      cancelRegistration('user cancelled')
+
+      let revoked = false
+      if (registrar) {
+        const result = await registrar.revoke({ deviceId })
+        revoked = result.ok
+        if (!result.ok) {
+          log(`[remote] failed to revoke the pending device (${result.reason})`)
+          link.lastError = `device revoke failed: ${result.reason}`
+        }
+      }
+      return { revoked, status: publish() }
     },
 
     async forget() {

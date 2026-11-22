@@ -20,7 +20,11 @@ import {
 } from '../../src/main/remote/device-identity'
 import { createHttpDeviceRegistrar, type DeviceFetchLike } from '../../src/main/remote/registration'
 import type { WebSocketFactory } from '../../src/main/remote/link-client'
-import { remoteDiagnosisSchema, remoteStatusSchema } from '../../src/shared/contracts/remote'
+import {
+  remoteDiagnosisSchema,
+  remotePendingRegistrationSchema,
+  remoteStatusSchema
+} from '../../src/shared/contracts/remote'
 import { startMockGateway, MOCK_DEVICE_TOKEN, type MockGateway } from '../helpers/mock-gateway'
 import { testWebSocketFactory } from '../helpers/ws-client'
 
@@ -268,6 +272,13 @@ describe('账户切换 / 登出会让进行中的注册失效', () => {
       // 在 remote-rotation.test.ts 里测，这里给一个明确的未实现标记。
       async rotate() {
         return { ok: false as const, reason: 'invalid_response' as const }
+      },
+      // 确认与撤销由 remote-confirm.test.ts 专门覆盖；这里只保证接口完整。
+      async confirm() {
+        return { ok: true as const }
+      },
+      async revoke() {
+        return { ok: true as const }
       }
     })
     return {
@@ -345,7 +356,7 @@ describe('账户切换 / 登出会让进行中的注册失效', () => {
 })
 
 describe('凭证边界', () => {
-  it('register 的返回值只有三项：confirmCode / deviceId / expiresAt', async () => {
+  it('register 的返回值只有展示信息：confirmCode / deviceId / deviceName / platform / expiresAt / accountLabel', async () => {
     gateway = await startMockGateway({})
     gatewayUrl = gateway.url
     const registrar = createHttpDeviceRegistrar({
@@ -357,7 +368,16 @@ describe('凭证边界', () => {
 
     const ticket = await service.register()
     // 一个多余字段都可能变成 Renderer 的泄漏面：这里锁死键集。
-    expect(Object.keys(ticket).sort()).toEqual(['confirmCode', 'deviceId', 'expiresAt'])
+    // 新增的 deviceName / platform / accountLabel 都是「确认前给你看清绑到谁」
+    // 所需的展示信息，不含任何可换 token 的材料。
+    expect(Object.keys(ticket).sort()).toEqual([
+      'accountLabel',
+      'confirmCode',
+      'deviceId',
+      'deviceName',
+      'expiresAt',
+      'platform'
+    ])
     // claim_secret 绝不出现在返回对象里
     expect(JSON.stringify(ticket)).not.toContain('claim_secret')
     expect(JSON.stringify(ticket)).not.toContain('claimSecret')
@@ -470,6 +490,7 @@ describe('Renderer 拿不到任何用户凭证', () => {
       'reconnectAttempt',
       'grants',
       'grantEpoch',
+      'pendingRegistration',
       'auditStatus'
     ])
 
@@ -488,6 +509,18 @@ describe('Renderer 拿不到任何用户凭证', () => {
       expect(statusKeys).not.toContain(forbidden)
       expect(diagnosisKeys).not.toContain(forbidden)
     }
+
+    // 待确认信息同样只有展示字段：确认码是给人抄的六位数字，不是凭据
+    // （它换不出 token）；claim_secret 与私钥不在其中。
+    const pendingKeys = Object.keys(remotePendingRegistrationSchema.shape).sort()
+    expect(pendingKeys).toEqual([
+      'accountLabel',
+      'confirmCode',
+      'deviceId',
+      'deviceName',
+      'expiresAt',
+      'platform'
+    ])
   })
 
 })

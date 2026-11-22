@@ -377,6 +377,16 @@ export async function startMockGateway(options: MockGatewayOptions = {}): Promis
     }
     const fail = (status: number, code: string): void => json(status, { error: code })
 
+    // 撤销（用户取消配对）：`DELETE /mcp-devices/:id`。
+    // 必须在下面那条 405 之前：那条只放行 POST。
+    if (req.method === 'DELETE') {
+      const revokeMatch = /^\/mcp-devices\/([^/]+)$/.exec(url.pathname)
+      if (!revokeMatch) return fail(404, 'not_found')
+      const device = registrations.get(decodeURIComponent(revokeMatch[1]))
+      if (!device) return fail(404, 'device_not_found')
+      device.status = 'revoked'
+      return json(200, { device_id: device.deviceId, status: 'revoked' })
+    }
     if (req.method !== 'POST') return fail(405, 'method_not_allowed')
 
     // register：需要用户 Bearer（协议 §3.2）。Mock 不校验 token 内容，只校验存在。

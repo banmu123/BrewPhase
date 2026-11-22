@@ -103,6 +103,8 @@ export const IPC = {
   remoteEnable: 'remote:enable',
   remoteDisable: 'remote:disable',
   remoteRegister: 'remote:register',
+  remoteConfirmRegistration: 'remote:confirm-registration',
+  remoteCancelRegistration: 'remote:cancel-registration',
   remoteForget: 'remote:forget',
   remoteUnbind: 'remote:unbind',
   remoteDiagnose: 'remote:diagnose',
@@ -610,6 +612,10 @@ export const ipcRequestSchemas = {
   [IPC.remoteEnable]: z.void(),
   [IPC.remoteDisable]: z.void(),
   [IPC.remoteRegister]: z.void(),
+  // 确认码由主进程保存的那一份决定，Renderer **不能**传码进来：
+  // 允许传参等于让渲染进程决定「确认哪台设备」，而它本来就不该知道 deviceId。
+  [IPC.remoteConfirmRegistration]: z.void(),
+  [IPC.remoteCancelRegistration]: z.void(),
   [IPC.remoteForget]: z.void(),
   [IPC.remoteUnbind]: z.void(),
   [IPC.remoteDiagnose]: z.void()

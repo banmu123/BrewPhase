@@ -585,6 +585,11 @@ function bootstrap(): void {
     db: db.db,
     services: { records, coffee, canvas, workContexts, personalDirection },
     currentUserId: () => account.snapshot().user?.id ?? null,
+    /**
+     * 确认页要回答「这台设备会绑到哪个账号」——用账号的展示名（通常就是邮箱
+     * 或 GitHub 昵称）。它只用于显示，**不参与任何身份判定**。
+     */
+    currentUserLabel: () => account.snapshot().user?.displayName ?? null,
     clientVersion: app.getVersion(),
     /**
      * 设备注册客户端（Phase 1.2A 接入真实 Cloud）。

@@ -379,6 +379,8 @@ export function registerIpc(params: {
   handle(IPC.remoteEnable, () => remote.enable())
   handle(IPC.remoteDisable, () => remote.disable())
   handle(IPC.remoteRegister, () => remote.register())
+  handle(IPC.remoteConfirmRegistration, () => remote.confirmRegistration())
+  handle(IPC.remoteCancelRegistration, () => remote.cancelRegistrationNow())
   handle(IPC.remoteForget, () => remote.forget())
   handle(IPC.remoteUnbind, () => remote.unbind())
   handle(IPC.remoteDiagnose, () => remote.diagnose())

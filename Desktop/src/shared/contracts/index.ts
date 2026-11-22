@@ -18,7 +18,13 @@ import type {
   AIRoundtableTaskSnapshot
 } from './roundtable-ai'
 import type { RoundtableLayoutSnapshot } from '../roundtable'
-import type { RemoteDiagnosis, RemoteStatus } from './remote'
+import type {
+  RemoteCancelResult,
+  RemoteConfirmResult,
+  RemoteDiagnosis,
+  RemoteRegistrationTicket,
+  RemoteStatus
+} from './remote'
 import type {
   CurrentState,
   CurrentStateDraft,
@@ -459,8 +465,12 @@ export interface RendererApi {
     /** 开启前应由界面完成「授权范围确认」；主进程不接受 scope 入参。 */
     enable: () => Promise<RemoteStatus>
     disable: () => Promise<RemoteStatus>
-    /** Mock 阶段：只返回待确认信息（`confirmCode`），不含 claim_secret。 */
-    register: () => Promise<{ deviceId: string; confirmCode: string; expiresAt: number }>
+    /** 只返回待确认信息（含 `confirmCode`），不含 claim_secret。 */
+    register: () => Promise<RemoteRegistrationTicket>
+    /** 用户确认待确认设备；成功后主进程已完成凭据领取与落盘。 */
+    confirmRegistration: () => Promise<RemoteConfirmResult>
+    /** 取消本次配对：本地清理 + 尽力撤销云端 pending 设备。 */
+    cancelRegistration: () => Promise<RemoteCancelResult>
     forget: () => Promise<RemoteStatus>
     unbind: () => Promise<RemoteStatus>
     diagnose: () => Promise<RemoteDiagnosis>
