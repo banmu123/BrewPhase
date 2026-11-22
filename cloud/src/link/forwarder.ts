@@ -939,7 +939,23 @@ export function createForwarder(deps: ForwarderDeps): Forwarder {
         (candidate) => candidate.userId === input.userId && candidate.rotating,
       );
       if (rotating) return fail("DEVICE_UNAUTHORIZED", "device credentials were rotated");
-      return fail("DEVICE_OFFLINE", "no active device connection for this user");
+      /**
+       * 文案必须说清「是哪个账号没有设备」。
+       *
+       * 同一个自然人可能用 Google 登录桌面端、用 GitHub 授权 MCP——那是**两个**
+       * user_id，设备永远不会跨账号可见（这是隔离，不是缺陷）。此时把原因写成
+       * 泛化的「设备离线」会让用户去查网络和开关，而真正要看的是「两边登录的
+       * 是不是同一个账号」。这里带上 user_id 前 8 位，足够定位又不泄露完整标识。
+       *
+       * 仍然返回 `DEVICE_OFFLINE`（可重试）：设备上线后同一次授权确实会恢复，
+       * 不该让客户端把它当成终态。
+       */
+      const account = input.userId.slice(0, 8);
+      logger.info("link_dispatch_no_device", { userId: account, tool: input.tool });
+      return fail(
+        "DEVICE_OFFLINE",
+        `no device is connected for account ${account}; sign in to the desktop app with the same account and enable remote access`,
+      );
     }
 
     const conn = conns.get(connection.connectionId);

@@ -172,7 +172,7 @@ describe("正常往返", () => {
 });
 
 describe("不可用与拒绝（都不应该发出 req）", () => {
-  it("设备离线 → DEVICE_OFFLINE", async () => {
+  it("设备离线 → DEVICE_OFFLINE，且文案点明是哪个账号没有设备", async () => {
     const result = await h.link.dispatchToolCall({
       userId,
       grantId,
@@ -180,6 +180,11 @@ describe("不可用与拒绝（都不应该发出 req）", () => {
       arguments: {},
     });
     expect(result).toMatchObject({ ok: false, error: { code: "DEVICE_OFFLINE", retryable: true } });
+    // 「账号不匹配」在云端只能表现为「该账号没有在线设备」，所以文案必须带上
+    // 账号线索：否则用户会去查网络/开关，而真正要看的是两边登录是否同一账号。
+    const error = (result as { ok: false; error: { message: string } }).error;
+    expect(error.message).toContain(userId.slice(0, 8));
+    expect(error.message).toContain("same account");
   });
 
   it("未知工具 → TOOL_NOT_ALLOWED", async () => {
