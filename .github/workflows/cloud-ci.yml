@@ -62,10 +62,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 不写 version：pnpm/action-setup 会读 cloud/package.json 的
-      # `packageManager: pnpm@9.0.0`，保证与 pnpm-lock.yaml 的锁文件版本一致。
+      # 不写 version：让 action 读 `cloud/package.json` 的
+      # `packageManager: pnpm@9.0.0`，与 pnpm-lock.yaml 的锁文件版本保持单一事实来源。
+      #
+      # `package_json_file` **必须显式给出**：仓库根没有 package.json（这是个
+      # monorepo，package.json 在 cloud/ 与 Desktop/ 下），而该 input 默认值是
+      # 相对仓库根的 `package.json`。漏写时 action 找不到 packageManager 就直接
+      # 失败在 "Setup pnpm" 这一步（实测：Cloud CI 首次运行即失败于此）。
+      # 注意 `working-directory` 只作用于 `run` 步骤，对 `uses` 步骤无效。
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
+        with:
+          package_json_file: cloud/package.json
 
       - name: Setup Node 22
         uses: actions/setup-node@v4
@@ -133,32 +141,37 @@ jobs:
           done
 
       # 迁移入口必须能在镜像内独立执行（用临时 Postgres，不碰任何生产库）
+      #
+      # 用**共享 network + 服务名**而不是 host.docker.internal：后者是
+      # Docker Desktop（macOS/Windows）专有的，Linux runner 上默认不存在，
+      # 会直接 DNS 解析失败。共享 network 在两种平台行为一致。
       - name: Verify migrations run inside the image
         run: |
-          docker run -d --name pg-mig \
+          docker network create mig-net
+          docker run -d --name pg-mig --network mig-net \
             -e POSTGRES_USER=brewphase -e POSTGRES_PASSWORD=brewphase \
-            -e POSTGRES_DB=brewphase_cloud_test -p 54330:5432 \
+            -e POSTGRES_DB=brewphase_cloud_test \
             postgres:16-alpine
           for i in $(seq 1 30); do
             docker exec pg-mig pg_isready -U brewphase -d brewphase_cloud_test >/dev/null 2>&1 && break
             sleep 2
           done
+          MIG_URL=postgres://brewphase:brewphase@pg-mig:5432/brewphase_cloud_test
           # 连跑两次：迁移必须幂等
-          docker run --rm \
-            -e DATABASE_URL=postgres://brewphase:brewphase@host.docker.internal:54330/brewphase_cloud_test \
+          docker run --rm --network mig-net -e DATABASE_URL="$MIG_URL" \
             brewphase-cloud:ci node dist/scripts/migrate.js
-          docker run --rm \
-            -e DATABASE_URL=postgres://brewphase:brewphase@host.docker.internal:54330/brewphase_cloud_test \
+          docker run --rm --network mig-net -e DATABASE_URL="$MIG_URL" \
             brewphase-cloud:ci node dist/scripts/migrate.js
           # 失败路径必须非零退出
-          if docker run --rm \
-            -e DATABASE_URL=postgres://brewphase:brewphase@host.docker.internal:54330/nope \
+          if docker run --rm --network mig-net \
+            -e DATABASE_URL=postgres://brewphase:brewphase@pg-mig:5432/nope \
             brewphase-cloud:ci node dist/scripts/migrate.js; then
             echo "::error::migrate must fail on a missing database"
             exit 1
           fi
           echo "migrate idempotent + fail-closed OK"
           docker rm -f pg-mig
+          docker network rm mig-net
 
       # 预检必须能失败：缺 MCP_BROWSER_SESSION_KEY 时 Remote MCP 是 404 而 /health 仍 200
       - name: Verify preflight fails without MCP_BROWSER_SESSION_KEY
@@ -199,28 +212,51 @@ jobs:
           esac
           echo "preflight OK + no secret leak"
 
-      # 部署产物语法与约束回归：单副本、db 不对外、Caddyfile 合法
+      # 部署产物语法与约束回归：单副本、db 不对外、仅 Caddy 对外、Caddyfile 合法
+      #
+      # 用 `config --format json` + python 而不是 grep YAML 文本：
+      # compose 的字段顺序不是契约，grep -A3 之类会随版本漂移成假通过/假失败。
       - name: Validate deploy artifacts
         working-directory: cloud/deploy
         run: |
+          set -euo pipefail
           cp .env.production.example .env.production
-          resolved=$(POSTGRES_PASSWORD=ci-only-password docker compose -f compose.yaml config)
+          POSTGRES_PASSWORD=ci-only-password docker compose -f compose.yaml config \
+            --format json > /tmp/resolved-compose.json
           echo "compose config OK"
-          echo "$resolved" | grep -q 'published: "80"' \
-            || { echo "::error::caddy must publish 80"; exit 1; }
-          echo "$resolved" | grep -q 'published: "443"' \
-            || { echo "::error::caddy must publish 443"; exit 1; }
-          if echo "$resolved" | grep -q "replicas"; then
-            echo "::error::replicas must not be configured (single instance only)"
-            exit 1
-          fi
-          echo "$resolved" | grep -q "internal: true" \
-            || { echo "::error::db network must be internal"; exit 1; }
-          # cloud 与 db 都不得发布宿主端口（只有 caddy 能对外）
-          if echo "$resolved" | grep -A3 "container_name: brewphase-cloud" | grep -q "published:"; then
-            echo "::error::cloud must not publish ports"; exit 1
-          fi
-          echo "deploy constraints OK"
+
+          python3 - <<'PY'
+          import json
+          d = json.load(open('/tmp/resolved-compose.json'))
+          svcs = d['services']
+
+          # 单副本：任何位置出现 replicas 都说明有人想跑多实例（Phase 1.4 之前禁止）
+          assert 'replicas' not in json.dumps(d), 'replicas must not be configured'
+
+          # 只有 Caddy 对外
+          published = {str(p.get('published')) for p in (svcs['caddy'].get('ports') or [])}
+          assert {'80', '443'} <= published, f'caddy must publish 80/443, got {published}'
+          for name in ('cloud', 'db'):
+              assert not svcs[name].get('ports'), f'{name} must not publish host ports'
+
+          # db 在 internal 网络：宿主与公网都不可达
+          assert d['networks']['data'].get('internal') is True, 'db network must be internal'
+          assert set(svcs['db'].get('networks', {})) == {'data'}, 'db must only join data network'
+
+          # 单副本 + 生产模式 + 代理信任边界钉死在 compose 里
+          env = svcs['cloud'].get('environment') or {}
+          assert env.get('GATEWAY_EXPECTED_REPLICAS') == '1', env.get('GATEWAY_EXPECTED_REPLICAS')
+          assert env.get('NODE_ENV') == 'production'
+          assert env.get('TRUST_PROXY') == 'true' and env.get('TRUST_PROXY_HOPS') == '1'
+          assert 'DATABASE_URL' in env
+
+          # cloud 必须等 db 健康才启动
+          dep = svcs['cloud'].get('depends_on', {}).get('db', {})
+          assert dep.get('condition') == 'service_healthy', dep
+
+          print('deploy constraints OK')
+          PY
+
           rm -f .env.production
           docker run --rm -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine \
             caddy validate --config /etc/caddy/Caddyfile 2>&1 | grep -q "Valid configuration" \
