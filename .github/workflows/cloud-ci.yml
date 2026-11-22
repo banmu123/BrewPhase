@@ -18,6 +18,11 @@
 #   - **部署命令与手册逐字一致**：全部带 `--env-file .env.production`，且执行
 #     前显式 `unset` 同名 Shell 变量——否则 Shell 环境会覆盖 env 文件，
 #     「文件没被加载」的缺陷就会被掩盖。
+#   - **负向测试必须断言「错误码」，不能只看退出码**：统一走
+#     `expect_preflight_failure` / `expect_caddy_failure`（`if cmd` 判失败 +
+#     `grep -Fq "[code]"` 判原因 + Secret 泄漏扫描）。禁止用持续生效的
+#     `set +e` 包住整步，也禁止用 `! grep` 代替显式判断——bash 的 `-e` 对
+#     `!` 取反的命令不生效，那等于「找到问题也不失败」。
 
 name: Cloud CI
 
@@ -340,108 +345,133 @@ jobs:
           grep -q "POSTGRES_PASSWORD .*URL-safe, not a placeholder" /tmp/preflight-ok.log
           echo "preflight OK with the composed DATABASE_URL + matching BREWPHASE_DOMAIN"
 
-      # ── 6. 预检负例：缺项 / 弱口令 / 保留字符都必须非零退出 ────────────
-      # 用 `-e` 覆盖模拟「配置缺失」，因为生产里这些值只可能来自 env 文件。
+      # ── 6. 预检负例：缺项 / 弱口令 / 域名 / 数据库连接串 ────────────────
+      # 这一段的教训（R5-R3.2）：原来是 `set +e` 包住整个步骤，中间十几个
+      # `grep -q` 即便没匹配到也不会中断，最后一句 `exit 0` 把整步判成通过——
+      # 也就是说「错误码根本没出现」这种情况会被静默吃掉。
+      #
+      # 现在改成一个断言函数，每次调用做三件事，缺一条都算失败：
+      #   1. 命令必须**非零退出**（`if cmd; then 失败`，不用 `$?`）；
+      #   2. 输出必须含**完整错误码**（`grep -Fq "[code]"`，不猜子串）；
+      #   3. 输出不得含任何测试 Secret。
+      # 命令若因 docker / 网络 / 镜像问题失败，输出里不会有错误码 → 同样判失败，
+      # 不会被误认为「预检正确拒绝了配置」。
       - name: Preflight must fail on missing or unsafe configuration
         run: |
-          set +e
+          set -o pipefail
+
+          TEST_SECRETS=(
+            "7c1f0b9d4e2a6835fa91c0d7e5b32468"
+            "ci_r5r3_jwt_key"
+            "ci_r5r3_mcp_key"
+            "ci_r5r3_google_secret"
+            "ci_r5r3_github_secret"
+          )
+
+          # 用法：expect_preflight_failure <日志> <错误码[,错误码…]> <命令…>
+          expect_preflight_failure() {
+            local log="$1"
+            local codes_csv="$2"
+            shift 2
+
+            if "$@" >"$log" 2>&1; then
+              echo "::error::preflight unexpectedly SUCCEEDED (expected failure: $codes_csv)"
+              cat "$log"
+              return 1
+            fi
+
+            local code
+            for code in ${codes_csv//,/ }; do
+              if ! grep -Fq "[$code]" "$log"; then
+                echo "::error::expected error code [$code] not found in preflight output"
+                cat "$log"
+                return 1
+              fi
+            done
+
+            local secret
+            for secret in "${TEST_SECRETS[@]}"; do
+              if grep -Fq "$secret" "$log"; then
+                echo "::error::preflight output leaked a test secret"
+                return 1
+              fi
+            done
+            return 0
+          }
+
           run_pf() {
-            docker compose --env-file .env.production run --rm --no-deps "$@" cloud \
-              node dist/scripts/preflight-remote-mcp.js > /tmp/pf-neg.log 2>&1
-            echo $?
+            docker compose --env-file .env.production run --rm --no-deps "$@" \
+              cloud node dist/scripts/preflight-remote-mcp.js
           }
 
           # (a) 缺 MCP_BROWSER_SESSION_KEY → /mcp 会 404，必须拦下
-          e=$(run_pf -e MCP_BROWSER_SESSION_KEY=)
-          test "$e" = "1" || { echo "::error::preflight passed without MCP_BROWSER_SESSION_KEY (exit=$e)"; cat /tmp/pf-neg.log; exit 1; }
-          grep -q "mcp_browser_session_key_missing" /tmp/pf-neg.log
-          echo "ok: missing MCP_BROWSER_SESSION_KEY -> exit 1"
+          expect_preflight_failure /tmp/pf-neg.log mcp_browser_session_key_missing \
+            run_pf -e MCP_BROWSER_SESSION_KEY=
+          echo "ok: missing MCP_BROWSER_SESSION_KEY -> exit 1 + correct code"
 
           # (b) 缺 DATABASE_URL
-          e=$(run_pf -e DATABASE_URL=)
-          test "$e" = "1" || { echo "::error::preflight passed without DATABASE_URL (exit=$e)"; exit 1; }
-          grep -q "database_url_missing" /tmp/pf-neg.log
-          echo "ok: missing DATABASE_URL -> exit 1"
+          expect_preflight_failure /tmp/pf-neg.log database_url_missing \
+            run_pf -e DATABASE_URL=
+          echo "ok: missing DATABASE_URL -> exit 1 + correct code"
 
           # (c) 弱口令（8 位）
-          e=$(run_pf -e POSTGRES_PASSWORD=shortpw)
-          test "$e" = "1" || { echo "::error::preflight passed with a weak DB password (exit=$e)"; exit 1; }
-          grep -q "postgres_password_too_short" /tmp/pf-neg.log
-          echo "ok: weak DB password -> exit 1"
+          expect_preflight_failure /tmp/pf-neg.log postgres_password_too_short \
+            run_pf -e POSTGRES_PASSWORD=shortpw
+          echo "ok: weak DB password -> exit 1 + correct code"
 
           # (d) 模板占位口令（照抄 .env.production.example 就上线）
-          e=$(run_pf -e POSTGRES_PASSWORD=change-me-strong-password)
-          test "$e" = "1" || { echo "::error::preflight passed with the placeholder password (exit=$e)"; exit 1; }
-          grep -q "postgres_password_placeholder" /tmp/pf-neg.log
-          echo "ok: placeholder DB password -> exit 1"
+          expect_preflight_failure /tmp/pf-neg.log postgres_password_placeholder \
+            run_pf -e POSTGRES_PASSWORD=change-me-strong-password
+          echo "ok: placeholder DB password -> exit 1 + correct code"
 
-          # (e) 含 URL 保留字符（openssl rand -base64 的典型产物）
-          e=$(run_pf -e POSTGRES_PASSWORD='ab/cdEfGhIjKlMnOpQrStUvWx')
-          test "$e" = "1" || { echo "::error::preflight passed with '/' in the DB password (exit=$e)"; exit 1; }
-          grep -q "postgres_password_unsafe_chars" /tmp/pf-neg.log
-          grep -q "database_url_invalid" /tmp/pf-neg.log
-          echo "ok: URL-unsafe DB password -> exit 1 (also rejects the unparseable URL)"
+          # (e) 含 URL 保留字符的口令。
+          # **必须同时覆盖 DATABASE_URL**：compose 在解析阶段就把 POSTGRES_PASSWORD
+          # 插进 DATABASE_URL 了，只 `-e POSTGRES_PASSWORD` 不会重新插值，容器里的
+          # DATABASE_URL 仍是那条正常的串——于是 database_url_invalid 永远不会出现。
+          # 这里把两侧都换成含 `/` 的值，才真的能同时命中两个错误码。
+          expect_preflight_failure /tmp/pf-neg.log postgres_password_unsafe_chars,database_url_invalid \
+            run_pf \
+              -e POSTGRES_PASSWORD='ab/cdEfGhIjKlMnOpQrStUvWx' \
+              -e DATABASE_URL='postgres://brewphase:ab/cdEfGhIjKlMnOpQrStUvWx@db:5432/brewphase_cloud'
+          echo "ok: URL-unsafe DB password -> exit 1 (unsafe_chars + invalid URL)"
 
           # (f) 口令两侧不一致（DATABASE_URL 与 POSTGRES_PASSWORD 各改一边）
-          e=$(run_pf -e POSTGRES_PASSWORD=aaaaaaaaaaaaaaaaaaaaaaaaaa)
-          test "$e" = "1" || { echo "::error::preflight passed on password mismatch (exit=$e)"; exit 1; }
-          grep -q "database_url_password_mismatch" /tmp/pf-neg.log
-          echo "ok: DATABASE_URL/POSTGRES_PASSWORD mismatch -> exit 1"
+          expect_preflight_failure /tmp/pf-neg.log database_url_password_mismatch \
+            run_pf -e POSTGRES_PASSWORD=aaaaaaaaaaaaaaaaaaaaaaaaaa
+          echo "ok: DATABASE_URL/POSTGRES_PASSWORD mismatch -> exit 1 + correct code"
 
           # (g) BREWPHASE_DOMAIN 与 BASE_URL 不一致 → Caddy 会签另一个名字的证书
-          e=$(run_pf -e BREWPHASE_DOMAIN=other.r5r3-deploy-check.example.org)
-          test "$e" = "1" || { echo "::error::preflight passed with a mismatched BREWPHASE_DOMAIN (exit=$e)"; cat /tmp/pf-neg.log; exit 1; }
-          grep -q "brewphase_domain_mismatch" /tmp/pf-neg.log
-          echo "ok: BREWPHASE_DOMAIN mismatch -> exit 1"
+          expect_preflight_failure /tmp/pf-neg.log brewphase_domain_mismatch \
+            run_pf -e BREWPHASE_DOMAIN=other.r5r3-deploy-check.example.org
+          echo "ok: BREWPHASE_DOMAIN mismatch -> exit 1 + correct code"
 
           # (h) BREWPHASE_DOMAIN 不是裸主机名（带 scheme）→ 配置错误
-          e=$(run_pf -e BREWPHASE_DOMAIN=https://api.r5r3-deploy-check.example.org)
-          test "$e" = "1" || { echo "::error::preflight passed with a URL-shaped BREWPHASE_DOMAIN (exit=$e)"; exit 1; }
-          grep -q "brewphase_domain_invalid" /tmp/pf-neg.log
-          echo "ok: BREWPHASE_DOMAIN with scheme -> exit 1"
+          expect_preflight_failure /tmp/pf-neg.log brewphase_domain_invalid \
+            run_pf -e BREWPHASE_DOMAIN=https://api.r5r3-deploy-check.example.org
+          echo "ok: BREWPHASE_DOMAIN with scheme -> exit 1 + correct code"
 
           # (i) BASE_URL 带非默认端口 → compose 只发布 80/443
-          e=$(run_pf -e BASE_URL=https://api.r5r3-deploy-check.example.org:8443)
-          test "$e" = "1" || { echo "::error::preflight passed with BASE_URL on :8443 (exit=$e)"; exit 1; }
-          grep -q "base_url_port_unsupported" /tmp/pf-neg.log
-          echo "ok: BASE_URL :8443 -> exit 1"
+          expect_preflight_failure /tmp/pf-neg.log base_url_port_unsupported \
+            run_pf -e BASE_URL=https://api.r5r3-deploy-check.example.org:8443
+          echo "ok: BASE_URL :8443 -> exit 1 + correct code"
 
           # (j) DATABASE_URL 没有密码 → 必须失败（不能因为 undefined 跳过比较）
-          e=$(run_pf -e DATABASE_URL=postgres://brewphase@db:5432/brewphase_cloud)
-          test "$e" = "1" || { echo "::error::preflight passed with a password-less DATABASE_URL (exit=$e)"; exit 1; }
-          grep -q "database_url_password_missing" /tmp/pf-neg.log
-          echo "ok: DATABASE_URL without password -> exit 1"
+          expect_preflight_failure /tmp/pf-neg.log database_url_password_missing \
+            run_pf -e DATABASE_URL=postgres://brewphase@db:5432/brewphase_cloud
+          echo "ok: DATABASE_URL without password -> exit 1 + correct code"
 
-          # (k) DATABASE_URL 的 host 不是 compose 服务名
-          e=$(run_pf -e DATABASE_URL='postgres://brewphase:7c1f0b9d4e2a6835fa91c0d7e5b32468@localhost:5432/brewphase_cloud')
-          test "$e" = "1" || { echo "::error::preflight passed with host=localhost (exit=$e)"; exit 1; }
-          grep -q "database_url_host_mismatch" /tmp/pf-neg.log
-          echo "ok: DATABASE_URL host != db -> exit 1"
+          # (k) host / 库名 / 用户名 / 端口 各自不符
+          expect_preflight_failure /tmp/pf-neg.log database_url_host_mismatch \
+            run_pf -e DATABASE_URL='postgres://brewphase:7c1f0b9d4e2a6835fa91c0d7e5b32468@localhost:5432/brewphase_cloud'
+          expect_preflight_failure /tmp/pf-neg.log database_url_name_mismatch \
+            run_pf -e DATABASE_URL='postgres://brewphase:7c1f0b9d4e2a6835fa91c0d7e5b32468@db:5432/other_db'
+          expect_preflight_failure /tmp/pf-neg.log database_url_user_mismatch \
+            run_pf -e DATABASE_URL='postgres://someone_else:7c1f0b9d4e2a6835fa91c0d7e5b32468@db:5432/brewphase_cloud'
+          expect_preflight_failure /tmp/pf-neg.log database_url_port_unsupported \
+            run_pf -e DATABASE_URL='postgres://brewphase:7c1f0b9d4e2a6835fa91c0d7e5b32468@db:5433/brewphase_cloud'
+          echo "ok: DATABASE_URL host/db/user/port mismatches -> exit 1 + correct codes"
 
-          # (l) DATABASE_URL 的库名 / 用户名 / 端口各自不符
-          e=$(run_pf -e DATABASE_URL='postgres://brewphase:7c1f0b9d4e2a6835fa91c0d7e5b32468@db:5432/other_db')
-          test "$e" = "1" || { echo "::error::preflight passed with a wrong database name (exit=$e)"; exit 1; }
-          grep -q "database_url_name_mismatch" /tmp/pf-neg.log
-
-          e=$(run_pf -e DATABASE_URL='postgres://someone_else:7c1f0b9d4e2a6835fa91c0d7e5b32468@db:5432/brewphase_cloud')
-          test "$e" = "1" || { echo "::error::preflight passed with a wrong database user (exit=$e)"; exit 1; }
-          grep -q "database_url_user_mismatch" /tmp/pf-neg.log
-
-          e=$(run_pf -e DATABASE_URL='postgres://brewphase:7c1f0b9d4e2a6835fa91c0d7e5b32468@db:5433/brewphase_cloud')
-          test "$e" = "1" || { echo "::error::preflight passed with port 5433 (exit=$e)"; exit 1; }
-          grep -q "database_url_port_unsupported" /tmp/pf-neg.log
-          echo "ok: DATABASE_URL db/user/port mismatches -> exit 1"
-
-          # 负例输出不得泄漏任何 Secret 值。
-          for s in 7c1f0b9d4e2a6835fa91c0d7e5b32468 ci_r5r3_jwt_key ci_r5r3_mcp_key \
-                   ci_r5r3_google_secret ci_r5r3_github_secret; do
-            if grep -q "$s" /tmp/pf-neg.log; then
-              echo "::error::preflight output leaked the secret value $s"
-              exit 1
-            fi
-          done
-          echo "ok: no secret value in negative-case output"
-          exit 0
+          echo "all preflight negative cases failed for the RIGHT reason"
 
       # ── 7. 真实 PostgreSQL：起 compose 的 db，跑手册第 ⑤ 步的迁移 ──────
       # 这一步同时证明「DATABASE_URL 指向的 host/port/口令确实可用」——
@@ -468,7 +498,12 @@ jobs:
           grep -q "\[migrate\] database migrations applied" /tmp/migrate-1.log
           grep -q "\[migrate\] database migrations applied" /tmp/migrate-2.log
           # 迁移日志不得出现口令。
-          ! grep -q "7c1f0b9d4e2a6835fa91c0d7e5b32468" /tmp/migrate-1.log
+          # 注意不能写成 `! grep -q`：bash 的 `-e` 对 `!` 取反的命令不生效，
+          # 那等于「找到口令也不失败」——正是本阶段要清掉的一类假通过。
+          if grep -Fq "7c1f0b9d4e2a6835fa91c0d7e5b32468" /tmp/migrate-1.log; then
+            echo "::error::migration log leaked the database password"
+            exit 1
+          fi
           echo "migrations applied twice (idempotent), no secret in output"
 
       # ── 8. Caddyfile：有变量必须通过，缺变量必须失败 ───────────────────
@@ -484,24 +519,43 @@ jobs:
 
       - name: Caddyfile must fail when the domain or email is missing
         run: |
-          set +e
-          # (a) 两个都缺
-          docker compose --env-file .env.production run --rm --no-deps \
-            -e ACME_EMAIL= -e BREWPHASE_DOMAIN= \
-            caddy caddy validate --config /etc/caddy/Caddyfile > /tmp/caddy-both.log 2>&1
-          e=$?
-          test "$e" != "0" || { echo "::error::caddy validate passed with no domain/email"; exit 1; }
-          grep -qE "wrong argument count|server block without any key" /tmp/caddy-both.log
-          echo "ok: missing ACME_EMAIL -> validate fails (exit=$e)"
+          set -o pipefail
 
-          # (b) 只缺域名（邮箱正常）：必须报「站点键为空」，而不是启动到错误域名
-          docker compose --env-file .env.production run --rm --no-deps \
-            -e BREWPHASE_DOMAIN= \
-            caddy caddy validate --config /etc/caddy/Caddyfile > /tmp/caddy-domain.log 2>&1
-          e=$?
-          test "$e" != "0" || { echo "::error::caddy validate passed with no BREWPHASE_DOMAIN"; exit 1; }
-          grep -q "server block without any key" /tmp/caddy-domain.log
-          echo "ok: missing BREWPHASE_DOMAIN -> validate fails (exit=$e)"
+          # 与预检负例同一套纪律：`if cmd` 判退出码，再断言失败**原因**。
+          # 原来的 `set +e` + 裸 grep 会让「原因不对」也判成通过。
+          expect_caddy_failure() {
+            local log="$1"
+            local needle="$2"
+            shift 2
+
+            if "$@" >"$log" 2>&1; then
+              echo "::error::caddy validate unexpectedly SUCCEEDED (expected failure: $needle)"
+              tail -n 40 "$log"
+              return 1
+            fi
+
+            if ! grep -Fq "$needle" "$log"; then
+              echo "::error::caddy failed for an unexpected reason (want: $needle)"
+              tail -n 40 "$log"
+              return 1
+            fi
+            return 0
+          }
+
+          run_caddy() {
+            docker compose --env-file .env.production run --rm --no-deps "$@" \
+              caddy caddy validate --config /etc/caddy/Caddyfile
+          }
+
+          # (a) 两个都缺 → `email ` 指令没有参数
+          expect_caddy_failure /tmp/caddy-both.log "wrong argument count" \
+            run_caddy -e ACME_EMAIL= -e BREWPHASE_DOMAIN=
+          echo "ok: missing ACME_EMAIL -> validate fails (wrong argument count)"
+
+          # (b) 只缺域名（邮箱正常）→ 站点键为空，而不是启动到错误域名
+          expect_caddy_failure /tmp/caddy-domain.log "server block without any key" \
+            run_caddy -e BREWPHASE_DOMAIN=
+          echo "ok: missing BREWPHASE_DOMAIN -> validate fails (empty site key)"
 
           # Caddyfile 不得保留任何 env 变量兜底默认值（否则漏配会静默用错域名）。
           if grep -qE '\{\$[A-Z_]+:' Caddyfile; then
@@ -509,7 +563,6 @@ jobs:
             exit 1
           fi
           echo "ok: no env-var fallback defaults in Caddyfile"
-          exit 0
 
       # ── 9. 清理 ────────────────────────────────────────────────────────
       - name: Tear down the temporary stack
