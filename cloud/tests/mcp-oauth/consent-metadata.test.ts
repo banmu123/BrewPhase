@@ -638,10 +638,19 @@ describe("STALE 放行与同意页身份展示（§8.3 / §16）", () => {
 
   it("同意页同时展示「客户端身份域名」与「回调域名」两个独立标签", async () => {
     const flow = await startConsentFlow(h); // 不透明 id = test-client
-    expect(flow.html).toContain("你正在授权给 <strong>test-client</strong>");
-    expect(flow.html).toContain("授权完成后你会回到 <strong>client.example</strong>");
+    // R4 起两行是带标签的 `<div class="fact">`（原先是两句散文）。这里**解析
+    // 结构**而不是匹配整句：能同时证明「两行都在」「标签不同」「值没串」，
+    // 比匹配一句固定文案更难被改版绕过。
+    const facts = [...flow.html.matchAll(/<div class="fact">\s*<dt>([^<]*)<\/dt>\s*<dd>([^<]*)<\/dd>\s*<\/div>/g)].map(
+      (m) => ({ label: m[1] as string, value: m[2] as string }),
+    );
+    expect(facts).toHaveLength(2);
+    const identity = facts.find((f) => f.label.includes("身份"));
+    const callback = facts.find((f) => f.label.includes("回到"));
+    expect(identity?.value).toBe("test-client");
+    expect(callback?.value).toBe("client.example");
     // 两个身份不混用：回调 host 不得出现在身份标签里。
-    expect(flow.html).not.toContain("你正在授权给 <strong>client.example</strong>");
+    expect(identity?.value).not.toBe("client.example");
     // 只展示纯文本：没有把 client_id / client_uri 渲染成链接。
     expect(flow.html).not.toContain("<a href");
     // 不展示远程 logo。
@@ -688,7 +697,11 @@ describe("STALE 放行与同意页身份展示（§8.3 / §16）", () => {
         resource: "https://gateway.example/mcp",
       }).toString(),
     });
-    expect(flow.html).toContain("你正在授权给 <strong>partner.example.com</strong>");
+    const identity = /<div class="fact">\s*<dt>[^<]*身份[^<]*<\/dt>\s*<dd>([^<]*)<\/dd>/.exec(
+      flow.html,
+    )?.[1];
+    expect(identity).toBe("partner.example.com");
+    // 完整 client_id（含路径）绝不回显。
     expect(flow.html).not.toContain("partner.example.com/oauth/client");
   });
 });

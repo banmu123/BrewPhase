@@ -67,6 +67,17 @@ import {
   renderErrorPage,
   renderLoginPage,
 } from "../mcp-oauth/login-page.js";
+import {
+  resolveAuthLocale,
+  type AuthErrorKey,
+  type AuthErrorParams,
+  type AuthLocale,
+} from "../mcp-oauth/auth-locale.js";
+
+/** 本次请求的页面语种（只由 `Accept-Language` 决定）。 */
+function localeOf(c: Context): AuthLocale {
+  return resolveAuthLocale(c.req.header("accept-language"));
+}
 
 /**
  * MCP 浏览器授权路由（Phase 1.3.1-C2a：authorize / login / callback）。
@@ -86,13 +97,17 @@ import {
  * 已限死的 127.0.0.1，与 MCP 的「任意注册回调」在语义上冲突。
  */
 
-const BROWSER_EXPIRED_HINT =
-  "浏览器会话已失效。请回到发起授权的应用重新开始授权，不要刷新这个页面。";
-const LINK_INVALID_HINT = "这个授权链接已失效。请回到发起授权的应用重新开始。";
-
-function htmlError(c: Context, status: number, title: string, message: string): Response {
+function htmlError(
+  c: Context,
+  status: number,
+  key: AuthErrorKey | string,
+  params: AuthErrorParams = {},
+): Response {
+  // 语种只由 `Accept-Language` 决定：错误页不能因为「用户点的是中文站点」
+  // 就假设语言，也不能因为没带头就把中文用户推到英文页。
+  const locale = resolveAuthLocale(c.req.header("accept-language"));
   return c.html(
-    renderErrorPage(title, message),
+    renderErrorPage(key, locale, params),
     status as ContentfulStatusCode,
     AUTH_PAGE_HEADERS,
   );
@@ -115,25 +130,15 @@ function htmlError(c: Context, status: number, title: string, message: string): 
  * 3. 只渲染本次失败的结论，不带 Registry 的 detail（可能含抓取细节）。
  */
 function registryFailurePage(c: Context, clientId: string, failure: RegistryFailure): Response {
+  // 只取安全展示形式（hostname 或 ≤40 字符截断），绝不回显完整 client_id。
   const label = clientIdentifierDisplay(clientId);
-  const suffix = label.length > 0 ? `（${label}）` : "";
   if (failure.status === 503) {
-    return htmlError(
-      c,
-      503,
-      "暂时无法验证客户端",
-      `暂时无法验证该客户端${suffix}的身份，请稍后重试。`,
-    );
+    return htmlError(c, 503, "client_unavailable", { client: label });
   }
   if (failure.status === 500) {
-    return htmlError(c, 500, "服务暂时不可用", "服务暂时不可用，请稍后重试。");
+    return htmlError(c, 500, "service_unavailable");
   }
-  return htmlError(
-    c,
-    400,
-    "无法验证该客户端",
-    `无法验证该客户端${suffix}的身份。请回到发起授权的应用重新开始。`,
-  );
+  return htmlError(c, 400, "client_unverified", { client: label });
 }
 
 /**
@@ -194,32 +199,25 @@ function singleQuery(c: Context, name: string): string | null {
   return values[0] ?? null;
 }
 
-const CONSENT_FAILURE_MESSAGES: Record<ConsentFailure, { title: string; message: string }> = {
-  not_found: { title: "授权链接无效", message: LINK_INVALID_HINT },
-  expired: { title: "授权已过期", message: "这次授权已超过 10 分钟。请回到发起授权的应用重新开始。" },
-  not_authenticated: {
-    title: "尚未完成登录",
-    message: "这次授权还没有确认你的 BrewPhase 账号。请回到发起授权的应用重新开始。",
-  },
-  provider_not_consumed: {
-    title: "尚未完成登录",
-    message: "这次授权还没有完成登录。请回到发起授权的应用重新开始。",
-  },
-  binding_mismatch: {
-    title: "授权会话不匹配",
-    message: "这个授权链接已在另一个浏览器中打开。请重新开始授权。",
-  },
-  unsupported_provider: {
-    title: "不支持的登录方式",
-    message: "这次授权使用的登录方式不受支持。请重新开始授权。",
-  },
-  // 四条件实时复核失败（§8.3）：删行 + `mcp_consent_metadata_invalid` 审计
-  // 已在业务层的事务里提交，这里只负责 400 页面——**不重定向、不再删一次、
-  // 不再审计一次**。
-  metadata_invalid: {
-    title: "客户端信息已变更",
-    message: "无法继续这次授权：该应用的注册信息已发生变化。请回到发起授权的应用重新开始。",
-  },
+/**
+ * `ConsentFailure` → 错误键。
+ *
+ * 文案（中英）集中在 `auth-locale.ts` 的目录里，这里只做**原因 → 键**的映射：
+ * 同一个原因在 GET 与 POST 两条路径上都要出同一张页，把字符串散在两处
+ * 迟早会漂移（例如 GET 改了措辞、POST 忘了改）。
+ *
+ * `metadata_invalid` 的删行 + `mcp_consent_metadata_invalid` 审计已在业务层的
+ * 事务里提交（§8.5 边界二），页面侧只负责渲染 400——**不重定向、不再删一次、
+ * 不再审计一次**。
+ */
+const CONSENT_FAILURE_KEYS: Record<ConsentFailure, AuthErrorKey> = {
+  not_found: "link_invalid",
+  expired: "link_expired",
+  not_authenticated: "not_authenticated",
+  provider_not_consumed: "provider_not_consumed",
+  binding_mismatch: "session_mismatch",
+  unsupported_provider: "provider_unsupported_consent",
+  metadata_invalid: "metadata_invalid",
 };
 
 /**
@@ -446,20 +444,20 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
   app.get("/mcp/oauth/login", limiter, async (c) => {
     const rid = singleQuery(c, "rid") ?? "";
     if (!isAuthRequestId(rid)) {
-      return htmlError(c, 400, "授权链接无效", "这个授权链接格式不正确。请回到发起授权的应用重新开始。");
+      return htmlError(c, 400, "link_malformed");
     }
 
     const currentTime = now();
     const existing = await loadAuthRequest(ctx.db.db, rid);
-    if (!existing) return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
+    if (!existing) return htmlError(c, 400, "link_invalid");
     if (existing.providerConsumedAt !== null) {
       // Provider 回调已经用掉这一次性状态，下一站是同意页。再走登录只会
       // 覆盖 `provider`/`nonce`，把已经成立的身份写丢。
-      return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
+      return htmlError(c, 400, "link_invalid");
     }
     if (existing.expiresAt.getTime() <= currentTime.getTime()) {
       await deleteAuthRequest(ctx.db.db, rid);
-      return htmlError(c, 400, "授权已过期", "这次授权已超过 10 分钟。请回到发起授权的应用重新开始。");
+      return htmlError(c, 400, "link_expired");
     }
 
     /**
@@ -483,7 +481,7 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
       sid = cookie.session.sid;
     } else {
       if (existing.browserBindingHash !== null) {
-        return htmlError(c, 400, "浏览器会话已失效", BROWSER_EXPIRED_HINT);
+        return htmlError(c, 400, "browser_expired");
       }
       const session = createBrowserSession(browserOptions);
       await setBrowserSessionCookie(c, session, browserOptions);
@@ -502,22 +500,17 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
           eventType: "mcp_browser_binding_mismatch",
           detail: { rid, stage: "login" },
         });
-        return htmlError(
-          c,
-          400,
-          "授权会话不匹配",
-          "这个授权链接已在另一个浏览器中打开。请重新开始授权。",
-        );
+        return htmlError(c, 400, "session_mismatch");
       }
       if (bound.reason === "expired") {
         await deleteAuthRequest(ctx.db.db, rid);
-        return htmlError(c, 400, "授权已过期", "这次授权已超过 10 分钟。请回到发起授权的应用重新开始。");
+        return htmlError(c, 400, "link_expired");
       }
-      return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
+      return htmlError(c, 400, "link_invalid");
     }
 
     const request = await loadAuthRequest(ctx.db.db, rid);
-    if (!request) return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
+    if (!request) return htmlError(c, 400, "link_invalid");
 
     const providerParam = c.req.query("provider");
     if (providerParam === undefined || providerParam.length === 0) {
@@ -527,14 +520,19 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
         (name): name is ProviderName => ctx.providers[name] !== undefined,
       );
       return c.html(
-        renderLoginPage({ rid, clientName: request.clientName, availableProviders: available }),
+        renderLoginPage({
+          rid,
+          clientName: request.clientName,
+          availableProviders: available,
+          locale: localeOf(c),
+        }),
         200,
         AUTH_PAGE_HEADERS,
       );
     }
 
     if (!isProviderName(providerParam)) {
-      return htmlError(c, 400, "不支持的登录方式", "这个登录方式不受支持。");
+      return htmlError(c, 400, "provider_unsupported");
     }
     const adapter = ctx.providers[providerParam];
     if (!adapter) {
@@ -555,26 +553,16 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
           eventType: "mcp_browser_binding_mismatch",
           detail: { rid, stage: "login_provider" },
         });
-        return htmlError(
-          c,
-          400,
-          "授权会话不匹配",
-          "这个授权链接已在另一个浏览器中打开。请重新开始授权。",
-        );
+        return htmlError(c, 400, "session_mismatch");
       }
       if (claim.reason === "provider_conflict") {
-        return htmlError(
-          c,
-          400,
-          "登录方式冲突",
-          "这次授权已经开始了另一个登录方式。请回到发起授权的应用重新开始。",
-        );
+        return htmlError(c, 400, "provider_conflict");
       }
       if (claim.reason === "expired") {
         await deleteAuthRequest(ctx.db.db, rid);
-        return htmlError(c, 400, "授权已过期", "这次授权已超过 10 分钟。请回到发起授权的应用重新开始。");
+        return htmlError(c, 400, "link_expired");
       }
-      return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
+      return htmlError(c, 400, "link_invalid");
     }
 
     await audit(ctx, {
@@ -599,7 +587,7 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
   app.get("/mcp/oauth/callback/:provider", limiter, async (c) => {
     const providerParam = c.req.param("provider") ?? "";
     if (!isProviderName(providerParam)) {
-      return htmlError(c, 400, "不支持的登录方式", "这个登录方式不受支持。");
+      return htmlError(c, 400, "provider_unsupported");
     }
     const provider: ProviderName = providerParam;
     const adapter = ctx.providers[provider];
@@ -607,7 +595,7 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
 
     const cookie = await readBrowserSessionCookie(c, browserOptions);
     if (!cookie.ok) {
-      return htmlError(c, 400, "浏览器会话已失效", BROWSER_EXPIRED_HINT);
+      return htmlError(c, 400, "browser_expired");
     }
     const binding = browserBindingHash(cookie.session.sid);
 
@@ -617,12 +605,7 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
     // ---- 分支一：用户在 Provider 侧拒绝 ----
     if (errorParam !== undefined) {
       if (!stateParam) {
-        return htmlError(
-          c,
-          400,
-          "授权未完成",
-          "这次授权没有完成。请回到发起授权的应用重新开始。",
-        );
+        return htmlError(c, 400, "auth_incomplete");
       }
       return await handleProviderDenied(c, {
         ctx,
@@ -638,10 +621,10 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
     // ---- 分支二：正常回调 ----
     const code = c.req.query("code");
     if (!code) {
-      return htmlError(c, 400, "授权未完成", "这次授权没有返回授权码。请回到发起授权的应用重新开始。");
+      return htmlError(c, 400, "auth_no_code");
     }
     if (!stateParam) {
-      return htmlError(c, 400, "授权未完成", "这次授权缺少状态参数。请回到发起授权的应用重新开始。");
+      return htmlError(c, 400, "auth_no_state");
     }
 
     const currentTime = now();
@@ -676,12 +659,7 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
             detail: { rid: consumed.rid, stage: "callback", provider },
           });
         }
-        return htmlError(
-          c,
-          400,
-          "授权会话不匹配",
-          "这个授权链接已在另一个浏览器中打开。请重新开始授权。",
-        );
+        return htmlError(c, 400, "session_mismatch");
       }
       if (consumed.reason === "expired") {
         await deleteAuthRequest(ctx.db.db, consumed.rid);
@@ -689,14 +667,14 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
           eventType: "mcp_provider_callback_failed",
           detail: { rid: consumed.rid, provider, reason: "expired" },
         });
-        return htmlError(c, 400, "授权已过期", "这次授权已超过 10 分钟。请回到发起授权的应用重新开始。");
+        return htmlError(c, 400, "link_expired");
       }
       // unknown_state / provider_mismatch / consumed：对外不透露是哪一种。
       await audit(ctx, {
         eventType: "mcp_provider_callback_failed",
         detail: { provider, reason: consumed.reason },
       });
-      return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
+      return htmlError(c, 400, "link_invalid");
     }
 
     const request = consumed.request;
@@ -758,14 +736,14 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
         eventType: "mcp_provider_callback_failed",
         detail: { rid: request.rid, provider, reason: "user_inactive", userId: resolved.user.id },
       });
-      return htmlError(c, 403, "账号不可用", "这个 BrewPhase 账号当前不可用。请联系服务管理员。");
+      return htmlError(c, 403, "account_unavailable");
     }
 
     const attached = await attachUser(ctx.db.db, request.rid, resolved.user.id);
     if (!attached) {
       // 行在交换期间消失，或已被写入别的用户：fail-closed。
       await deleteAuthRequest(ctx.db.db, request.rid);
-      return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
+      return htmlError(c, 400, "link_invalid");
     }
 
     await audit(ctx, {
@@ -795,14 +773,14 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
   app.get("/mcp/oauth/consent", limiter, async (c) => {
     const rid = singleQuery(c, "rid") ?? "";
     if (!isAuthRequestId(rid)) {
-      return htmlError(c, 400, "授权链接无效", "这个授权链接格式不正确。请回到发起授权的应用重新开始。");
+      return htmlError(c, 400, "link_malformed");
     }
 
     const cookie = await readBrowserSessionCookie(c, browserOptions);
     if (!cookie.ok) {
       // 同意页**不允许**新建浏览器会话：绑定必须发生在登录那一步，
       // 否则「拿到 rid」就足以在任意浏览器里打开同意页。
-      return htmlError(c, 400, "浏览器会话已失效", BROWSER_EXPIRED_HINT);
+      return htmlError(c, 400, "browser_expired");
     }
     const binding = browserBindingHash(cookie.session.sid);
     const currentTime = now();
@@ -825,7 +803,7 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
     if (!csrf) {
       // 这一行在「读」与「写 CSRF」之间被消费/删除/换了浏览器。fail-closed：
       // 渲染一张没有 CSRF 的同意页等于给出一个永远提交不了的陷阱。
-      return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
+      return htmlError(c, 400, "link_invalid");
     }
 
     /**
@@ -848,6 +826,7 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
         clientName: loaded.request.clientName,
         clientIdentifierHost: loaded.request.clientIdentifierHost,
         redirectHost: loaded.request.redirectHost,
+        locale: localeOf(c),
         scopes: loaded.request.requestedScopes.map((scope) => ({
           scope,
           granted: isStepUp && grantedScopes.includes(scope),
@@ -877,20 +856,15 @@ export function routeMcpOAuth(app: AppHono, ctx: AppContext): void {
   app.post("/mcp/oauth/consent", limiter, async (c) => {
     const form = await parseConsentForm(c);
     if (!form) {
-      return htmlError(
-        c,
-        400,
-        "请求无法处理",
-        "这张授权表单已失效。请回到发起授权的应用重新开始。",
-      );
+      return htmlError(c, 400, "form_invalid");
     }
     if (!isAuthRequestId(form.rid)) {
-      return htmlError(c, 400, "授权链接无效", "这个授权链接格式不正确。请回到发起授权的应用重新开始。");
+      return htmlError(c, 400, "link_malformed");
     }
 
     const cookie = await readBrowserSessionCookie(c, browserOptions);
     if (!cookie.ok) {
-      return htmlError(c, 400, "浏览器会话已失效", BROWSER_EXPIRED_HINT);
+      return htmlError(c, 400, "browser_expired");
     }
     const binding = browserBindingHash(cookie.session.sid);
     const currentTime = now();
@@ -1437,8 +1411,7 @@ async function consentFailurePage(
     // 四条件失败的删行 + `mcp_consent_metadata_invalid` 审计**已经由
     // `loadConsentRequest` 的事务提交**（§8.5 边界二）。这里绝不再删一次、
     // 不再审计一次（重复副作用会污染审计计数；重复删除是无意义的写）。
-    const mapped = CONSENT_FAILURE_MESSAGES.metadata_invalid;
-    return htmlError(c, 400, mapped.title, mapped.message);
+    return htmlError(c, 400, CONSENT_FAILURE_KEYS.metadata_invalid);
   }
   if (reason === "binding_mismatch") {
     await deleteAuthRequest(ctx.db.db, rid);
@@ -1449,8 +1422,7 @@ async function consentFailurePage(
   } else if (reason === "expired") {
     await deleteAuthRequest(ctx.db.db, rid);
   }
-  const mapped = CONSENT_FAILURE_MESSAGES[reason];
-  return htmlError(c, 400, mapped.title, mapped.message);
+  return htmlError(c, 400, CONSENT_FAILURE_KEYS[reason]);
 }
 
 /**
@@ -1470,8 +1442,7 @@ async function consentSubmitFailure(
     // 删行 + 审计已在 `decideConsent` 的事务里提交（POST 分支是**有意拒绝、
     // 正常提交**，不是回滚）。这里只渲染 400 HTML：不 302、不建 Grant / Code、
     // 不再删行、不再审计（任务书 §4.4）。
-    const mapped = CONSENT_FAILURE_MESSAGES.metadata_invalid;
-    return htmlError(c, 400, mapped.title, mapped.message);
+    return htmlError(c, 400, CONSENT_FAILURE_KEYS.metadata_invalid);
   }
 
   if (reason === "csrf_mismatch") {
@@ -1480,12 +1451,7 @@ async function consentSubmitFailure(
       userId: context.userId,
       detail: { rid, clientId: context.clientId },
     });
-    return htmlError(
-      c,
-      400,
-      "表单已失效",
-      "这张授权表单已失效，可能是页面打开太久或在另一处重新打开了授权。请重新开始授权。",
-    );
+    return htmlError(c, 400, "form_stale");
   }
 
   if (reason === "binding_mismatch") {
@@ -1494,12 +1460,7 @@ async function consentSubmitFailure(
       eventType: "mcp_browser_binding_mismatch",
       detail: { rid, stage: "consent_submit" },
     });
-    return htmlError(
-      c,
-      400,
-      "授权会话不匹配",
-      "这个授权链接已在另一个浏览器中打开。请重新开始授权。",
-    );
+    return htmlError(c, 400, "session_mismatch");
   }
 
   if (reason === "expired") {
@@ -1509,20 +1470,14 @@ async function consentSubmitFailure(
   if (reason === "invalid_scope" || reason === "no_scope_granted") {
     // 不删行：这多半是客户端/页面 bug，用户重新打开同意页即可。删行会让
     // 一次可恢复的失败变成「必须重新走 Provider 登录」。
-    return htmlError(
-      c,
-      400,
-      "权限范围无效",
-      "这次提交的权限范围不在授权请求之内。请重新打开授权页面。",
-    );
+    return htmlError(c, 400, "scope_invalid");
   }
 
   if (reason === "invalid_request" || reason === "not_found") {
-    return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
+    return htmlError(c, 400, "link_invalid");
   }
 
-  const mapped = CONSENT_FAILURE_MESSAGES[reason];
-  return htmlError(c, 400, mapped.title, mapped.message);
+  return htmlError(c, 400, CONSENT_FAILURE_KEYS[reason]);
 }
 
 /**
@@ -1578,7 +1533,7 @@ async function handleProviderDenied(
     .limit(1);
   const row = rows[0];
   if (!row || row.provider !== input.provider) {
-    return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
+    return htmlError(c, 400, "link_invalid");
   }
   if (!row.browserBindingHash || !constantTimeEqual(row.browserBindingHash, input.binding)) {
     /**
@@ -1599,12 +1554,7 @@ async function handleProviderDenied(
         detail: { rid: row.id, stage: "denied", provider: input.provider },
       });
     }
-    return htmlError(
-      c,
-      400,
-      "授权会话不匹配",
-      "这个授权链接已在另一个浏览器中打开。请重新开始授权。",
-    );
+    return htmlError(c, 400, "session_mismatch");
   }
 
   const deleted = await deleteDeniedProviderRequest(ctx.db.db, {
@@ -1616,7 +1566,7 @@ async function handleProviderDenied(
   });
   // 命中 0 行 = 这一行已经不是「那把被拒绝的 state 对应的授权」了
   // （被新的 Provider 流程覆盖 / 已被消费 / 已过期）。不重定向。
-  if (!deleted) return htmlError(c, 400, "授权链接无效", LINK_INVALID_HINT);
+  if (!deleted) return htmlError(c, 400, "link_invalid");
 
   const clientError = input.providerError === "access_denied" ? "access_denied" : "server_error";
   await audit(ctx, {

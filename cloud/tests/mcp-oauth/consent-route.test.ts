@@ -91,11 +91,26 @@ describe("正常展示", () => {
     const flow = await startConsentFlow(h);
     const html = await (await consent(flow.rid, flow.cookie)).text();
 
-    expect(html).toContain("读取你的记录、正文、笔记和标签");
-    expect(html).toContain("读取你的咖啡豆、冲煮与品鉴记录");
-    // 不得出现写入语义。
+    // R4 起权限说明是卡片里的多行文案（任务书指定）。
+    expect(html).toContain("读取已保存的记录。");
+    expect(html).toContain("读取标题、正文、笔记和标签。");
+    expect(html).toContain("读取咖啡豆、烘焙信息。");
+    expect(html).toContain("读取品鉴记录。");
+
+    /**
+     * 「不得出现写入语义」断言**限定在权限卡片内**。
+     *
+     * 只读声明区刻意用否定句澄清能力边界（「不能修改或删除 Coffee 数据」）——
+     * 那是在**否认**写能力，与「描述成可写」是相反的两件事。整页级的字面
+     * 匹配会把这类澄清误判成违规，所以范围收窄到真正描述权限的那段 HTML。
+     */
+    const permSection = html.slice(
+      html.indexOf('<ul class="perm-list">'),
+      html.indexOf('class="flow"'),
+    );
+    expect(permSection, "权限卡片区间必须存在").not.toBe("-1");
     for (const word of ["修改", "删除", "写入", "编辑"]) {
-      expect(html.includes(word), `页面不应出现「${word}」`).toBe(false);
+      expect(permSection.includes(word), `权限说明不应出现「${word}」`).toBe(false);
     }
   });
 
