@@ -594,10 +594,11 @@ input: z.object({
   journey_id: z.string().uuid(),
   event_type: z.enum(['user_input','plan','decision','execution','observation',
                       'revision','verification','outcome','user_annotation']),
-  role: z.enum(['user','agent','system']).default('agent'),
-  status: z.enum(['planned','running','completed','failed','skipped','cancelled'])
-            .default('completed'),
-  evidence_level: z.enum(['agent_reported']).default('agent_reported'), // v1 只此一值
+  // **不暴露 role / evidence_level**（R6-1.1 已实现推导，见下）。
+  // status 可选且**不设通用默认值**：默认由 Service 按 event_type 决定——
+  // 陈述类 completed、执行类 planned。在 Zod 上写死 default('completed')
+  // 会把执行类事件直接建成终态，绕过整个状态机。
+  status: z.enum(['planned','running','completed','failed','skipped','cancelled']).optional(),
   title: z.string().trim().min(1).max(200),
   summary: z.string().max(2_000).optional(),
   content: z.string().max(20_000).optional(),
@@ -618,9 +619,14 @@ input: z.object({
 output: { event: AgentJourneyEvent, edges: AgentJourneyEdge[], sequence: number, replayed?: boolean, sync_status }
 ```
 - **同一事务**：查幂等 → 分配 `sequence` → 插 event → 插 edges →（若 `journey_status='completed'`）更新 journey → 插幂等行 → 提交 → **提交后** `events.emit('agentJourneys')`。
-- `source_client_id` 来自 `context`；`evidence_level` 只接受 `agent_reported`（否则 `VALIDATION_ERROR`）。
+- `source_client_id` 来自 `context`，**不在入参里**；请求体传了也不影响落库身份。
+- **`role` 不暴露**：由 `event_type` 推导（`user_input` / `user_annotation` → `user`，
+  其余 → `agent`）。先给默认 `agent` 再传给 Service 会让 `user_input` 因角色不一致
+  被拒；R6-2 也不开放人工声明 `system`。
+- **`evidence_level` 不暴露**：Service 固定写 `agent_reported`。v1 没有可验证的
+  Main 运行时观察通道，Agent 不能自行声明 `tool_result` / `runtime_observed`。
 - `parent_event_id` / `to_event_id` 必须属于同一 journey，否则 `VALIDATION_ERROR`（防越权）。
-- `user_annotation` 强制 `role='user'`。
+- `user_annotation` 的 role 恒为 `user`（由推导保证，不是入参）。
 
 **3. `update_agent_journey_event`** · scope `agent_journey:write` · 无幂等键（乐观锁）
 
@@ -640,14 +646,18 @@ output: { event: AgentJourneyEvent, sync_status }
 ```ts
 input: z.object({
   journey_id: z.string().uuid(),
-  status: z.enum(['running','paused','failed','cancelled','abandoned']),
-  expected_updated_at: z.number().int(),
-  reason: z.string().max(2_000).optional()
+  // **不暴露 `abandoned`**：R6-1.1 没有超时维护机制，它当前不可达；
+  // 给一个永远无法成功的状态操作只会让调用方以为自己成功了。
+  // **不暴露 `completed`**：只能由 Outcome 事件在同一事务里完成。
+  // **不暴露 `reason`**：Service 没有对应存储字段；要留原因应写成一条独立 Event，
+  // 而不是传进一个没有落点的参数。
+  status: z.enum(['running','paused','failed','cancelled']),
+  expected_updated_at: z.number().int()
 })
 output: { journey: AgentJourney, sync_status }
 ```
 - 只接受 §9.2 允许的转移；`completed` 不在此枚举内 → **无法用它改终态**。
-- `cancelled` 会同时清掉进行中的临时状态，但**不删**已写入的事件（§16）。
+- `cancelled` 会把开放中的执行类事件收敛为 `cancelled`（**保留历史，不删事件**，§16）。
 
 **5. `list_agent_journeys`** · scope `agent_journey:read`
 
@@ -668,10 +678,16 @@ input: z.object({
   journey_id: z.string().uuid(),
   event_types: z.array(z.enum([...9 种])).max(9).optional(),
   since_sequence: z.number().int().min(0).optional(),
-  include_layout: z.boolean().optional()
+  limit: z.number().int().min(1).max(50).optional()   // 与 Service 的分页参数一致
 })
-output: { journey, events: AgentJourneyEvent[], edges: AgentJourneyEdge[], layout?: AgentJourneyLayout[], sync_status }
+output: { journey, events: AgentJourneyEvent[], edges: AgentJourneyEdge[], sync_status }
 ```
+> **不返回 Layout、不接受 `include_layout`**：R6-1 只建了表，没有 Layout
+> Repository / 查询逻辑（排期 R6-4）。
+>
+> **`edges` 不是时间线**：顺序永远由 `events[].sequence` 给出；若按
+> `event_types` 过滤，返回的边可能有一端不在 `events` 里——那是**关系**而不是
+> 顺序，调用方不得把它当时间线读（§8.3）。
 
 ### 10.4 身份上下文来源 **[设计确定]**
 
@@ -1321,6 +1337,52 @@ Service」结构断言，且等同于为 MCP 工具铺路。装配留到 R6-2。
 `mcp-bridge/request-router.ts` 的 `replayFromIdempotency()` **仍然只比对 digest**。
 本阶段**不改** MCP Router；该边界与 `agentJourney` / `agentJourneyEvent` 的
 `replayIdempotent()` 分支一起记在 §19.2，属 **R6-2 必做**。
+
+---
+
+## 20. R6-2 实现落地（MCP Integration）
+
+### 20.1 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `shared/contracts/mcp.ts` | 新增 `ToolExecutionContext` / `LocalToolExecutionContext` / `isLocalToolContext`；`MCP_SCOPES` 14 → **16**；`MCP_SCOPE_GROUP_KEYS` + `MCP_SCOPE_GROUPS` 增 `agentJourney` |
+| `shared/mcp/tool-schemas.ts` | 新增 6 个工具（27 → **33**），入参按 §10.3 修正版实现 |
+| `main/application/mcp-tools/tool-executor.ts` | `ExecuteToolOptions.context` **必填**；第 5 步把完整 context 传给 Handler |
+| `main/application/mcp-tools/handlers.ts` | `ToolHandler` 增第 3 参；6 个 Journey Handler + `requireLocalContext` + **DTO 映射（首次执行与重放共用）** |
+| `main/application/mcp-tools/tool-services.ts` | 增 `agentJourneys`（仍**不含** `db` / `clients`） |
+| `main/mcp-bridge/request-router.ts` | 认证后构造 Local context；`IDEMPOTENT_TOOLS` +2；`replayFromIdempotency` **先比 `toolName` 再比 digest**；`replayIdempotent` 增 `agentJourney` / `agentJourneyEvent` 分支 |
+| `main/remote/request-handler.ts` | **只补 context**（grant 回查全部通过后由 `InstalledGrant` 构造 `remote_grant`） |
+| `main/index.ts` | 构造 `AgentJourneysService`（复用同一 `ApplicationEvents`），注入 Bridge `RouterContext` 与 Remote `ToolServices` |
+| `mcp/tools/agent-journey.ts`（**新增**）+ `mcp/stdio.ts` | 6 个工具的 stdio 注册——**见 20.3 的范围说明** |
+| i18n `mcp.ts` / `onboarding.ts`（zh + en） | 分组名 `agentJourney`、两条 `scopeLabel`、`fullAccess` 文案补 Journey |
+| 测试 | `mcp-journey-tools.test.ts`（13）、`mcp-journey-bridge.test.ts`（20）；15 个既有 fixture 补 `agentJourneys`；27→33 / 5→6 的结构断言 |
+
+### 20.2 关键决策
+
+1. **`role` / `evidence_level` 不进工具入参**：前者由 `event_type` 推导，后者固定 `agent_reported`。暴露 `role` 会让调用方把 `plan` 说成用户说的；暴露 `evidence_level` 等于让 Agent 自己声明「系统已验证」。
+2. **`status` 可选且无 Zod 默认值**：默认由 Service 按 `event_type` 决定（陈述类 `completed`、执行类 `planned`）。写死 `default('completed')` 会把执行类事件直接建成终态，绕过整个状态机。
+3. **`update_agent_journey_status` 只收 `running|paused|failed|cancelled`**：不暴露 `abandoned`（R6-1.1 无超时机制，不可达）、不暴露 `completed`（只能由 Outcome 同事务完成）、不暴露 `reason`（无存储字段）。
+4. **`get_agent_journey` 不返回 Layout**：R6-1 只建了表，Layout Repository 排期 R6-4。`edges` 是关系不是时间线，过滤后可能有一端不在结果里——已在 description 中写明。
+5. **DTO 单一来源**：`agentJourneyDto` / `agentJourneyEventDto` / `agentJourneyEdgeDto` + `startAgentJourneyData` / `appendAgentJourneyEventData` 被 **Handler 与 `replayIdempotent` 共用**，两条路径的键集完全一致（`replayed` 由 DTO 给 `false`、路由层重放时覆盖成 `true`）。
+6. **Journey 六个工具全部 Local-only**：`requireLocalContext` 同时校验 `channel === 'local'` 与 `actor.kind === 'mcp_client'`（类型守卫，**不用类型断言**）。即使 Remote 白名单因配置错误混入写工具，Handler 也会拒。
+7. **受限预设不被扩大**：`fullAccess = [...MCP_SCOPES]` 自动含新权限；`personalGrowthCollab` / `personalGrowth` / `recordsOnly` **一个都不加**——不能因为加了工具就扩大用户已有受限预设的授权承诺，现有 Client 也不会被自动升级。
+
+### 20.3 范围说明（一处超出任务书「允许修改」清单）
+
+任务书 §八 的允许清单**没有**列出 `src/mcp/`，但 §一 要求「六个 Journey MCP Tools」且验收标准是「Codex / WorkBuddy 可以通过各自独立的 Local MCP Client Token 创建、追加、更新、读取」——**不注册就不可能被 `tools/list` 发现**。因此新增了：
+
+- `src/mcp/tools/agent-journey.ts`（照抄 `work-context.ts` 的注册模式，无业务逻辑）；
+- `src/mcp/stdio.ts` 增一行 `registerAgentJourneyTools(...)`。
+
+这**不是**「大规模重构」：两个文件合计只做「把 `TOOL_DEFINITIONS` 里的定义注册进 MCP server」。不加它们，`mcp-protocol.integration.test.ts` 的「`tools/list` 与 `TOOL_DEFINITIONS` 一致」会直接红——而把它改成 27 属于**弱化测试**，是明令禁止的。
+
+### 20.4 已知留白
+
+- **Layout Repository / 读写**：R6-4。
+- **Skill、Canvas Renderer、导出 UI、Capture Mode 设置页**：R6-3 / R6-4 / R6-5。
+- **Remote 写入**：仍被 OQ-16 挡住（§17 十条门槛未变）；`REMOTE_TOOLS` 与 Cloud `mcp-http/tools.ts` 均**未改动**。
+- **`mcp-bridge/audit-log.ts` 未改**：跨工具幂等键的拒绝已同时落在 Service 层（R6-1.1）与 `replayFromIdempotency`（本阶段），无需再动审计。
 
 ---
 

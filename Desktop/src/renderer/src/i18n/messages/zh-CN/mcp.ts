@@ -28,7 +28,8 @@ export const mcp = {
       coffee: '咖啡',
       workContext: '工作上下文',
       canvas: '画布',
-      direction: '个人方向'
+      direction: '个人方向',
+      agentJourney: 'Agent Journey'
     }
   },
   clients: {

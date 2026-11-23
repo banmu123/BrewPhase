@@ -44,8 +44,8 @@ describe('常量面', () => {
     }
   })
 
-  it('27 个 Local 工具里只有 8 个进入远程面', () => {
-    expect(Object.keys(TOOL_DEFINITIONS)).toHaveLength(27)
+  it('33 个 Local 工具里只有 8 个进入远程面（R6-2 新增的 Journey 工具不在其中）', () => {
+    expect(Object.keys(TOOL_DEFINITIONS)).toHaveLength(33)
     expect(REMOTE_TOOLS.length).toBeLessThan(Object.keys(TOOL_DEFINITIONS).length)
   })
 

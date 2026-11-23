@@ -2,11 +2,17 @@ import { eq } from 'drizzle-orm'
 import { TOOL_DEFINITIONS, type ToolName } from '../../shared/mcp/tool-schemas'
 import type { AuthenticatedClient, McpClientService } from '../application/authorization/permission-service'
 import { ApplicationError as AppError } from '../application/errors'
-import { createShape, type HandlerResult } from '../application/mcp-tools/handlers'
+import {
+  appendAgentJourneyEventData,
+  createShape,
+  startAgentJourneyData,
+  type HandlerResult
+} from '../application/mcp-tools/handlers'
 import { executeTool, messageOf } from '../application/mcp-tools/tool-executor'
 import type { ToolServices } from '../application/mcp-tools/tool-services'
+import type { ToolExecutionContext } from '../../shared/contracts/mcp'
 import type { Db } from '../database/client'
-import { recordTags } from '../database/schema'
+import { agentJourneyEvents, recordTags } from '../database/schema'
 import { digestParams, lookupIdempotency, recordIdempotency, writeAudit } from './audit-log'
 import { BRIDGE_PROTOCOL_VERSION, type BridgeRequest, type BridgeResponse } from './bridge-contract'
 
@@ -34,7 +40,10 @@ const IDEMPOTENT_TOOLS: ReadonlySet<ToolName> = new Set([
   'add_record_to_canvas',
   'create_canvas_note',
   'create_work_context',
-  'link_work_context_resource'
+  'link_work_context_resource',
+  // Agent Journey（R6-2）：两者都要求 idempotency_key。
+  'start_agent_journey',
+  'append_agent_journey_event'
 ])
 
 export function routeBridgeRequest(ctx: RouterContext, request: BridgeRequest): BridgeResponse {
@@ -60,9 +69,18 @@ export function routeBridgeRequest(ctx: RouterContext, request: BridgeRequest): 
     return fail(requestId, 'UNAUTHORIZED', messageOf(error))
   }
 
+  // 身份**只**来自刚刚认证通过的 `AuthenticatedClient.id`。绝不从
+  // `request.params`（`source_client_id` / `client_id` / `source_agent`）取，
+  // 也不存全局变量——Main 是多客户端并发的长期进程，全局身份会串号。
+  const context: ToolExecutionContext = {
+    channel: 'local',
+    actor: { kind: 'mcp_client', clientId: client.id }
+  }
+
   const outcome = executeTool(request.tool, request.params ?? {}, {
     services: ctx,
     scopes: client.scopes,
+    context,
     // Local 的幂等表：必须是「Zod 已通过、Handler 未执行」的那一刻，
     // 且摘要要用解析后的参数——所以由执行层的 replay 钩子接入。
     replay: ({ toolName, params }) => replayFromIdempotency(ctx, client.id, toolName, params)
@@ -152,7 +170,10 @@ function replayFromIdempotency(
   const existing = lookupIdempotency(ctx.db, clientId, key)
   if (!existing) return undefined
 
-  if (existing.requestDigest !== digestParams(params)) {
+  // **先比工具身份，再比参数摘要**。PK 是 (client_id, key)，不含 tool_name：
+  // 同一个 Client 用同一个 key 调另一个工具时，若只看摘要，参数恰好相同就会
+  // 被当成「重试」，把 A 工具的结果当成 B 工具的成功返回（跨工具污染）。
+  const reuse = (reason: string): never => {
     writeAudit(ctx.db, {
       clientId,
       toolName,
@@ -160,10 +181,14 @@ function replayFromIdempotency(
       errorCode: 'IDEMPOTENCY_KEY_REUSE',
       idempotencyKey: key
     })
-    throw new AppError(
-      'IDEMPOTENCY_KEY_REUSE',
-      'this idempotency_key was already used with different params'
-    )
+    throw new AppError('IDEMPOTENCY_KEY_REUSE', reason)
+  }
+
+  if (existing.toolName !== toolName) {
+    return reuse('this idempotency_key was already used by a different tool')
+  }
+  if (existing.requestDigest !== digestParams(params)) {
+    return reuse('this idempotency_key was already used with different params')
   }
 
   return {
@@ -203,6 +228,32 @@ function replayIdempotent(
         resource: ctx.workContexts.resourceForMcp(entityId),
         created: false
       })
+    // ---- Agent Journey（R6-2）：DTO 与首次执行**同一套构造函数** ----
+    case 'agentJourney':
+      // 用 Service 读回（顺带校验存在）：实体没了就明确 NOT_FOUND，
+      // 不伪造一个「成功」。
+      return startAgentJourneyData(ctx.agentJourneys.getJourney(entityId).journey, false)
+    case 'agentJourneyEvent': {
+      const row = ctx.db
+        .select()
+        .from(agentJourneyEvents)
+        .where(eq(agentJourneyEvents.id, entityId))
+        .get()
+      if (!row) throw new AppError('NOT_FOUND', `agent journey event ${entityId} no longer exists`)
+      const detail = ctx.agentJourneys.getJourney(row.journeyId)
+      const event = detail.events.find((item) => item.id === row.id)
+      if (!event) throw new AppError('NOT_FOUND', `agent journey event ${entityId} no longer exists`)
+      return appendAgentJourneyEventData(
+        {
+          event,
+          // 只回放**这条事件发出的**边，不要把整个 Journey 的边都算进来。
+          edges: detail.edges.filter((edge) => edge.fromEventId === event.id),
+          sequence: event.sequence,
+          journey: detail.journey
+        },
+        false
+      )
+    }
     default:
       throw new AppError('INTERNAL_ERROR', `cannot replay ${toolName}: unknown entity type ${String(entityType)}`)
   }

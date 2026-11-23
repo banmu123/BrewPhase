@@ -7,6 +7,8 @@ import type { McpScope } from '@shared/contracts/mcp'
 import { openDatabase, type DatabaseHandle } from '../../src/main/database/client'
 import { WorkContextService } from '../../src/main/application/work-context/work-context-service'
 import { PersonalDirectionService } from '../../src/main/application/personal-direction/personal-direction-service'
+import type { ToolExecutionContext } from '../../src/shared/contracts/mcp'
+import { AgentJourneyService } from '../../src/main/application/agent-journey/agent-journey-service'
 import { mcpOperationLog, records } from '../../src/main/database/schema'
 import { ApplicationEvents } from '../../src/main/application/events/application-events'
 import { RecordService } from '../../src/main/application/records/record-service'
@@ -54,7 +56,8 @@ beforeEach(() => {
     coffee: new CoffeeService(handle.db),
     canvas: new CanvasService(handle.db, handle.deviceId, events),
     workContexts: new WorkContextService(handle.db, events),
-    personalDirection: new PersonalDirectionService(handle.db, events)
+    personalDirection: new PersonalDirectionService(handle.db, events),
+    agentJourneys: new AgentJourneyService(handle.db, events),
   }
 })
 
@@ -287,7 +290,7 @@ describe('CB-11 ~ CB-14 幂等与返回形状', () => {
 })
 
 describe('CB-15 工具清单', () => {
-  it('27 个工具，名称与顺序逐项相等', () => {    expect(TOOL_NAMES).toEqual([
+  it('33 个工具，名称与顺序逐项相等', () => {    expect(TOOL_NAMES).toEqual([
       'search_records',
       'get_record',
       'list_record_tags',
@@ -314,20 +317,40 @@ describe('CB-15 工具清单', () => {
       'get_direction_overview',
       'propose_current_state',
       'propose_direction',
-      'propose_stage_goal'
+      'propose_stage_goal',
+      'start_agent_journey',
+      'append_agent_journey_event',
+      'update_agent_journey_event',
+      'update_agent_journey_status',
+      'list_agent_journeys',
+      'get_agent_journey'
     ])
-    expect(TOOL_NAMES).toHaveLength(27)
+    expect(TOOL_NAMES).toHaveLength(33)
   })
 })
 
+/** R6-2：`context` 是必填的可信调用者上下文（这里用 Local 形态）。 */
+const LOCAL_CONTEXT: ToolExecutionContext = {
+  channel: 'local',
+  actor: { kind: 'mcp_client', clientId: 'client-test-0000-4000-8000-000000000001' }
+}
+
 describe('共享执行层可脱离 Bridge 直接调用', () => {
-  it('只给 services + scopes 就能执行，授权不足在执行层内部被拦下', () => {
+  it('给 services + scopes + context 就能执行，授权不足在执行层内部被拦下', () => {
     // 这条用例证明 Phase 1.1A 的目标达成：Remote 将来不需要 socket，
-    // 也不需要 MCP Client Token，只要能算出自己的 scopes。
-    const allowed = executeTool('list_record_tags', {}, { services: ctx, scopes: ['tags:read'] })
+    // 也不需要 MCP Client Token，只要能算出自己的 scopes 与 context。
+    const allowed = executeTool('list_record_tags', {}, {
+      services: ctx,
+      scopes: ['tags:read'],
+      context: LOCAL_CONTEXT
+    })
     expect(allowed.ok).toBe(true)
 
-    const denied = executeTool('list_record_tags', {}, { services: ctx, scopes: ['records:read'] })
+    const denied = executeTool('list_record_tags', {}, {
+      services: ctx,
+      scopes: ['records:read'],
+      context: LOCAL_CONTEXT
+    })
     expect(denied.ok).toBe(false)
     if (!denied.ok) {
       expect(denied.stage).toBe('scope')
@@ -339,7 +362,11 @@ describe('共享执行层可脱离 Bridge 直接调用', () => {
   })
 
   it('未知工具在执行层同样被拦下（白名单的唯一入口）', () => {
-    const unknown = executeTool('drop_database', {}, { services: ctx, scopes: ALL_SCOPES })
+    const unknown = executeTool('drop_database', {}, {
+      services: ctx,
+      scopes: ALL_SCOPES,
+      context: LOCAL_CONTEXT
+    })
     expect(unknown.ok).toBe(false)
     if (!unknown.ok) {
       expect(unknown.stage).toBe('tool')

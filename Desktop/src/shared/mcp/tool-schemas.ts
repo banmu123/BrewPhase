@@ -386,6 +386,165 @@ export const TOOL_DEFINITIONS = {
       obstacles: z.string().max(2_000).optional(),
       work_context_id: uuid.optional()
     })
+  },
+
+  // MARK: - Agent Journey（R6-2，Local MCP only）
+
+  /**
+   * 六个 Journey 工具的共同约定：
+   * - **入参里没有 `source_client_id` / `role` / `evidence_level` / `capture_mode`**：
+   *   身份取自认证后的 `ToolExecutionContext`，role 与 evidence 由 Service 按
+   *   `event_type` 推导，采集模式只有用户能在设置里改。请求体给不了这些字段，
+   *   就不可能伪造来源。
+   * - 写操作带 `idempotency_key`（`start:<uuid>` / `evt:<uuid>`），update 类靠
+   *   `expected_updated_at` 乐观锁。
+   * - 全部 **Local-only**：Remote 的白名单是写死的只读 8 项，见 §五。
+   */
+  start_agent_journey: {
+    scope: 'agent_journey:write',
+    write: true,
+    description:
+      'Start recording an Agent Journey: one concrete task this agent is about to work on, ' +
+      'kept as a personal asset the user can read, relate and reuse later. Creates the journey ' +
+      'in `created` state with the caller identity taken from authentication, never from this ' +
+      'payload. Only do this for work worth keeping (a real debugging/analysis/build task); ' +
+      'skip it for one-off questions, translation or formatting. Reuse `idempotency_key` on retry.',
+    input: z.object({
+      title: z.string().trim().min(1).max(200),
+      goal: z.string().max(2_000).optional(),
+      work_context_id: uuid.optional(),
+      source_agent: z.string().max(120).optional(),
+      model: z.string().max(120).optional(),
+      idempotency_key: idempotencyKey
+    })
+  },
+
+  append_agent_journey_event: {
+    scope: 'agent_journey:write',
+    write: true,
+    description:
+      'Append one significant step to an Agent Journey (plan, decision, execution, observation, ' +
+      'revision, verification, outcome, user annotation). Submit milestones, not every message. ' +
+      '`status` is optional and has NO default here: the server decides — statement events are ' +
+      'completed on creation, while execution/verification start as `planned` and must be ' +
+      'advanced with update_agent_journey_event. Never claim a test passed without running it; ' +
+      'record the failure and revise instead of overwriting history. Appending an `outcome` with ' +
+      '`journey_status: "completed"` finishes the journey in the same transaction.',
+    input: z.object({
+      journey_id: uuid,
+      event_type: z.enum([
+        'user_input',
+        'plan',
+        'decision',
+        'execution',
+        'observation',
+        'revision',
+        'verification',
+        'outcome',
+        'user_annotation'
+      ]),
+      // 可选且**不设默认值**：默认由 Service 按 event_type 决定。
+      status: z.enum(['planned', 'running', 'completed', 'failed', 'skipped', 'cancelled']).optional(),
+      title: z.string().trim().min(1).max(200),
+      summary: z.string().max(2_000).optional(),
+      content: z.string().max(20_000).optional(),
+      reason: z.string().max(2_000).optional(),
+      attempt_id: uuid.optional(),
+      parent_event_id: uuid.optional(),
+      edges: z
+        .array(
+          z.object({
+            to_event_id: uuid,
+            relationship_type: z.enum(['depends_on', 'branch_from', 'revises', 'retries'])
+          })
+        )
+        .max(8)
+        .optional(),
+      source_agent: z.string().max(120).optional(),
+      model: z.string().max(120).optional(),
+      occurred_at: z.number().int().optional(),
+      metadata: z.record(z.string(), z.unknown()).optional(),
+      journey_status: z.literal('completed').optional(),
+      idempotency_key: idempotencyKey
+    })
+  },
+
+  update_agent_journey_event: {
+    scope: 'agent_journey:write',
+    write: true,
+    description:
+      'Advance the status of an execution or verification event (planned -> running -> completed ' +
+      '| failed, plus skipped/cancelled exits). Statement events are immutable and cannot be ' +
+      'updated. Only `status` is accepted — content fields are deliberately absent so history ' +
+      'cannot be rewritten; to correct something, append a `revision` event instead. Requires ' +
+      '`expected_updated_at` (optimistic lock).',
+    input: z.object({
+      event_id: uuid,
+      status: z.enum(['planned', 'running', 'completed', 'failed', 'skipped', 'cancelled']),
+      expected_updated_at: z.number().int()
+    })
+  },
+
+  update_agent_journey_status: {
+    scope: 'agent_journey:write',
+    write: true,
+    description:
+      'Change the lifecycle state of a journey: running, paused (stop collecting), failed, or ' +
+      'cancelled (also marks open execution events cancelled, keeping history). `completed` is ' +
+      'not accepted here — only an `outcome` event finishes a journey, in the same transaction. ' +
+      'Cancelled and completed are irreversible. Requires `expected_updated_at`.',
+    input: z.object({
+      journey_id: uuid,
+      status: z.enum(['running', 'paused', 'failed', 'cancelled']),
+      expected_updated_at: z.number().int()
+    })
+  },
+
+  list_agent_journeys: {
+    scope: 'agent_journey:read',
+    write: false,
+    description:
+      'List recorded Agent Journeys, newest first. Pure read: it never changes journey state, ' +
+      'never sweeps timeouts and never writes anything. Use with get_agent_journey to read one.',
+    input: z.object({
+      status: z
+        .enum(['created', 'running', 'paused', 'failed', 'completed', 'cancelled', 'abandoned'])
+        .optional(),
+      work_context_id: uuid.optional(),
+      limit: z.number().int().min(1).max(50).optional(),
+      offset: z.number().int().min(0).optional()
+    })
+  },
+
+  get_agent_journey: {
+    scope: 'agent_journey:read',
+    write: false,
+    description:
+      'Read one Agent Journey with its events (ascending by `sequence` — the only ordering ' +
+      'truth) and its edges. Filter by `event_types`/`since_sequence` for large journeys. Note ' +
+      'that edges are relationships, not the timeline: after filtering, an edge may point to an ' +
+      'event that is not in `events`. Layout is not returned in this version.',
+    input: z.object({
+      journey_id: uuid,
+      event_types: z
+        .array(
+          z.enum([
+            'user_input',
+            'plan',
+            'decision',
+            'execution',
+            'observation',
+            'revision',
+            'verification',
+            'outcome',
+            'user_annotation'
+          ])
+        )
+        .max(9)
+        .optional(),
+      since_sequence: z.number().int().min(0).optional(),
+      limit: z.number().int().min(1).max(50).optional()
+    })
   }
 } satisfies Record<string, ToolDefinition>
 

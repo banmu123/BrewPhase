@@ -21,6 +21,7 @@ import { WorkspaceFileService } from './application/local-workspace/workspace-fi
 import { ContextBuilder } from './application/local-workspace/context-builder'
 import { ReplyIntelligenceService } from './application/reply-intelligence/reply-intelligence-service'
 import { PersonalDirectionService } from './application/personal-direction/personal-direction-service'
+import { AgentJourneyService } from './application/agent-journey/agent-journey-service'
 import { CoffeeService } from './application/coffee/coffee-service'
 import { CanvasService } from './application/canvas/canvas-service'
 import { McpClientService } from './application/authorization/permission-service'
@@ -251,6 +252,9 @@ function bootstrap(): void {
   const clients = new McpClientService(db.db)
   const workContexts = new WorkContextService(db.db, events)
   const personalDirection = new PersonalDirectionService(db.db, events)
+  // Agent Journey（R6-2）：复用**同一个** ApplicationEvents——第二份实例会让
+  // Renderer 只收到一半的 `app:changed`。
+  const agentJourneys = new AgentJourneyService(db.db, events)
   // AI Card Workspace Bridge（Phase 1）：登记 / 绑定 / 只读文件 / 上下文。
   const localWorkspaceService = new LocalWorkspaceService(db.db, events)
   const workspaceFileService = new WorkspaceFileService(db.db)
@@ -281,7 +285,7 @@ function bootstrap(): void {
   if (platformSupportsBridge()) {
     const server = new BridgeServer(
       bridgePaths(app.getPath('userData')),
-      { db: db.db, clients, records, coffee, canvas, workContexts, personalDirection },
+      { db: db.db, clients, records, coffee, canvas, workContexts, personalDirection, agentJourneys },
       APP_VERSION
     )
     bridgeServer = server
@@ -583,7 +587,7 @@ function bootstrap(): void {
   // 不依赖 Renderer，也不依赖用户打开设置页——默认关闭时零出站连接。
   remoteService = createRemoteService({
     db: db.db,
-    services: { records, coffee, canvas, workContexts, personalDirection },
+    services: { records, coffee, canvas, workContexts, personalDirection, agentJourneys },
     currentUserId: () => account.snapshot().user?.id ?? null,
     /**
      * 确认页要回答「这台设备会绑到哪个账号」——用账号的展示名（通常就是邮箱

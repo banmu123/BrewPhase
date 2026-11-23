@@ -9,6 +9,7 @@ import { CoffeeService } from '../../src/main/application/coffee/coffee-service'
 import { CanvasService } from '../../src/main/application/canvas/canvas-service'
 import { WorkContextService } from '../../src/main/application/work-context/work-context-service'
 import { PersonalDirectionService } from '../../src/main/application/personal-direction/personal-direction-service'
+import { AgentJourneyService } from '../../src/main/application/agent-journey/agent-journey-service'
 import { mcpOperationLog } from '../../src/main/database/schema'
 import { createRequestHandler, computeRequestHash, writeRemoteAudit } from '../../src/main/remote/request-handler'
 import { createResultCache } from '../../src/main/remote/result-cache'
@@ -47,7 +48,8 @@ function bootstrap() {
     coffee: new CoffeeService(handle.db),
     canvas: new CanvasService(handle.db, handle.deviceId, events),
     workContexts: new WorkContextService(handle.db, events),
-    personalDirection: new PersonalDirectionService(handle.db, events)
+    personalDirection: new PersonalDirectionService(handle.db, events),
+    agentJourneys: new AgentJourneyService(handle.db, events),
   }
   const grantState = emptyGrantContext()
   applyHelloOk(grantState, makeHelloOk({ grant_epoch: 1, allowed_tools: ['search_records'], grants: [] }))

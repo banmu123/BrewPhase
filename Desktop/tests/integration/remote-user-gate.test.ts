@@ -9,6 +9,7 @@ import { CoffeeService } from '../../src/main/application/coffee/coffee-service'
 import { CanvasService } from '../../src/main/application/canvas/canvas-service'
 import { WorkContextService } from '../../src/main/application/work-context/work-context-service'
 import { PersonalDirectionService } from '../../src/main/application/personal-direction/personal-direction-service'
+import { AgentJourneyService } from '../../src/main/application/agent-journey/agent-journey-service'
 import type { ToolServices } from '../../src/main/application/mcp-tools/tool-services'
 import { createRemoteService, type RemoteService } from '../../src/main/remote/remote-service'
 import {
@@ -77,7 +78,8 @@ beforeEach(async () => {
     coffee: new CoffeeService(handle.db),
     canvas: new CanvasService(handle.db, handle.deviceId, events),
     workContexts: new WorkContextService(handle.db, events),
-    personalDirection: new PersonalDirectionService(handle.db, events)
+    personalDirection: new PersonalDirectionService(handle.db, events),
+    agentJourneys: new AgentJourneyService(handle.db, events),
   }
   currentUserId = USER_A
   gateway = null

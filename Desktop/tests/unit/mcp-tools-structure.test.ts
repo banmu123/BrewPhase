@@ -62,6 +62,7 @@ describe('共享执行层的依赖方向', () => {
     expect(source).not.toMatch(/from\s+'[^']*database\//)
     const imports = [...source.matchAll(/from\s+'([^']+)'/g)].map((match) => match[1])
     expect(imports.sort()).toEqual([
+      '../agent-journey/agent-journey-service',
       '../canvas/canvas-service',
       '../coffee/coffee-service',
       '../personal-direction/personal-direction-service',
@@ -86,10 +87,27 @@ describe('ToolServices 的类型边界', () => {
     expect(hasClients).toBe(false)
   })
 
-  it('恰好暴露五个业务 Service', () => {
+  it('恰好暴露六个业务 Service（R6-2 起含 agentJourneys）', () => {
     type Keys = keyof ToolServices
-    const keys: Keys[] = ['records', 'coffee', 'canvas', 'workContexts', 'personalDirection']
-    expect(keys).toHaveLength(5)
+    const keys: Keys[] = [
+      'records',
+      'coffee',
+      'canvas',
+      'workContexts',
+      'personalDirection',
+      'agentJourneys'
+    ]
+    expect(keys).toHaveLength(6)
+    // 类型层必须真的齐全：少一个就编译不过（而不是运行时才发现 undefined）。
+    const complete: Record<Keys, true> = {
+      records: true,
+      coffee: true,
+      canvas: true,
+      workContexts: true,
+      personalDirection: true,
+      agentJourneys: true
+    }
+    expect(Object.keys(complete)).toHaveLength(6)
   })
 })
 
@@ -109,17 +127,17 @@ describe('routeBridgeRequest 的契约与调用关系', () => {
     const source = stripComments(readFileSync(ROUTER, 'utf8'))
     expect(source).toMatch(/import\s+\{[^}]*executeTool[^}]*\}\s+from\s+'\.\.\/application\/mcp-tools\/tool-executor'/)
     expect(source).toMatch(/executeTool\(/)
-    // 27 个 Handler 只在 handlers.ts 定义一次。
+    // 33 个 Handler 只在 handlers.ts 定义一次。
     expect(source).not.toMatch(/const HANDLERS\b/)
     expect(source).not.toMatch(/TOOL_HANDLERS\[/)
   })
 })
 
 describe('工具清单不被改动', () => {
-  it('TOOL_DEFINITIONS 恰好 27 项，且 Handler 与定义一一对应', () => {
-    expect(Object.keys(TOOL_DEFINITIONS)).toHaveLength(27)
+  it('TOOL_DEFINITIONS 恰好 33 项，且 Handler 与定义一一对应', () => {
+    expect(Object.keys(TOOL_DEFINITIONS)).toHaveLength(33)
     expect(Object.keys(TOOL_HANDLERS).sort()).toEqual([...TOOL_NAMES].sort())
-    expect(TOOL_NAMES).toHaveLength(27)
+    expect(TOOL_NAMES).toHaveLength(33)
   })
 })
 

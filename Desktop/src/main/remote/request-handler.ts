@@ -4,6 +4,7 @@ import { executeTool } from '../application/mcp-tools/tool-executor'
 import type { ToolServices } from '../application/mcp-tools/tool-services'
 import { writeAuditResult } from '../mcp-bridge/audit-log'
 import type { RemoteErrorCode, RemoteReq, RemoteScope } from '../../shared/contracts/remote'
+import type { ToolExecutionContext } from '../../shared/contracts/mcp'
 import { effectiveScopes, effectiveTools, isRetryableRemoteError, scopeForTool, toRemoteErrorCode } from './remote-policy'
 import type { GrantContextState } from './grant-context'
 import { lookupGrant } from './grant-context'
@@ -313,9 +314,18 @@ export function createRequestHandler(deps: RequestHandlerDeps) {
       })
     }
 
+    // 身份只来自**已经回查通过**的 grant（顺序契约：查询 → 撤销状态 → 用户
+    // 绑定 → scope → 工具白名单，全部通过之后才走到这里）。
+    // **绝不**从 `req.arguments` 构造 clientId——那是请求体，谁都能写。
+    const context: ToolExecutionContext = {
+      channel: 'remote',
+      actor: { kind: 'remote_grant', clientId: grant.clientId, grantCtx: grant.grantCtx }
+    }
+
     const outcome = executeTool(req.tool, req.arguments, {
       services: deps.services,
-      scopes
+      scopes,
+      context
       // 不传 replay：Remote 的去重在准入链（键是 delivery_id），不是持久幂等表。
     })
     const durationMs = Math.round(deps.nowMono() - startedMono)

@@ -1,15 +1,35 @@
+import { isLocalToolContext, type ToolExecutionContext } from '../../../shared/contracts/mcp'
 import type { WorkContextStatus } from '../../../shared/contracts/work-context'
 import { type ToolName } from '../../../shared/mcp/tool-schemas'
+import type {
+  AgentJourney,
+  AgentJourneyEdge,
+  AgentJourneyEvent,
+  AgentJourneyEventType,
+  AgentJourneyEventStatus,
+  AgentJourneyStatus
+} from '../../database/repositories/agent-journeys'
+// `digestParams` 是**纯函数**（sha256 规范化 JSON），从 Repository 层取用不给
+// Handler 任何 `db` 句柄、也不让它碰 SQL——Handler 仍然只调 Service。
+// 必须与 `replayFromIdempotency` 用同一个实现，否则重放永远对不上摘要。
+import { digestParams } from '../../database/repositories/mcp-idempotency'
+import { ApplicationError } from '../errors'
 import type { WorkContextService } from '../work-context/work-context-service'
+import type { AgentJourneyCallContext } from '../agent-journey/agent-journey-service'
 import type { ToolServices } from './tool-services'
 
 /**
- * 27 个工具的实现。**从 `mcp-bridge/request-router.ts` 原样搬移**
+ * 33 个工具的实现。**从 `mcp-bridge/request-router.ts` 原样搬移**
  * （Phase 1.1A）：每一行仍是 `services.x.y(...)`，没有业务逻辑改动。
  *
  * 边界：这里只有「参数 → Service 调用 → 结果形状」。认证、scope、Zod、
  * 幂等、审计、协议版本全部在调用方——因此同一个 Handler 既能被 Local
- * Bridge 用，也能被将来的 Remote 入口用，而两边各自守自己的授权。
+ * Bridge 用，也能被 Remote 入口用，而两边各自守自己的授权。
+ *
+ * 第三个参数 `context` 是**认证之后**构造的可信调用者上下文（R6-2）。
+ * 既有 27 个 Handler 不用它（TypeScript 允许实现少于形参个数），只有
+ * Agent Journey 这类需要记录「是谁提交的」才读它——**绝不允许从 `params`
+ * 里找身份，也不允许从全局变量里读「当前 client」**。
  */
 
 export type HandlerResult = {
@@ -18,7 +38,11 @@ export type HandlerResult = {
   entityId?: string
 }
 
-export type ToolHandler = (services: ToolServices, params: Record<string, unknown>) => HandlerResult
+export type ToolHandler = (
+  services: ToolServices,
+  params: Record<string, unknown>,
+  context: ToolExecutionContext
+) => HandlerResult
 
 export const TOOL_HANDLERS: Record<ToolName, ToolHandler> = {
   search_records: (services, params) => ({
@@ -322,6 +346,105 @@ export const TOOL_HANDLERS: Record<ToolName, ToolHandler> = {
         note: 'Proposal only — the user must confirm it in BrewPhase.'
       }
     }
+  },
+
+  // MARK: - Agent Journey（R6-2，Local MCP only）
+
+  start_agent_journey: (services, params, context) => {
+    const call = journeyCallContext(context, 'start_agent_journey', params)
+    const result = services.agentJourneys.createJourney(call, {
+      title: params.title as string,
+      goal: params.goal as string | undefined,
+      workContextId: (params.work_context_id as string | undefined) ?? null,
+      sourceAgent: params.source_agent as string | undefined,
+      model: params.model as string | undefined
+    })
+    return {
+      data: startAgentJourneyData(result.journey, result.created),
+      entityType: 'agentJourney',
+      entityId: result.journey.id
+    }
+  },
+
+  append_agent_journey_event: (services, params, context) => {
+    const call = journeyCallContext(context, 'append_agent_journey_event', params)
+    const result = services.agentJourneys.appendEvent(call, {
+      journeyId: params.journey_id as string,
+      eventType: params.event_type as AgentJourneyEventType,
+      status: params.status as AgentJourneyEventStatus | undefined,
+      title: params.title as string,
+      summary: params.summary as string | undefined,
+      content: params.content as string | undefined,
+      reason: params.reason as string | undefined,
+      attemptId: (params.attempt_id as string | undefined) ?? null,
+      parentEventId: (params.parent_event_id as string | undefined) ?? null,
+      edges: params.edges as
+        | Array<{ toEventId: string; relationshipType: AgentJourneyEdge['relationshipType'] }>
+        | undefined,
+      sourceAgent: params.source_agent as string | undefined,
+      model: params.model as string | undefined,
+      occurredAt: params.occurred_at as number | undefined,
+      metadata: (params.metadata as Record<string, unknown> | undefined) ?? null,
+      journeyStatus: params.journey_status as string | undefined
+    })
+    return {
+      data: appendAgentJourneyEventData(result, result.created),
+      entityType: 'agentJourneyEvent',
+      entityId: result.event.id
+    }
+  },
+
+  update_agent_journey_event: (services, params, context) => {
+    requireLocalContext(context, 'update_agent_journey_event')
+    const event = services.agentJourneys.updateEventStatus({
+      eventId: params.event_id as string,
+      status: params.status as AgentJourneyEventStatus,
+      expectedUpdatedAt: params.expected_updated_at as number
+    })
+    return {
+      data: { event: agentJourneyEventDto(event) },
+      entityType: 'agentJourneyEvent',
+      entityId: event.id
+    }
+  },
+
+  update_agent_journey_status: (services, params, context) => {
+    requireLocalContext(context, 'update_agent_journey_status')
+    const journey = services.agentJourneys.updateJourneyStatus({
+      journeyId: params.journey_id as string,
+      status: params.status as AgentJourneyStatus,
+      expectedUpdatedAt: params.expected_updated_at as number
+    })
+    return {
+      data: { journey: agentJourneyDto(journey) },
+      entityType: 'agentJourney',
+      entityId: journey.id
+    }
+  },
+
+  list_agent_journeys: (services, params, context) => {
+    requireLocalContext(context, 'list_agent_journeys')
+    const result = services.agentJourneys.listJourneys({
+      status: params.status as AgentJourneyStatus | undefined,
+      workContextId: params.work_context_id as string | undefined,
+      limit: params.limit as number | undefined,
+      offset: params.offset as number | undefined
+    })
+    return {
+      data: listAgentJourneysData(result)
+    }
+  },
+
+  get_agent_journey: (services, params, context) => {
+    requireLocalContext(context, 'get_agent_journey')
+    const detail = services.agentJourneys.getJourney(params.journey_id as string, {
+      eventTypes: params.event_types as AgentJourneyEventType[] | undefined,
+      sinceSequence: params.since_sequence as number | undefined,
+      limit: params.limit as number | undefined
+    })
+    return {
+      data: getAgentJourneyData(detail)
+    }
   }
 }
 
@@ -368,5 +491,172 @@ export function createShape(toolName: ToolName, entity: Record<string, unknown>)
       return { resource: entity.resource, created: entity.created ?? false }
     default:
       return entity
+  }
+}
+
+// MARK: - Agent Journey：可信上下文与 DTO
+
+/**
+ * 收窄成 Local 身份。
+ *
+ * **不用类型断言**：`isLocalToolContext` 是类型守卫，Remote 身份在这里被挡下。
+ * 即使哪天 Remote 白名单因为配置错误混进了 Journey 工具，这条也会把它拒掉——
+ * Journey 写入永远只走本机 Bridge。
+ */
+function requireLocalContext(
+  context: ToolExecutionContext,
+  toolName: string
+): Extract<ToolExecutionContext, { channel: 'local' }> {
+  if (!isLocalToolContext(context)) {
+    throw new ApplicationError(
+      'PERMISSION_DENIED',
+      `${toolName} is only available through the local MCP bridge`
+    )
+  }
+  return context
+}
+
+/**
+ * 把可信上下文 + 幂等参数组装成 `AgentJourneyCallContext`。
+ *
+ * - `clientId` **只**来自 `context.actor.clientId`（认证后的值）；
+ * - `requestDigest` 用与路由层**同一个** `digestParams(params)`，而 `params`
+ *   正是 `executeTool` 经 Zod 解析后的完整入参（含 `idempotency_key`）——
+ *   用残缺字段重算会得到一个与 `replayFromIdempotency` 永远对不上的摘要。
+ */
+function journeyCallContext(
+  context: ToolExecutionContext,
+  toolName: 'start_agent_journey' | 'append_agent_journey_event',
+  params: Record<string, unknown>
+): AgentJourneyCallContext {
+  const local = requireLocalContext(context, toolName)
+  const key = params.idempotency_key
+  if (typeof key !== 'string' || key.length === 0) {
+    throw new ApplicationError('VALIDATION_ERROR', 'idempotency_key is required')
+  }
+  return {
+    actor: { kind: 'mcp_client', clientId: local.actor.clientId },
+    idempotency: { key, toolName, requestDigest: digestParams(params) }
+  }
+}
+
+function parseJsonOrNull(raw: string | null): unknown {
+  if (raw === null) return null
+  try {
+    return JSON.parse(raw) as unknown
+  } catch {
+    return null
+  }
+}
+
+/** Journey → snake_case DTO。**保留真实数据，不做任何二次摘要化。** */
+export function agentJourneyDto(journey: AgentJourney): Record<string, unknown> {
+  return {
+    id: journey.id,
+    title: journey.title,
+    goal: journey.goal,
+    status: journey.status,
+    source_client_id: journey.sourceClientId,
+    source_agent: journey.sourceAgent,
+    model: journey.model,
+    work_context_id: journey.workContextId,
+    created_at: journey.createdAt,
+    started_at: journey.startedAt,
+    updated_at: journey.updatedAt,
+    completed_at: journey.completedAt,
+    capture_mode: journey.captureMode,
+    schema_version: journey.schemaVersion
+  }
+}
+
+/** Event → snake_case DTO。`metadata` 由库里的 JSON 串还原成对象。 */
+export function agentJourneyEventDto(event: AgentJourneyEvent): Record<string, unknown> {
+  return {
+    id: event.id,
+    journey_id: event.journeyId,
+    sequence: event.sequence,
+    event_type: event.eventType,
+    role: event.role,
+    status: event.status,
+    evidence_level: event.evidenceLevel,
+    title: event.title,
+    summary: event.summary,
+    content: event.content,
+    reason: event.reason,
+    source_client_id: event.sourceClientId,
+    source_agent: event.sourceAgent,
+    model: event.model,
+    attempt_id: event.attemptId,
+    parent_event_id: event.parentEventId,
+    occurred_at: event.occurredAt,
+    received_at: event.receivedAt,
+    updated_at: event.updatedAt,
+    metadata: parseJsonOrNull(event.metadata)
+  }
+}
+
+/** Edge → snake_case DTO。关系不是时间线，顺序永远由 `sequence` 给。 */
+export function agentJourneyEdgeDto(edge: AgentJourneyEdge): Record<string, unknown> {
+  return {
+    id: edge.id,
+    journey_id: edge.journeyId,
+    from_event_id: edge.fromEventId,
+    to_event_id: edge.toEventId,
+    relationship_type: edge.relationshipType,
+    created_at: edge.createdAt
+  }
+}
+
+/**
+ * **首次执行与幂等重放共用**的响应构造（与 `createShape` 同一理由：
+ * 两边形状不一致时，AI 会在「重试」时拿到一个没见过的结构）。
+ *
+ * `replayed` 恒由这里给 `false`，路由层重放时会覆盖成 `true`——
+ * 于是两条路径的**键集完全一致**。
+ */
+export function startAgentJourneyData(
+  journey: AgentJourney,
+  created: boolean
+): Record<string, unknown> {
+  return { journey: agentJourneyDto(journey), created, replayed: false }
+}
+
+export type AppendAgentJourneyEventResult = {
+  event: AgentJourneyEvent
+  edges: AgentJourneyEdge[]
+  sequence: number
+  journey: AgentJourney
+}
+
+export function appendAgentJourneyEventData(
+  result: AppendAgentJourneyEventResult,
+  created: boolean
+): Record<string, unknown> {
+  return {
+    event: agentJourneyEventDto(result.event),
+    edges: result.edges.map(agentJourneyEdgeDto),
+    sequence: result.sequence,
+    journey: agentJourneyDto(result.journey),
+    created,
+    replayed: false
+  }
+}
+
+export function listAgentJourneysData(result: {
+  journeys: AgentJourney[]
+  total: number
+}): Record<string, unknown> {
+  return { journeys: result.journeys.map(agentJourneyDto), total: result.total }
+}
+
+export function getAgentJourneyData(detail: {
+  journey: AgentJourney
+  events: AgentJourneyEvent[]
+  edges: AgentJourneyEdge[]
+}): Record<string, unknown> {
+  return {
+    journey: agentJourneyDto(detail.journey),
+    events: detail.events.map(agentJourneyEventDto),
+    edges: detail.edges.map(agentJourneyEdgeDto)
   }
 }

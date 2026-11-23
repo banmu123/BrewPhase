@@ -1,4 +1,8 @@
-import type { McpErrorCode, McpScope } from '../../../shared/contracts/mcp'
+import type {
+  McpErrorCode,
+  McpScope,
+  ToolExecutionContext
+} from '../../../shared/contracts/mcp'
 import { TOOL_DEFINITIONS, type ToolDefinition, type ToolName } from '../../../shared/mcp/tool-schemas'
 import { type ApplicationError, isApplicationError } from '../errors'
 import { TOOL_HANDLERS, type HandlerResult } from './handlers'
@@ -52,6 +56,15 @@ export type ExecuteToolOptions = {
    * （逐 grant，不是连接级）。
    */
   scopes: readonly McpScope[]
+  /**
+   * **认证之后**构造的可信调用者上下文（R6-2）。**必填**——类型上就要求
+   * 每个执行入口明确说明请求来自 Local 还是 Remote，避免「忘了传」退化成
+   * 「拿不到身份」。按请求创建、按值传递，不进任何单例或全局变量。
+   *
+   * 加在这里而不是让 Handler 自己去读，是因为共享层的顺序不能变：
+   * 身份属于**入口的授权结果**，第 5 步 Handler 只是消费它。
+   */
+  context: ToolExecutionContext
   replay?: ToolReplayHook
 }
 
@@ -162,7 +175,7 @@ export function executeTool(
 
   // 5. 业务
   try {
-    const result = TOOL_HANDLERS[toolName](options.services, params)
+    const result = TOOL_HANDLERS[toolName](options.services, params, options.context)
     return {
       ok: true,
       toolName,

@@ -56,7 +56,7 @@ export const onboarding = {
       recordsOnly: '只看记录'
     },
     presetHints: {
-      fullAccess: '默认给全：读现状、方向、阶段、工作上下文、记录、豆子与画布，也能整理记录、摆画布、写草稿。人生方向的确认永远只能由你在应用内完成。',
+      fullAccess: '默认给全：读现状、方向、阶段、工作上下文、记录、豆子与画布，也能整理记录、摆画布、写草稿，并记录 Agent 任务历程。人生方向的确认永远只能由你在应用内完成。',
       personalGrowthCollab: '能读，也能写待你确认的草稿；不改动你已有的记录与画布。',
       personalGrowth: '读现状、方向、阶段、工作上下文与记录。不含任何写权限。',
       recordsOnly: '只读你的记录。'
@@ -75,7 +75,9 @@ export const onboarding = {
       'work_context:update': '更新工作上下文',
       'work_context:link': '把记录、画布与链接关联到工作上下文',
       'direction:read': '读取你确认过的现状、方向和阶段',
-      'direction:propose': '创建待你确认的方向草稿（不能确认）'
+      'direction:propose': '创建待你确认的方向草稿（不能确认）',
+      'agent_journey:read': '读取你过去的 Agent 任务历程',
+      'agent_journey:write': '记录新的 Agent 任务历程（计划、决策、执行与验证）'
     },
     custom: '自定义权限',
     scopeCount: (picked: number, total: number) => `已选 ${picked} / ${total} 项`,
