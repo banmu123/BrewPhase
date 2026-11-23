@@ -53,6 +53,7 @@ import { lookupIdempotency, recordIdempotency } from '../../database/repositorie
 import { JOURNEY_METADATA_MAX, JOURNEY_TEXT_LIMITS, redactDeep, sanitizeJourneyContent } from './sanitize'
 import {
   JOURNEY_DETAIL_KEY,
+  detailEventTypeError,
   journeyDetailV1Schema,
   parseJourneyMetadataJson
 } from '../../../shared/contracts/entities/agent-journey'
@@ -415,7 +416,7 @@ export class AgentJourneyService {
       max: JOURNEY_TEXT_LIMITS.label
     })
     const model = sanitizeJourneyContent(input.model ?? '', { max: JOURNEY_TEXT_LIMITS.label })
-    const metadata = serializeMetadata(input.metadata)
+    const metadata = serializeMetadata(input.metadata, eventType)
 
     const parentEventId = input.parentEventId ?? null
     if (parentEventId !== null && !UUID_RE.test(parentEventId)) {
@@ -1048,7 +1049,10 @@ function assertCreationStatus(
   }
 }
 
-function serializeMetadata(metadata: Record<string, unknown> | null | undefined): string | null {
+function serializeMetadata(
+  metadata: Record<string, unknown> | null | undefined,
+  eventType: string
+): string | null {
   if (metadata === null || metadata === undefined) return null
   if (typeof metadata !== 'object' || Array.isArray(metadata)) {
     throw new AgentJourneyError('VALIDATION_ERROR', 'metadata must be an object')
@@ -1069,6 +1073,17 @@ function serializeMetadata(metadata: Record<string, unknown> | null | undefined)
         'VALIDATION_ERROR',
         `metadata.${JOURNEY_DETAIL_KEY}.${where}: ${first?.message ?? 'invalid structure'}`
       )
+    }
+    /*
+     * 第二层：事件类型 ↔ 详情内容的**语义**校验（§4.1）。
+     *
+     * Zod 只知道字段长什么样，不知道 `decision` 事件该不该带 `decision` 块
+     * —— event_type 是 details 的同级参数。MCP 边界也可能被绕过，
+     * 所以这里必须再拦一次：未来任何写入口都受同一套规则约束。
+     */
+    const semanticError = detailEventTypeError(eventType, parsed.data)
+    if (semanticError !== null) {
+      throw new AgentJourneyError('VALIDATION_ERROR', `metadata.${JOURNEY_DETAIL_KEY}: ${semanticError}`)
     }
   }
   // 递归脱敏叶子字符串后再序列化：直接对整段 JSON 跑正则会吃掉成对引号。

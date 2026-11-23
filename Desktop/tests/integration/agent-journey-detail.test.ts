@@ -16,6 +16,7 @@ import {
   parseJourneyDetail,
   type JourneyDetailV1
 } from '../../src/shared/contracts/entities/agent-journey'
+import { journeyDetailSchema } from '../../src/shared/contracts/entities/agent-journey'
 import { JOURNEY_METADATA_MAX } from '../../src/main/application/agent-journey/sanitize'
 
 /**
@@ -90,7 +91,9 @@ const THREE_FILE_CHANGES: JourneyDetailV1 = {
       change_type: 'modified',
       symbols: ['insertEdge'],
       change_summary: '保持既有写入语义不变，仅被上层调用方式改变。',
-      why_this_location: '边的持久化唯一入口，改动必须留在这一层。'
+      before_behavior: '写入路径由 Handler 内联拼装，字段名错误在更晚的事务里才暴露。',
+      after_behavior: '写入仍由本层独占，上层只负责在边界把字段名转换正确。',
+      why_this_location: '边的持久化唯一入口，改动必须留在这一层而不是散落在 Handler。'
     }
   ]
 }
@@ -210,7 +213,9 @@ describe('场景 C：失败与修正', () => {
               file_path: 'Desktop/src/main/application/mcp-tools/handlers.ts',
               change_type: 'modified',
               change_summary: '只补了类型断言。',
-              why_this_location: '误以为类型对了字段就对了。'
+              before_behavior: '字段名仍是 snake_case，Service 读到 undefined，整条 append 回滚。',
+              after_behavior: '类型对上了但运行时字段没变，回归依旧红。',
+              why_this_location: '当时误以为类型对了字段名就对了，改在了断言所在处。'
             }
           ]
         }
@@ -449,10 +454,12 @@ describe('场景 G：脱敏、预算与非法 Schema', () => {
             version: 1,
             changes: [
               {
-                file_path: 'a.ts',
+                file_path: 'src/a.ts',
                 change_type: 'modified',
-                change_summary: 'x',
-                why_this_location: 'y',
+                change_summary: '把入参校验从 Service 提到边界。',
+                before_behavior: '非法入参一路穿到仓储层才报错。',
+                after_behavior: '非法入参在边界即被拒绝。',
+                why_this_location: '边界层负责入参合法性，仓储层只应处理已校验的数据。',
                 line_range: { start: -1, end: 5 }
               }
             ]
@@ -466,5 +473,45 @@ describe('场景 G：脱敏、预算与非法 Schema', () => {
       expect(message).toContain('journey_detail_v1')
       expect(message).toContain('line_range')
     }
+  })
+})
+
+// MARK: - 场景 G.8：Renderer DTO 必须能被 IPC 契约 parse
+
+describe('场景 G.8：Desktop IPC / Zod Contract 校验实际 DTO', () => {
+  it('getDetailForRenderer 的输出能被 journeyDetailSchema 严格 parse', () => {
+    const journeyId = newJourney()
+    append(journeyId, {
+      eventType: 'execution',
+      title: '带详情的执行',
+      metadata: { [JOURNEY_DETAIL_KEY]: THREE_FILE_CHANGES, legacy_note: 'kept' }
+    })
+
+    const detail = service.getDetailForRenderer(journeyId)
+    // 契约 parse：字段名、类型、结构必须与 Renderer 期待的完全一致
+    const parsed = journeyDetailSchema.safeParse(detail)
+    expect(
+      parsed.success,
+      parsed.success ? '' : JSON.stringify(parsed.error.issues, null, 2)
+    ).toBe(true)
+
+    const event = journeyDetailSchema.parse(detail).events[0]
+    expect(event.evidence_level).toBe('agent_reported')
+    // 结构化详情经 metadata 原样穿过 IPC 边界
+    const structured = parseJourneyDetail(event.metadata)
+    expect(structured).not.toBeNull()
+    expect(structured!.changes).toHaveLength(3)
+    // 旧 metadata 键也一起过桥，不被契约丢掉
+    expect(event.metadata!.legacy_note).toBe('kept')
+  })
+
+  it('没有详情的旧事件同样能被契约 parse（metadata 为 null 而非缺失）', () => {
+    const journeyId = newJourney()
+    append(journeyId, { eventType: 'plan', title: '旧事件', content: '正文' })
+
+    const parsed = journeyDetailSchema.safeParse(service.getDetailForRenderer(journeyId))
+    expect(parsed.success, parsed.success ? '' : JSON.stringify(parsed.error.issues)).toBe(true)
+    expect(parsed.success && parsed.data.events[0].metadata).toBeNull()
+    expect(parsed.success && parsed.data.events[0].evidence_level).toBe('agent_reported')
   })
 })

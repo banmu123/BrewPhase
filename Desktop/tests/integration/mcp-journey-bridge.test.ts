@@ -976,3 +976,231 @@ describe('F3. 结构化执行详情经真实 MCP 往返', () => {
     expect(handle.db.select().from(agentJourneyEvents).all()).toHaveLength(0)
   })
 })
+
+// MARK: - G. 质量门经真实 MCP 往返（R6-4.2.1 §12.G）
+
+describe('G. 质量门经真实 MCP 往返', () => {
+  const LEGAL_DETAIL = {
+    version: 1 as const,
+    changes: [
+      {
+        file_path: 'Desktop/src/main/application/mcp-tools/handlers.ts',
+        change_type: 'modified' as const,
+        symbols: ['append_agent_journey_event'],
+        change_summary: '把外部 to_event_id 显式转换为内部 toEventId。',
+        before_behavior: '断言只改类型不改字段名，Service 读到 undefined。',
+        after_behavior: 'Handler 在边界逐字段转换，边关系正常写入。',
+        why_this_location: 'Handler 是 MCP 协议与 Application Service 之间唯一的适配层。'
+      }
+    ],
+    verification: [
+      {
+        target: '边关系回归',
+        result: 'passed' as const,
+        exit_code: 0,
+        summary: '23 通过。'
+      },
+      { target: 'Playwright 全量 E2E', result: 'not_run' as const, summary: '未运行。' }
+    ]
+  }
+
+  async function startJourney(title: string): Promise<string> {
+    const codex = makeClient('Codex', JOURNEY_ALL)
+    const started = (await codex.client.call('start_agent_journey', {
+      title,
+      idempotency_key: `start:${randomUUID()}`
+    })) as { journey: { id: string } }
+    // 把 client 句柄挂在 journey 上，后续调用保持同一身份
+    return started.journey.id
+  }
+
+  function client() {
+    return makeClient('Codex', JOURNEY_ALL).client
+  }
+
+  it('不合法 details 被拒，且不留下半截事件', async () => {
+    const codex = client()
+    const journeyId = await startJourney('质量门：拒绝空壳与非法结构')
+
+    const invalid: Array<[string, Record<string, unknown>]> = [
+      // A：只有 version，没有任何实际内容
+      ['空壳', { version: 1 }],
+      // A：全空数组
+      ['全空数组', { version: 1, changes: [], observations: [] }],
+      // C：绝对路径
+      ['绝对路径', { version: 1, changes: [{ ...LEGAL_DETAIL.changes[0], file_path: '/etc/passwd' }] }],
+      // C：路径穿越
+      ['路径穿越', { version: 1, changes: [{ ...LEGAL_DETAIL.changes[0], file_path: '../../x.ts' }] }],
+      // C：重复文件
+      [
+        '重复文件',
+        { version: 1, changes: [LEGAL_DETAIL.changes[0], LEGAL_DETAIL.changes[0]] }
+      ],
+      // D：源码 modified 缺前后行为
+      [
+        '缺前后行为',
+        {
+          version: 1,
+          changes: [
+            {
+              file_path: 'src/a.ts',
+              change_type: 'modified',
+              change_summary: 'x',
+              why_this_location: '边界层负责入参合法性，仓储层只应处理已校验的数据。'
+            }
+          ]
+        }
+      ],
+      // E：行号从 0 开始
+      [
+        '行号为 0',
+        {
+          version: 1,
+          changes: [{ ...LEGAL_DETAIL.changes[0], line_range: { start: 0, end: 5 } }]
+        }
+      ],
+      // F：not_run 带退出码
+      [
+        'not_run 带退出码',
+        {
+          version: 1,
+          verification: [{ target: 't', result: 'not_run', exit_code: 0, summary: 's' }]
+        }
+      ],
+      // B：execution 有 details 却没有任何执行依据
+      ['execution 无依据', { version: 1, limitations: [], changes: [] }]
+    ]
+
+    for (const [label, details] of invalid) {
+      await expect(
+        codex.call('append_agent_journey_event', {
+          journey_id: journeyId,
+          event_type: 'execution',
+          title: `非法：${label}`,
+          details,
+          idempotency_key: `evt:${randomUUID()}`
+        }),
+        label
+      ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' })
+    }
+
+    // 每一笔都被拒 → 库里一条事件都没有
+    expect(
+      handle.db
+        .select()
+        .from(agentJourneyEvents)
+        .all()
+        .filter((row) => row.journeyId === journeyId)
+    ).toHaveLength(0)
+  })
+
+  it('事件类型与详情不匹配被拒（decision 却没有 decision 块）', async () => {
+    const codex = client()
+    const journeyId = await startJourney('质量门：事件类型不匹配')
+
+    await expect(
+      codex.call('append_agent_journey_event', {
+        journey_id: journeyId,
+        event_type: 'decision',
+        title: '有 changes 却不是 decision 的详情',
+        details: { version: 1, changes: [LEGAL_DETAIL.changes[0]] },
+        idempotency_key: `evt:${randomUUID()}`
+      })
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' })
+
+    await expect(
+      codex.call('append_agent_journey_event', {
+        journey_id: journeyId,
+        event_type: 'verification',
+        title: '有 changes 却不是 verification 的详情',
+        details: { version: 1, changes: [LEGAL_DETAIL.changes[0]] },
+        idempotency_key: `evt:${randomUUID()}`
+      })
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' })
+
+    expect(
+      handle.db
+        .select()
+        .from(agentJourneyEvents)
+        .all()
+        .filter((row) => row.journeyId === journeyId)
+    ).toHaveLength(0)
+  })
+
+  it('合法 details 落库、读回结构一致、幂等重放结构相同', async () => {
+    const codex = client()
+    const journeyId = await startJourney('质量门：合法往返')
+
+    const params = {
+      journey_id: journeyId,
+      event_type: 'execution',
+      title: '补齐 edges 的字段映射',
+      details: LEGAL_DETAIL,
+      idempotency_key: `evt:${randomUUID()}`
+    }
+
+    const first = (await codex.call('append_agent_journey_event', params)) as {
+      created: boolean
+      event: { metadata: Record<string, unknown> | null; evidence_level: string }
+    }
+    expect(first.created).toBe(true)
+    expect(first.event.evidence_level).toBe('agent_reported')
+
+    const replayed = (await codex.call('append_agent_journey_event', params)) as {
+      created: boolean
+      event: { metadata: Record<string, unknown> | null; evidence_level: string }
+    }
+    expect(replayed.created).toBe(false)
+    // §12.G.6：同一请求重放，结构必须完全一致
+    expect(replayed.event.metadata).toEqual(first.event.metadata)
+    expect(replayed.event.evidence_level).toBe(first.event.evidence_level)
+
+    // 读回
+    const read = (await codex.call('get_agent_journey', { journey_id: journeyId })) as {
+      events: Array<{
+        event_type: string
+        evidence_level: string
+        metadata: Record<string, unknown> | null
+      }>
+    }
+    const event = read.events.find((item) => item.event_type === 'execution')!
+    const detail = event.metadata!.journey_detail_v1 as typeof LEGAL_DETAIL
+    expect(detail.version).toBe(1)
+    expect(detail.changes).toHaveLength(1)
+    expect(detail.changes[0].file_path).toBe(
+      'Desktop/src/main/application/mcp-tools/handlers.ts'
+    )
+    expect(detail.changes[0].why_this_location).toContain('唯一的适配层')
+    expect(detail.verification.map((item) => item.result)).toEqual(['passed', 'not_run'])
+
+    // 只有一条事件（重放没写第二条）
+    expect(
+      handle.db
+        .select()
+        .from(agentJourneyEvents)
+        .all()
+        .filter((row) => row.journeyId === journeyId)
+    ).toHaveLength(1)
+  })
+
+  it('不传 details 的旧客户端照常工作', async () => {
+    const codex = client()
+    const journeyId = await startJourney('质量门：旧客户端')
+
+    await codex.call('append_agent_journey_event', {
+      journey_id: journeyId,
+      event_type: 'observation',
+      title: '只传老字段',
+      content: '旧客户端的正文。',
+      idempotency_key: `evt:${randomUUID()}`
+    })
+
+    const read = (await codex.call('get_agent_journey', { journey_id: journeyId })) as {
+      events: Array<{ content: string; metadata: unknown; evidence_level: string }>
+    }
+    expect(read.events).toHaveLength(1)
+    expect(read.events[0].content).toBe('旧客户端的正文。')
+    expect(read.events[0].metadata).toBeNull()
+    expect(read.events[0].evidence_level).toBe('agent_reported')
+  })
+})

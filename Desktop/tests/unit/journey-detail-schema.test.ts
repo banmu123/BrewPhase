@@ -8,6 +8,18 @@ import {
 } from '../../src/shared/contracts/entities/agent-journey'
 import { JOURNEY_METADATA_MAX } from '../../src/main/application/agent-journey/sanitize'
 
+/** 一条能通过全部新校验的最小合法修改记录（读取用例的正例）。 */
+function validChange() {
+  return {
+    file_path: 'src/example.ts',
+    change_type: 'modified' as const,
+    change_summary: '把入参校验从 Service 提到边界。',
+    before_behavior: '非法入参一路穿到仓储层才报错。',
+    after_behavior: '非法入参在边界即被拒绝。',
+    why_this_location: '边界层负责入参合法性，仓储层只应处理已校验的数据。'
+  }
+}
+
 /**
  * 结构化执行详情（R6-4.2 §4）的契约测试。
  *
@@ -58,6 +70,8 @@ const THREE_FILE_DETAIL: JourneyDetailV1 = {
       change_type: 'modified',
       symbols: ['insertEdge'],
       change_summary: '保持既有写入语义不变，仅被上层调用方式改变。',
+      before_behavior: '写入路径由 Handler 内联拼装，字段名错误在更晚的事务里才暴露。',
+      after_behavior: '写入仍由本层独占，上层只负责在边界把字段名转换正确。',
       why_this_location: '边的持久化唯一入口，改动必须留在这一层而不是散落在 Handler。'
     }
   ],
@@ -184,6 +198,25 @@ describe('parseJourneyDetail：旧数据与脏数据都不炸', () => {
     expect(parseJourneyDetail(null)).toBeNull()
     expect(parseJourneyDetail(undefined)).toBeNull()
     expect(parseJourneyDetail('not an object')).toBeNull()
+  })
+
+  it('空壳详情（只有 version / 全空数组）→ null，UI 显示原始摘要而不是空卡片', () => {
+    // §10.2/§10.3：空壳在**写入**时就被 Schema 拒了；这里守的是
+    // 「库里万一已有脏数据」的读取降级——不能因为一个空壳就渲染出
+    // 一块看似完整的详情，更不能让整条 Journey 打不开。
+    expect(parseJourneyDetail({ [JOURNEY_DETAIL_KEY]: { version: 1 } })).toBeNull()
+    expect(
+      parseJourneyDetail({
+        [JOURNEY_DETAIL_KEY]: { version: 1, changes: [], observations: [], verification: [] }
+      })
+    ).toBeNull()
+    expect(
+      parseJourneyDetail({ [JOURNEY_DETAIL_KEY]: { version: 1, limitations: ['   '] } })
+    ).toBeNull()
+    // 正例：合法详情仍然读得出来
+    expect(
+      parseJourneyDetail({ [JOURNEY_DETAIL_KEY]: { version: 1, changes: [validChange()] } })
+    ).not.toBeNull()
   })
 
   it('结构非法 / 版本不认识 → null，不抛错', () => {

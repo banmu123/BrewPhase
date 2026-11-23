@@ -352,27 +352,82 @@ details = {
 
 ### Rules that will fail review
 
-1. **One entry per file.** Three files changed means three `changes` entries.
-   A single overall summary hides exactly the information a reader needs.
-2. **`why_this_location` is required on every change.** Say what that module
-   owns, what depends on it, and why the fix belongs there rather than
-   somewhere more convenient.
-3. **`result` is `not_run` / `skipped` if you did not execute it.** Not
-   `passed`, not quietly left out.
-4. **`evidence_level` is always `agent_reported`.** You cannot declare
+The server **enforces** these — they are not style advice. A violation comes
+back as `VALIDATION_ERROR` and the event is not written at all.
+
+1. **`details` must contain real content.** `{ version: 1 }` alone is
+   rejected, and so are all-empty arrays and whitespace-only strings
+   (`'   '` does not count as filled in). Omit `details` entirely if you
+   have nothing structured to add — that is always allowed.
+2. **The block must match the event type.**
+
+   | Event | Required block |
+   |---|---|
+   | `decision` | `decision` |
+   | `observation` | `observations` |
+   | `verification` | `verification` |
+   | `execution` | `changes` **or** `observations` / `references` / `limitations` |
+   | `revision` | `changes` **or** `observations` **or** `decision` |
+   | `outcome` | at least one of `changes`, `verification`, `references`, `limitations`, `decision` |
+   | `user_input`, `plan`, `user_annotation` | none — do not fill in unrelated content just to satisfy a schema |
+
+   An `execution` that only analysed or debugged does **not** need
+   `changes`. Record what you actually did in `observations` instead of
+   inventing a file edit.
+
+3. **One entry per file, no duplicate paths.** Three files changed means
+   three `changes` entries; the same path twice is rejected. Two different
+   edits in one file go into **one** entry with both `symbols`.
+4. **Repo-relative POSIX paths only** (`Desktop/src/...`, `src/...`,
+   `tests/...`, `.github/...`). Rejected: absolute paths, Windows drive
+   letters, UNC paths, `..` segments, backslashes, NUL, empty segments
+   (`a//b`, trailing `/`). There is no required prefix — a path from
+   another repository is fine. No home directories, no machine names.
+5. **`why_this_location` must be at least 12 characters and must explain**
+   what that module owns, what depends on it, and why the fix belongs there
+   rather than somewhere more convenient. "因为这个文件需要修改" is rejected.
+6. **`change_type` decides which fields you must supply:**
+   - `created` → `after_behavior` (what the new file does)
+   - `deleted` → `before_behavior` (what it was responsible for)
+   - `modified` (source files) → **both** `before_behavior` and
+     `after_behavior`. Test and config files may omit both.
+   - `renamed` → `previous_file_path`, and it must differ from `file_path`.
+   - If you give one of `before_behavior` / `after_behavior`, give both.
+   Never invent a difference you did not observe — use `limitations` instead.
+7. **`line_range` starts at 1**, `end >= start`, integers only. It is
+   optional: **omit it rather than guess.** A wrong line number is worse
+   than none; the file path and `symbols` are the stable identifiers.
+8. **`result` is `not_run` / `skipped` if you did not execute it.** Not
+   `passed`, not quietly left out. `not_run` must **not** carry an
+   `exit_code` (nothing ran), and `passed` must not carry a non-zero one —
+   if a command is expected to exit non-zero, drop `exit_code` and say so
+   in `summary`.
+9. **`evidence_level` is always `agent_reported`.** You cannot declare
    `tool_result` or `runtime_observed` — the server rejects it. Present your
    test results as what they are: your own report, traceable only through
    the `command` and `evidence_reference` you recorded.
-5. **Repo-relative paths only** (`Desktop/src/...`). No absolute machine
-   paths, no home directories.
-6. **No full source files, no full terminal dumps, no raw diffs.** Keep the
-   summary; reference a commit SHA instead of pasting a patch.
-7. **Budget:** the whole `metadata` blob is capped (16 000 chars) and every
-   field has its own limit. Over budget is **rejected**, not truncated —
-   trimming would leave JSON you cannot parse.
-8. **Never record hidden chain of thought.** `rationale` and
-   `why_this_location` are reasons you already showed the user, not your
-   internal scratchpad.
+10. **No full source files, no full terminal dumps, no raw diffs.** Keep the
+    summary; reference a commit SHA instead of pasting a patch.
+11. **Budget:** the whole `metadata` blob is capped (16 000 chars) and every
+    field has its own limit. Over budget is **rejected**, not truncated —
+    trimming would leave JSON you cannot parse.
+12. **Never record hidden chain of thought.** `rationale` and
+    `why_this_location` are reasons you already showed the user, not your
+    internal scratchpad.
+
+### When the server rejects your `details`
+
+The error names the exact path, e.g.
+`metadata.journey_detail_v1.changes.0.file_path: path must not contain '.' or '..' segments`.
+
+1. Read the path — it points at the offending block, index and field.
+2. Fix **only** that value. Do not drop the whole `details` to get past the
+   check, and do not delete a file entry to dodge a duplicate-path error —
+   merge the two edits into one entry with both `symbols`.
+3. Resubmit with a **new** idempotency key. Your parameters changed, so the
+   digest differs; reusing the old key returns `IDEMPOTENCY_KEY_REUSE`.
+   Reuse the original key **only** when retrying the exact same logical
+   request with byte-identical parameters (timeout, ambiguous result).
 
 ### Complete example
 
@@ -498,8 +553,11 @@ append_agent_journey_event({
 append_agent_journey_event({ … event_type: "execution", title: "第一次：只补了类型断言",
   details: { version: 1, changes: [{
     file_path: "Desktop/src/main/application/mcp-tools/handlers.ts",
-    change_type: "modified", change_summary: "只把 as 的目标类型改成了 Service 的输入类型。",
-    why_this_location: "当时误以为类型对了字段名就对了。" }] } })
+    change_type: "modified",
+    change_summary: "只把 as 的目标类型改成了 Service 的输入类型。",
+    before_behavior: "字段名仍是 snake_case，Service 读到 undefined，整条 append 回滚。",
+    after_behavior: "类型对上了但运行时字段没变，回归依旧红。",
+    why_this_location: "当时误以为类型对了字段名就对了，改在了断言所在处。" }] } })
 update_agent_journey_event({ event_id: "…", status: "running", expected_updated_at: … })
 update_agent_journey_event({ event_id: "…", status: "failed",   expected_updated_at: … })
 
@@ -553,10 +611,14 @@ append_agent_journey_event({
     changes: [
       { file_path: "Desktop/src/main/application/mcp-tools/handlers.ts",
         change_type: "modified", change_summary: "边界显式映射 edges。",
-        why_this_location: "协议命名只应在适配层消失。" },
+        before_behavior: "Service 收到的字段名仍是 snake_case，边一条都建不出来。",
+        after_behavior: "Handler 在边界逐字段转换，边关系正常写入。",
+        why_this_location: "协议命名只应在适配层消失，Handler 正是那层边界。" },
       { file_path: "Desktop/tests/integration/mcp-journey-bridge.test.ts",
         change_type: "modified", change_summary: "新增边关系回归 3 例。",
-        why_this_location: "该文件已有真实端到端链路。" }
+        before_behavior: "没有任何测试覆盖 edges 的字段名映射，写错照样绿。",
+        after_behavior: "映射写错时该套件立刻变红。",
+        why_this_location: "该文件已有真实端到端链路，回归放这里才测得到。" }
     ],
     verification: [
       { target: "pnpm typecheck", result: "passed", exit_code: 0, summary: "0 错误。" },
@@ -603,6 +665,9 @@ Rules:
 - Never use a counter (`evt:1`, `evt:2`) instead of a UUID.
 - Do not mint endless new keys because a retry failed — first check whether the
   original request already landed (`list_agent_journeys` / `get_agent_journey`).
+- A rejected `details` is a **changed** request once you fix it: fix the field
+  the error path names, then use a fresh key (see "When the server rejects
+  your `details`").
 - The two update tools take no key; they use `expected_updated_at`.
 
 ## Recovery across sessions
