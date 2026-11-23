@@ -7,6 +7,7 @@ import { eq } from 'drizzle-orm'
 import { digestParams } from '../../src/main/database/repositories/mcp-idempotency'
 import { openDatabase, type DatabaseHandle } from '../../src/main/database/client'
 import {
+  agentJourneyEdges,
   agentJourneyEvents,
   agentJourneys,
   mcpIdempotency,
@@ -660,5 +661,122 @@ describe('F. 真实 Local MCP 端到端', () => {
     // 库里仍然是 1 条 Journey、0 条事件
     expect(handle.db.select().from(agentJourneys).all()).toHaveLength(1)
     expect(handle.db.select().from(agentJourneyEvents).all()).toHaveLength(0)
+  })
+})
+
+// MARK: - F2. Edge 关系（R6-2.1 映射回归）
+
+describe('F2. edges 的 snake_case → camelCase 映射', () => {
+  it('按 MCP 契约写入关系：from 指向新事件、to 指向被依赖事件', async () => {
+    const codex = makeClient('Codex', JOURNEY_ALL)
+    const started = (await codex.client.call('start_agent_journey', {
+      title: '边关系回归',
+      idempotency_key: `start:${randomUUID()}`
+    })) as { journey: { id: string } }
+
+    const plan = (await codex.client.call('append_agent_journey_event', {
+      journey_id: started.journey.id,
+      event_type: 'plan',
+      title: '先写映射',
+      idempotency_key: `evt:${randomUUID()}`
+    })) as { event: { id: string; sequence: number } }
+
+    // 用 MCP 对外的 snake_case 字段名提交
+    const withEdge = (await codex.client.call('append_agent_journey_event', {
+      journey_id: started.journey.id,
+      event_type: 'execution',
+      status: 'planned',
+      title: '带边的执行',
+      edges: [{ to_event_id: plan.event.id, relationship_type: 'depends_on' }],
+      idempotency_key: `evt:${randomUUID()}`
+    })) as {
+      event: { id: string; sequence: number; status: string }
+      edges: Array<{
+        from_event_id: string
+        to_event_id: string
+        relationship_type: string
+      }>
+    }
+
+    expect(withEdge.event.status).toBe('planned')
+    expect(withEdge.event.sequence).toBe(2)
+    expect(withEdge.edges, '边必须真的写进去').toHaveLength(1)
+    expect(withEdge.edges[0]).toMatchObject({
+      from_event_id: withEdge.event.id,
+      to_event_id: plan.event.id,
+      relationship_type: 'depends_on'
+    })
+
+    // 直接查库（不是只信返回值）
+    const rows = handle.db.select().from(agentJourneyEdges).all()
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      journeyId: started.journey.id,
+      fromEventId: withEdge.event.id,
+      toEventId: plan.event.id,
+      relationshipType: 'depends_on'
+    })
+
+    // get 返回的 events 按 sequence 升序；edges 是关系，不是时间线
+    const detail = (await codex.client.call('get_agent_journey', {
+      journey_id: started.journey.id
+    })) as {
+      events: Array<{ id: string; sequence: number }>
+      edges: Array<{ from_event_id: string; to_event_id: string }>
+    }
+    expect(detail.events.map((event) => event.sequence)).toEqual([1, 2])
+    expect(detail.edges).toHaveLength(1)
+    expect(detail.edges[0]!.to_event_id).toBe(plan.event.id)
+  })
+
+  it('未传 edges 时返回空数组（不造出空对象、不影响行为）', async () => {
+    const codex = makeClient('Codex', JOURNEY_ALL)
+    const started = (await codex.client.call('start_agent_journey', {
+      title: '无边',
+      idempotency_key: `start:${randomUUID()}`
+    })) as { journey: { id: string } }
+
+    const plain = (await codex.client.call('append_agent_journey_event', {
+      journey_id: started.journey.id,
+      event_type: 'observation',
+      title: '没有边',
+      idempotency_key: `evt:${randomUUID()}`
+    })) as { event: { sequence: number }; edges: unknown[] }
+
+    expect(plain.event.sequence).toBe(1)
+    expect(plain.edges).toEqual([])
+    expect(handle.db.select().from(agentJourneyEdges).all()).toHaveLength(0)
+  })
+
+  it('非法目标事件由 Service 在事务内拒绝，不留下半截事件', async () => {
+    const codex = makeClient('Codex', JOURNEY_ALL)
+    const started = (await codex.client.call('start_agent_journey', {
+      title: '非法边',
+      idempotency_key: `start:${randomUUID()}`
+    })) as { journey: { id: string } }
+    await codex.client.call('append_agent_journey_event', {
+      journey_id: started.journey.id,
+      event_type: 'plan',
+      title: '基线',
+      idempotency_key: `evt:${randomUUID()}`
+    })
+    const eventsBefore = handle.db.select().from(agentJourneyEvents).all().length
+
+    await expect(
+      codex.client.call('append_agent_journey_event', {
+        journey_id: started.journey.id,
+        event_type: 'execution',
+        status: 'planned',
+        title: '目标不存在',
+        edges: [
+          { to_event_id: randomUUID(), relationship_type: 'depends_on' }
+        ],
+        idempotency_key: `evt:${randomUUID()}`
+      })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+
+    // 事件插入之后才校验边 → 整体回滚
+    expect(handle.db.select().from(agentJourneyEvents).all()).toHaveLength(eventsBefore)
+    expect(handle.db.select().from(agentJourneyEdges).all()).toHaveLength(0)
   })
 })

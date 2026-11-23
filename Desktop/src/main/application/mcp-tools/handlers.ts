@@ -368,6 +368,21 @@ export const TOOL_HANDLERS: Record<ToolName, ToolHandler> = {
 
   append_agent_journey_event: (services, params, context) => {
     const call = journeyCallContext(context, 'append_agent_journey_event', params)
+    // **在 Handler 边界做 snake_case → camelCase 映射**。
+    //
+    // MCP 对外契约是 snake_case（`tool-schemas.ts` 不改），Service 的领域输入
+    // 是 camelCase（`AppendEventInput` 不改）——两者之间只有这一处需要转换。
+    // 之前这里是一句 `params.edges as Array<{toEventId …}>`，断言只骗过编译器：
+    // 运行时字段仍是 `to_event_id` / `relationship_type`，Service 读到的是
+    // `undefined`，于是一条边都建不出来（并连带把整个 append 回滚掉）。
+    // 断言只描述**进来的**形状（Zod 已校验过 uuid + 枚举），字段名靠显式 map。
+    const incomingEdges = params.edges as
+      | Array<{
+          to_event_id: string
+          relationship_type: AgentJourneyEdge['relationshipType']
+        }>
+      | undefined
+
     const result = services.agentJourneys.appendEvent(call, {
       journeyId: params.journey_id as string,
       eventType: params.event_type as AgentJourneyEventType,
@@ -378,9 +393,12 @@ export const TOOL_HANDLERS: Record<ToolName, ToolHandler> = {
       reason: params.reason as string | undefined,
       attemptId: (params.attempt_id as string | undefined) ?? null,
       parentEventId: (params.parent_event_id as string | undefined) ?? null,
-      edges: params.edges as
-        | Array<{ toEventId: string; relationshipType: AgentJourneyEdge['relationshipType'] }>
-        | undefined,
+      // 未传 `edges` 时保持 undefined（`?.map` 不会造出空数组），
+      // 非法目标 / 跨 Journey / 自关联仍由 Service 在事务内校验并整体回滚。
+      edges: incomingEdges?.map((edge) => ({
+        toEventId: edge.to_event_id,
+        relationshipType: edge.relationship_type
+      })),
       sourceAgent: params.source_agent as string | undefined,
       model: params.model as string | undefined,
       occurredAt: params.occurred_at as number | undefined,
