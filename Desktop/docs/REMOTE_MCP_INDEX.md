@@ -45,6 +45,15 @@
 
 *「0.0*」= 0.0 / 0.0.1 / 0.0.2 修订摘要，仅保留在各族主册。
 
+## 4a. Agent Journey 族
+
+| 册 | 文件 | 内容 |
+|---|---|---|
+| Agent Journey 设计 | `AGENT_JOURNEY_R6_DESIGN.md` | §1 产品定位与边界、§3 已确认事实与修正、**ADR-R6-01** 调用者上下文、**ADR-R6-02** Local-first 路线、§7 数据模型与 ER 图、§9 生命周期状态机、§10 MCP 工具协议、§11 Scope 与幂等、**ADR-R6-03** Canvas 集成、§13 Work Context 关联、§15 隐私与 Capture Mode、§16 导出与删除、§17 Remote 扩展门槛、§18 测试矩阵与 R6-1…R6-5 分期 |
+
+> **状态：设计阶段（R6-0 / R6-0.1），尚未实现任何 Journey 业务代码。**
+> 本册**不改变**既有协议、Scope、`TOOL_DEFINITIONS` 或 `REMOTE_TOOLS`；Remote MCP 写入的解锁门槛见该文档 §17（依赖 OQ-16）。
+
 ## 5. 唯一权威表落位（拆分后不变）
 
 | 权威项 | 位置 |
