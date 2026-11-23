@@ -1159,7 +1159,148 @@ Remote MCP（future）────┘   （复用，不重新实现）
 
 ---
 
-## 附：本阶段改动清单
+## 19. R6-1 实现约束（Domain Persistence 落地前补充）
+
+> 本节在编写业务代码之前确定，是 R6-1 的**实现契约**；与 §7–§16 冲突时以本节为准。
+> 范围：Migration 14 + Drizzle Schema + Repository + `AgentJourneyService` + 事务幂等 +
+> 状态机 + 内容脱敏 + 测试。**不含** MCP 工具、Skill、Canvas UI、Remote、导出 UI。
+
+### 19.1 读写权限边界
+
+- `list_agent_journeys` / `get_agent_journey` 对应的 Service 方法是**纯读取**：
+  查询过程中**不**自动推进 Journey 状态、**不**执行 `abandoned` 惰性清理、
+  **不**写入任何业务数据、**不**做「先改库再把改动结果当查询结果返回」。
+- **自动超时状态变更（`running/paused → abandoned`）R6-1 不实现**，后续单独设计
+  维护机制。因此 R6-1 中 `abandoned` 是**不可达**状态：既不通过 `updateJourneyStatus`
+  设置，也不会被查询触发。状态枚举仍保留该值，只为与 §9 状态机保持同构。
+- 读取唯一允许的副作用是**返回数据**；审计（若 R6-2 需要）由调用方在 Service 之外记。
+
+### 19.2 幂等职责划分
+
+| 层 | 职责 |
+|---|---|
+| `mcp_idempotency` | **MCP 请求级幂等与重放的主要记录**（`request-router` 的 `replay` 钩子读它） |
+| `agent_journey_events.idempotency_key` | **事件级唯一性约束**（`UNIQUE(journey_id, source_client_id, idempotency_key)`），是数据库兜底，**不构成第二套重放逻辑** |
+
+- 同一客户端的 `idempotency_key` **仍然全局唯一**（PK `(client_id, idempotency_key)` 不变），
+  继续沿用 `start:<uuid>` / `evt:<uuid>` 命名约定（§11.3）。
+- **请求摘要必须与 `executeTool` 经 Zod 解析后的完整参数一致**，即包含
+  `idempotency_key` 本身；**Application Service 不得根据残缺的业务字段重新拼接摘要**。
+  R6-1 由调用方把 `digestParams(parsedParams)` 的结果作为上下文传入，Service 只校验不重算。
+- 事务中保存的幂等上下文至少包含：`clientId`、`key`、`toolName`、`requestDigest`、
+  `entityType`、`entityId`。
+- **`AgentJourneyService` 不得依赖 `mcp-bridge/audit-log.ts`**（业务层反向依赖桥接层
+  会把 Local 专属策略拖进领域层）。幂等持久化能力下沉到
+  **`database/repositories/mcp-idempotency.ts`**（基础设施/Repository 层），
+  `mcp-bridge/audit-log.ts` 改为**转发/再导出**同一批函数：
+  - 业务事务可以原子写入幂等记录；
+  - `request-router.ts` 的查询与写入路径**保持可用且行为不变**；
+  - **不复制两套互不兼容的幂等实现**（同一张表、同一组函数）。
+- **R6-1 不修改 `request-router.ts` 的路由与重放分支**；但 **R6-2 必须**为
+  `entityType = 'agentJourney'` / `'agentJourneyEvent'` 增加对应的
+  `replayIdempotent()` 分支（否则重放会落到 `unknown entity type` 的
+  `INTERNAL_ERROR`）。**不能声称 request-router 完全无需扩展。**
+
+### 19.3 隐私与导出语义
+
+- **数据库里只保存完成脱敏后的内容**：`sanitizeJourneyContent` 在**落库之前**执行，
+  脱敏前的原始凭证/秘密文本**不写入数据库、不写入审计、不进调试日志**。
+- 未来 JSON 导出**直接导出库中的已脱敏内容**，不再二次摘要化、不改变正文；
+  **不能承诺恢复已被脱敏的原文**（脱敏是单向的）。
+- 正则黑名单是**尽力而为**：它能挡住已知形态，**不是**能发现所有未知凭证的绝对安全保证
+  —— 产品文案与测试断言都不得表述为「保证无泄漏」。
+
+### 19.4 `parent_event_id` 与 Edge 的关系
+
+| 表示 | 语义 |
+|---|---|
+| `agent_journey_events.parent_event_id` | **结构性父子归属**（谁派生自谁，例如 revision 指向被修订的 plan） |
+| `agent_journey_edges` | **有明确语义的业务关系**：`depends_on` / `branch_from` / `revises` / `retries` |
+
+- **不得为同一关系自动重复写入两种表示**：调用方显式给 `parent_event_id` 就只写 parent；
+  显式给 `edges[]` 就只写 edge。Service **不推导、不镜像**。
+- Service 必须校验**两个事件属于同一 Journey**，并禁止自引用与引用不存在的事件。
+
+### 19.5 Event 状态规则（按 `event_type` 区分性质）
+
+**陈述类**（创建即完成，正文不可再改）：
+`user_input` · `plan` · `decision` · `observation` · `revision` · `outcome` · `user_annotation`
+
+- 创建时 `status` **只能是 `completed`**；传入其它状态 → `VALIDATION_ERROR`。
+- 终态不可逆 → `updateEventStatus` 对它们一律拒绝。
+
+**执行类**：`execution` · `verification`
+
+- 创建时 `status` 只能是 `planned` 或 `running`（**不能**一上来就 `completed`——
+  「宣布做完了」和「做完了」必须是两次独立写入，后者带自己的 `expected_updated_at`）。
+- 允许的推进：
+
+```text
+planned  → running | skipped | cancelled
+running  → completed | failed | skipped | cancelled
+completed / failed / skipped / cancelled → （终态，不可逆）
+```
+
+- `planned → completed` **不被允许**（必须经过 `running`）。
+- 其它任何「类型 × 状态」组合 → `VALIDATION_ERROR`。
+
+**证据等级**：v1 **只接受 `agent_reported`**；客户端声明 `tool_result` 或
+`runtime_observed` → `VALIDATION_ERROR`。
+Agent 自述**仍然是自述**——产品文案与测试断言中**不得**把它描述成「系统已独立验证的事实」。
+
+### 19.6 可信调用上下文（R6-1 不实现 `ToolExecutionContext`）
+
+Service 的写方法接收一个**独立的可信上下文**，业务入参里**没有** `source_client_id`：
+
+```ts
+type AgentJourneyCallContext = {
+  actor: { kind: 'mcp_client'; clientId: string }   // 只能由认证后的入口构造
+  idempotency: { key: string; toolName: string; requestDigest: string }
+}
+```
+
+- **R6-1 不实现 `ToolExecutionContext`**，也**不使用全局变量**保存当前 Client 身份；
+  上下文由调用方按值传入（测试直接构造）。
+- R6-2 由认证后的 `ToolExecutionContext` 构造它（§5.4）。
+- `source_agent` / `model` 只是客户端自报元数据，**永不参与身份判定**。
+- 拿不到可信 `clientId` → 写入一律拒绝，**不允许匿名降级或伪造来源**。
+
+### 19.7 R6-1 改动清单
+
+| 文件 | 改动 |
+|---|---|
+| `src/main/database/migrations.ts` | 追加 `version: 14, name: 'agent-journeys'`（只新增，不改历史） |
+| `src/main/database/schema.ts` | 四张表的 Drizzle 定义 + 索引/外键 |
+| `src/main/database/repositories/agent-journeys.ts` | **新增** Repository |
+| `src/main/database/repositories/mcp-idempotency.ts` | **新增**：幂等持久化下沉到基础设施层 |
+| `src/main/mcp-bridge/audit-log.ts` | 改为再导出上表的幂等函数（行为不变） |
+| `src/main/application/agent-journey/agent-journey-service.ts` | **新增** Application Service |
+| `src/main/application/agent-journey/sanitize.ts` | **新增** `sanitizeJourneyContent` |
+| `src/main/application/events/application-events.ts` | `AppDomain` 增 `'agentJourneys'` |
+| `tests/unit/agent-journey-sanitize.test.ts` | **新增** 脱敏单测 |
+| `tests/integration/agent-journey-persistence.test.ts` | **新增** 真实 SQLite 集成测试 |
+| 本文档 | §19 实现约束 |
+
+**不接入** `ToolServices` / `TOOL_HANDLERS` / `main/index.ts` 装配：R6-1 尚无消费者，
+提前塞进 `ToolServices` 会破坏 `tests/unit/mcp-tools-structure.test.ts` 的「恰好 5 个
+Service」结构断言，且等同于为 MCP 工具铺路。装配留到 R6-2。
+
+### 19.8 实现期补充决策（写码时确定，与 §19.5/§19.7 一致）
+
+| # | 决策 | 理由 |
+|---|---|---|
+| 1 | `role` **由 `event_type` 推导**：`user_input`/`user_annotation` → `user`，其余 → `agent`；调用方传了就必须相等，否则 `VALIDATION_ERROR` | 不允许把 `plan` 声明成「用户说的」。`system` 保留为枚举值，留给未来的运行时观察事件 |
+| 2 | 执行类事件**创建时**只能是 `planned` 或 `running`，**不能**直接 `completed` | 「宣布做完了」与「做完了」必须是两次独立写入，后者带自己的 `expected_updated_at`（乐观锁） |
+| 3 | `planned → completed` **不被允许**，必须经过 `running` | §19.5 的推进表是链条，不是全连接图 |
+| 4 | `appendEvent` 只接受 Journey 状态 `created` / `running`（`paused`/`failed`/`abandoned` 先 resume；`completed`/`cancelled` 永久拒绝） | 否则「暂停采集」是假的——paused 期间照样能写就等于没暂停 |
+| 5 | R6-1 **只接受 `capture_mode='workflow_summary'`**；`conversation_capture` / `detailed_capture` 直接 `VALIDATION_ERROR` | §15.1 要求这两种必须**用户显式授权**，而 R6-1 没有授权界面。没有闸门就不开这道门 |
+| 6 | `updateJourneyStatus` **不接受 `reason` 参数** | 没有对应列；R6-2 若要留原因，应作为一条事件写入，而不是塞进无处安放的入参 |
+| 7 | Edge 校验放在**事件插入之后**、幂等写入之前 | 这样任何一条非法边都会把事件插入一起回滚——事务原子性因此**可测**（测试 12 就靠它） |
+| 8 | 请求摘要**只校验不重算**：`requestDigest` 必须是 64 位 hex（`digestParams` 的输出形态） | §19.2 禁止 Service 用残缺字段重拼摘要；格式校验是「这个值必须来自 digestParams」的最低保证 |
+
+---
+
+## 附 A：R6-0.1 改动清单
 
 | 文件 | 改动 |
 |---|---|

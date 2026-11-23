@@ -590,6 +590,92 @@ create table action_drafts (
 create index action_drafts_reply_idx on action_drafts (reply_id);
 `
 
+// MARK: - Agent Journey（migration 014）
+//
+// 一次 Agent 任务的执行历程。Desktop 本地数据：**不进 change_log、不进 iOS
+// 同步**（与 Work Context 同一惯例），因此本版不写任何 recordChange / 同步表。
+//
+// 外键取舍（与 Drizzle 定义必须一致）：
+// - `source_client_id` **不设外键**：撤销 MCP Client 不得删除个人历史资产；
+// - `work_context_id` ON DELETE SET NULL：删项目保留 Journey；
+// - `parent_event_id` ON DELETE SET NULL：链接可断、内容不丢；
+// - events / edges / layouts 随 Journey 级联删除；edge 两端事件删除时级联删边。
+const AGENT_JOURNEY_SQL = `
+CREATE TABLE IF NOT EXISTS agent_journeys (
+  id TEXT PRIMARY KEY NOT NULL,
+  title TEXT NOT NULL,
+  goal TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'created',
+  source_client_id TEXT NOT NULL,
+  source_agent TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  work_context_id TEXT REFERENCES work_contexts(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL,
+  started_at INTEGER,
+  updated_at INTEGER NOT NULL,
+  completed_at INTEGER,
+  capture_mode TEXT NOT NULL DEFAULT 'workflow_summary',
+  schema_version INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS agent_journeys_status_idx ON agent_journeys (status, updated_at);
+CREATE INDEX IF NOT EXISTS agent_journeys_work_context_idx ON agent_journeys (work_context_id);
+CREATE INDEX IF NOT EXISTS agent_journeys_source_client_idx ON agent_journeys (source_client_id);
+
+CREATE TABLE IF NOT EXISTS agent_journey_events (
+  id TEXT PRIMARY KEY NOT NULL,
+  journey_id TEXT NOT NULL REFERENCES agent_journeys(id) ON DELETE CASCADE,
+  sequence INTEGER NOT NULL,
+  event_type TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'agent',
+  status TEXT NOT NULL DEFAULT 'completed',
+  evidence_level TEXT NOT NULL DEFAULT 'agent_reported',
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL DEFAULT '',
+  source_client_id TEXT NOT NULL,
+  source_agent TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  attempt_id TEXT,
+  parent_event_id TEXT REFERENCES agent_journey_events(id) ON DELETE SET NULL,
+  idempotency_key TEXT NOT NULL,
+  occurred_at INTEGER NOT NULL,
+  received_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  metadata TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS agent_journey_events_seq_uidx ON agent_journey_events (journey_id, sequence);
+CREATE UNIQUE INDEX IF NOT EXISTS agent_journey_events_idem_uidx ON agent_journey_events (journey_id, source_client_id, idempotency_key);
+CREATE INDEX IF NOT EXISTS agent_journey_events_type_idx ON agent_journey_events (journey_id, event_type);
+CREATE INDEX IF NOT EXISTS agent_journey_events_attempt_idx ON agent_journey_events (journey_id, attempt_id);
+
+CREATE TABLE IF NOT EXISTS agent_journey_edges (
+  id TEXT PRIMARY KEY NOT NULL,
+  journey_id TEXT NOT NULL REFERENCES agent_journeys(id) ON DELETE CASCADE,
+  from_event_id TEXT NOT NULL REFERENCES agent_journey_events(id) ON DELETE CASCADE,
+  to_event_id TEXT NOT NULL REFERENCES agent_journey_events(id) ON DELETE CASCADE,
+  relationship_type TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS agent_journey_edges_uidx ON agent_journey_edges (journey_id, from_event_id, to_event_id, relationship_type);
+CREATE INDEX IF NOT EXISTS agent_journey_edges_from_idx ON agent_journey_edges (from_event_id);
+CREATE INDEX IF NOT EXISTS agent_journey_edges_to_idx ON agent_journey_edges (to_event_id);
+
+CREATE TABLE IF NOT EXISTS agent_journey_layouts (
+  id TEXT PRIMARY KEY NOT NULL,
+  journey_id TEXT NOT NULL REFERENCES agent_journeys(id) ON DELETE CASCADE,
+  event_id TEXT NOT NULL REFERENCES agent_journey_events(id) ON DELETE CASCADE,
+  position_x REAL NOT NULL DEFAULT 0,
+  position_y REAL NOT NULL DEFAULT 0,
+  width REAL NOT NULL DEFAULT 240,
+  height REAL NOT NULL DEFAULT 140,
+  z_index INTEGER NOT NULL DEFAULT 0,
+  collapsed INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS agent_journey_layouts_uidx ON agent_journey_layouts (journey_id, event_id);
+`
+
 export const migrations: Migration[] = [
   { version: 1, name: 'init', sql: INIT_SQL },
   { version: 2, name: 'sync-align-ios', sql: SYNC_ALIGN_SQL },
@@ -603,7 +689,8 @@ export const migrations: Migration[] = [
   { version: 10, name: 'ai-conversations', sql: AI_CONVERSATIONS_SQL },
   { version: 11, name: 'roundtable-panels', sql: ROUNDTABLE_PANELS_SQL },
   { version: 12, name: 'local-workspaces', sql: LOCAL_WORKSPACES_SQL },
-  { version: 13, name: 'reply-intelligence', sql: REPLY_INTELLIGENCE_SQL }
+  { version: 13, name: 'reply-intelligence', sql: REPLY_INTELLIGENCE_SQL },
+  { version: 14, name: 'agent-journeys', sql: AGENT_JOURNEY_SQL }
 ]
 
 /**

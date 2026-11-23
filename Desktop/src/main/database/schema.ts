@@ -1,4 +1,13 @@
-import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
+import {
+  index,
+  integer,
+  primaryKey,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+  type AnySQLiteColumn
+} from 'drizzle-orm/sqlite-core'
 
 /**
  * 本地 SQLite 的 Drizzle 定义。**只镜像 iOS 的语义，不复制它的物理格式**：
@@ -759,4 +768,162 @@ export const actionDrafts = sqliteTable(
     updatedAt: integer('updated_at').notNull()
   },
   (table) => [index('action_drafts_reply_idx').on(table.replyId)]
+)
+
+// MARK: - Agent Journey（migration 014）
+//
+// 一次 Agent 任务的执行历程。**Desktop 本地数据**：不进 change_log、不进 iOS
+// 同步（与 Work Context / Personal Direction 同一惯例）。
+//
+// 三条与既有表不同的设计：
+// 1. `source_client_id` **不设外键**——撤销/删除 MCP Client 绝不能连带删除
+//    用户的历史资产（与 `mcp_operation_log.client_id` 同一取舍）。
+// 2. `work_context_id` 用 `ON DELETE SET NULL`——删项目保留个人历史。
+// 3. 事件顺序的唯一真相是 `sequence`；`occurred_at` 只是 Agent 声称的时间。
+
+/**
+ * 一次具体的 Agent 任务历程。一个 Work Context 可以关联多次 Journey，
+ * Journey 也可以独立存在（`work_context_id` 可空）。
+ */
+export const agentJourneys = sqliteTable(
+  'agent_journeys',
+  {
+    id: text('id').primaryKey(),
+    title: text('title').notNull(),
+    goal: text('goal').notNull().default(''),
+    /** created / running / paused / failed / completed / cancelled / abandoned */
+    status: text('status').notNull().default('created'),
+    /** `mcp_clients.id`，**无外键**：撤销客户端不删除个人历史。 */
+    sourceClientId: text('source_client_id').notNull(),
+    /** Agent 自报元数据，不参与任何身份判定。 */
+    sourceAgent: text('source_agent').notNull().default(''),
+    model: text('model').notNull().default(''),
+    workContextId: text('work_context_id').references(() => workContexts.id, {
+      onDelete: 'set null'
+    }),
+    createdAt: integer('created_at').notNull(),
+    /** 首次进入 running 时写入；此前为 null。 */
+    startedAt: integer('started_at'),
+    updatedAt: integer('updated_at').notNull(),
+    /** 只有显式完成时写入；completed_at 为 null 即未完成。 */
+    completedAt: integer('completed_at'),
+    /** workflow_summary（默认）/ conversation_capture / detailed_capture */
+    captureMode: text('capture_mode').notNull().default('workflow_summary'),
+    schemaVersion: integer('schema_version').notNull().default(1)
+  },
+  (table) => [
+    index('agent_journeys_status_idx').on(table.status, table.updatedAt),
+    index('agent_journeys_work_context_idx').on(table.workContextId),
+    index('agent_journeys_source_client_idx').on(table.sourceClientId)
+  ]
+)
+
+/**
+ * 一次重要的过程记录。事实字段创建后不可覆盖（更新接口只接受 `status`）。
+ *
+ * `UNIQUE(journey_id, sequence)` 是顺序兜底；`UNIQUE(journey_id,
+ * source_client_id, idempotency_key)` 是事件级重复提交兜底——两者都不承担
+ * MCP 请求级重放职责（那是 `mcp_idempotency` 的事）。
+ */
+export const agentJourneyEvents = sqliteTable(
+  'agent_journey_events',
+  {
+    id: text('id').primaryKey(),
+    journeyId: text('journey_id')
+      .notNull()
+      .references(() => agentJourneys.id, { onDelete: 'cascade' }),
+    sequence: integer('sequence').notNull(),
+    eventType: text('event_type').notNull(),
+    role: text('role').notNull().default('agent'),
+    status: text('status').notNull().default('completed'),
+    /** v1 只接受 agent_reported。 */
+    evidenceLevel: text('evidence_level').notNull().default('agent_reported'),
+    title: text('title').notNull(),
+    summary: text('summary').notNull().default(''),
+    content: text('content').notNull().default(''),
+    reason: text('reason').notNull().default(''),
+    sourceClientId: text('source_client_id').notNull(),
+    sourceAgent: text('source_agent').notNull().default(''),
+    model: text('model').notNull().default(''),
+    attemptId: text('attempt_id'),
+    /** 结构性父子归属；关联事件被删时置空（内容优先，链接可断）。 */
+    parentEventId: text('parent_event_id').references(
+      (): AnySQLiteColumn => agentJourneyEvents.id,
+      { onDelete: 'set null' }
+    ),
+    idempotencyKey: text('idempotency_key').notNull(),
+    occurredAt: integer('occurred_at').notNull(),
+    receivedAt: integer('received_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    /** 可选扩展，Zod `.strict()` + schema_version；不参与查询。 */
+    metadata: text('metadata')
+  },
+  (table) => [
+    uniqueIndex('agent_journey_events_seq_uidx').on(table.journeyId, table.sequence),
+    uniqueIndex('agent_journey_events_idem_uidx').on(
+      table.journeyId,
+      table.sourceClientId,
+      table.idempotencyKey
+    ),
+    index('agent_journey_events_type_idx').on(table.journeyId, table.eventType),
+    index('agent_journey_events_attempt_idx').on(table.journeyId, table.attemptId)
+  ]
+)
+
+/**
+ * 事件间的**业务关系**（与 `parent_event_id` 的结构性归属不同，不互相镜像）。
+ * 两端都属于同一 Journey 由 Service 校验，`journey_id` 参与唯一索引兜底。
+ */
+export const agentJourneyEdges = sqliteTable(
+  'agent_journey_edges',
+  {
+    id: text('id').primaryKey(),
+    journeyId: text('journey_id')
+      .notNull()
+      .references(() => agentJourneys.id, { onDelete: 'cascade' }),
+    fromEventId: text('from_event_id')
+      .notNull()
+      .references(() => agentJourneyEvents.id, { onDelete: 'cascade' }),
+    toEventId: text('to_event_id')
+      .notNull()
+      .references(() => agentJourneyEvents.id, { onDelete: 'cascade' }),
+    /** depends_on / branch_from / revises / retries */
+    relationshipType: text('relationship_type').notNull(),
+    createdAt: integer('created_at').notNull()
+  },
+  (table) => [
+    uniqueIndex('agent_journey_edges_uidx').on(
+      table.journeyId,
+      table.fromEventId,
+      table.toEventId,
+      table.relationshipType
+    ),
+    index('agent_journey_edges_from_idx').on(table.fromEventId),
+    index('agent_journey_edges_to_idx').on(table.toEventId)
+  ]
+)
+
+/**
+ * 节点摆位（**纯展示层**）：拖动只写这张表，永不改变 `sequence` 与业务 Edge。
+ * 只存用户手动覆盖项，算法默认值不落库。
+ */
+export const agentJourneyLayouts = sqliteTable(
+  'agent_journey_layouts',
+  {
+    id: text('id').primaryKey(),
+    journeyId: text('journey_id')
+      .notNull()
+      .references(() => agentJourneys.id, { onDelete: 'cascade' }),
+    eventId: text('event_id')
+      .notNull()
+      .references(() => agentJourneyEvents.id, { onDelete: 'cascade' }),
+    positionX: real('position_x').notNull().default(0),
+    positionY: real('position_y').notNull().default(0),
+    width: real('width').notNull().default(240),
+    height: real('height').notNull().default(140),
+    zIndex: integer('z_index').notNull().default(0),
+    collapsed: integer('collapsed', { mode: 'boolean' }).notNull().default(false),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (table) => [uniqueIndex('agent_journey_layouts_uidx').on(table.journeyId, table.eventId)]
 )
