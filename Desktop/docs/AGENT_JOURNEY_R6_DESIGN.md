@@ -887,16 +887,23 @@ flowchart LR
 
 ## 14. Codex / WorkBuddy Skill 规范
 
-### 14.1 目录与发现路径 **[已验证 → 设计确定]**
+### 14.1 目录与发现路径 **[已实现（R6-3）]**
 
 ```text
 skills/
   brewphase-agent-journey/
-    SKILL.md                     ← 唯一 canonical source（仓库内是普通文件，非符号链接）
+    SKILL.md                          ← 唯一 canonical source（仓库内是普通文件，非符号链接）
     adapters/
-      codex/README.md            ← .agents/skills/ 与 .codex/skills/ 的 ln -s
-      workbuddy/README.md        ← ~/.workbuddy/skills/ 的 ln -s
+      codex/README.md                 ← .agents/skills/ 与 .codex/skills/ 的 ln -s
+      workbuddy/README.md             ← ~/.workbuddy/skills/（或项目级 .workbuddy/skills/）的 ln -s
+    tests/
+      behavior-scenarios.md           ← 人工行为验收场景（**非自动化测试**）
 ```
+
+**R6-3 交付状态**：上述 4 个文件**已全部落地**（commit `feat(skills): add BrewPhase Agent Journey skill (R6-3)`）。
+`SKILL.md` 为英文主体（与既有 canonical skill `brewphase-life-path/SKILL.md` 一致，description 用于触发匹配）；
+两个 adapter 只讲安装与发现路径，**不复制正文**；`tests/behavior-scenarios.md` 明确标注为人工走查用例，
+**不被任何测试框架执行**。
 
 - 沿用 `skills/brewphase-life-path` 的先例：**仓库一份主体 + 两个 adapter README 只讲安装**。
 - 现有 Skill **无任何 Hook / 运行时拦截机制**（`grep -ri hook skills/` 零命中）→ **[已验证]**
@@ -942,7 +949,22 @@ flowchart TD
 
 **客户端差异 [设计确定]**：统一协议写在 `SKILL.md`；差异（配置路径、token 获取、是否能列目录）只写在各自 `adapters/*/README.md`。
 
-**[待实现]** 实际 Skill 文件（R6-3），本阶段不创建。
+**[已实现（R6-3）]** 实际 Skill 文件已落地：`skills/brewphase-agent-journey/SKILL.md`（唯一主体）+ 两个 adapter README + `tests/behavior-scenarios.md`，见 §14.1。
+
+
+### 14.3 R6-3 验证状态
+
+| 项 | 状态 |
+|---|---|
+| 4 个文件的目录结构与相对路径 | **已验证**（`git diff --check` 通过，路径均为仓库相对路径） |
+| `SKILL.md` YAML frontmatter（`name` / `description`） | **已验证** |
+| 工具名与入参同 `tool-schemas.ts` 真实 Schema 逐项核对 | **已验证**（六工具、字段、长度上限、`status` 无默认、`skipped` 不可作为创建状态） |
+| 状态机同 `agent-journeys.ts` / `agent-journey-service.ts` 真实实现核对 | **已验证**（Journey 与 Event 转移表、终态、`abandoned` 不可达） |
+| 幂等键规则同 `mcp_idempotency` 真实约束核对 | **已验证**（PK `(client_id, idempotency_key)` 跨工具全局唯一） |
+| **真实 Codex / WorkBuddy 客户端加载验证** | **NOT VERIFIED —— 文档结构已验证，客户端运行时尚未验证** |
+
+**明确未做**（本阶段禁止）：无 Hook、无 MCP 工具改动、无 Migration、无 UI、
+未修改 `brewphase-life-path` 等既有 Skill、未写入任何真实 Token 或机器绝对路径。
 
 ---
 
