@@ -250,12 +250,14 @@ describe('账户切换 / 登出会让进行中的注册失效', () => {
     factory: (origin: string) => ReturnType<typeof createHttpDeviceRegistrar>
     release: () => void
     claimCalls: () => number
+    revokeCalls: () => number
   } {
     let release: (() => void) | null = null
     const gate = new Promise<void>((resolve) => {
       release = resolve
     })
     let calls = 0
+    let revokes = 0
     const factory = () => ({
       async register(input: { publicKey: string }) {
         return {
@@ -283,13 +285,15 @@ describe('账户切换 / 登出会让进行中的注册失效', () => {
         return { ok: true as const }
       },
       async revoke() {
+        revokes += 1
         return { ok: true as const }
       }
     })
     return {
       factory,
       release: () => release?.(),
-      claimCalls: () => calls
+      claimCalls: () => calls,
+      revokeCalls: () => revokes
     }
   }
 
@@ -319,7 +323,7 @@ describe('账户切换 / 登出会让进行中的注册失效', () => {
     expect(service.status().deviceId).toBeNull()
   })
 
-  it('claim 在途时登出（prepareForSignOut）→ 结果被丢弃', async () => {
+  it('claim 在途时登出（prepareForSignOut）→ 结果被丢弃，且不留下未处理的 Cloud 设备', async () => {
     gateway = await startMockGateway({})
     gatewayUrl = gateway.url
 
@@ -330,12 +334,26 @@ describe('账户切换 / 登出会让进行中的注册失效', () => {
     await service.register()
     await waitFor(() => hanging.claimCalls() >= 1, 5_000)
 
-    await service.prepareForSignOut()
+    // R5-R3.4.2 §三：prepareForSignOut 必须**先失效、再等待**，而且必须在
+    // 账户凭据被清掉之前等完——之后 accessToken() 就不可用了，撤销会失败。
+    // 所以它在 claim 放行之前不可能返回。
+    let settled = false
+    const signingOut = service.prepareForSignOut().then(() => {
+      settled = true
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(settled, 'prepareForSignOut 不该在在途 claim 落定前返回').toBe(false)
+
+    // 放行：claim 拿到的是**成功**结果，但配对已被作废 → 必须收敛而不是落盘。
     hanging.release()
-    await new Promise((resolve) => setTimeout(resolve, 300))
+    await signingOut
+    await new Promise((resolve) => setTimeout(resolve, 100))
 
     const store = createDeviceStore(deviceStorePaths(dir), memoryBox())
     expect((await store.load()).status).toBe('empty')
+    expect(service.status().deviceId).toBeNull()
+    // Cloud 侧已签发的凭据必须被撤销（身份未变，允许撤销）。
+    expect(hanging.revokeCalls()).toBe(1)
   })
 
   it('pending 期间再次 register 必须被拒绝，不能静默顶替上一次', async () => {
