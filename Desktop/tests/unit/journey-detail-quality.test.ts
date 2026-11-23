@@ -3,6 +3,7 @@ import {
   detailEventTypeError,
   isLikelyTestOrConfigPath,
   journeyDetailV1Schema,
+  parseJourneyDetail,
   repoRelativePathError,
   type JourneyDetailV1
 } from '../../src/shared/contracts/entities/agent-journey'
@@ -171,12 +172,6 @@ describe('B. Event Type 与详情语义（纯函数）', () => {
     ).toBeNull()
     expect(detailEventTypeError('outcome', detail({ limitations: ['E2E not run'] }))).toBeNull()
     expect(detailEventTypeError('outcome', detail({ changes: [changeOf()] }))).toBeNull()
-  })
-
-  it('user_input / plan / user_annotation 不强制填任何块', () => {
-    for (const type of ['user_input', 'plan', 'user_annotation']) {
-      expect(detailEventTypeError(type, detail({})), type).toBeNull()
-    }
   })
 
   it('未知事件类型不在此处拦（由事件类型枚举负责）', () => {
@@ -535,5 +530,127 @@ describe('F. Verification 结果与退出码一致性', () => {
       verification: [{ ...base, result: 'passed', evidence_level: 'runtime_observed' }]
     })
     expect(result.success).toBe(false) // .strict() 拒绝未知字段
+  })
+})
+
+
+// ================================================================
+// R6-4.2.2 —— 陈述事件不允许携带 journey_detail_v1（§4.A）
+// ================================================================
+
+/**
+ * 通过 **Schema parse** 构造合法详情——不靠 `as JourneyDetailV1` 绕开基础契约。
+ * 构造本身就证明该对象确实满足 `journeyDetailV1Schema`。
+ */
+function legalDetail(extra: Record<string, unknown>): JourneyDetailV1 {
+  const parsed = journeyDetailV1Schema.safeParse({ version: 1, ...extra })
+  if (!parsed.success) {
+    throw new Error(
+      `fixture is not schema-valid: ${JSON.stringify(parsed.error.issues, null, 2)}`
+    )
+  }
+  return parsed.data
+}
+
+/** 合法的 decision 块。 */
+const DECISION_BLOCK = {
+  selected_approach: '在 Handler 边界做显式映射',
+  rationale: '协议细节只应出现在适配层。',
+  alternatives: [
+    { approach: '在 Service 内兼容两种命名', reason_not_selected: '领域模型背上协议细节' }
+  ],
+  tradeoffs: ['边界多一层显式转换']
+}
+
+/** 合法的 verification 块。 */
+const VERIFICATION_BLOCK = [
+  {
+    target: '边关系回归',
+    result: 'passed' as const,
+    exit_code: 0,
+    summary: '23 通过。',
+    evidence_reference: 'tests/integration/mcp-journey-bridge.test.ts'
+  }
+]
+
+describe('§4.A 陈述事件（user_input / plan / user_annotation）不接受 journey_detail_v1', () => {
+  const STATEMENT_TYPES = ['user_input', 'plan', 'user_annotation'] as const
+
+  const cases: Array<[string, string, Record<string, unknown>]> = [
+    ['user_input', 'decision', { decision: DECISION_BLOCK }],
+    ['user_input', 'changes', { changes: [changeOf()] }],
+    ['plan', 'changes', { changes: [changeOf()] }],
+    ['plan', 'verification', { verification: VERIFICATION_BLOCK }],
+    ['user_annotation', 'observations', { observations: [{ finding: '用户补充的一条事实' }] }]
+  ]
+
+  for (const [eventType, label, extra] of cases) {
+    it(`${eventType} + 合法 ${label} 详情 → 拒绝`, () => {
+      // 先证明这个对象**确实**通过 Schema（不是靠类型断言造出来的）
+      const detail = legalDetail(extra)
+      expect(journeyDetailV1Schema.safeParse(detail).success).toBe(true)
+
+      const message = detailEventTypeError(eventType, detail)
+      expect(message, `${eventType} 必须被拒`).not.toBeNull()
+      expect(message).toContain('is not accepted on event_type')
+      expect(message).toContain(eventType)
+      // 必须指出改法：写普通字段 / 删掉 details，而不是模糊的 invalid details
+      expect(message).toContain('journey_detail_v1')
+      expect(message).toMatch(/summary\/content\/reason/)
+      expect(message).toContain('remove `details`')
+      expect(message).not.toBe('invalid details')
+    })
+  }
+
+  it('每种陈述事件的错误信息指向它自己的普通字段', () => {
+    const detail = legalDetail({ decision: DECISION_BLOCK })
+    expect(detailEventTypeError('user_input', detail)).toContain("the user's own words")
+    expect(detailEventTypeError('plan', detail)).toContain('the plan you showed the user')
+    expect(detailEventTypeError('user_annotation', detail)).toContain("the user's note")
+  })
+
+  it('陈述事件不提交 details：parseJourneyDetail 为 null，语义校验根本不会被调用', () => {
+    // Service 只在 metadata.journey_detail_v1 存在时才调 detailEventTypeError；
+    // 旧客户端/不传 details 的路径 = metadata 里没有这个键。
+    expect(parseJourneyDetail(null)).toBeNull()
+    expect(parseJourneyDetail(undefined)).toBeNull()
+    expect(parseJourneyDetail({})).toBeNull()
+    expect(parseJourneyDetail({ command: 'pnpm test' })).toBeNull()
+    for (const type of STATEMENT_TYPES) {
+      expect(type).toBeTruthy()
+    }
+  })
+
+  it('其它 metadata 键不受本规则影响（只有 journey_detail_v1 被看）', () => {
+    // 这条在 Service 层生效：metadata 里没有 journey_detail_v1 时
+    // detailEventTypeError 不会被调用，普通键原样保留（见集成测试）。
+    const legacy = { command: 'pnpm test', note: '旧的自由格式' }
+    expect(parseJourneyDetail(legacy)).toBeNull()
+    expect(legacy.command).toBe('pnpm test')
+  })
+
+  it('允许携带详情的事件满足最低要求后仍可带辅助信息', () => {
+    // decision + decision 块 + references：不被实现成「只能有一个字段」
+    const withRefs = legalDetail({
+      decision: DECISION_BLOCK,
+      references: [{ kind: 'commit', value: 'ed3f22c', label: 'R6-4.2.1' }],
+      limitations: ['未运行全量 E2E']
+    })
+    expect(detailEventTypeError('decision', withRefs)).toBeNull()
+
+    // execution 的两种合法形态都保持可用（不破坏非代码分析工作的兼容）
+    expect(detailEventTypeError('execution', legalDetail({ changes: [changeOf()] }))).toBeNull()
+    expect(
+      detailEventTypeError(
+        'execution',
+        legalDetail({ observations: [{ finding: '竞态出现在同步段' }] })
+      )
+    ).toBeNull()
+    expect(
+      detailEventTypeError(
+        'execution',
+        legalDetail({ references: [{ kind: 'test', value: 'tests/x.test.ts' }] })
+      )
+    ).toBeNull()
   })
 })

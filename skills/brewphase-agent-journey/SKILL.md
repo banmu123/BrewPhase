@@ -352,8 +352,9 @@ details = {
 
 ### Rules that will fail review
 
-The server **enforces** these — they are not style advice. A violation comes
-back as `VALIDATION_ERROR` and the event is not written at all.
+The server **enforces** rules 1–10 below — they are not style advice. A
+violation comes back as `VALIDATION_ERROR` and the event is not written at
+all: no half-written event, no idempotency row, no journey status change.
 
 1. **`details` must contain real content.** `{ version: 1 }` alone is
    rejected, and so are all-empty arrays and whitespace-only strings
@@ -369,11 +370,25 @@ back as `VALIDATION_ERROR` and the event is not written at all.
    | `execution` | `changes` **or** `observations` / `references` / `limitations` |
    | `revision` | `changes` **or** `observations` **or** `decision` |
    | `outcome` | at least one of `changes`, `verification`, `references`, `limitations`, `decision` |
-   | `user_input`, `plan`, `user_annotation` | none — do not fill in unrelated content just to satisfy a schema |
+   | `user_input`, `plan`, `user_annotation` | **`details` is rejected outright** |
 
    An `execution` that only analysed or debugged does **not** need
    `changes`. Record what you actually did in `observations` instead of
    inventing a file edit.
+
+   **Statement events never take `details`.** `user_input`, `plan` and
+   `user_annotation` carry their content in the plain fields, and the
+   server rejects `journey_detail_v1` on them **even when the structure is
+   perfectly valid** — a schema-valid payload is not the same as content
+   that belongs on that event:
+
+   - `user_input` → the user's own words, in `summary` / `content`
+   - `plan` → the plan you showed the user, in `summary` / `content`
+   - `user_annotation` → the user's note, in `summary` / `content`
+
+   Do not attach unrelated structured data to make a statement event look
+   detailed. Omitting `details` is always fine, and other `metadata` keys
+   are unaffected — only `journey_detail_v1` is refused on these three.
 
 3. **One entry per file, no duplicate paths.** Three files changed means
    three `changes` entries; the same path twice is rejected. Two different
@@ -406,14 +421,25 @@ back as `VALIDATION_ERROR` and the event is not written at all.
    `tool_result` or `runtime_observed` — the server rejects it. Present your
    test results as what they are: your own report, traceable only through
    the `command` and `evidence_reference` you recorded.
-10. **No full source files, no full terminal dumps, no raw diffs.** Keep the
-    summary; reference a commit SHA instead of pasting a patch.
-11. **Budget:** the whole `metadata` blob is capped (16 000 chars) and every
+10. **Budget:** the whole `metadata` blob is capped (16 000 chars) and every
     field has its own limit. Over budget is **rejected**, not truncated —
     trimming would leave JSON you cannot parse.
-12. **Never record hidden chain of thought.** `rationale` and
-    `why_this_location` are reasons you already showed the user, not your
-    internal scratchpad.
+
+### Rules only you can keep
+
+The server cannot check these. It bounds how much you can write, but not
+what you put in it — a violation here will not come back as
+`VALIDATION_ERROR`, it will just make the record worse.
+
+- **No full source files, no full terminal dumps, no raw diffs.** Field
+  length caps and the metadata budget limit the size, but nothing
+  recognises a pasted file. Keep the summary; reference a commit SHA
+  instead of pasting a patch.
+- **Never record hidden chain of thought.** `rationale` and
+  `why_this_location` are reasons you already showed the user, not your
+  internal scratchpad.
+- **Do not pad a statement event.** `details` is refused on those three,
+  but you can still bury filler in `content` — don't.
 
 ### When the server rejects your `details`
 

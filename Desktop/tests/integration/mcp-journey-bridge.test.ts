@@ -1204,3 +1204,188 @@ describe('G. 质量门经真实 MCP 往返', () => {
     expect(read.events[0].evidence_level).toBe('agent_reported')
   })
 })
+
+// MARK: - §4.B 陈述事件不接受 journey_detail_v1（真实 Local MCP Bridge）
+
+describe('§4.B 陈述事件不接受 journey_detail_v1', () => {
+  /**
+   * 一份**完全合法**的 details（路径相对、modified 带前后行为、行号从 1 起）。
+   * 被拒的原因必须是「plan 不接受 v1」，而不是结构问题——否则测不到本阶段的规则。
+   */
+  const PLAN_DETAILS = {
+    version: 1 as const,
+    changes: [
+      {
+        file_path: 'Desktop/src/main/mcp-bridge/request-router.ts',
+        change_type: 'modified' as const,
+        symbols: ['routeBridgeRequest'],
+        change_summary: '在路由入口加一道参数形状校验。',
+        before_behavior: '非法入参一路穿到 Service 才报错。',
+        after_behavior: '非法入参在路由层即被拒绝，Service 不再收到脏参数。',
+        why_this_location: '路由层是外部请求进入 Main 的唯一入口，参数形状只应在这里被约束。',
+        line_range: { start: 60, end: 95 }
+      }
+    ]
+  }
+
+  it('plan 携带合法 details 被拒：无事件、无幂等记录、Journey 状态不变，失败审计照记', async () => {
+    const codex = makeClient('Codex', JOURNEY_ALL)
+
+    const started = (await codex.client.call('start_agent_journey', {
+      title: '陈述事件不接受 details',
+      idempotency_key: `start:${randomUUID()}`
+    })) as { journey: { id: string; status: string } }
+    const journeyId = started.journey.id
+
+    const before = {
+      events: handle.db
+        .select()
+        .from(agentJourneyEvents)
+        .all()
+        .filter((row) => row.journeyId === journeyId).length,
+      status: (
+        handle.db.select().from(agentJourneys).all().find((row) => row.id === journeyId)!
+      ).status
+    }
+    expect(before.events).toBe(0)
+
+    const key = `evt:${randomUUID()}`
+    await expect(
+      codex.client.call('append_agent_journey_event', {
+        journey_id: journeyId,
+        event_type: 'plan',
+        title: '带了不该带的结构化详情',
+        summary: '计划本身写在普通字段里。',
+        details: PLAN_DETAILS,
+        idempotency_key: key
+      })
+    ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' })
+
+    // 4) 没有半截事件
+    const after = handle.db
+      .select()
+      .from(agentJourneyEvents)
+      .all()
+      .filter((row) => row.journeyId === journeyId)
+    expect(after, '非法请求不得写入任何事件').toHaveLength(0)
+
+    // 5) 没有留下该请求的幂等记录
+    expect(idempotencyRows(key), '失败不得留下幂等记录').toHaveLength(0)
+
+    // 6) Journey 状态与事件数量没有非预期变化（首个事件才会把 created 推到 running）
+    const journey = handle.db.select().from(agentJourneys).all().find((row) => row.id === journeyId)!
+    expect(journey.status, '校验失败不得推进 Journey 状态').toBe('created')
+    expect(
+      handle.db
+        .select()
+        .from(agentJourneys)
+        .all()
+        .filter((row) => row.id === journeyId)
+    ).toHaveLength(1)
+
+    // 既有约定：写工具的失败**要**记审计（success:false）——本阶段不得削弱该能力
+    const failures = auditRows('append_agent_journey_event').filter((row) => row.success === false)
+    expect(failures.length, '失败请求必须留下审计').toBeGreaterThan(0)
+    expect(failures[0].errorCode).toBe('VALIDATION_ERROR')
+  })
+
+  it('错误信息指向 event_type 与 journey_detail_v1，不是模糊的 invalid details', async () => {
+    const codex = makeClient('Codex', JOURNEY_ALL)
+    const started = (await codex.client.call('start_agent_journey', {
+      title: '错误信息可定位',
+      idempotency_key: `start:${randomUUID()}`
+    })) as { journey: { id: string } }
+
+    let message = ''
+    try {
+      await codex.client.call('append_agent_journey_event', {
+        journey_id: started.journey.id,
+        event_type: 'plan',
+        title: '不该带 details',
+        details: PLAN_DETAILS,
+        idempotency_key: `evt:${randomUUID()}`
+      })
+    } catch (error) {
+      message = (error as { message?: string }).message ?? String(error)
+    }
+
+    expect(message).toContain('journey_detail_v1')
+    expect(message).toContain('plan')
+    expect(message).toMatch(/summary\/content\/reason/)
+    expect(message).toContain('remove `details`')
+    expect(message).not.toBe('invalid details')
+  })
+
+  it('不带 details 的旧客户端 plan 照常成功（兼容性不被破坏）', async () => {
+    const codex = makeClient('Codex', JOURNEY_ALL)
+    const started = (await codex.client.call('start_agent_journey', {
+      title: '旧客户端 plan',
+      idempotency_key: `start:${randomUUID()}`
+    })) as { journey: { id: string; status: string } }
+
+    const planned = (await codex.client.call('append_agent_journey_event', {
+      journey_id: started.journey.id,
+      event_type: 'plan',
+      title: '先在 Handler 边界补齐字段映射',
+      summary: '三步：定位缺口 → 边界转换 → 补回归。',
+      content: '计划正文写在普通字段里。',
+      idempotency_key: `evt:${randomUUID()}`
+    })) as {
+      event: { sequence: number; status: string; metadata: unknown }
+      journey: { status: string }
+    }
+
+    expect(planned.event.sequence).toBe(1)
+    expect(planned.event.status).toBe('completed') // 陈述类创建即 completed
+    expect(planned.event.metadata, '不传 details 时 metadata 为 null').toBeNull()
+    expect(planned.journey.status).toBe('running')
+    expect(
+      handle.db
+        .select()
+        .from(agentJourneyEvents)
+        .all()
+        .filter((row) => row.journeyId === started.journey.id)
+    ).toHaveLength(1)
+  })
+
+  it('decision 等允许结构化详情的事件仍正常写入（规则没有误伤）', async () => {
+    const codex = makeClient('Codex', JOURNEY_ALL)
+    const started = (await codex.client.call('start_agent_journey', {
+      title: '允许详情的事件不受影响',
+      idempotency_key: `start:${randomUUID()}`
+    })) as { journey: { id: string } }
+
+    const decision = (await codex.client.call('append_agent_journey_event', {
+      journey_id: started.journey.id,
+      event_type: 'decision',
+      title: '映射放在 Handler 边界',
+      reason: '边界转换可测、可枚举。',
+      details: {
+        version: 1,
+        decision: {
+          selected_approach: '在 Handler 边界做显式映射',
+          rationale: '协议细节只应出现在适配层。',
+          alternatives: [
+            { approach: '在 Service 内兼容两种命名', reason_not_selected: '领域模型背上协议细节' }
+          ],
+          tradeoffs: ['边界多一层显式转换']
+        },
+        references: [{ kind: 'commit', value: 'ed3f22ca1407a3a40478790aa3ac51d1cb079bd3' }]
+      },
+      idempotency_key: `evt:${randomUUID()}`
+    })) as { event: { metadata: Record<string, unknown> | null } }
+
+    const detail = decision.event.metadata!.journey_detail_v1 as {
+      decision: { selected_approach: string }
+      references: unknown[]
+    }
+    expect(detail.decision.selected_approach).toContain('Handler')
+    // 满足最低要求后仍可携带辅助信息（不被实现成「只能有一个字段」）
+    expect(detail.references).toHaveLength(1)
+
+    const read = (await codex.client.call('get_agent_journey', {
+      journey_id: started.journey.id
+    })) as { events: Array<{ event_type: string }> }
+    expect(read.events.map((item) => item.event_type)).toEqual(['decision'])
+  })
+})

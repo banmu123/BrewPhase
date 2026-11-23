@@ -427,8 +427,21 @@ export function detailEventTypeError(eventType: string, detail: JourneyDetailV1)
     case 'user_input':
     case 'plan':
     case 'user_annotation':
-      // 这三类没有对应的结构化块：不为凑 Schema 填无关内容（§4 末段）。
-      return null
+      /*
+       * 这三类是**陈述事件**：内容属于普通字段，不允许携带
+       * `journey_detail_v1`（R6-4.2.2 §二）。
+       *
+       * - 没传 details → 根本不会走到这里（serializeMetadata 只在
+       *   `metadata.journey_detail_v1` 存在时才调用本函数）；
+       * - 传了 details（即使结构完全合法）→ 一律拒绝。
+       *
+       * 拒绝的理由是**语义不属**，不是结构错误：用户原话写 `user_input` 的
+       * `summary/content`，展示过的计划写 `plan`，用户补充写 `user_annotation`。
+       * 结构校验放行不等于这条事件该有这块内容。
+       *
+       * 本规则只看 `journey_detail_v1`；metadata 的其它键不受影响。
+       */
+      return `${prefix} is not accepted on event_type "${eventType}" — this event carries its content in the plain fields (${eventType === 'user_input' ? "the user's own words" : eventType === 'plan' ? 'the plan you showed the user' : "the user's note"}), so write it into summary/content/reason and remove \`details\``
 
     default:
       // 未知事件类型不在此处拦——事件类型本身由 Service 的枚举校验负责。
