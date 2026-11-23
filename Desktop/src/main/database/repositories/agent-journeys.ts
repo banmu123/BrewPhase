@@ -335,8 +335,28 @@ export type JourneyPatch = Partial<{
 }>
 
 /**
+ * 下一个乐观锁版本号：`max(now, previousUpdatedAt + 1)`。
+ *
+ * 为什么不能直接用 `Date.now()`：CAS 的 WHERE 是 `updated_at = ?`，而
+ * `Date.now()` 是**毫秒**值——快速连续更新会得到同一个时间戳，于是「已经
+ * 变更过一次」的记录仍然会被一个**旧请求**用同一个 `expectedUpdatedAt` 命中，
+ * 乐观锁形同虚设。测试用 `now` 与当前值完全相同就能复现。
+ *
+ * `previousUpdatedAt` 取自**参与 CAS 的那个值**（`expectedUpdatedAt`）或
+ * 更新前重新读出的当前值——两者都严格等于库里的现值，因此结果必然
+ * **严格大于**旧版本，且不受调用方传入的 `now` 影响。
+ */
+function nextUpdatedAt(now: number, previousUpdatedAt: number): number {
+  return Math.max(now, previousUpdatedAt + 1)
+}
+
+/**
  * **乐观锁**更新：`WHERE id = ? AND updated_at = ?`。不匹配返回 null，
  * 由 Service 翻译成 `STALE_RECORD`（与 `work-contexts.ts` 同一语义）。
+ *
+ * 写入的 `updated_at` 由 `nextUpdatedAt` 计算，**严格递增**（见其注释）。
+ * 由于 WHERE 已经保证命中行的 `updated_at === expectedUpdatedAt`，
+ * 直接用 `expectedUpdatedAt` 当「前值」即可，不必额外读一次。
  */
 export function updateJourney(
   db: Db,
@@ -347,7 +367,7 @@ export function updateJourney(
 ): AgentJourney | null {
   const result = db
     .update(agentJourneys)
-    .set({ ...patch, updatedAt: now })
+    .set({ ...patch, updatedAt: nextUpdatedAt(now, expectedUpdatedAt) })
     .where(and(eq(agentJourneys.id, id), eq(agentJourneys.updatedAt, expectedUpdatedAt)))
     .run()
   if (result.changes !== 1) return null
@@ -357,9 +377,18 @@ export function updateJourney(
 /**
  * 事务内的**无条件**更新（Service 已在同一事务里校验过状态前置条件）。
  * 与 `updateJourney` 的区别只在「谁负责保证前置条件」。
+ *
+ * 没有 CAS 就没有「前值」可用，因此**先读当前版本**再算下一个版本——
+ * 同一个事务里连续调用两次（`created → running → completed`）时，
+ * 第二次读到的正是第一次写下的值，版本会继续递增而不是原地踏步。
  */
 export function updateJourneyUnchecked(db: Db, id: string, patch: JourneyPatch, now: number): AgentJourney {
-  db.update(agentJourneys).set({ ...patch, updatedAt: now }).where(eq(agentJourneys.id, id)).run()
+  const current = selectJourney(db, id)
+  if (!current) throw new Error(`journey ${id} disappeared during update`)
+  db.update(agentJourneys)
+    .set({ ...patch, updatedAt: nextUpdatedAt(now, current.updatedAt) })
+    .where(eq(agentJourneys.id, id))
+    .run()
   const row = selectJourney(db, id)
   if (!row) throw new Error(`journey ${id} disappeared during update`)
   return row
@@ -478,14 +507,19 @@ export function selectEvents(db: Db, journeyId: string, filter: EventListFilter 
   return query.all().map(toEvent)
 }
 
-/** 乐观锁推进事件状态；不匹配返回 null → `STALE_RECORD`。 */
+/**
+ * 乐观锁推进事件状态；不匹配返回 null → `STALE_RECORD`。
+ *
+ * 写入的 `updated_at` 严格递增（`nextUpdatedAt`），因此用**同一个 now**
+ * 连续推进两次时，第二次必须拿第一次写下的版本号，旧值一律 `STALE_RECORD`。
+ */
 export function updateEventStatus(
   db: Db,
   input: { id: string; status: AgentJourneyEventStatus; expectedUpdatedAt: number; now: number }
 ): AgentJourneyEvent | null {
   const result = db
     .update(agentJourneyEvents)
-    .set({ status: input.status, updatedAt: input.now })
+    .set({ status: input.status, updatedAt: nextUpdatedAt(input.now, input.expectedUpdatedAt) })
     .where(
       and(
         eq(agentJourneyEvents.id, input.id),

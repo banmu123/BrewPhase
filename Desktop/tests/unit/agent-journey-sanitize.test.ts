@@ -148,3 +148,98 @@ describe('metadata 递归脱敏', () => {
     expect(JOURNEY_METADATA_MAX).toBe(4_000)
   })
 })
+
+describe('metadata：敏感父级整棵子树被替换（不许靠子键名漏网）', () => {
+  const SECRET = 'plain-secret-value-abc123'
+
+  it('1) 敏感父级对象下的普通字符串字段被整块替换', () => {
+    const out = redactDeep({ authorization: { scheme: 'Bearer', value: SECRET } })
+    // 注意子键是 `value` / `scheme`——它们本身**不**含敏感词，
+    // 只有「整棵子树替换」这条规则能挡住。
+    expect(out).toEqual({ authorization: '[redacted]' })
+    expect(JSON.stringify(out)).not.toContain(SECRET)
+  })
+
+  it('2) 敏感父级下的多层嵌套对象同样整块替换', () => {
+    const out = redactDeep({ client_secret: { outer: { inner: { deeper: SECRET } } } })
+    expect(out).toEqual({ client_secret: '[redacted]' })
+    expect(JSON.stringify(out)).not.toContain(SECRET)
+  })
+
+  it('3) 敏感父级数组整块替换', () => {
+    const out = redactDeep({ tokens: ['first', SECRET, 'third'] })
+    expect(out).toEqual({ tokens: '[redacted]' })
+    expect(JSON.stringify(out)).not.toContain(SECRET)
+  })
+
+  it('4) 敏感对象内部包含数组也整块替换', () => {
+    const out = redactDeep({ credentials: { list: [SECRET, { nested: SECRET }] } })
+    expect(out).toEqual({ credentials: '[redacted]' })
+    expect(JSON.stringify(out)).not.toContain(SECRET)
+  })
+
+  it('5) 非敏感父级的普通字段与嵌套结构原样保留', () => {
+    const normal = {
+      note: 'keep me',
+      list: ['a', 'b'],
+      nested: { title: 'keep too', items: [{ k: 'v' }] },
+      count: 3
+    }
+    expect(redactDeep(normal)).toEqual(normal)
+    // 混合：敏感的折叠，其余的保留
+    const mixed = { note: 'keep me', password: { value: SECRET } }
+    expect(redactDeep(mixed)).toEqual({ note: 'keep me', password: '[redacted]' })
+  })
+
+  it('6) JSON 序列化后原始敏感值完全不存在，且仍是合法 JSON', () => {
+    const meta = {
+      authorization: { scheme: 'Bearer', value: SECRET },
+      api_key: { provider: 'acme', value: SECRET },
+      client_secret: { nested: [SECRET] },
+      password: { value: SECRET },
+      credentials: { user: 'alice', pass: SECRET },
+      keep: 'visible'
+    }
+    const json = JSON.stringify(redactDeep(meta))
+    expect(() => JSON.parse(json)).not.toThrow()
+    expect(json).not.toContain(SECRET)
+    expect(json).not.toContain('alice')
+    expect(json).toContain('visible')
+    // 五个键名都确实命中了敏感规则
+    for (const key of ['authorization', 'api_key', 'client_secret', 'password', 'credentials']) {
+      expect(json, key).toContain(`"${key}":"[redacted]"`)
+    }
+  })
+})
+
+describe('goal 字段独立上限（设计文档 §7.2 ≤2000）', () => {
+  it('1999 / 2000 字符原样保存', () => {
+    expect(JOURNEY_TEXT_LIMITS.goal).toBe(2_000)
+    expect(sanitizeJourneyContent('g'.repeat(1_999), { max: JOURNEY_TEXT_LIMITS.goal })).toHaveLength(
+      1_999
+    )
+    const atLimit = sanitizeJourneyContent('g'.repeat(2_000), { max: JOURNEY_TEXT_LIMITS.goal })
+    expect(atLimit).toHaveLength(2_000)
+    expect(atLimit.endsWith(TRUNCATION_MARKER)).toBe(false)
+  })
+
+  it('超过 2000 字符明确截断', () => {
+    const out = sanitizeJourneyContent('g'.repeat(3_000), { max: JOURNEY_TEXT_LIMITS.goal })
+    expect(out).toHaveLength(JOURNEY_TEXT_LIMITS.goal)
+    expect(out.endsWith(TRUNCATION_MARKER)).toBe(true)
+    expect(exceedsLimit(out, 'goal')).toBe(false)
+  })
+
+  it('超长敏感文本仍然先脱敏后截断', () => {
+    const input = 'x'.repeat(2_100) + 'password=' + 'S'.repeat(3_000)
+    const out = sanitizeJourneyContent(input, { max: JOURNEY_TEXT_LIMITS.goal })
+    expect(out).not.toContain('SSSSSSSSSS')
+    expect(out.endsWith(TRUNCATION_MARKER)).toBe(true)
+    expect(out.length).toBeLessThanOrEqual(JOURNEY_TEXT_LIMITS.goal)
+  })
+
+  it('普通中文 Goal 不被误删', () => {
+    const zh = '目标：把设备配对问题定位并修复，保持现有协议与工具面不变。'
+    expect(sanitizeJourneyContent(zh, { max: JOURNEY_TEXT_LIMITS.goal })).toBe(zh)
+  })
+})

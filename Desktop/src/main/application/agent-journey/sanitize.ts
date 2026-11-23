@@ -22,9 +22,11 @@
  * 命令行在没有敏感键赋值时原样保留（见测试）。
  */
 
-/** 各字段的字符上限（与 Zod schema 一致）。 */
+/** 各字段的字符上限（与设计文档 §7.2 一致）。 */
 export const JOURNEY_TEXT_LIMITS = {
   title: 200,
+  /** `goal` 有独立上限：它与 `summary` 同级（≤2000），不是正文（≤20000）。 */
+  goal: 2_000,
   summary: 2_000,
   content: 20_000,
   reason: 2_000,
@@ -129,15 +131,27 @@ export function sanitizeJourneyContent(text: string, limits: SanitizeLimits): st
  *
  * 两件事：
  * 1. **键名本身可能携带敏感性**——`{ POSTGRES_PASSWORD: "raw" }` 的叶子串
- *    `raw` 不含任何凭证形态，只跑 `redactSecrets` 会原样漏出去；因此键名命中
- *    黑名单时整个值替换。
- * 2. 只触碰**叶子**，不碰结构，因此重新 `JSON.stringify` 仍是合法 JSON
- *    ——直接对整段 JSON 文本跑正则会把成对的引号一起吃掉，产出坏 JSON。
+ *    `raw` 不含任何凭证形态，只跑 `redactSecrets` 会原样漏出去。
+ * 2. **敏感键命中后整棵子树替换**（方案 A），绝不下钻。
+ *
+ * ## 为什么不能下钻
+ *
+ * `{ authorization: { scheme: "Bearer", value: "secret-value" } }` 里，
+ * 父级键命中敏感规则，但子级 `value` 既不是敏感键、内容也不符合任何已知
+ * Token 正则——继续递归就会把它原样留下。数组同理（`{ tokens: [...] }`）。
+ * 与其给每个后代都挂上「我来自敏感父级」的状态（状态一多就必然漏一个），
+ * 直接把整棵子树换成 `[redacted]` 更简单、更安全、更好测。
+ *
+ * 结构上仍然安全：只有**敏感**子树被折叠，普通 metadata 的嵌套与数组原样
+ * 保留；替换值是普通字符串，`JSON.stringify` 结果必然仍是合法 JSON。
+ *
+ * 只触碰**叶子**的那一半仍然保留：普通对象继续下钻，叶子字符串跑
+ * `redactSecrets`（对整段 JSON 文本跑正则会吃掉成对引号，产出坏 JSON）。
  */
 export function redactDeep<T>(value: T, key?: string): T {
   if (key !== undefined && SENSITIVE_KEY_PATTERN.test(key)) {
-    // 对象/数组继续下钻以保住结构；原语直接替换。
-    if (value === null || typeof value !== 'object') return REDACTED as unknown as T
+    // 整棵子树替换：不区分原语 / 对象 / 数组。
+    return REDACTED as unknown as T
   }
   if (typeof value === 'string') return redactSecrets(value) as unknown as T
   if (Array.isArray(value)) {

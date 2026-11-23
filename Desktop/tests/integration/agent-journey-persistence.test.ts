@@ -36,6 +36,10 @@ import {
 } from '../../src/main/application/agent-journey/agent-journey-service'
 import type { AgentJourney } from '../../src/main/database/repositories/agent-journeys'
 import { ApplicationEvents } from '../../src/main/application/events/application-events'
+import {
+  JOURNEY_TEXT_LIMITS,
+  TRUNCATION_MARKER
+} from '../../src/main/application/agent-journey/sanitize'
 import { McpClientService } from '../../src/main/application/authorization/permission-service'
 
 /**
@@ -1093,5 +1097,316 @@ describe('领域事件广播', () => {
       'NOT_FOUND'
     )
     expect(emitted).toHaveLength(0)
+  })
+})
+
+// MARK: - R6-1.1 加固：乐观锁 / goal / 幂等上下文
+
+describe('R6-1.1 修复一：乐观锁版本严格递增', () => {
+  it('Event：同毫秒 CAS —— 第一次成功且严格递增，旧 expectedUpdatedAt 拿 STALE_RECORD', () => {
+    const journey = createJourney()
+    const created = append(journey.id, { eventType: 'execution', status: 'planned', title: 'x' })
+    const initial = created.event.updatedAt
+
+    // 显式传入与当前 updatedAt **完全相同** 的 now（不 sleep、不等下一毫秒）
+    const first = service.updateEventStatus({
+      eventId: created.event.id,
+      status: 'running',
+      expectedUpdatedAt: initial,
+      now: initial
+    })
+    expect(first.updatedAt).toBeGreaterThan(initial)
+    expect(first.status).toBe('running')
+
+    // 仍然拿着旧版本号 → 必须 STALE_RECORD（这正是修复前会命中的场景）
+    expectAgentJourneyError(
+      () =>
+        service.updateEventStatus({
+          eventId: created.event.id,
+          status: 'completed',
+          expectedUpdatedAt: initial,
+          now: initial
+        }),
+      'STALE_RECORD'
+    )
+
+    // 连续两次用「当前值」当 now，版本仍必须一路递增
+    const second = service.updateEventStatus({
+      eventId: created.event.id,
+      status: 'completed',
+      expectedUpdatedAt: first.updatedAt,
+      now: first.updatedAt
+    })
+    expect(second.updatedAt).toBeGreaterThan(first.updatedAt)
+    expect(selectEvent(handle.db, created.event.id)?.status).toBe('completed')
+  })
+
+  it('Journey：同毫秒 CAS 同样严格递增', () => {
+    const journey = createJourney()
+    const initial = journey.updatedAt
+
+    const running = service.updateJourneyStatus({
+      journeyId: journey.id,
+      status: 'running',
+      expectedUpdatedAt: initial,
+      now: initial
+    })
+    expect(running.updatedAt).toBeGreaterThan(initial)
+
+    expectAgentJourneyError(
+      () =>
+        service.updateJourneyStatus({
+          journeyId: journey.id,
+          status: 'paused',
+          expectedUpdatedAt: initial,
+          now: initial
+        }),
+      'STALE_RECORD'
+    )
+
+    const paused = service.updateJourneyStatus({
+      journeyId: journey.id,
+      status: 'paused',
+      expectedUpdatedAt: running.updatedAt,
+      now: running.updatedAt
+    })
+    expect(paused.updatedAt).toBeGreaterThan(running.updatedAt)
+  })
+
+  it('同一事务内 created → running → completed，最终版本严格大于初始', () => {
+    const T = 1_700_000_000_000
+    const params = { title: 'tx' }
+    const created = service.createJourney(ctx(CLIENT_A, 'start_agent_journey', params), {
+      title: 'tx',
+      now: T
+    })
+    expect(created.journey.updatedAt).toBe(T)
+    expect(created.journey.status).toBe('created')
+
+    const done = append(
+      created.journey.id,
+      { eventType: 'outcome', title: '完事', journeyStatus: 'completed', now: T },
+      CLIENT_A
+    )
+
+    expect(done.journey.status).toBe('completed')
+    expect(done.journey.completedAt).not.toBeNull()
+    expect(done.journey.startedAt).toBe(T)
+    // 两次 updateJourneyUnchecked 在同一事务里连续写，版本必须继续递增
+    expect(done.journey.updatedAt).toBeGreaterThan(T)
+    expect(selectJourney(handle.db, created.journey.id)?.updatedAt).toBe(done.journey.updatedAt)
+  })
+
+  it('取消 Journey 批量推进开放事件：变化的版本严格递增，未变的不动', () => {
+    const journey = createJourney()
+    const plan = append(journey.id, { eventType: 'plan', title: '陈述' })
+    const runningExec = append(journey.id, {
+      eventType: 'execution',
+      status: 'running',
+      title: '进行中'
+    })
+    const plannedVerif = append(journey.id, {
+      eventType: 'verification',
+      status: 'planned',
+      title: '待验证'
+    })
+    const failedExec = append(journey.id, {
+      eventType: 'execution',
+      status: 'running',
+      title: '已失败'
+    })
+    service.updateEventStatus({
+      eventId: failedExec.event.id,
+      status: 'failed',
+      expectedUpdatedAt: failedExec.event.updatedAt
+    })
+
+    const before = new Map(selectEvents(handle.db, journey.id).map((e) => [e.id, e.updatedAt]))
+    const current = selectJourney(handle.db, journey.id)!
+    const cancelled = service.updateJourneyStatus({
+      journeyId: current.id,
+      status: 'cancelled',
+      expectedUpdatedAt: current.updatedAt
+    })
+    expect(cancelled.status).toBe('cancelled')
+
+    const after = selectEvents(handle.db, journey.id)
+    expect(after).toHaveLength(4)
+    for (const event of after) {
+      const previous = before.get(event.id)!
+      const shouldAdvance = event.status === 'cancelled'
+      if (shouldAdvance) {
+        expect(event.updatedAt, `${event.title} 应严格递增`).toBeGreaterThan(previous)
+      } else {
+        expect(event.updatedAt, `${event.title} 未发生状态变化，版本不该动`).toBe(previous)
+      }
+    }
+    // 只有开放中的执行类被推进
+    expect(after.find((e) => e.id === runningExec.event.id)?.status).toBe('cancelled')
+    expect(after.find((e) => e.id === plannedVerif.event.id)?.status).toBe('cancelled')
+    expect(after.find((e) => e.id === failedExec.event.id)?.status).toBe('failed')
+    expect(after.find((e) => e.id === plan.event.id)?.status).toBe('completed')
+  })
+})
+
+describe('R6-1.1 修复三：goal 独立上限 2000', () => {
+  it('Service 返回值与真实 SQLite 落库值一致，且不越过 2000', () => {
+    const T = 1_700_000_001_000
+    const params = { title: 'goal limit', goal: 'g'.repeat(2_500) }
+    const created = service.createJourney(ctx(CLIENT_A, 'start_agent_journey', params), {
+      title: 'goal limit',
+      goal: 'g'.repeat(2_500),
+      now: T
+    })
+
+    expect(created.journey.goal).toHaveLength(JOURNEY_TEXT_LIMITS.goal)
+    expect(created.journey.goal.endsWith(TRUNCATION_MARKER)).toBe(true)
+
+    const raw = selectJourney(handle.db, created.journey.id)!
+    expect(raw.goal).toBe(created.journey.goal)
+    expect(raw.goal.length).toBeLessThanOrEqual(JOURNEY_TEXT_LIMITS.goal)
+
+    // 1999 / 2000 正常保存，不带截断标记
+    const atLimit = service.createJourney(
+      ctx(CLIENT_A, 'start_agent_journey', { title: 't2', goal: 'h'.repeat(2_000) }),
+      { title: 't2', goal: 'h'.repeat(2_000), now: T + 1 }
+    )
+    expect(atLimit.journey.goal).toHaveLength(2_000)
+    expect(atLimit.journey.goal.endsWith(TRUNCATION_MARKER)).toBe(false)
+
+    const underLimit = service.createJourney(
+      ctx(CLIENT_A, 'start_agent_journey', { title: 't3', goal: '中文目标'.repeat(10) }),
+      { title: 't3', goal: '中文目标'.repeat(10), now: T + 2 }
+    )
+    expect(underLimit.journey.goal).toBe('中文目标'.repeat(10))
+    expect(selectJourney(handle.db, underLimit.journey.id)?.goal).toBe('中文目标'.repeat(10))
+  })
+})
+
+describe('R6-1.1 修复四：幂等上下文与 Work Context 重放', () => {
+  it('createJourney 用错 toolName 被拒绝，且不写任何表', () => {
+    const params = { title: 'wrong tool' }
+    const bad = {
+      actor: { kind: 'mcp_client' as const, clientId: CLIENT_A },
+      idempotency: {
+        key: `start:${randomUUID()}`,
+        toolName: 'append_agent_journey_event',
+        requestDigest: digestParams(params)
+      }
+    }
+    expectAgentJourneyError(() => service.createJourney(bad, { title: 'wrong tool' }), 'VALIDATION_ERROR')
+    expect(handle.db.select().from(agentJourneys).all()).toHaveLength(0)
+    expect(handle.db.select().from(mcpIdempotency).all()).toHaveLength(0)
+    expect(emitted).toHaveLength(0)
+  })
+
+  it('appendEvent 用错 toolName 被拒绝，且不写任何表', () => {
+    const journey = createJourney()
+    const before = eventCount(journey.id)
+    const idemRows = handle.db.select().from(mcpIdempotency).all().length
+    emitted = []
+
+    const params = { journeyId: journey.id, eventType: 'plan', title: 'p' }
+    const bad = {
+      actor: { kind: 'mcp_client' as const, clientId: CLIENT_A },
+      idempotency: {
+        key: `evt:${randomUUID()}`,
+        toolName: 'start_agent_journey',
+        requestDigest: digestParams(params)
+      }
+    }
+    expectAgentJourneyError(
+      () => service.appendEvent(bad, { journeyId: journey.id, eventType: 'plan', title: 'p' }),
+      'VALIDATION_ERROR'
+    )
+    expect(eventCount(journey.id)).toBe(before)
+    expect(handle.db.select().from(mcpIdempotency).all()).toHaveLength(idemRows)
+    expect(emitted).toHaveLength(0)
+  })
+
+  it('重放时已有幂等记录的 toolName 不匹配 → IDEMPOTENCY_KEY_REUSE', () => {
+    const journey = createJourney()
+    const key = `evt:${randomUUID()}`
+    const params = { journeyId: journey.id, eventType: 'plan', title: '跨工具同 key' }
+    append(journey.id, { eventType: 'plan', title: '跨工具同 key' }, CLIENT_A, key)
+    const journeysBefore = handle.db.select().from(agentJourneys).all().length
+
+    // 同 Client、同 key、**同 digest**，但换一个工具来调 —— 必须拒绝，
+    // 不能把 append 的记录当成一次 start 的成功结果。
+    const crossTool = {
+      actor: { kind: 'mcp_client' as const, clientId: CLIENT_A },
+      idempotency: {
+        key,
+        toolName: 'start_agent_journey',
+        requestDigest: digestParams(params)
+      }
+    }
+    expectAgentJourneyError(() => service.createJourney(crossTool, { title: 'x' }), 'IDEMPOTENCY_KEY_REUSE')
+    expect(handle.db.select().from(agentJourneys).all()).toHaveLength(journeysBefore)
+  })
+
+  it('同 key、同 digest 正常重放；同 key、异 digest 仍然拒绝', () => {
+    const params = { title: 'replay' }
+    const key = `start:${randomUUID()}`
+    const context = ctx(CLIENT_A, 'start_agent_journey', params, key)
+
+    const first = service.createJourney(context, { title: 'replay' })
+    expect(first.created).toBe(true)
+
+    const replayed = service.createJourney(context, { title: 'replay' })
+    expect(replayed.replayed).toBe(true)
+    expect(replayed.created).toBe(false)
+    expect(replayed.journey.id).toBe(first.journey.id)
+
+    expectAgentJourneyError(
+      () =>
+        service.createJourney(ctx(CLIENT_A, 'start_agent_journey', { title: 'different' }, key), {
+          title: 'different'
+        }),
+      'IDEMPOTENCY_KEY_REUSE'
+    )
+    expect(handle.db.select().from(agentJourneys).all()).toHaveLength(1)
+  })
+
+  it('Work Context 被删除后，完全相同的请求仍回放原 Journey（workContextId 为 null）', () => {
+    const now = Date.now()
+    const wc = insertWorkContext(handle.db, {
+      title: '临时上下文',
+      goal: '',
+      summary: '',
+      nextStep: '',
+      now
+    })
+    const params = { title: 'replay after wc delete', workContextId: wc.id }
+    const context = ctx(CLIENT_A, 'start_agent_journey', params, `start:${randomUUID()}`)
+    const input = { title: 'replay after wc delete', workContextId: wc.id }
+
+    const first = service.createJourney(context, input)
+    expect(first.created).toBe(true)
+    expect(first.journey.workContextId).toBe(wc.id)
+
+    // ON DELETE SET NULL：Journey 保留，引用置空
+    handle.db.delete(workContexts).where(eq(workContexts.id, wc.id)).run()
+    expect(selectJourney(handle.db, first.journey.id)?.workContextId).toBeNull()
+
+    // 完全相同的原始请求 + 完全相同的上下文再调一次
+    emitted = []
+    const second = service.createJourney(context, input)
+
+    expect(second.replayed).toBe(true)
+    expect(second.created).toBe(false)
+    expect(second.journey.id).toBe(first.journey.id)
+    expect(second.journey.workContextId).toBeNull()
+    // 仍然只有一条 Journey，且没有重复通知
+    expect(handle.db.select().from(agentJourneys).all()).toHaveLength(1)
+    expect(emitted, '重放不得再次广播').toHaveLength(0)
+    // 幂等记录也只有一条
+    expect(
+      handle.db
+        .select()
+        .from(mcpIdempotency)
+        .where(eq(mcpIdempotency.idempotencyKey, context.idempotency.key))
+        .all()
+    ).toHaveLength(1)
   })
 })

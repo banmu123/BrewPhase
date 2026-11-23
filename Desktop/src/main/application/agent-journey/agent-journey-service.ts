@@ -78,8 +78,22 @@ export type AgentJourneyCallContext = {
   idempotency: { key: string; toolName: string; requestDigest: string }
 }
 
+/**
+ * 两个幂等操作各自的工具名。
+ *
+ * **一个方法只认一个工具名**：`AgentJourneyCallContext.idempotency.toolName`
+ * 不能只校验「非空」——否则调用方可以把 `append_agent_journey_event` 的上下文
+ * 传给 `createJourney()`，幂等记录的 `tool_name` 就会与真实操作对不上，
+ * 之后的重放会把一个工具的结果当成另一个工具的成功结果。
+ */
+export const START_AGENT_JOURNEY_TOOL = 'start_agent_journey'
+export const APPEND_AGENT_JOURNEY_EVENT_TOOL = 'append_agent_journey_event'
+
 /** 幂等键只在 start / append 上存在；更新类操作靠乐观锁。 */
-export const AGENT_JOURNEY_IDEMPOTENT_OPS = ['start_agent_journey', 'append_agent_journey_event'] as const
+export const AGENT_JOURNEY_IDEMPOTENT_OPS = [
+  START_AGENT_JOURNEY_TOOL,
+  APPEND_AGENT_JOURNEY_EVENT_TOOL
+] as const
 
 export class AgentJourneyError extends ApplicationError {
   constructor(code: McpErrorCode, message: string) {
@@ -215,13 +229,22 @@ export class AgentJourneyService {
   createJourney(ctx: AgentJourneyCallContext, input: CreateJourneyInput): CreateJourneyResult {
     const clientId = requireClientId(ctx)
     const idem = requireIdempotency(ctx)
+    // 方法与工具名绑定：不一致时在**任何写入之前**拒绝，
+    // 业务表与幂等表都不会留下痕迹。
+    if (idem.toolName !== START_AGENT_JOURNEY_TOOL) {
+      throw new AgentJourneyError(
+        'VALIDATION_ERROR',
+        `createJourney requires toolName "${START_AGENT_JOURNEY_TOOL}" (got "${idem.toolName}")`
+      )
+    }
     const now = input.now ?? Date.now()
 
     const title = sanitizeJourneyContent(input.title ?? '', { max: JOURNEY_TEXT_LIMITS.title })
     if (title.trim().length === 0) {
       throw new AgentJourneyError('VALIDATION_ERROR', 'title is required')
     }
-    const goal = sanitizeJourneyContent(input.goal ?? '', { max: JOURNEY_TEXT_LIMITS.content })
+    // goal 有独立上限（设计文档 §7.2 ≤2000），不是正文的 20000。
+    const goal = sanitizeJourneyContent(input.goal ?? '', { max: JOURNEY_TEXT_LIMITS.goal })
     const sourceAgent = sanitizeJourneyContent(input.sourceAgent ?? '', {
       max: JOURNEY_TEXT_LIMITS.label
     })
@@ -241,20 +264,25 @@ export class AgentJourneyService {
     }
 
     const workContextId = input.workContextId ?? null
-    if (workContextId !== null) {
-      if (!UUID_RE.test(workContextId)) {
-        throw new AgentJourneyError('VALIDATION_ERROR', 'work_context_id must be a uuid')
-      }
-      if (!selectWorkContext(this.db, workContextId)) {
-        throw new AgentJourneyError('NOT_FOUND', `work context ${workContextId} does not exist`)
-      }
+    if (workContextId !== null && !UUID_RE.test(workContextId)) {
+      throw new AgentJourneyError('VALIDATION_ERROR', 'work_context_id must be a uuid')
     }
+    // **Work Context 是否存在必须放到事务内的创建分支里查**（见下面的注释）。
 
     const outcome = this.db.transaction((tx): CreateJourneyResult => {
       const scoped = tx as unknown as Db
 
+      // ---- 1) 先处理已有幂等记录（在任何外部状态校验之前）----
       const existing = lookupIdempotency(scoped, clientId, idem.key)
       if (existing) {
+        // 工具身份也必须对得上：同一 Client 用同一个 key 调另一个工具时，
+        // 绝不能把上一个工具的结果当成这次的成功结果。
+        if (existing.toolName !== idem.toolName) {
+          throw new AgentJourneyError(
+            'IDEMPOTENCY_KEY_REUSE',
+            'this idempotency_key was already used by a different tool'
+          )
+        }
         if (existing.requestDigest !== idem.requestDigest) {
           throw new AgentJourneyError(
             'IDEMPOTENCY_KEY_REUSE',
@@ -268,7 +296,16 @@ export class AgentJourneyService {
         if (!replayed) {
           throw new AgentJourneyError('NOT_FOUND', 'the recorded journey no longer exists')
         }
+        // 回放**不看** Work Context 是否还在：原始请求创建成功之后，
+        // 用户可能已经删掉了那个上下文（`ON DELETE SET NULL` 保留了 Journey）。
+        // 这时再用完全相同的请求重放，必须拿回原来那条 Journey，
+        // 而不是在幂等检查之前先抛 NOT_FOUND。
         return { journey: replayed, created: false, replayed: true }
+      }
+
+      // ---- 2) 只有真正创建新 Journey 时才校验外部依赖 ----
+      if (workContextId !== null && !selectWorkContext(scoped, workContextId)) {
+        throw new AgentJourneyError('NOT_FOUND', `work context ${workContextId} does not exist`)
       }
 
       const journey = insertJourney(scoped, {
@@ -303,6 +340,13 @@ export class AgentJourneyService {
   appendEvent(ctx: AgentJourneyCallContext, input: AppendEventInput): AppendEventResult {
     const clientId = requireClientId(ctx)
     const idem = requireIdempotency(ctx)
+    // 同 createJourney：先绑工具名，再碰任何状态。
+    if (idem.toolName !== APPEND_AGENT_JOURNEY_EVENT_TOOL) {
+      throw new AgentJourneyError(
+        'VALIDATION_ERROR',
+        `appendEvent requires toolName "${APPEND_AGENT_JOURNEY_EVENT_TOOL}" (got "${idem.toolName}")`
+      )
+    }
     const now = input.now ?? Date.now()
 
     if (!input.journeyId || !UUID_RE.test(input.journeyId)) {
@@ -379,6 +423,13 @@ export class AgentJourneyService {
       // 1) 请求级幂等：同 key 同摘要回放，异摘要拒绝。
       const existing = lookupIdempotency(scoped, clientId, idem.key)
       if (existing) {
+        // 工具身份必须一致：同 key 同摘要但来自另一个工具，也绝不能回放。
+        if (existing.toolName !== idem.toolName) {
+          throw new AgentJourneyError(
+            'IDEMPOTENCY_KEY_REUSE',
+            'this idempotency_key was already used by a different tool'
+          )
+        }
         if (existing.requestDigest !== idem.requestDigest) {
           throw new AgentJourneyError(
             'IDEMPOTENCY_KEY_REUSE',

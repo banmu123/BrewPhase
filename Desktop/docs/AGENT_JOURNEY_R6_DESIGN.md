@@ -1196,10 +1196,18 @@ Remote MCP（future）────┘   （复用，不重新实现）
   - 业务事务可以原子写入幂等记录；
   - `request-router.ts` 的查询与写入路径**保持可用且行为不变**；
   - **不复制两套互不兼容的幂等实现**（同一张表、同一组函数）。
-- **R6-1 不修改 `request-router.ts` 的路由与重放分支**；但 **R6-2 必须**为
-  `entityType = 'agentJourney'` / `'agentJourneyEvent'` 增加对应的
-  `replayIdempotent()` 分支（否则重放会落到 `unknown entity type` 的
-  `INTERNAL_ERROR`）。**不能声称 request-router 完全无需扩展。**
+- **R6-1 不修改 `request-router.ts` 的路由与重放分支**；但 **R6-2 必须**做两件事：
+  1. 为 `entityType = 'agentJourney'` / `'agentJourneyEvent'` 增加对应的
+     `replayIdempotent()` 分支（否则重放会落到 `unknown entity type` 的
+     `INTERNAL_ERROR`）；
+  2. **`replayFromIdempotency()` 补跨工具幂等键拒绝**：目前它只比对
+     `existing.requestDigest !== digestParams(params)`，**没有比对
+     `existing.toolName !== toolName`**。于是同一 Client 用同一个 key、
+     同一组参数去调两个不同的 MCP 工具时，第二个会被当成「重放」而返回
+     第一个工具的结果。R6-2 必须加上该判断并补测试
+     （Service 层已经在 R6-1.1 加了同样的边界，见 §19.9）。
+
+  **不能声称 request-router 完全无需扩展。**
 
 ### 19.3 隐私与导出语义
 
@@ -1286,7 +1294,6 @@ type AgentJourneyCallContext = {
 Service」结构断言，且等同于为 MCP 工具铺路。装配留到 R6-2。
 
 ### 19.8 实现期补充决策（写码时确定，与 §19.5/§19.7 一致）
-
 | # | 决策 | 理由 |
 |---|---|---|
 | 1 | `role` **由 `event_type` 推导**：`user_input`/`user_annotation` → `user`，其余 → `agent`；调用方传了就必须相等，否则 `VALIDATION_ERROR` | 不允许把 `plan` 声明成「用户说的」。`system` 保留为枚举值，留给未来的运行时观察事件 |
@@ -1297,6 +1304,23 @@ Service」结构断言，且等同于为 MCP 工具铺路。装配留到 R6-2。
 | 6 | `updateJourneyStatus` **不接受 `reason` 参数** | 没有对应列；R6-2 若要留原因，应作为一条事件写入，而不是塞进无处安放的入参 |
 | 7 | Edge 校验放在**事件插入之后**、幂等写入之前 | 这样任何一条非法边都会把事件插入一起回滚——事务原子性因此**可测**（测试 12 就靠它） |
 | 8 | 请求摘要**只校验不重算**：`requestDigest` 必须是 64 位 hex（`digestParams` 的输出形态） | §19.2 禁止 Service 用残缺字段重拼摘要；格式校验是「这个值必须来自 digestParams」的最低保证 |
+
+### 19.9 R6-1.1 加固（持久化不变量）
+
+审查发现的四类问题与定稿修法（**只改不变量，不加功能**）：
+
+| # | 问题 | 定稿修法 |
+|---|---|---|
+| 1 | 乐观锁用 `Date.now()` 写版本，**毫秒会撞**——快速连续更新时，已经变更过一次的记录仍会被旧请求用同一个 `expectedUpdatedAt` 命中，CAS 形同虚设 | 统一 `nextUpdatedAt(now, previous) = max(now, previous + 1)`，**严格递增**。`previous` 取参与 CAS 的 `expectedUpdatedAt`（WHERE 已保证它等于库内现值），或 `updateJourneyUnchecked` 更新前**重读**当前值——因此同一事务里 `created → running → completed` 连写两次，第二次会继续递增而不是原地踏步。覆盖 `updateEventStatus` / `updateJourney` / `updateJourneyUnchecked` 三条写路径（含取消时的批量推进）。**协议契约不变**：仍是 `expected_updated_at`，不改 MCP 接口 |
+| 2 | `redactDeep()` 对敏感父级**继续下钻**：`{authorization:{value:'x'}}` 的子键 `value` 既非敏感键、内容也不匹配任何 Token 正则 → 原样漏出；数组同理 | **方案 A：敏感键命中后整棵子树替换为 `[redacted]`**，不区分原语/对象/数组。比「给每个后代挂敏感祖先状态」更简单、更安全、更好测；只有敏感子树被折叠，普通 metadata 的嵌套与数组原样保留，替换值是普通字符串 → `JSON.stringify` 必然合法 |
+| 3 | `goal` 误用 `content` 的 20000 上限，与 §7.2 的 ≤2000 不符 | `JOURNEY_TEXT_LIMITS` 新增独立 `goal: 2_000`，`createJourney()` 用它脱敏+截断；其余字段行为不变 |
+| 4 | 幂等上下文只校验「toolName 非空」；且回放只比对 digest | ① **方法与工具名绑定**：`createJourney` 只收 `start_agent_journey`、`appendEvent` 只收 `append_agent_journey_event`，不一致在**任何写入之前**抛 `VALIDATION_ERROR`（业务表与幂等表都不留痕）；② **回放额外比对 `existing.toolName`**，不一致抛 `IDEMPOTENCY_KEY_REUSE`——绝不把一个工具的记录当成另一个工具的成功结果 |
+| 5 | `createJourney` 在**幂等检查之前**查 Work Context 存在性 | 校验顺序改为「**先幂等，后依赖**」：命中同 key 同 digest 就直接回放，**即使原 Work Context 已被 `ON DELETE SET NULL` 掉**；只有真正创建新 Journey 时才在事务内查存在性。回放**不重复创建**、**不重复 `emit`** |
+
+**跨工具幂等键的边界**：Service 层已在 R6-1.1 加了判断（上表 #4），但
+`mcp-bridge/request-router.ts` 的 `replayFromIdempotency()` **仍然只比对 digest**。
+本阶段**不改** MCP Router；该边界与 `agentJourney` / `agentJourneyEvent` 的
+`replayIdempotent()` 分支一起记在 §19.2，属 **R6-2 必做**。
 
 ---
 
