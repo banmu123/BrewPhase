@@ -38,6 +38,33 @@ export type ThemeColors = {
   mediaScrim: string
   mediaControl: string
   mediaControlInk: string
+  /* Agent Journey（R6-4.1.1）：分组托盘、事件卡片、三条连接线、状态与九类事件强调色。
+     同样只从 app.css 读——这里不持有任何色值。 */
+  journeyInk: string
+  journeySurface: string
+  journeyHeader: string
+  journeyBorder: string
+  journeySelected: string
+  eventSurface: string
+  eventBorder: string
+  annotationSurface: string
+  connectorSequence: string
+  connectorEdge: string
+  connectorRecord: string
+  statusRunning: string
+  statusCompleted: string
+  statusFailed: string
+  statusPending: string
+  statusSkipped: string
+  eventUserInput: string
+  eventPlan: string
+  eventDecision: string
+  eventExecution: string
+  eventObservation: string
+  eventRevision: string
+  eventVerification: string
+  eventOutcome: string
+  eventUserAnnotation: string
 }
 
 const VARS: Record<keyof ThemeColors, string> = {
@@ -68,7 +95,32 @@ const VARS: Record<keyof ThemeColors, string> = {
   mediaInkSoft: '--media-ink-soft',
   mediaScrim: '--media-scrim',
   mediaControl: '--media-control',
-  mediaControlInk: '--media-control-ink'
+  mediaControlInk: '--media-control-ink',
+  journeyInk: '--journey-ink',
+  journeySurface: '--journey-surface',
+  journeyHeader: '--journey-header',
+  journeyBorder: '--journey-border',
+  journeySelected: '--journey-selected',
+  eventSurface: '--event-surface',
+  eventBorder: '--event-border',
+  annotationSurface: '--annotation-surface',
+  connectorSequence: '--connector-sequence',
+  connectorEdge: '--connector-edge',
+  connectorRecord: '--connector-record',
+  statusRunning: '--status-running',
+  statusCompleted: '--status-completed',
+  statusFailed: '--status-failed',
+  statusPending: '--status-pending',
+  statusSkipped: '--status-skipped',
+  eventUserInput: '--event-user-input',
+  eventPlan: '--event-plan',
+  eventDecision: '--event-decision',
+  eventExecution: '--event-execution',
+  eventObservation: '--event-observation',
+  eventRevision: '--event-revision',
+  eventVerification: '--event-verification',
+  eventOutcome: '--event-outcome',
+  eventUserAnnotation: '--event-user-annotation'
 }
 
 let cache: ThemeColors | null = null

@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm'
 import type { Canvas, CanvasNode, CanvasNodeWithRecord, CanvasNote } from '../../../shared/contracts'
 import { nextNodeOrigin, type Rect } from '../../../shared/domain/placement'
 import {
+  JOURNEY_GROUP_INSET,
   journeyGroupRect,
   layoutJourneyEvents
 } from '../../../shared/domain/journey-layout'
@@ -282,22 +283,26 @@ export class CanvasService {
           height: item.height
         }))
     ]
-    const origin = nextNodeOrigin({ occupied, width: rect.width, height: rect.height })
+    // 避让算的是**整个分组盒**（含标题条），落位写的是**内容原点**——
+    // 两者相差 JOURNEY_GROUP_INSET。不减这个量，新分组的标题条会压到上方节点。
+    const boxOrigin = nextNodeOrigin({ occupied, width: rect.width, height: rect.height })
+    const originX = boxOrigin.x + JOURNEY_GROUP_INSET.x
+    const originY = boxOrigin.y + JOURNEY_GROUP_INSET.y
     const now = Date.now()
 
     placeJourney(this.db, {
       canvasId: input.canvasId,
       journeyId: journey.id,
       group: {
-        positionX: origin.x,
-        positionY: origin.y,
+        positionX: originX,
+        positionY: originY,
         width: rect.width,
         height: rect.height
       },
       nodes: relative.map((node) => ({
         eventId: node.eventId,
-        positionX: origin.x + node.x,
-        positionY: origin.y + node.y,
+        positionX: originX + node.x,
+        positionY: originY + node.y,
         width: node.width,
         height: node.height
       })),

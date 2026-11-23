@@ -2,16 +2,21 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { CanvasJourney, CanvasJourneyPlacement, CanvasNodeWithRecord } from '@shared/contracts'
 import { api } from '../../shared/api'
 import { useI18n } from '../../i18n'
+import { confirmAction } from '../../shared/ConfirmDialog'
+import { EventGlyph, eventTypeAccent } from '../../shared/EventGlyph'
 
 /**
- * Journey Inspector 的内容体（R6-4.1 §4.4 / §5.2 / §6）。
+ * Journey Inspector 的内容体（R6-4.1 §4.4 / §5.2 / §6，R6-4.1.1 §8 精修）。
  *
- * 两种形态：
- * - **未选中事件**（`eventId === null`）→ 整条 Journey 的信息 + Journey 级笔记；
- * - **选中事件** → 事件详情（只读，来自 Agent 原始记录）+ Event 级笔记
- *   + 到普通 Record 的跨记录连接。
+ * 信息层级（自上而下，越靠上越稳定）：
+ * 1. **Journey 头部**——标题、状态、计数、来源，始终可见；
+ * 2. **Event 详情**——选中事件时才出现，标题与核心内容最突出，
+ *    状态与时间是次级信息；
+ * 3. **小节**——业务关系 / 跨记录关系 / 用户笔记，各自一致的标题样式、
+ *    间距与分隔，空状态写人话；
+ * 4. **危险操作**——「从画布移除」放在最底部、低干扰，且有确认保护。
  *
- * 数据隔离（§6.3）：这里所有的写操作只碰 `agent_journey_notes` 与
+ * 数据隔离（§6.3）：这里所有写操作只碰 `agent_journey_notes` 与
  * `journey_record_links` 两张表。**没有任何入口能改 `agent_journey_events`**
  * ——事件内容对用户是只读的，用户补充永远是新增行。
  */
@@ -25,23 +30,22 @@ export function JourneyInspectorBody(props: {
 }) {
   const { t, formatDate } = useI18n()
   const { journey, eventId } = props
+  const journeyId = journey.placement.journey_id
 
   const [noteDraft, setNoteDraft] = useState('')
-  const [noteBusy, setNoteBusy] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
+  const [noteState, setNoteState] = useState<'idle' | 'saving' | 'saved'>('idle')
   const [error, setError] = useState<string | null>(null)
 
   // 建立连接：目标记录必须已在画布上（§5.2.5 说必要时先加进画布）。
   const [linkRecordId, setLinkRecordId] = useState('')
   const [linkType, setLinkType] = useState('references')
+  const [linkState, setLinkState] = useState<'idle' | 'busy' | 'done'>('idle')
 
   const event = useMemo(
     () => journey.events.find((item) => item.id === eventId) ?? null,
     [journey.events, eventId]
   )
 
-  // 笔记由详情接口返回（画布载荷不含笔记，避免每次拖动都重传）。
-  // 这里单独取一次，编辑后由 onChanged 触发父层重取。
   const [notes, setNotes] = useState<Array<{ id: string; event_id: string | null; body: string }>>(
     []
   )
@@ -52,9 +56,11 @@ export function JourneyInspectorBody(props: {
 
   const reload = useCallback(() => {
     api.agentJourneys
-      .get(props.journey.placement.journey_id)
+      .get(journeyId)
       .then((detail) => {
-        setNotes(detail.notes.map((note) => ({ id: note.id, event_id: note.event_id, body: note.body })))
+        setNotes(
+          detail.notes.map((note) => ({ id: note.id, event_id: note.event_id, body: note.body }))
+        )
         setLinks(
           detail.links.map((link) => ({
             id: link.id,
@@ -63,17 +69,17 @@ export function JourneyInspectorBody(props: {
             relationship_type: link.relationship_type
           }))
         )
-        setLoadedFor(props.journey.placement.journey_id)
+        setLoadedFor(journeyId)
       })
       .catch((cause: Error) => setError(cause.message))
-  }, [props.journey.placement.journey_id])
+  }, [journeyId])
 
   // 首次展开 / 换了 Journey 时取一次；写操作后由 reload() 手动再取。
   useEffect(() => {
-    if (loadedFor === props.journey.placement.journey_id) return
+    if (loadedFor === journeyId) return
     let alive = true
     api.agentJourneys
-      .get(props.journey.placement.journey_id)
+      .get(journeyId)
       .then((detail) => {
         if (!alive) return
         setNotes(
@@ -87,7 +93,7 @@ export function JourneyInspectorBody(props: {
             relationship_type: link.relationship_type
           }))
         )
-        setLoadedFor(props.journey.placement.journey_id)
+        setLoadedFor(journeyId)
       })
       .catch((cause: Error) => {
         if (alive) setError(cause.message)
@@ -95,7 +101,7 @@ export function JourneyInspectorBody(props: {
     return () => {
       alive = false
     }
-  }, [loadedFor, props.journey.placement.journey_id])
+  }, [loadedFor, journeyId])
 
   const visibleNotes = notes.filter((note) =>
     eventId ? note.event_id === eventId : note.event_id === null
@@ -104,20 +110,21 @@ export function JourneyInspectorBody(props: {
 
   const saveNote = useCallback(async () => {
     const body = noteDraft.trim()
-    if (!body) return
-    setNoteBusy(true)
+    if (!body || noteState === 'saving') return
+    setNoteState('saving')
     setError(null)
     try {
-      await api.agentJourneys.createNote(props.journey.placement.journey_id, body, eventId)
+      await api.agentJourneys.createNote(journeyId, body, eventId)
       setNoteDraft('')
+      setNoteState('saved')
       reload()
       props.onChanged()
+      window.setTimeout(() => setNoteState('idle'), 1800)
     } catch (cause) {
       setError((cause as Error).message)
-    } finally {
-      setNoteBusy(false)
+      setNoteState('idle')
     }
-  }, [noteDraft, eventId, props, reload])
+  }, [noteDraft, noteState, eventId, journeyId, props, reload])
 
   const deleteNote = useCallback(
     async (id: string) => {
@@ -134,23 +141,26 @@ export function JourneyInspectorBody(props: {
   )
 
   const createLink = useCallback(async () => {
-    if (!eventId || !linkRecordId) return
+    if (!eventId || !linkRecordId || linkState === 'busy') return
+    setLinkState('busy')
     setError(null)
-    setMessage(null)
     try {
       await api.agentJourneys.createLink({
-        journeyId: props.journey.placement.journey_id,
+        journeyId,
         eventId,
         recordId: linkRecordId,
         relationshipType: linkType as 'references'
       })
-      setMessage(t.canvas.journey.linkCreate)
+      setLinkState('done')
+      setLinkRecordId('')
       reload()
       props.onChanged()
+      window.setTimeout(() => setLinkState('idle'), 1800)
     } catch (cause) {
       setError((cause as Error).message)
+      setLinkState('idle')
     }
-  }, [eventId, linkRecordId, linkType, props, reload, t])
+  }, [eventId, linkRecordId, linkType, linkState, journeyId, props, reload])
 
   const deleteLink = useCallback(
     async (id: string) => {
@@ -166,66 +176,107 @@ export function JourneyInspectorBody(props: {
     [props, reload]
   )
 
+  /** 从画布移除：只删摆位，但仍然是破坏性操作 → 要确认。 */
+  const removeFromCanvas = useCallback(async () => {
+    const confirmed = await confirmAction({
+      title: t.canvas.journey.removeFromCanvas,
+      description: t.canvas.journey.removeFromCanvasHint,
+      confirmLabel: t.canvas.journey.removeFromCanvas,
+      cancelLabel: t.common.cancel,
+      tone: 'danger'
+    })
+    if (confirmed) props.onRemove()
+  }, [t, props])
+
   const statusLabel =
     t.canvas.journey.status[journey.journey?.status as keyof typeof t.canvas.journey.status] ??
     journey.journey?.status ??
     ''
 
+  const accent = event ? eventTypeAccent(event.event_type) : null
+
   return (
     <div className="journey-inspector">
-      {/* ── 头部：整条 Journey 的元信息 ─────────────────── */}
-      <h2 className="detail-title">{journey.journey?.title ?? ''}</h2>
-      <div className="detail-meta">
-        <span className="journey-status" data-status={journey.journey?.status}>
-          {statusLabel}
+      {/* ── 1. Journey 头部：稳定信息区 ─────────────────────── */}
+      <div className="journey-inspector__head">
+        <span className="journey-type-badge">
+          <EventGlyph type="outcome" size={13} />
+          {t.canvas.journey.detailTitle}
         </span>
-        <span>{t.canvas.journey.eventCount(journey.events.length)}</span>
-        {journey.journey?.source_agent && (
-          <span>{journey.journey.source_agent}</span>
-        )}
+        <h2 className="detail-title">{journey.journey?.title ?? ''}</h2>
+        <div className="journey-meta-chips">
+          <span className="journey-chip journey-chip--status" data-status={journey.journey?.status}>
+            {statusLabel}
+          </span>
+          <span className="journey-chip">
+            {t.canvas.journey.eventCount(journey.events.length)}
+          </span>
+          {journey.journey?.source_agent && (
+            <span className="journey-chip">
+              {t.canvas.journey.source(journey.journey.source_agent)}
+            </span>
+          )}
+        </div>
+        {journey.journey?.goal && <p className="note">{journey.journey.goal}</p>}
       </div>
-      {journey.journey?.goal && (
-        <p className="note" style={{ marginTop: 8 }}>
-          {journey.journey.goal}
-        </p>
-      )}
 
-      {/* ── 事件详情（只读） ─────────────────────────────── */}
+      {/* ── 2. Event 详情：选中时出现，标题与核心内容最突出 ──── */}
       {event && (
-        <section className="journey-section">
-          <h3 className="journey-section__title">
-            {t.canvas.journey.sequence(event.sequence)} ·{' '}
-            {t.canvas.journey.eventType[
-              event.event_type as keyof typeof t.canvas.journey.eventType
-            ] ?? event.event_type}
-          </h3>
-          <div className="journey-event__title">{event.title}</div>
-          <div className="detail-meta">
+        <section className="journey-inspector__section">
+          <div className="journey-event__head">
+            <span className="journey-event__seq">
+              {t.canvas.journey.sequence(event.sequence)}
+            </span>
+            <span
+              className="journey-event__glyph"
+              style={{ color: `var(${accent ?? '--ink-faint'})` }}
+            >
+              <EventGlyph type={event.event_type} size={15} accent={accent ?? undefined} />
+            </span>
+            <span className="journey-event__type">
+              {t.canvas.journey.eventType[
+                event.event_type as keyof typeof t.canvas.journey.eventType
+              ] ?? event.event_type}
+            </span>
             <span className="journey-event__status" data-status={event.status}>
               {t.canvas.journey.eventStatus[
                 event.status as keyof typeof t.canvas.journey.eventStatus
               ] ?? event.status}
             </span>
-            <span>{formatDate(event.occurred_at)}</span>
+            <span className="journey-event__time">{formatDate(event.occurred_at)}</span>
           </div>
-          {event.summary && <p className="note">{event.summary}</p>}
-          {event.content && <div className="detail-note">{event.content}</div>}
+
+          <div className="journey-event__title">{event.title}</div>
+          {event.summary && <div className="journey-event__summary">{event.summary}</div>}
+
+          {event.content && (
+            <div className="journey-event__detail">
+              <span className="journey-event__detail-label">
+                {t.canvas.journey.eventType.execution}
+              </span>
+              <p>{event.content}</p>
+            </div>
+          )}
           {event.reason && (
-            <div className="detail-note">
-              <span className="journey-note__label">
+            <div className="journey-event__detail">
+              <span className="journey-event__detail-label">
                 {t.canvas.journey.eventType.decision}
               </span>
-              {event.reason}
+              <p>{event.reason}</p>
             </div>
           )}
         </section>
       )}
 
-      {/* ── 业务关系：来自 agent_journey_edges ─────────────── */}
-      {event && journey.edges.filter((edge) => edge.from_event_id === event.id).length > 0 && (
-        <section className="journey-section">
-          <h3 className="journey-section__title">{t.canvas.journey.timeline}</h3>
-          {journey.edges
+      {/* ── 3a. 业务关系 ────────────────────────────────────── */}
+      <section className="journey-inspector__section">
+        <h3 className="journey-inspector__title">{t.canvas.journey.timeline}</h3>
+        {!event ? (
+          <p className="journey-inspector__hint">{t.canvas.journey.selectEventFirst}</p>
+        ) : journey.edges.filter((edge) => edge.from_event_id === event.id).length === 0 ? (
+          <p className="journey-inspector__empty">{t.canvas.journey.edgeEmpty}</p>
+        ) : (
+          journey.edges
             .filter((edge) => edge.from_event_id === event.id)
             .map((edge) => (
               <div key={edge.id} className="journey-event__edge">
@@ -234,36 +285,39 @@ export function JourneyInspectorBody(props: {
                 ] ?? edge.relationship_type}{' '}
                 →{' '}
                 {journey.events.find((item) => item.id === edge.to_event_id)?.title ??
-                  edge.to_event_id.slice(0, 8)}
+                  t.canvas.journey.eventMissing}
               </div>
-            ))}
-        </section>
-      )}
+            ))
+        )}
+      </section>
 
-      {/* ── 跨记录连接（§5） ─────────────────────────────── */}
-      <section className="journey-section">
-        <h3 className="journey-section__title">{t.canvas.journey.linkToRecord}</h3>
+      {/* ── 3b. 跨记录关系 ──────────────────────────────────── */}
+      <section className="journey-inspector__section">
+        <h3 className="journey-inspector__title">{t.canvas.journey.linkToRecord}</h3>
 
         {!eventId ? (
-          <p className="page-sub">{t.canvas.journey.selectEventFirst}</p>
+          <p className="journey-inspector__hint">{t.canvas.journey.selectEventFirst}</p>
         ) : (
           <>
             {visibleLinks.length === 0 ? (
-              <p className="page-sub">{t.canvas.journey.linkEmpty}</p>
+              <p className="journey-inspector__empty">{t.canvas.journey.linkEmpty}</p>
             ) : (
               <ul className="journey-notes">
                 {visibleLinks.map((link) => {
                   const target = props.recordNodes.find((node) => node.recordID === link.record_id)
                   return (
                     <li key={link.id} className="journey-event__link">
-                      {t.canvas.journey.linkType[
-                        link.relationship_type as keyof typeof t.canvas.journey.linkType
-                      ] ?? link.relationship_type}
-                      {' · '}
-                      {target?.recordTitle ?? link.record_id.slice(0, 8)}
+                      <span className="journey-event__link-type">
+                        {t.canvas.journey.linkType[
+                          link.relationship_type as keyof typeof t.canvas.journey.linkType
+                        ] ?? link.relationship_type}
+                      </span>
+                      <span className="journey-event__link-title">
+                        {target?.recordTitle || t.records.journey.recordUnavailable}
+                      </span>
                       <button
                         type="button"
-                        className="button button--ghost"
+                        className="button button--ghost journey-note__delete"
                         onClick={() => void deleteLink(link.id)}
                       >
                         {t.canvas.journey.linkRemove}
@@ -275,12 +329,12 @@ export function JourneyInspectorBody(props: {
             )}
 
             {props.recordNodes.length === 0 ? (
-              <p className="page-sub">{t.canvas.journey.addRecordTarget}</p>
+              <p className="journey-inspector__empty">{t.canvas.journey.addRecordTarget}</p>
             ) : (
               <div className="journey-inline">
                 <select
                   value={linkRecordId}
-                  onChange={(event) => setLinkRecordId(event.target.value)}
+                  onChange={(event2) => setLinkRecordId(event2.target.value)}
                   aria-label={t.canvas.journey.linkPickRecord}
                 >
                   <option value="">{t.canvas.journey.linkPickRecord}</option>
@@ -292,7 +346,7 @@ export function JourneyInspectorBody(props: {
                 </select>
                 <select
                   value={linkType}
-                  onChange={(event) => setLinkType(event.target.value)}
+                  onChange={(event2) => setLinkType(event2.target.value)}
                   aria-label={t.canvas.journey.linkToRecord}
                 >
                   {(['references', 'supports', 'produces', 'validates', 'related_to'] as const).map(
@@ -306,26 +360,31 @@ export function JourneyInspectorBody(props: {
                 <button
                   type="button"
                   className="button"
-                  disabled={!linkRecordId}
+                  disabled={!linkRecordId || linkState === 'busy'}
                   onClick={() => void createLink()}
                 >
-                  {t.canvas.journey.linkCreate}
+                  {linkState === 'busy' ? t.records.journey.noteSaving : t.canvas.journey.linkCreate}
                 </button>
               </div>
+            )}
+            {linkState === 'done' && (
+              <p className="journey-inspector__hint" role="status">
+                ✓ {t.canvas.journey.linkCreated}
+              </p>
             )}
           </>
         )}
       </section>
 
-      {/* ── 用户笔记（§6）：与 Agent 原始事件分离 ─────────── */}
-      <section className="journey-section">
-        <h3 className="journey-section__title">{t.canvas.journey.noteLabel}</h3>
-        <p className="page-sub">
+      {/* ── 3c. 用户笔记：暖纸底，与 Agent 原始事件分离 ─────── */}
+      <section className="journey-inspector__section">
+        <h3 className="journey-inspector__title">{t.canvas.journey.noteLabel}</h3>
+        <p className="journey-inspector__hint">
           {eventId ? t.canvas.journey.noteEventLevel : t.canvas.journey.noteJourneyLevel}
         </p>
 
         {visibleNotes.length === 0 ? (
-          <p className="page-sub">{t.canvas.journey.noteEmpty}</p>
+          <p className="journey-inspector__empty">{t.canvas.journey.noteEmpty}</p>
         ) : (
           <ul className="journey-notes">
             {visibleNotes.map((note) => (
@@ -333,7 +392,7 @@ export function JourneyInspectorBody(props: {
                 <p>{note.body}</p>
                 <button
                   type="button"
-                  className="button button--ghost"
+                  className="button button--ghost journey-note__delete"
                   onClick={() => void deleteNote(note.id)}
                 >
                   {t.canvas.journey.noteDelete}
@@ -343,31 +402,71 @@ export function JourneyInspectorBody(props: {
           </ul>
         )}
 
-        <div className="journey-inline">
-          <input
+        <div className="journey-note-editor">
+          <textarea
+            className="journey-note-editor__input"
+            rows={2}
             placeholder={t.canvas.journey.notePlaceholder}
             value={noteDraft}
-            onChange={(event) => setNoteDraft(event.target.value)}
+            onChange={(event2) => {
+              setNoteDraft(event2.target.value)
+              if (noteState === 'saved') setNoteState('idle')
+            }}
+            onKeyDown={(event2) => {
+              if (event2.key === 'Enter' && (event2.metaKey || event2.ctrlKey)) {
+                event2.preventDefault()
+                void saveNote()
+              }
+            }}
           />
-          <button
-            type="button"
-            className="button"
-            disabled={noteBusy || !noteDraft.trim()}
-            onClick={() => void saveNote()}
-          >
-            {t.canvas.journey.noteSave}
-          </button>
+          <div className="journey-note-editor__actions">
+            <button
+              type="button"
+              className="button"
+              disabled={!noteDraft.trim() || noteState === 'saving'}
+              onClick={() => void saveNote()}
+            >
+              {noteState === 'saving'
+                ? t.records.journey.noteSaving
+                : t.canvas.journey.noteSave}
+            </button>
+            {noteState === 'saved' && (
+              <span className="journey-note-editor__feedback" role="status">
+                ✓ {t.records.journey.noteSaved}
+              </span>
+            )}
+          </div>
         </div>
       </section>
 
-      {message && <p className="page-sub">{message}</p>}
+      {/* ── 图例：三条连接不靠猜 ─────────────────────────────── */}
+      <section className="journey-inspector__section">
+        <h3 className="journey-inspector__title">{t.canvas.journey.legendTitle}</h3>
+        <div className="journey-legend">
+          <div className="journey-legend__row">
+            <span className="journey-legend__swatch journey-legend__swatch--sequence" />
+            {t.canvas.journey.legendSequence}
+          </div>
+          <div className="journey-legend__row">
+            <span className="journey-legend__swatch journey-legend__swatch--edge" />
+            {t.canvas.journey.legendEdge}
+          </div>
+          <div className="journey-legend__row">
+            <span className="journey-legend__swatch journey-legend__swatch--record" />
+            {t.canvas.journey.legendRecord}
+          </div>
+        </div>
+      </section>
+
       {error && <p className="error">{error}</p>}
 
-      <div className="hairline" />
-      <button type="button" className="button" onClick={props.onRemove}>
-        {t.canvas.journey.removeFromCanvas}
-      </button>
-      <p className="page-sub">{t.canvas.journey.removeFromCanvasHint}</p>
+      {/* ── 4. 危险操作：最低干扰 + 确认保护 ─────────────────── */}
+      <div className="journey-inspector__danger">
+        <button type="button" className="button" onClick={() => void removeFromCanvas()}>
+          {t.canvas.journey.removeFromCanvas}
+        </button>
+        <p className="journey-inspector__danger-hint">{t.canvas.journey.removeFromCanvasHint}</p>
+      </div>
     </div>
   )
 }

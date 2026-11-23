@@ -151,6 +151,13 @@ export const canvas = {
     source: (name: string) => `来源：${name}`,
     createdAt: (value: string) => `创建：${value}`,
     updatedAt: (value: string) => `更新：${value}`,
+    edgeEmpty: '这个节点没有业务关系。',
+    eventMissing: '事件已删除',
+    linkCreated: '已建立连接',
+    legendTitle: '连线图例',
+    legendSequence: '时间顺序：第 1 步 → 第 2 步（只展示，不入库）',
+    legendEdge: 'Agent 业务关系：依赖 / 分支 / 修订 / 重试',
+    legendRecord: '跨记录关联：连到画布上的普通 Record',
     openInRecords: '在记录中查看'
   },
 

@@ -272,7 +272,9 @@ test('Journey 融合：进画布、共存、连接、笔记、重开保持（场
   })
 
   // ══ 场景 E：Event 级笔记 + Journey 级笔记 ══════════════════
-  const noteInput = page.locator('.node-panel input[placeholder*="经验"]')
+  // R6-4.1.1 §7.4：笔记输入从单行 input 改为多行 textarea（显式编辑区），
+  // 断言语义不变——「笔记编辑区可见 + 能写入 + 保存落库」。
+  const noteInput = page.locator('.node-panel textarea[placeholder*="经验"]')
   await expect(noteInput).toBeVisible()
   await noteInput.fill('下次先检查 IPC 白名单，不要直接改 Renderer')
   await page.locator('.node-panel').getByRole('button', { name: '保存笔记' }).click()

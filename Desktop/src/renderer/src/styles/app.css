@@ -93,6 +93,48 @@
   --danger-tint: rgba(168, 80, 63, 0.06);
   --danger-tint-border: rgba(168, 80, 63, 0.26);
 
+  /* ---------- Agent Journey（R6-4.1.1）----------
+     与画布同一套分层逻辑：台面 → 分组托盘 → 事件卡片，一层比一层亮。
+     分组**不**用大面积米黄填充——托盘只比台面深一档，靠亮度差分层，
+     让事件卡片保持视觉主角。Konva 侧经 shared/tokens.ts 读取。 */
+  --journey-surface: #f4f1ea; /* 托盘：比台面深一档的凹陷区（同 --well 语义） */
+  --journey-header: #ebe6dc; /* 标题条：托盘内再深一档，与内容区拉开 */
+  --journey-border: #e3dccf; /* 托盘描边：低对比度实线，不用虚线 */
+  --journey-selected: rgba(151, 118, 90, 0.1); /* 选中时的淡染，配合 espresso 细描边 */
+  --event-surface: #fffdf9; /* 事件卡片：与 --canvas-node 同档，压在托盘上 */
+  --event-border: #e8e1d5;
+  --annotation-surface: #faf6ed; /* 用户补充：暖纸，与 Agent 内容区分开 */
+  /*
+   * 次级正文专用色：`--ink-soft` 在白底只有 4.41:1、压在 `--well` 上 3.91:1，
+   * 都够不到 WCAG 4.5:1（11–13px 属小字）。Journey 的摘要、Chip、提示
+   * 全部改用这一支，**只影响 Journey 面**，不动全站的 `--ink-soft`。
+   */
+  --journey-ink: #676d64;
+  /* 三条连接线：色相必须能一眼分开——中性灰=时间，棕=业务，青=跨记录。
+     两者同时要当文字色用（关系标签），所以取到 4.5:1 以上；线在托盘上
+     的非文字对比度（≥3:1）自然更满足。 */
+  --connector-sequence: #9c9384; /* 时间顺序：最轻，只做引导 */
+  --connector-edge: #7d5f45; /* agent_journey_edges：roast 压深一档 */
+  --connector-record: #4f7078; /* journey_record_links：冷青压深，仍与业务关系区分 */
+  /* 状态：文字可读的中间调，Chip 背景用同色低透明度压出来。
+     这些值必须在**自己的 12% 底色上**仍过 4.5:1，不是只在白底上好看。 */
+  --status-running: #7d5f45;
+  --status-completed: #4f6b49;
+  --status-failed: #8f4e3f;
+  --status-paused: #7a6147;
+  --status-pending: #6b7168;
+  --status-skipped: #6f6a5f;
+  /* 九类事件的低饱和强调色：统一彩度与明度区间，避免九张卡九种风格 */
+  --event-user-input: #7d97b5;
+  --event-plan: #7fa087;
+  --event-decision: #9b86ab;
+  --event-execution: #b8935f;
+  --event-observation: #8695a6;
+  --event-revision: #b58375;
+  --event-verification: #6f9eaa;
+  --event-outcome: #7a9a72;
+  --event-user-annotation: #b3a06d;
+
   /* Elevation：普通卡片不投影；浮层才允许柔和阴影 */
   --shadow-hover: 0 4px 14px rgba(48, 55, 47, 0.06);
   --shadow-lifted: 0 8px 24px rgba(48, 55, 47, 0.1);
@@ -166,6 +208,35 @@
   --canvas-node: #241f1a;
   --canvas-chip: #2e2721;
   --canvas-rule: #3a322a;
+  /* Agent Journey：黑底上层级靠亮度差，托盘比台面亮、卡片再亮一档。
+     强调色整体提亮一档，否则压在暖黑上发闷。 */
+  --journey-surface: #221d19;
+  --journey-header: #282219;
+  --journey-border: #3a322a;
+  --journey-selected: rgba(185, 159, 134, 0.16);
+  --event-surface: #262019;
+  --event-border: #3a322a;
+  --annotation-surface: #2b2219;
+  --journey-ink: #a49c92;
+  --connector-sequence: #6f6458;
+  --connector-edge: #c09a78;
+  --connector-record: #93b6bb;
+  --status-running: #c9a37c;
+  --status-completed: #93b089;
+  --status-failed: #d09383;
+  --status-paused: #b9a184;
+  --status-pending: #94897c;
+  --status-skipped: #8a8175;
+  --event-user-input: #9ab4d0;
+  --event-plan: #9dbca4;
+  --event-decision: #b9a5c8;
+  --event-execution: #d4b183;
+  --event-observation: #a4b3c2;
+  --event-revision: #d0a294;
+  --event-verification: #95c0ca;
+  --event-outcome: #9cbd94;
+  --event-user-annotation: #cfbc8a;
+
   /* 与浅色同值：这几层永远压在图片上，不跟随主题翻转 */
   --media-ink: #fdfaf5;
   --media-ink-soft: rgba(253, 250, 245, 0.82);
@@ -10110,33 +10181,96 @@ textarea {
 }
 
 /* ================================================================
-   Agent Journey（R6-4.1）
+   Agent Journey（R6-4.1 → R6-4.1.1 精修）
    设计语言沿用 A quiet bright personal creative space：
-   明亮、安静、留白足够；类型靠**低饱和色条 + 图形**区分，不用大色块。
+   明亮、安静、留白足够。类型靠**字形 + 低饱和色条/色点**区分，
+   不靠大面积色块；状态是小 Chip，不是一行灰字。
+   所有颜色取自 :root / [data-theme='dark'] 的 Journey token。
    ================================================================ */
 
-/* ---- 内容类型筛选里的 Journey 档 ---- */
+/* ---------- 通用小件：类型徽标与元信息 Chip ---------- */
+.journey-type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--roast);
+  background: var(--sheet-warm);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 3px 9px 3px 7px;
+  white-space: nowrap;
+}
+
+.journey-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--journey-ink);
+  background: var(--well);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 4px 9px;
+  white-space: nowrap;
+}
+
+/* 状态 Chip：底色用同色低透明度，字用同一色——失败一眼可见但不刺眼 */
+.journey-chip--status[data-status] {
+  font-weight: 600;
+  border-color: transparent;
+}
+.journey-chip--status[data-status='running'] {
+  color: var(--status-running);
+  background: color-mix(in srgb, var(--status-running) 12%, transparent);
+}
+.journey-chip--status[data-status='completed'] {
+  color: var(--status-completed);
+  background: color-mix(in srgb, var(--status-completed) 12%, transparent);
+}
+.journey-chip--status[data-status='failed'] {
+  color: var(--status-failed);
+  background: color-mix(in srgb, var(--status-failed) 12%, transparent);
+}
+.journey-chip--status[data-status='paused'] {
+  color: var(--status-paused);
+  background: color-mix(in srgb, var(--status-paused) 12%, transparent);
+}
+.journey-chip--status[data-status='created'],
+.journey-chip--status[data-status='cancelled'],
+.journey-chip--status[data-status='abandoned'] {
+  color: var(--status-pending);
+  background: color-mix(in srgb, var(--status-pending) 12%, transparent);
+}
+
+/* ---------- 内容类型筛选里的 Journey 档 ---------- */
 .chip--journey {
   border-style: dashed;
 }
 
-/* ---- Records 网格里的 Journey 卡片 ---- */
+/* ---------- Records 网格里的 Journey 卡片 ---------- */
 .record-tile--journey {
   position: relative;
-  padding: 14px 15px 12px;
-  gap: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 15px 13px;
+  text-align: left;
   /* 左侧一条状态色条：与四种载体的 Record 卡片一眼区分开 */
   border-left: 3px solid var(--hairline-strong);
 }
-
 .record-tile--journey[data-status='running'] {
-  border-left-color: var(--roast);
+  border-left-color: var(--status-running);
 }
 .record-tile--journey[data-status='completed'] {
-  border-left-color: #7a9a72;
+  border-left-color: var(--status-completed);
 }
 .record-tile--journey[data-status='failed'] {
-  border-left-color: #b57f6a;
+  border-left-color: var(--status-failed);
 }
 .record-tile--journey[data-status='paused'] {
   border-left-color: var(--latte);
@@ -10146,95 +10280,105 @@ textarea {
   border-left-color: var(--hairline-strong);
 }
 
-.record-tile__journey-badge {
-  align-self: flex-start;
-  font-size: 10px;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--ink-soft);
-  background: var(--sheet-warm);
-  border: 1px solid var(--hairline);
-  border-radius: 999px;
-  padding: 2px 8px;
+.record-tile__journey-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .record-tile__journey-body {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
+  min-width: 0;
+}
+
+.record-tile--journey .record-tile__title {
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.4;
+  color: var(--ink);
+  /* 标题最多两行：长标题截断而不是把卡片撑成巨塔 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .record-tile__journey-summary {
   font-size: 12.5px;
-  line-height: 1.5;
-  color: var(--ink-soft);
-  /* 摘要最多三行，卡片高度保持可比 */
+  line-height: 1.55;
+  color: var(--journey-ink);
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
-.record-tile__journey-meta,
-.record-tile__journey-foot {
+.record-tile__journey-counts {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  font-size: 11.5px;
-  color: var(--ink-faint);
+  gap: 6px;
 }
 
 .record-tile__journey-foot {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
+  gap: 10px;
+  font-size: 11.5px;
+  color: var(--journey-ink);
   border-top: 1px solid var(--hairline-faint);
-  padding-top: 8px;
+  padding-top: 9px;
   margin-top: auto;
-}
-
-.record-tile__journey-status {
-  font-weight: 600;
-  color: var(--ink-soft);
-}
-.record-tile__journey-status[data-status='running'] {
-  color: var(--roast);
-}
-.record-tile__journey-status[data-status='completed'] {
-  color: #5f7f58;
-}
-.record-tile__journey-status[data-status='failed'] {
-  color: #a36a55;
 }
 
 .record-tile__journey-source {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 60%;
+  min-width: 0;
 }
 
-/* ---- Journey 详情浮层 ---- */
+/* Hover / active / focus 完整：与普通卡片同一套反馈强度 */
+.record-tile--journey:hover {
+  border-color: var(--hairline-strong);
+  border-left-color: inherit;
+}
+.record-tile--journey:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ---------- Journey 详情浮层 ---------- */
 .journey-detail {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.journey-status {
-  font-weight: 600;
-  color: var(--ink-soft);
+.journey-meta-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
 }
-.journey-status[data-status='running'] {
-  color: var(--roast);
-}
-.journey-status[data-status='completed'] {
-  color: #5f7f58;
-}
-.journey-status[data-status='failed'] {
-  color: #a36a55;
+
+.detail-meta__muted {
+  color: var(--journey-ink);
 }
 
 .journey-section {
-  margin-top: 16px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline-faint);
+}
+.journey-section:first-of-type {
+  border-top: none;
+  padding-top: 0;
 }
 
 .journey-section__title {
@@ -10242,8 +10386,8 @@ textarea {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--ink-faint);
-  margin: 0 0 8px;
+  color: var(--journey-ink);
+  margin: 0 0 9px;
 }
 
 .journey-inline {
@@ -10251,168 +10395,215 @@ textarea {
   gap: 8px;
   align-items: center;
 }
-.journey-inline input {
+.journey-inline input,
+.journey-inline select,
+.journey-inline textarea {
   flex: 1;
   min-width: 0;
 }
-.journey-inline select {
-  flex: 1;
-  min-width: 0;
+.journey-inline__feedback {
+  margin-top: 7px;
+  color: var(--status-completed);
 }
 
-/* 执行时间线：sequence 驱动的竖排，事件类型靠左侧色点区分 */
+/* ---------- 执行时间线 ---------- */
 .journey-timeline {
   list-style: none;
   margin: 0;
-  padding: 0 0 0 14px;
+  padding: 0 0 0 15px;
   border-left: 2px solid var(--hairline);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
 .journey-event {
   position: relative;
-  padding-left: 12px;
+  padding-left: 13px;
 }
 
+/* 时间线上的类型色点：与事件字形同色，序号与内容之间有个视觉锚 */
 .journey-event::before {
   content: '';
   position: absolute;
-  left: -21px;
-  top: 5px;
+  left: -22px;
+  top: 6px;
   width: 9px;
   height: 9px;
   border-radius: 50%;
   background: var(--event-dot, var(--hairline-strong));
   border: 2px solid var(--card);
 }
-
-/* 九种事件类型的低饱和色点（统一色系，避免花哨） */
-.journey-event[data-event-type='user_input'] {
-  --event-dot: #8fa8c4;
-}
-.journey-event[data-event-type='plan'] {
-  --event-dot: #9db8a4;
-}
-.journey-event[data-event-type='decision'] {
-  --event-dot: #b8a6c4;
-}
-.journey-event[data-event-type='execution'] {
-  --event-dot: #c4a882;
-}
-.journey-event[data-event-type='observation'] {
-  --event-dot: #a4b0be;
-}
-.journey-event[data-event-type='revision'] {
-  --event-dot: #c49a8f;
-}
-.journey-event[data-event-type='verification'] {
-  --event-dot: #8bb0b8;
-}
-.journey-event[data-event-type='outcome'] {
-  --event-dot: #8fae7f;
-}
-.journey-event[data-event-type='user_annotation'] {
-  --event-dot: #c9b98f;
-}
+.journey-event[data-event-type='user_input'] { --event-dot: var(--event-user-input); }
+.journey-event[data-event-type='plan'] { --event-dot: var(--event-plan); }
+.journey-event[data-event-type='decision'] { --event-dot: var(--event-decision); }
+.journey-event[data-event-type='execution'] { --event-dot: var(--event-execution); }
+.journey-event[data-event-type='observation'] { --event-dot: var(--event-observation); }
+.journey-event[data-event-type='revision'] { --event-dot: var(--event-revision); }
+.journey-event[data-event-type='verification'] { --event-dot: var(--event-verification); }
+.journey-event[data-event-type='outcome'] { --event-dot: var(--event-outcome); }
+.journey-event[data-event-type='user_annotation'] { --event-dot: var(--event-user-annotation); }
 
 .journey-event__head {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  align-items: baseline;
+  align-items: center;
+  gap: 7px;
   font-size: 11.5px;
-  color: var(--ink-faint);
+  color: var(--journey-ink);
 }
 
 .journey-event__seq {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
-  color: var(--ink-soft);
+  color: var(--journey-ink);
+}
+
+.journey-event__glyph {
+  display: inline-flex;
+  align-items: center;
 }
 
 .journey-event__type {
   font-weight: 600;
-  color: var(--ink-soft);
+  color: var(--journey-ink);
 }
 
 .journey-event__status {
-  padding: 1px 7px;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 8px;
   border-radius: 999px;
   background: var(--well);
   border: 1px solid var(--hairline);
 }
 .journey-event__status[data-status='failed'] {
-  color: #a36a55;
+  color: var(--status-failed);
+  background: color-mix(in srgb, var(--status-failed) 14%, transparent);
+  border-color: transparent;
 }
 .journey-event__status[data-status='running'] {
-  color: var(--roast);
+  color: var(--status-running);
+  background: color-mix(in srgb, var(--status-running) 14%, transparent);
+  border-color: transparent;
+}
+.journey-event__status[data-status='completed'] {
+  color: var(--status-completed);
+  background: color-mix(in srgb, var(--status-completed) 13%, transparent);
+  border-color: transparent;
+}
+
+.journey-event__time {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
 }
 
 .journey-event__title {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 14.5px;
+  font-weight: 650;
+  line-height: 1.4;
   color: var(--ink);
-  margin-top: 3px;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
 }
 
 .journey-event__summary {
   font-size: 12.5px;
-  line-height: 1.55;
-  color: var(--ink-soft);
-  margin-top: 3px;
+  line-height: 1.6;
+  color: var(--journey-ink);
+  margin-top: 4px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-/* 业务关系：与时间线明确区分——虚线 + 「关系：」前缀 */
-.journey-event__edge {
-  margin-top: 5px;
-  font-size: 11.5px;
-  color: var(--ink-soft);
-  border-left: 2px dashed var(--hairline-strong);
-  padding-left: 8px;
-}
-
-.journey-event__link {
-  margin-top: 5px;
-  font-size: 11.5px;
-  color: var(--roast);
-  border-left: 2px solid var(--latte);
-  padding-left: 8px;
-}
-
-.journey-event__note,
-.journey-note {
-  margin-top: 7px;
+/* 决策依据 / 执行内容：与摘要分开的次级块，带类别标签 */
+.journey-event__detail {
+  margin-top: 8px;
   padding: 8px 10px;
-  background: var(--sheet-warm);
-  border: 1px solid var(--hairline);
-  border-radius: 7px;
+  background: var(--sheet-cool);
+  border-left: 2px solid var(--hairline-strong);
+  border-radius: 0 7px 7px 0;
   font-size: 12.5px;
-  line-height: 1.55;
+  line-height: 1.6;
+  color: var(--journey-ink);
+  overflow-wrap: anywhere;
+}
+.journey-event__detail p {
+  margin: 3px 0 0;
+  white-space: pre-wrap;
+}
+.journey-event__detail-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--journey-ink);
+}
+
+/* 业务关系：虚线 + 「关系：」前缀，与时间线明确区分 */
+.journey-event__edge {
+  margin-top: 7px;
+  font-size: 11.5px;
+  color: var(--connector-edge, var(--roast));
+  border-left: 2px dashed var(--connector-edge, var(--roast));
+  padding-left: 9px;
+}
+
+/* 跨记录关系：实线 + 关系类型 + 记录名（绝不用 UUID） */
+.journey-event__link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 7px;
+  margin-top: 7px;
+  padding-left: 9px;
+  border-left: 2px solid var(--connector-record, var(--latte));
+  font-size: 12px;
+  color: var(--journey-ink);
+}
+.journey-event__link-type {
+  font-weight: 600;
+  color: var(--connector-record, var(--roast));
+}
+.journey-event__link-title {
+  overflow-wrap: anywhere;
+}
+.journey-event__link.is-unavailable {
+  border-left-color: var(--hairline-strong);
+  color: var(--journey-ink);
+  font-style: italic;
+}
+
+/* ---------- 用户笔记：暖纸底，与 Agent 内容明确分离 ---------- */
+.journey-note {
+  margin-top: 8px;
+  padding: 9px 11px;
+  background: var(--annotation-surface, var(--sheet-warm));
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.journey-note p,
-.journey-event__note p {
-  margin: 0 0 6px;
+.journey-note p {
+  margin: 0;
 }
-
 .journey-note__label {
   display: block;
   font-size: 10px;
-  letter-spacing: 0.08em;
+  font-weight: 700;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
-  color: var(--ink-faint);
-  margin-bottom: 3px;
+  color: var(--journey-ink);
+  margin-bottom: 4px;
 }
-
-.journey-event__addnote {
-  margin-top: 7px;
+.journey-note__delete {
+  margin-top: 6px;
+  font-size: 11.5px;
 }
-
 .journey-notes {
   list-style: none;
   margin: 0 0 10px;
@@ -10422,13 +10613,63 @@ textarea {
   gap: 8px;
 }
 
-/* ---- Canvas 侧：Picker 的 Journey 区与 Journey Inspector ---- */
+/* ---------- 笔记编辑区（显式保存 + 反馈） ---------- */
+.journey-note-editor {
+  margin-top: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.journey-note-editor__input {
+  width: 100%;
+  min-height: 54px;
+  resize: vertical;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.journey-note-editor__input::placeholder {
+  color: var(--journey-ink);
+}
+.journey-note-editor__input:focus {
+  outline: none;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 22%, transparent);
+}
+.journey-note-editor__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.journey-note-editor__feedback {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--status-completed);
+  animation: journey-feedback-in 0.18s ease-out;
+}
+@keyframes journey-feedback-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------- Canvas 侧：Picker 的 Journey 区与 Journey Inspector ---------- */
 .picker-list--journeys {
   max-height: 220px;
 }
 
 .add-card--journey {
-  border-left: 3px solid var(--roast);
+  border-left: 3px solid var(--connector-edge, var(--roast));
 }
 
 .journey-inspector {
@@ -10436,6 +10677,76 @@ textarea {
   flex-direction: column;
   gap: 2px;
   overflow-y: auto;
+}
+
+.journey-inspector__section {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline-faint);
+}
+.journey-inspector__section:first-of-type {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+.journey-inspector__title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--journey-ink);
+  margin: 0 0 8px;
+}
+.journey-inspector__hint {
+  font-size: 11.5px;
+  color: var(--journey-ink);
+  margin: 0 0 8px;
+}
+.journey-inspector__empty {
+  font-size: 12px;
+  color: var(--journey-ink);
+  margin: 0 0 8px;
+}
+.journey-inspector__danger {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline-faint);
+}
+.journey-inspector__danger-hint {
+  font-size: 11.5px;
+  color: var(--journey-ink);
+  margin: 6px 0 0;
+}
+
+/* 三种连接的图例：让「时间 / 业务 / 跨记录」不靠猜 */
+.journey-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.journey-legend__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--journey-ink);
+}
+.journey-legend__swatch {
+  width: 26px;
+  height: 0;
+  border-top: 2px solid var(--hairline-strong);
+  flex: none;
+}
+.journey-legend__swatch--sequence {
+  border-top-color: var(--connector-sequence);
+}
+.journey-legend__swatch--edge {
+  border-top-color: var(--connector-edge);
+  border-top-style: dashed;
+}
+.journey-legend__swatch--record {
+  border-top-color: var(--connector-record);
 }
 
 /* 折叠态下标题栏是主要命中区，给它一个明确的指针反馈 */

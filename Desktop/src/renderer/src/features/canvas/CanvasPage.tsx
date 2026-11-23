@@ -18,6 +18,7 @@ import type {
 import { screenToWorld, zoomAt, CANVAS_LIMITS } from '@shared/contracts'
 import { embedURL } from '@shared/link-embed'
 import { nextNodeOrigin, fitViewport } from '@shared/domain/placement'
+import { JOURNEY_GROUP_INSET } from '@shared/domain/journey-layout'
 import { previewFileFor } from './canvas-thumbnail-model'
 import { api } from '../../shared/api'
 import { useI18n } from '../../i18n'
@@ -107,14 +108,19 @@ function contentRects(
   for (const note of notes) {
     rects.push({ x: note.positionX, y: note.positionY, width: note.width, height: note.height })
   }
-  // Journey 分组也要进包围盒，否则「适配全部内容」会把整组推出视口。
-  // 用分组摆位的原点 + 尺寸（组内事件都在这个框里）。
+  /*
+   * Journey 分组也要进包围盒，否则「适配全部内容」会把整组推出视口。
+   *
+   * 摆位存的是**内容原点**，而盒子从它左上方延伸 JOURNEY_GROUP_INSET
+   * （左 18 / 上 70，标题条在里面）。直接用 position 当盒子左上角会把
+   * 标题条切出视口——inset 从 journey-layout 读，与渲染层同一份定义。
+   */
   for (const journey of journeys) {
     rects.push({
-      x: journey.placement.position_x - 16,
-      y: journey.placement.position_y - 72,
-      width: journey.placement.width + 32,
-      height: journey.placement.height + 72
+      x: journey.placement.position_x - JOURNEY_GROUP_INSET.x - 6,
+      y: journey.placement.position_y - JOURNEY_GROUP_INSET.y - 6,
+      width: journey.placement.width + 12,
+      height: journey.placement.height + 12
     })
   }
   for (const stroke of strokes) {

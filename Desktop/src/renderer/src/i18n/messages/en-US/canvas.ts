@@ -148,6 +148,13 @@ export const canvas = {
     source: (name: string) => `Source: ${name}`,
     createdAt: (value: string) => `Created: ${value}`,
     updatedAt: (value: string) => `Updated: ${value}`,
+    edgeEmpty: 'No business relation on this node.',
+    eventMissing: 'Event removed',
+    linkCreated: 'Link created',
+    legendTitle: 'Connector legend',
+    legendSequence: 'Time order: step 1 → step 2 (display only, never stored)',
+    legendEdge: 'Agent business relation: depends on / branches / revises / retries',
+    legendRecord: 'Cross-record link: to a regular Record on this canvas',
     openInRecords: 'View in Records'
   },
 
