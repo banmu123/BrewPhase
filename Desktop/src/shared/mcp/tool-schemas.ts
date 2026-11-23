@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { McpScope } from '../contracts/mcp'
+import { journeyDetailV1Schema } from '../contracts/entities/agent-journey'
 
 /**
  * MCP 工具清单的**唯一事实来源**。
@@ -429,7 +430,13 @@ export const TOOL_DEFINITIONS = {
       'completed on creation, while execution/verification start as `planned` and must be ' +
       'advanced with update_agent_journey_event. Never claim a test passed without running it; ' +
       'record the failure and revise instead of overwriting history. Appending an `outcome` with ' +
-      '`journey_status: "completed"` finishes the journey in the same transaction.',
+      '`journey_status: "completed"` finishes the journey in the same transaction. ' +
+      'Pass `details` for anything another developer must be able to inspect later: which files ' +
+      'changed and why that location, which approach was chosen and which were rejected, what was ' +
+      'actually observed, and which commands really ran with what result. `details` is optional ' +
+      'and strictly validated — unknown fields are rejected, so do not invent keys. Omit what you ' +
+      'do not know rather than guessing; `verification.result` must be `not_run` for anything you ' +
+      'did not execute.',
     input: z.object({
       journey_id: uuid,
       event_type: z.enum([
@@ -463,6 +470,15 @@ export const TOOL_DEFINITIONS = {
       source_agent: z.string().max(120).optional(),
       model: z.string().max(120).optional(),
       occurred_at: z.number().int().optional(),
+      /**
+       * 结构化执行详情（R6-4.2）。可选——**旧客户端一个参数都不用加**。
+       *
+       * 存进 `metadata.journey_detail_v1`（命名空间让 v1/v2 可共存，
+       * 也让 `metadata` 的旧用法原样保留）。`.strict()`：多写一个字段直接
+       * 拒绝；字段长度与数组条数都有上限；整包受 `JOURNEY_METADATA_MAX`
+       * 约束，超限**拒绝**而不是截断。
+       */
+      details: journeyDetailV1Schema.optional(),
       metadata: z.record(z.string(), z.unknown()).optional(),
       journey_status: z.literal('completed').optional(),
       idempotency_key: idempotencyKey

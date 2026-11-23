@@ -37,6 +37,7 @@ import {
   type AgentJourneyEvent
 } from '../../database/repositories/agent-journeys'
 import { listLinksForJourney } from '../../database/repositories/agent-journey-supplements'
+import { parseJourneyMetadataJson } from '../../../shared/contracts/entities/agent-journey'
 import { canvasNodes, canvasNotes, canvases, records } from '../../database/schema'
 import type { ApplicationEvents } from '../events/application-events'
 import { ApplicationError } from '../errors'
@@ -567,8 +568,12 @@ function journeyEventDto(event: AgentJourneyEvent) {
     reason: event.reason,
     source_agent: event.sourceAgent,
     model: event.model,
+    // R6-4.2：Canvas 侧此前也断链——节点要显示「2 个文件 · 3 项验证」
+    // 这类关键辅助信息，Inspector 要展示证据来源，都得先拿到这两个字段。
+    evidence_level: event.evidenceLevel,
     occurred_at: event.occurredAt,
-    updated_at: event.updatedAt
+    updated_at: event.updatedAt,
+    metadata: parseJourneyMetadataJson(event.metadata)
   }
 }
 

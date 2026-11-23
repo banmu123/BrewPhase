@@ -16,6 +16,10 @@ import { digestParams } from '../../database/repositories/mcp-idempotency'
 import { ApplicationError } from '../errors'
 import type { WorkContextService } from '../work-context/work-context-service'
 import type { AgentJourneyCallContext } from '../agent-journey/agent-journey-service'
+import {
+  JOURNEY_DETAIL_KEY,
+  type JourneyDetailV1
+} from '../../../shared/contracts/entities/agent-journey'
 import type { ToolServices } from './tool-services'
 
 /**
@@ -402,7 +406,15 @@ export const TOOL_HANDLERS: Record<ToolName, ToolHandler> = {
       sourceAgent: params.source_agent as string | undefined,
       model: params.model as string | undefined,
       occurredAt: params.occurred_at as number | undefined,
-      metadata: (params.metadata as Record<string, unknown> | undefined) ?? null,
+      // `details` 是 R6-4.2 的结构化执行详情，落库位置固定在
+      // `metadata.journey_detail_v1`；`metadata` 的其它键原样保留（旧用法）。
+      // 两边都给了 → 明确拒绝，不静默覆盖，避免调用方以为自己写进去的内容丢了。
+      metadata: mergeJourneyDetail(
+        (params.metadata as Record<string, unknown> | undefined) ?? null,
+        // 断言只描述**进来的**形状：`details` 已由 tool schema 的
+        // `journeyDetailV1Schema`（.strict()）校验过。
+        params.details as JourneyDetailV1 | undefined
+      ),
       journeyStatus: params.journey_status as string | undefined
     })
     return {
@@ -556,6 +568,21 @@ function journeyCallContext(
     actor: { kind: 'mcp_client', clientId: local.actor.clientId },
     idempotency: { key, toolName, requestDigest: digestParams(params) }
   }
+}
+
+/** `details` → `metadata.journey_detail_v1`；与 metadata 里已有的同名键冲突时报错。 */
+function mergeJourneyDetail(
+  metadata: Record<string, unknown> | null,
+  details: JourneyDetailV1 | undefined
+): Record<string, unknown> | null {
+  if (!details) return metadata
+  if (metadata && Object.prototype.hasOwnProperty.call(metadata, JOURNEY_DETAIL_KEY)) {
+    throw new ApplicationError(
+      'VALIDATION_ERROR',
+      `pass either "details" or "metadata.${JOURNEY_DETAIL_KEY}", not both`
+    )
+  }
+  return { ...(metadata ?? {}), [JOURNEY_DETAIL_KEY]: details }
 }
 
 function parseJsonOrNull(raw: string | null): unknown {

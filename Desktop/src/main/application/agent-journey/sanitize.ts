@@ -40,8 +40,24 @@ export type SanitizeLimits = { max: number }
 
 export const TRUNCATION_MARKER = '…[truncated]'
 
-/** `metadata` 序列化后的上限：不能安全截断 JSON，超限直接拒绝。 */
-export const JOURNEY_METADATA_MAX = 4_000
+/**
+ * `metadata` 序列化后的上限（R6-4.2 从 4_000 提到 16_000）。
+ *
+ * **预算怎么算出来的**（不是拍脑袋放大）：
+ * - 结构化详情里最贵的是 `changes[]`。按字段上限估一条：
+ *   `file_path` 400 + `symbols` 12×200 + `change_summary` 600 +
+ *   `before/after` 各 500 + `why_this_location` 600 ≈ **2.5K**；
+ * - 场景 A 要求「2–3 个文件各自完整表达」≈ **7.5K**；
+ * - 再加一条 decision（alternatives 6×800 ≈ 5K 上限内实际 ~1.5K）、
+ *   3 条 verification（各 ~1.1K）与 references，整包落在 **12–14K**。
+ *
+ * 所以 16_000 能装下「一份诚实的多文件修改记录」，同时仍是**拒绝而非
+ * 截断**——截断会留下解析不了的坏 JSON。字段级上限（`journeyChangeSchema`
+ * 等）已经卡死单条上限，靠无限放大 JSON 解决不了的问题这里也解决不了。
+ *
+ * 边界测试见 `tests/unit/agent-journey-sanitize.test.ts`。
+ */
+export const JOURNEY_METADATA_MAX = 16_000
 
 const REDACTED = '[redacted]'
 

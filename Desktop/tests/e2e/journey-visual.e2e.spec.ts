@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { migrations } from '../../src/main/database/migrations'
 import { pinLocale } from './locale'
+import type { JourneyDetailV1 } from '../../src/shared/contracts/entities/agent-journey'
+import { JOURNEY_DETAIL_KEY } from '../../src/shared/contracts/entities/agent-journey'
 import { openSpace } from './nav'
 import {
   JOURNEY_GROUP_INSET,
@@ -50,6 +52,8 @@ type EventSeed = {
   title: string
   summary: string
   reason?: string
+  /** 结构化执行详情（R6-4.2）。不给 = 旧事件，用来验「尚无详细执行信息」。 */
+  details?: JourneyDetailV1
 }
 
 /** 九类事件各一条，讲一个完整的故事：需求 → 计划 → 决策 → 执行失败 → 观察 → 修正 → 验证 → 结果 → 用户补充。 */
@@ -77,7 +81,29 @@ const EVENTS: EventSeed[] = [
     status: 'completed',
     title: '映射放在 Handler 边界，不改 Service 领域模型',
     summary: '只在一处转换，MCP 对外 snake_case 与 Service camelCase 都保持原样。',
-    reason: '边界转换可测、可枚举；散落到 Service 里会让领域模型背上协议细节。'
+    reason: '边界转换可测、可枚举；散落到 Service 里会让领域模型背上协议细节。',
+    details: {
+      version: 1,
+      decision: {
+        selected_approach: '在 Handler 边界做 snake_case → camelCase 显式映射',
+        rationale: 'Handler 是外部协议与 Application Service 的适配边界，协议细节只应在这里消失。',
+        alternatives: [
+          {
+            approach: '在 Service 内部兼容两种命名',
+            reason_not_selected: '领域模型被迫知道外部协议，测试面扩大到每一处读取'
+          },
+          {
+            approach: '只补类型断言',
+            reason_not_selected: '断言骗过编译器，运行时字段仍是 undefined'
+          },
+          {
+            approach: '改 MCP 对外用 camelCase',
+            reason_not_selected: '破坏既有客户端契约，6 个 Journey 工具全部受影响'
+          }
+        ],
+        tradeoffs: ['边界多一层显式转换', '需要补一条真实链路的回归']
+      }
+    }
   },
   {
     id: 'e0e0e0e0-1111-4111-8111-000000000104',
@@ -85,7 +111,39 @@ const EVENTS: EventSeed[] = [
     type: 'execution',
     status: 'failed',
     title: '改 handlers.ts 的 edges 映射',
-    summary: '第一次只改了断言没改字段名，回归仍然红：边一条都没写进去。'
+    summary: '第一次只改了断言没改字段名，回归仍然红：边一条都没写进去。',
+    details: {
+      version: 1,
+      changes: [
+        {
+          file_path: 'Desktop/src/main/application/mcp-tools/handlers.ts',
+          change_type: 'modified',
+          symbols: ['append_agent_journey_event'],
+          change_summary: '把 params.edges 的 to_event_id / relationship_type 显式 map 成 toEventId / relationshipType。',
+          before_behavior: '直接 as 成 Service 类型：类型过了，运行时字段仍是 snake_case，Service 读到 undefined，整条 append 事务回滚。',
+          after_behavior: 'Handler 在边界逐字段转换，边关系正常写入；未传 edges 时仍为 undefined，行为不变。',
+          why_this_location: 'Handler 是 MCP 协议与 Application Service 之间唯一的适配层，协议命名只应在这里消失。',
+          line_range: { start: 369, end: 410 }
+        },
+        {
+          file_path: 'Desktop/tests/integration/mcp-journey-bridge.test.ts',
+          change_type: 'modified',
+          symbols: ['F2. edges 的 snake_case → camelCase 映射'],
+          change_summary: '新增三条断言：snake_case 提交真的落库、未传 edges 返回空数组、非法目标整体回滚。',
+          before_behavior: '没有任何测试覆盖 edges 的字段名映射，映射写错照样绿。',
+          after_behavior: '映射写错时该套件立刻变红。',
+          why_this_location: '这个文件已经有 BridgeClient → BridgeServer → Service → SQLite 的完整链路，回归放这里才测得到端到端。'
+        }
+      ],
+      observations: [
+        {
+          finding: 'Service 收到的 edge 对象字段名仍是 to_event_id，读 toEventId 得到 undefined。',
+          impact: '每条边都触发 NOT_FOUND，整条 append 回滚，库里 0 条关系。',
+          source: '回归套件的断言输出与 agent_journey_edges 表计数'
+        }
+      ],
+      limitations: ['本条为失败尝试，成功的修改见后续 execution']
+    }
   },
   {
     id: 'e0e0e0e0-1111-4111-8111-000000000105',
@@ -111,7 +169,36 @@ const EVENTS: EventSeed[] = [
     type: 'verification',
     status: 'completed',
     title: '变异验证：还原成裸断言必须变红',
-    summary: '两个套件各抓到 2 处失败，还原后全绿——测试确实覆盖了这条路径。'
+    summary: '两个套件各抓到 2 处失败，还原后全绿——测试确实覆盖了这条路径。',
+    details: {
+      version: 1,
+      verification: [
+        {
+          command: 'npx vitest run tests/integration/mcp-journey-bridge.test.ts',
+          target: '边关系回归 3 例',
+          result: 'passed',
+          exit_code: 0,
+          summary: '23 通过；变异还原后恢复全绿。',
+          evidence_reference: 'tests/integration/mcp-journey-bridge.test.ts'
+        },
+        {
+          command: 'npx vitest run tests/integration/mcp-protocol.integration.test.ts',
+          target: '真实 STDIO A→F 闭环',
+          result: 'passed',
+          exit_code: 0,
+          summary: '7 通过。'
+        },
+        {
+          target: 'Playwright 全量 E2E',
+          result: 'not_run',
+          summary: '本阶段未运行，不声称通过。'
+        }
+      ],
+      references: [
+        { kind: 'commit', value: 'e8390e35f793769a1776d5f0e9907fdef3f13839', label: 'R6-2.1' },
+        { kind: 'test', value: 'tests/unit/mcp-journey-tools.test.ts', label: '工具契约 13 例' }
+      ]
+    }
   },
   {
     id: 'e0e0e0e0-1111-4111-8111-000000000108',
@@ -238,8 +325,15 @@ function seed(fixture: { userData: string; dbPath: string }): void {
     `insert into agent_journey_events (id, journey_id, sequence, event_type, role, status, evidence_level,
        title, summary, content, reason, source_client_id, source_agent, model, attempt_id, parent_event_id,
        idempotency_key, occurred_at, received_at, updated_at, metadata)
-     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,null)`
+     values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   )
+  /**
+   * 结构化详情按**生产路径的形状**落库：`metadata.journey_detail_v1`。
+   * 给了 `details` 才写，不给就写 null——后者正是「旧事件」的形态，
+   * 用来验 §3 要求的「尚无详细执行信息」而不是伪造空详情。
+   */
+  const metadataOf = (event: EventSeed): string | null =>
+    event.details ? JSON.stringify({ [JOURNEY_DETAIL_KEY]: event.details }) : null
   for (const event of EVENTS) {
     insertEvent.run(
       event.id,
@@ -261,7 +355,8 @@ function seed(fixture: { userData: string; dbPath: string }): void {
       `seed-${event.seq}`,
       NOW - 3_600_000 + event.seq * 60_000,
       NOW - 3_600_000 + event.seq * 60_000,
-      NOW - 3_600_000 + event.seq * 60_000
+      NOW - 3_600_000 + event.seq * 60_000,
+      metadataOf(event)
     )
   }
 
@@ -581,12 +676,35 @@ async function auditDom(
     }
 
     const targets = [
+      // 时间线与卡片
       ['.journey-event__summary', 4.5],
       ['.journey-event__title', 4.5],
+      ['.journey-event__nodetail', 4.5],
+      ['.journey-event__counts', 4.5],
       ['.journey-chip', 4.5],
       ['.journey-note p', 4.5],
       ['.record-tile__journey-summary', 4.5],
-      ['.journey-inspector__hint', 4.5]
+      ['.journey-inspector__hint', 4.5],
+      ['.journey-inspector__empty', 4.5],
+      // R6-4.2 结构化详情
+      ['.journey-detail__label', 4.5],
+      ['.journey-file-card__path', 4.5],
+      ['.journey-file-card__summary', 4.5],
+      ['.journey-file-card__why', 4.5],
+      ['.journey-symbol', 4.5],
+      ['.journey-diff__side p', 4.5],
+      ['.journey-decision', 4.5],
+      ['.journey-decision__alts li', 4.5],
+      ['.journey-observations__finding', 4.5],
+      ['.journey-observations__impact', 4.5],
+      ['.journey-verify__target', 4.5],
+      ['.journey-verify__summary', 4.5],
+      ['.journey-verify__command', 4.5],
+      ['.journey-verify__ref', 4.5],
+      ['.journey-evidence__hint', 4.5],
+      ['.journey-refs li', 4.5],
+      ['.journey-limitations li', 4.5],
+      ['.journey-detail__section-title', 4.5]
     ] as const
     for (const [sel, min] of targets) {
       document.querySelectorAll(sel).forEach((el, index) => {
@@ -606,6 +724,11 @@ async function auditDom(
     console.log(`[visual-audit ${label}]`, JSON.stringify(issues, null, 2))
   }
   return issues
+}
+
+/** 旧事件的提示文案（zh）：与 i18n 的 records.journey.detail.noDetail 对齐。 */
+function t_noDetail(_page: import('@playwright/test').Page): string {
+  return '尚无详细执行信息'
 }
 
 /** 摆位（画布绝对坐标）→ 用于点选事件节点。 */
@@ -684,11 +807,61 @@ test('Journey 视觉验收：九类事件、三种连接、双视口双语言', 
     // 笔记编辑区必须有显式保存按钮，不是只能按 Enter
     await expect(page.locator('.journey-detail').getByRole('button', { name: '保存' }).first()).toBeVisible()
 
+    /*
+     * 场景 H：展开单个事件的详细信息（§9.3 按需展开）。
+     * execution 是第 4 个事件（seq 4），它的 details 里有 **两个文件**。
+     */
+    const executionItem = page.locator('.journey-timeline > li').nth(3)
+    await expect(executionItem).toContainText('改 handlers.ts 的 edges 映射')
+    await executionItem.getByRole('button', { name: '展开详细信息' }).click()
+    await page.waitForTimeout(400)
+    await expect(executionItem).toContainText('handlers.ts')
+    await expect(executionItem).toContainText('mcp-journey-bridge.test.ts')
+    await expect(executionItem).toContainText('为什么改在这里')
+    await expect(executionItem.getByRole('button', { name: '收起详细信息' })).toBeVisible()
+    await shoot(page, '14-records-detail-expanded-1440-zh')
+    expect(await auditDom(page, 'records-expanded-zh'), '展开后不应有溢出/越界/对比度问题').toEqual([])
+
+    // 旧事件（plan 没有 details）：明确显示「尚无详细执行信息」，不伪造详情
+    const planItem = page.locator('.journey-timeline > li').nth(1)
+    await expect(planItem).toContainText('先在 Handler 边界补齐字段映射')
+    await expect(planItem).toContainText(t_noDetail(page))
+    await shoot(page, '15-records-old-event-1440-zh')
+
     // 笔记与关联关系（Inspector 内）
     await openFittedCanvas(page)
     await selectEvent(page, fixture.dbPath, 'e0e0e0e0-1111-4111-8111-000000000104')
     await expect(page.locator('.node-panel')).toBeVisible()
     await shoot(page, '08-notes-and-links-1440-zh')
+    expect(await auditDom(page, 'notes-links-zh'), '笔记与关联不应有溢出/对比度问题').toEqual([])
+
+    // 场景 H：Decision Inspector —— 选择方案 / 放弃的方案 / 代价
+    await closePanels(page)
+    await selectEvent(page, fixture.dbPath, 'e0e0e0e0-1111-4111-8111-000000000103')
+    await expect(page.locator('.node-panel')).toContainText('决策依据')
+    await expect(page.locator('.node-panel')).toContainText('放弃的方案')
+    await expect(page.locator('.node-panel')).toContainText('只补类型断言')
+    await expect(page.locator('.node-panel')).toContainText('证据来源')
+    await expect(page.locator('.node-panel')).toContainText('Agent 自述')
+    await shoot(page, '16-inspector-decision-detail-1440-zh')
+    expect(await auditDom(page, 'decision-detail-zh'), '决策详情不应有溢出/对比度问题').toEqual([])
+
+    // 场景 H：Verification Inspector —— 通过 / 未运行两种结果都看得见
+    await closePanels(page)
+    await selectEvent(page, fixture.dbPath, 'e0e0e0e0-1111-4111-8111-000000000107')
+    await expect(page.locator('.node-panel')).toContainText('实际验证')
+    await expect(page.locator('.node-panel')).toContainText('通过')
+    await expect(page.locator('.node-panel')).toContainText('未运行')
+    await expect(page.locator('.node-panel')).toContainText('mcp-journey-bridge.test.ts')
+    await shoot(page, '17-inspector-verification-detail-1440-zh')
+    expect(await auditDom(page, 'verify-detail-zh'), '验证详情不应有溢出/对比度问题').toEqual([])
+
+    // 场景 H（旧事件）：plan 没有 details，Inspector 给一句说明而不是空卡片
+    await closePanels(page)
+    await selectEvent(page, fixture.dbPath, 'e0e0e0e0-1111-4111-8111-000000000102')
+    await expect(page.locator('.node-panel')).toContainText('先在 Handler 边界补齐字段映射')
+    await expect(page.locator('.node-panel')).toContainText('尚无详细执行信息')
+    await shoot(page, '18-inspector-old-event-1440-zh')
 
     // ══ 视口 2：1280 × 800 ═══════════════════════════════
     await setWindowSize(app, 1280, 800)

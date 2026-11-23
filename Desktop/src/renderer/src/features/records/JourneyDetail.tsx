@@ -3,6 +3,8 @@ import type { Canvas, JourneyDetail as Detail, JourneyNote, JourneyRecordLink } 
 import { api } from '../../shared/api'
 import { useI18n } from '../../i18n'
 import { EventGlyph, eventTypeAccent } from '../../shared/EventGlyph'
+import { EventDetailSections } from '../../shared/EventDetailSections'
+import { parseJourneyDetail } from '@shared/contracts'
 
 /**
  * Agent Journey 的**完整详情**（R6-4.1 §3.2，R6-4.1.1 §7 精修）。
@@ -28,6 +30,8 @@ export function JourneyDetailView(props: {
   const { detail } = props
   const { journey, events, edges, notes, links } = detail
 
+  /** 展开的事件：§9.3 要求「按需展开」，不把全部详情压进一条长 timeline。 */
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [canvases, setCanvases] = useState<Canvas[]>([])
   const [pickedCanvas, setPickedCanvas] = useState('')
   const [canvasMessage, setCanvasMessage] = useState<string | null>(null)
@@ -91,6 +95,15 @@ export function JourneyDetailView(props: {
     list.push(link)
     linksByEvent.set(link.event_id, list)
   }
+
+  const toggleExpanded = useCallback((eventId: string) => {
+    setExpanded((current) => {
+      const next = new Set(current)
+      if (next.has(eventId)) next.delete(eventId)
+      else next.add(eventId)
+      return next
+    })
+  }, [])
 
   const deleteNote = useCallback(
     async (id: string) => {
@@ -210,6 +223,12 @@ export function JourneyDetailView(props: {
         <ol className="journey-timeline">
           {events.map((event) => {
             const statusKey2 = event.status as keyof typeof t.records.journey.eventStatus
+            // 结构化详情：拿不到（旧事件 / 结构脏）就是 null，
+            // 这时只显示原始摘要与正文，**不放空卡片占位**（§9.2 / 场景 E）。
+            const structured = parseJourneyDetail(event.metadata)
+            const isExpanded = expanded.has(event.id)
+            const fileCount = structured?.changes?.length ?? 0
+            const checkCount = structured?.verification?.length ?? 0
             const eventLinks = linksByEvent.get(event.id) ?? []
             const eventNotes = notesByEvent.get(event.id) ?? []
             const accent = eventTypeAccent(event.event_type)
@@ -235,6 +254,44 @@ export function JourneyDetailView(props: {
 
                 <div className="journey-event__title">{event.title}</div>
                 {event.summary && <div className="journey-event__summary">{event.summary}</div>}
+
+                {/*
+                  * §9.3「按需展开」：有结构化详情才给开关（否则展开也无内容）；
+                  * 旧事件给一句明确说明，而不是一个空的占位卡片。
+                  */}
+                <div className="journey-event__detailbar">
+                  {structured ? (
+                    <>
+                      <span className="journey-event__counts">
+                        {fileCount > 0 && t.records.journey.changesCount(fileCount)}
+                        {fileCount > 0 && checkCount > 0 && ' · '}
+                        {checkCount > 0 && t.records.journey.verifyCount(checkCount)}
+                      </span>
+                      <button
+                        type="button"
+                        className="button button--ghost journey-event__toggle"
+                        aria-expanded={isExpanded}
+                        onClick={() => toggleExpanded(event.id)}
+                      >
+                        {isExpanded
+                          ? t.records.journey.detail.collapse
+                          : t.records.journey.detail.expand}
+                      </button>
+                    </>
+                  ) : (
+                    <span className="journey-event__nodetail">
+                      {t.records.journey.detail.noDetail}
+                    </span>
+                  )}
+                </div>
+
+                {isExpanded && structured && (
+                  <EventDetailSections
+                    detail={structured}
+                    evidenceLevel={event.evidence_level}
+                    metadata={event.metadata}
+                  />
+                )}
 
                 {/* 决策依据 / 执行内容：数据存在才出现，且标明是哪一类 */}
                 {event.reason && (

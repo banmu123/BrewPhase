@@ -5,6 +5,7 @@ import type { Context } from 'konva/lib/Context'
 import type { CanvasJourney, CanvasJourneyPlacement, CanvasNodeWithRecord } from '@shared/contracts'
 import { themeColors, type ThemeColors } from '../../shared/tokens'
 import { JOURNEY_MAX_COLUMNS } from '@shared/domain/journey-layout'
+import { parseJourneyDetail } from '@shared/contracts'
 import { useI18n } from '../../i18n'
 
 /**
@@ -754,6 +755,20 @@ function EventNodeShape(props: {
   const [hover, setHover] = useState(false)
 
   const accent = colors[ACCENT_KEY[event.event_type] ?? 'eventObservation']
+  /*
+   * §9.1：节点保持摘要化，但要把「改了几个文件 / 验了几项」这类
+   * 关键辅助信息露出来——它决定用户要不要点开这个节点。
+   * 只有计数，详情一律点开再看。
+   */
+  const structured = parseJourneyDetail(event.metadata)
+  const fileCount = structured?.changes?.length ?? 0
+  const checkCount = structured?.verification?.length ?? 0
+  const countsText = [
+    fileCount > 0 ? t.records.journey.changesCount(fileCount) : '',
+    checkCount > 0 ? t.records.journey.verifyCount(checkCount) : ''
+  ]
+    .filter(Boolean)
+    .join(' · ')
   const typeLabel =
     t.canvas.journey.eventType[event.event_type as keyof typeof t.canvas.journey.eventType] ??
     event.event_type
@@ -767,6 +782,8 @@ function EventNodeShape(props: {
   const glyphSize = 22
 
   const statusW = estimateWidth(statusLabel, 9.5) + 16
+  const countsW = countsText ? estimateWidth(countsText, 9.5) + 4 : 0
+
   const footerY = rect.h - pad - 17
   const hasTime = event.occurred_at > 0
   const timeText = hasTime ? props.formatDate(event.occurred_at) : ''
@@ -855,7 +872,9 @@ function EventNodeShape(props: {
       <Text
         x={pad + badgeW + 7 + glyphSize + 7}
         y={16}
-        width={rect.w - pad * 2 - badgeW - glyphSize - 28}
+        width={
+          rect.w - pad * 2 - badgeW - glyphSize - 28 - (countsText ? countsW + 8 : 0)
+        }
         text={typeLabel}
         fontSize={10.5}
         fontStyle="600"
@@ -864,6 +883,20 @@ function EventNodeShape(props: {
         ellipsis
         listening={false}
       />
+      {countsText && (
+        <Text
+          x={rect.w - pad - countsW}
+          y={17}
+          width={countsW}
+          text={countsText}
+          fontSize={9.5}
+          align="right"
+          fill={colors.journeyInk}
+          wrap="none"
+          ellipsis
+          listening={false}
+        />
+      )}
 
       {/* 标题：卡片的主角 */}
       <Text

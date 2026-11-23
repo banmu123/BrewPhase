@@ -10753,3 +10753,413 @@ textarea {
 .konvajs-content {
   cursor: default;
 }
+
+/* ================================================================
+   R6-4.2 —— 结构化执行详情
+   分区标题、文件卡、修改前后对照、验证结果、证据来源。
+   颜色全部取自既有 Journey token；文字一律用 --journey-ink 保证 4.5:1。
+   ================================================================ */
+
+.journey-detail__section {
+  margin-top: 16px;
+  padding-top: 13px;
+  border-top: 1px solid var(--hairline-faint);
+}
+.journey-detail__section:first-of-type {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 12px;
+}
+
+.journey-detail__section-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--journey-ink);
+  margin: 0 0 9px;
+}
+
+/* 小标签：区块内字段名（修改前 / 为什么改在这里 …） */
+.journey-detail__label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--journey-ink);
+  opacity: 0.85;
+  margin-bottom: 3px;
+}
+
+/* ---------- 事件详情条（Records 时间线） ---------- */
+.journey-event__detailbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 9px;
+}
+.journey-event__counts {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--journey-ink);
+}
+.journey-event__toggle {
+  font-size: 11.5px;
+  padding: 3px 9px;
+}
+.journey-event__nodetail {
+  font-size: 11.5px;
+  color: var(--journey-ink);
+  opacity: 0.75;
+  font-style: italic;
+}
+
+/* ---------- 修改位置：每个文件一张卡 ---------- */
+.journey-file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.journey-file-card {
+  padding: 10px 12px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--event-execution, var(--roast));
+  border-radius: 8px;
+}
+
+.journey-file-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.journey-file-card__path {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.journey-chip--change {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--journey-ink);
+  background: color-mix(in srgb, var(--event-execution) 14%, transparent);
+  border-color: transparent;
+}
+.journey-chip--change[data-type='created'] {
+  background: color-mix(in srgb, var(--status-completed) 14%, transparent);
+  color: var(--status-completed);
+}
+.journey-chip--change[data-type='deleted'] {
+  background: color-mix(in srgb, var(--status-failed) 14%, transparent);
+  color: var(--status-failed);
+}
+.journey-chip--change[data-type='renamed'] {
+  background: color-mix(in srgb, var(--event-decision) 14%, transparent);
+  color: var(--event-decision);
+}
+
+.journey-file-card__symbols {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 8px;
+}
+.journey-file-card__symbols .journey-detail__label {
+  display: inline;
+  margin-bottom: 0;
+}
+.journey-symbol {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink);
+  background: var(--well);
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  padding: 1px 6px;
+  overflow-wrap: anywhere;
+}
+
+.journey-file-card__summary {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--journey-ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 修改前 / 修改后：左右对照，靠底色与左侧色条区分 */
+.journey-diff {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-top: 9px;
+}
+@media (min-width: 560px) {
+  .journey-diff {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.journey-diff__side {
+  padding: 8px 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.journey-diff__side p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.journey-diff__side--before {
+  background: color-mix(in srgb, var(--status-failed) 8%, transparent);
+  border-left: 2px solid var(--status-failed);
+}
+.journey-diff__side--after {
+  background: color-mix(in srgb, var(--status-completed) 8%, transparent);
+  border-left: 2px solid var(--status-completed);
+}
+
+.journey-file-card__why {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--hairline-strong);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--journey-ink);
+}
+.journey-file-card__why p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.journey-file-card__lines {
+  margin-top: 7px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--journey-ink);
+  opacity: 0.8;
+}
+
+/* ---------- 决策依据 ---------- */
+.journey-decision {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px 12px;
+  background: var(--sheet-cool);
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--journey-ink);
+}
+.journey-decision p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.journey-decision__selected {
+  color: var(--ink);
+  font-weight: 600;
+}
+.journey-decision__alts ul,
+.journey-decision__tradeoffs ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.journey-decision__alts li {
+  overflow-wrap: anywhere;
+}
+.journey-decision__alts strong {
+  display: block;
+  color: var(--ink);
+  font-weight: 600;
+}
+.journey-decision__alts span {
+  color: var(--journey-ink);
+}
+
+/* ---------- 实际观察 ---------- */
+.journey-observations {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.journey-observations li {
+  padding-left: 10px;
+  border-left: 2px solid var(--event-observation, var(--hairline-strong));
+}
+.journey-observations__finding {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.journey-observations__impact,
+.journey-observations__source {
+  margin: 3px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--journey-ink);
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 实际验证 ---------- */
+.journey-verify-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.journey-verify {
+  padding: 9px 11px;
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+}
+.journey-verify__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.journey-verify__result {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.journey-verify__result[data-result='passed'] {
+  color: var(--status-completed);
+  background: color-mix(in srgb, var(--status-completed) 14%, transparent);
+}
+.journey-verify__result[data-result='failed'] {
+  color: var(--status-failed);
+  background: color-mix(in srgb, var(--status-failed) 14%, transparent);
+}
+.journey-verify__result[data-result='not_run'],
+.journey-verify__result[data-result='skipped'] {
+  color: var(--status-pending);
+  background: color-mix(in srgb, var(--status-pending) 14%, transparent);
+  border: 1px dashed var(--hairline-strong);
+}
+.journey-verify__target {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.journey-verify__exit {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--journey-ink);
+}
+.journey-verify__command {
+  display: block;
+  margin-top: 7px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink);
+  background: var(--well);
+  border-radius: 6px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  white-space: pre;
+}
+.journey-verify__summary {
+  margin: 7px 0 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--journey-ink);
+  overflow-wrap: anywhere;
+}
+.journey-verify__ref {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: var(--journey-ink);
+  overflow-wrap: anywhere;
+}
+.journey-verify__ref code {
+  font-family: var(--mono);
+}
+
+/* ---------- 证据来源 ---------- */
+.journey-evidence {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.journey-chip--evidence {
+  align-self: flex-start;
+  font-weight: 700;
+  color: var(--status-pending);
+  background: color-mix(in srgb, var(--status-pending) 12%, transparent);
+  border-color: transparent;
+}
+.journey-evidence__hint {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--journey-ink);
+}
+.journey-refs {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.journey-refs li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--journey-ink);
+}
+.journey-refs code {
+  font-family: var(--mono);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.journey-refs__label {
+  color: var(--journey-ink);
+  opacity: 0.85;
+}
+
+/* ---------- 尚未解决 ---------- */
+.journey-limitations {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--journey-ink);
+}

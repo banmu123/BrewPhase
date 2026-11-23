@@ -4,6 +4,8 @@ import { api } from '../../shared/api'
 import { useI18n } from '../../i18n'
 import { confirmAction } from '../../shared/ConfirmDialog'
 import { EventGlyph, eventTypeAccent } from '../../shared/EventGlyph'
+import { EventDetailSections } from '../../shared/EventDetailSections'
+import { parseJourneyDetail } from '@shared/contracts'
 
 /**
  * Journey Inspector 的内容体（R6-4.1 §4.4 / §5.2 / §6，R6-4.1.1 §8 精修）。
@@ -44,6 +46,12 @@ export function JourneyInspectorBody(props: {
   const event = useMemo(
     () => journey.events.find((item) => item.id === eventId) ?? null,
     [journey.events, eventId]
+  )
+
+  /** 结构化执行详情：拿不到就是 null（旧事件显示原始摘要，不放空卡片）。 */
+  const structured = useMemo(
+    () => parseJourneyDetail(event?.metadata ?? null),
+    [event]
   )
 
   const [notes, setNotes] = useState<Array<{ id: string; event_id: string | null; body: string }>>(
@@ -264,6 +272,23 @@ export function JourneyInspectorBody(props: {
               </span>
               <p>{event.reason}</p>
             </div>
+          )}
+
+          {/*
+            * §9.2 分区详情：修改位置 / 决策依据 / 实际验证 / 证据来源……
+            * 与 Records 详情共用同一份渲染实现，两处不会漂移。
+            * 旧事件给一句明确说明，不放空卡片占位。
+            */}
+          {structured ? (
+            <EventDetailSections
+              detail={structured}
+              evidenceLevel={event.evidence_level}
+              metadata={event.metadata}
+            />
+          ) : (
+            <p className="journey-inspector__hint" style={{ marginTop: 10 }}>
+              {t.records.journey.detail.noDetail}
+            </p>
           )}
         </section>
       )}

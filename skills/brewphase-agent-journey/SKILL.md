@@ -195,7 +195,12 @@ When a choice actually changes direction, append `decision`:
 - what alternatives you dropped,
 - the known cost or limitation of the choice.
 
-Only decisions that mattered. Detail that changes nothing is noise.
+Put the structured version in `details.decision` (`selected_approach`,
+`rationale`, `alternatives[]`, `tradeoffs[]`) so a later reader can scan the
+rejected options without parsing prose. Only decisions that mattered —
+detail that changes nothing is noise.
+
+See [Structured execution details](#structured-execution-details-details).
 
 ### 5. Record execution
 
@@ -216,11 +221,27 @@ update  execution → completed        (it really succeeded)
   `expected_updated_at`. Use the `updated_at` returned by the append; the
   server rejects a stale version with `STALE_RECORD`.
 - Never report success before the action finished.
+- **If you changed code, record it in `details.changes` — one entry per
+  file.** Each entry needs the repo-relative path, the change type, what
+  actually changed, what was wrong before, what happens after, and **why
+  that file/function was the right place to fix it**. A single
+  "fixed the parameter mapping" summary for three files is not enough, and
+  a summary with no file list is worse. If you did not touch a file, do not
+  list one.
+- If the work was analysis or debugging with no file changes, record the
+  object you worked on and the outcome in `details.observations` instead —
+  never invent a `changes` entry.
 
 ### 6. Record what you observed
 
 Append `observation` with the actual outcome: real return values, which files
 changed, build/test results, defects found, mismatches against expectations.
+
+Use `details.observations[]` (`finding`, `impact?`, `source?`) for the
+structured form: what you actually saw, how far it reaches, and **where the
+information came from** (log line, test output, error text). A guess is not
+an observation — if you inferred it, say so in `summary` instead of filing
+it under `source`.
 
 `observation` is a **statement event** — created `completed` because the
 *observation* has been recorded. It says nothing about whether the operation it
@@ -257,6 +278,12 @@ update  verification → completed   (it really passed)
   update to `skipped` using the `expected_updated_at` the server returned.
 - **Never mark an unrun test `completed`.** This is the single most damaging
   lie a Journey can contain.
+- Record each command or test target in `details.verification[]` with
+  `result` = `passed` | `failed` | `not_run` | `skipped`, plus `command`,
+  `target`, `exit_code` when you have it, and a short `summary`.
+  **Anything you did not execute is `not_run`** — not `passed`, not omitted.
+  `evidence_reference` is for something another person can open (a test file,
+  a report path, a commit).
 
 ### 9. Finish the journey
 
@@ -282,6 +309,274 @@ and cannot be reopened. Never fabricate a successful outcome to tidy up the
 data.
 
 `abandoned` is not reachable; do not try to set it.
+
+## Structured execution details (`details`)
+
+`append_agent_journey_event` accepts an optional, **strictly validated**
+`details` object. It is stored under `metadata.journey_detail_v1` and read
+back by `get_agent_journey`. Unknown keys are **rejected**, so do not invent
+fields — omit what you do not know instead of guessing.
+
+Use it whenever another developer (or a future you) must answer:
+*what was changed, where, why there, and how it was verified.*
+
+```text
+details = {
+  version: 1
+  decision?      { selected_approach, rationale,
+                   alternatives[]?: { approach, reason_not_selected },
+                   tradeoffs[]?: string }
+  changes[]?     { file_path, change_type: created|modified|deleted|renamed,
+                   symbols[]?, change_summary, before_behavior?,
+                   after_behavior?, why_this_location, line_range? {start,end} }
+  observations[]?{ finding, impact?, source? }
+  verification[]?{ command?, target,
+                   result: passed|failed|not_run|skipped,
+                   exit_code?, summary, evidence_reference? }
+  references[]?  { kind: commit|diff|test|file|record|url, value, label? }
+  limitations[]? string
+}
+```
+
+### Which event carries which fields
+
+| Event | Put in `details` |
+|---|---|
+| `decision` | `decision` — chosen approach, the real reason, each rejected alternative and why, known tradeoffs |
+| `execution` (code changed) | `changes[]` — **one entry per file**, each with path, symbols, what changed, before/after behaviour and **why that location** |
+| `execution` (no code changed) | `observations[]` — what you actually worked on and got. **Never invent a `changes` entry** |
+| `observation` | `observations[]` — finding, impact, and the source you read it from |
+| `revision` | `changes[]` for what actually moved this time, plus `observations[]`/`limitations[]` for the defect that forced it |
+| `verification` | `verification[]` — one entry per command or test target |
+| `outcome` | `changes[]` (what shipped), `verification[]`, `references[]`, `limitations[]` |
+
+### Rules that will fail review
+
+1. **One entry per file.** Three files changed means three `changes` entries.
+   A single overall summary hides exactly the information a reader needs.
+2. **`why_this_location` is required on every change.** Say what that module
+   owns, what depends on it, and why the fix belongs there rather than
+   somewhere more convenient.
+3. **`result` is `not_run` / `skipped` if you did not execute it.** Not
+   `passed`, not quietly left out.
+4. **`evidence_level` is always `agent_reported`.** You cannot declare
+   `tool_result` or `runtime_observed` — the server rejects it. Present your
+   test results as what they are: your own report, traceable only through
+   the `command` and `evidence_reference` you recorded.
+5. **Repo-relative paths only** (`Desktop/src/...`). No absolute machine
+   paths, no home directories.
+6. **No full source files, no full terminal dumps, no raw diffs.** Keep the
+   summary; reference a commit SHA instead of pasting a patch.
+7. **Budget:** the whole `metadata` blob is capped (16 000 chars) and every
+   field has its own limit. Over budget is **rejected**, not truncated —
+   trimming would leave JSON you cannot parse.
+8. **Never record hidden chain of thought.** `rationale` and
+   `why_this_location` are reasons you already showed the user, not your
+   internal scratchpad.
+
+### Complete example
+
+A realistic Journey: the user asks for a mapping fix, you plan it, pick an
+approach, touch two files, hit a failure, revise, verify, and finish.
+
+**1 — user input**
+
+```text
+append_agent_journey_event({
+  journey_id: "…", event_type: "user_input",
+  title: "边关系一条都写不进去，修一下",
+  summary: "用户要求：append_agent_journey_event 提交 edges 后数据库里没有关系行。",
+  idempotency_key: "evt:<uuid>"
+})
+```
+
+**2 — plan**
+
+```text
+append_agent_journey_event({
+  journey_id: "…", event_type: "plan",
+  title: "先定位映射缺口，再补边关系回归",
+  summary: "三步：复现 → 在 Handler 边界补字段映射 → 加真实 Bridge 回归。",
+  idempotency_key: "evt:<uuid>"
+})
+```
+
+**3 — decision (with rejected alternatives)**
+
+```text
+append_agent_journey_event({
+  journey_id: "…", event_type: "decision",
+  title: "映射放在 Handler 边界，不改 Service 领域模型",
+  reason: "边界转换可测、可枚举；散落到 Service 会让领域模型背上协议细节。",
+  details: {
+    version: 1,
+    decision: {
+      selected_approach: "在 Handler 边界做 snake_case → camelCase 显式映射",
+      rationale: "Handler 是外部协议与 Application Service 的适配边界，协议细节只应出现在这里。",
+      alternatives: [
+        { approach: "在 Service 内部兼容两种命名",
+          reason_not_selected: "领域模型被迫知道外部协议，测试面扩大到每一处读取" },
+        { approach: "只补类型断言",
+          reason_not_selected: "断言骗过编译器，运行时字段仍是 undefined" },
+        { approach: "改 MCP 对外用 camelCase",
+          reason_not_selected: "破坏既有客户端契约，R6-2 的 6 个工具全部受影响" }
+      ],
+      tradeoffs: ["边界多一层显式转换", "需要补一条真实链路的回归"]
+    }
+  },
+  idempotency_key: "evt:<uuid>"
+})
+```
+
+**4 — execution, file 1 (the actual fix)**
+
+```text
+append_agent_journey_event({
+  journey_id: "…", event_type: "execution", title: "补齐 edges 的字段映射",
+  summary: "在 Handler 边界逐字段转换，断言只描述进来的形状。",
+  details: {
+    version: 1,
+    changes: [{
+      file_path: "Desktop/src/main/application/mcp-tools/handlers.ts",
+      change_type: "modified",
+      symbols: ["append_agent_journey_event"],
+      change_summary: "把 params.edges 的 to_event_id / relationship_type 显式 map 成 toEventId / relationshipType。",
+      before_behavior: "直接 as 成 Service 类型：类型过了，运行时字段仍是 snake_case，Service 读到 undefined，整条 append 事务回滚。",
+      after_behavior: "Handler 在边界逐字段转换，边关系正常写入；未传 edges 时仍为 undefined，行为不变。",
+      why_this_location: "Handler 是 MCP 协议与 Application Service 之间唯一的适配层，协议命名只应在这里消失。",
+      line_range: { start: 369, end: 410 }
+    }]
+  },
+  idempotency_key: "evt:<uuid>"
+})
+```
+
+**5 — execution, file 2 (the regression that proves it)**
+
+```text
+append_agent_journey_event({
+  journey_id: "…", event_type: "execution", title: "补边关系回归",
+  summary: "在已有真实 Bridge 链路上加三条断言。",
+  details: {
+    version: 1,
+    changes: [{
+      file_path: "Desktop/tests/integration/mcp-journey-bridge.test.ts",
+      change_type: "modified",
+      symbols: ["F2. edges 的 snake_case → camelCase 映射"],
+      change_summary: "新增：snake_case 提交真的落库、未传 edges 返回空数组、非法目标整体回滚不留半截。",
+      before_behavior: "没有任何测试覆盖 edges 的字段名映射，映射写错照样绿。",
+      after_behavior: "映射写错时该套件立刻变红。",
+      why_this_location: "这个文件已经有 BridgeClient → BridgeServer → Service → SQLite 的完整链路，回归放这里才测得到端到端；放到纯单测里只能测到 mock。"
+    }]
+  },
+  idempotency_key: "evt:<uuid>"
+})
+```
+
+**6 — observation (what you actually saw)**
+
+```text
+append_agent_journey_event({
+  journey_id: "…", event_type: "observation",
+  title: "日志里 edge.toEventId 是 undefined",
+  summary: "断言骗过了编译器，没骗过运行时。",
+  details: {
+    version: 1,
+    observations: [{
+      finding: "Service 收到的 edge 对象字段名仍是 to_event_id，读 toEventId 得到 undefined。",
+      impact: "每条边都触发 NOT_FOUND，整条 append 回滚，库里 0 条关系。",
+      source: "回归套件的断言输出与 agent_journey_edges 表计数"
+    }]
+  },
+  idempotency_key: "evt:<uuid>"
+})
+```
+
+**7 — failure, then a revision (history is never overwritten)**
+
+```text
+append_agent_journey_event({ … event_type: "execution", title: "第一次：只补了类型断言",
+  details: { version: 1, changes: [{
+    file_path: "Desktop/src/main/application/mcp-tools/handlers.ts",
+    change_type: "modified", change_summary: "只把 as 的目标类型改成了 Service 的输入类型。",
+    why_this_location: "当时误以为类型对了字段名就对了。" }] } })
+update_agent_journey_event({ event_id: "…", status: "running", expected_updated_at: … })
+update_agent_journey_event({ event_id: "…", status: "failed",   expected_updated_at: … })
+
+append_agent_journey_event({
+  journey_id: "…", event_type: "revision", title: "改成显式 map",
+  reason: "断言不产生运行时转换；类型和字段名是两件事。",
+  parent_event_id: "<failed event id>",
+  edges: [{ to_event_id: "<failed event id>", relationship_type: "revises" }],
+  idempotency_key: "evt:<uuid>"
+})
+```
+
+The failed execution **stays** with its own `details` — a later reader must
+be able to see what was tried first and why it did not work.
+
+**8 — verification (only what really ran)**
+
+```text
+append_agent_journey_event({ … event_type: "verification", title: "跑回归" })
+update_agent_journey_event({ …, status: "running", … })
+   → npx vitest run tests/integration/mcp-journey-bridge.test.ts   (exit 0, 23 passed)
+   → npx vitest run tests/integration/mcp-protocol.integration.test.ts (exit 0, 7 passed)
+update_agent_journey_event({ …, status: "completed", … })
+
+details: {
+  version: 1,
+  verification: [
+    { command: "npx vitest run tests/integration/mcp-journey-bridge.test.ts",
+      target: "边关系回归 3 例", result: "passed", exit_code: 0,
+      summary: "23 通过；变异还原后恢复全绿。",
+      evidence_reference: "tests/integration/mcp-journey-bridge.test.ts" },
+    { command: "npx vitest run tests/integration/mcp-protocol.integration.test.ts",
+      target: "真实 STDIO A→F 闭环", result: "passed", exit_code: 0,
+      summary: "7 通过。" },
+    { target: "Playwright 全量 E2E", result: "not_run",
+      summary: "本阶段未运行，不声称通过。" }
+  ]
+}
+```
+
+**9 — outcome (finishes the journey in the same transaction)**
+
+```text
+append_agent_journey_event({
+  journey_id: "…", event_type: "outcome",
+  title: "边关系回归通过，整套 1457 全绿",
+  summary: "typecheck 0、mcp:build 0、完整套件 0 失败；Cloud 回归未受影响。",
+  journey_status: "completed",
+  details: {
+    version: 1,
+    changes: [
+      { file_path: "Desktop/src/main/application/mcp-tools/handlers.ts",
+        change_type: "modified", change_summary: "边界显式映射 edges。",
+        why_this_location: "协议命名只应在适配层消失。" },
+      { file_path: "Desktop/tests/integration/mcp-journey-bridge.test.ts",
+        change_type: "modified", change_summary: "新增边关系回归 3 例。",
+        why_this_location: "该文件已有真实端到端链路。" }
+    ],
+    verification: [
+      { target: "pnpm typecheck", result: "passed", exit_code: 0, summary: "0 错误。" },
+      { target: "pnpm test", result: "passed", exit_code: 0, summary: "102 文件 / 1526 测试。" },
+      { target: "Playwright 全量 E2E", result: "not_run", summary: "未运行。" }
+    ],
+    references: [
+      { kind: "commit", value: "<sha>", label: "R6-2.1" },
+      { kind: "test", value: "tests/integration/mcp-journey-bridge.test.ts" }
+    ],
+    limitations: ["Playwright 全量 E2E 未运行", "行号仅作辅助，以符号名为准"]
+  },
+  idempotency_key: "evt:<uuid>"
+})
+```
+
+A reader who opens this Journey can answer, without asking you:
+which files changed, why the fix landed in `handlers.ts` rather than in the
+service, which approach was rejected and why, what the first attempt got
+wrong, which commands actually ran, and what is still unverified.
 
 ## Idempotency keys
 

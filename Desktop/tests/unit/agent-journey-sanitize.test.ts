@@ -144,8 +144,30 @@ describe('metadata 递归脱敏', () => {
     expect(json).toContain('plain line')
   })
 
-  it('metadata 上限是 4000（Service 据此拒绝，而不是截断坏 JSON）', () => {
-    expect(JOURNEY_METADATA_MAX).toBe(4_000)
+  it('metadata 上限是 16000（R6-4.2 预算；仍拒绝而非截断坏 JSON）', () => {
+    // 4_000 装不下「3 个文件各自完整修改记录 + 决策 + 验证」，
+    // 所以按字段上限推算后提到 16_000——见 sanitize.ts 的预算注释。
+    expect(JOURNEY_METADATA_MAX).toBe(16_000)
+  })
+
+  it('预算边界：等于上限算通过，超 1 字符即超限（判定是长度比较，不是截断）', () => {
+    // Service 的 serializeMetadata 就是 `json.length > JOURNEY_METADATA_MAX → 抛错`，
+    // 这里把那条判定复刻一遍，锁住「拒绝而非截断」的语义：
+    // 超限时拿到的仍是完整字符串，不会被裁成解析不了的半截 JSON。
+    // JSON.stringify 会给这个形状加上固定外壳（`{"blob":""}` = 12 字符），
+    // 先量出来再算，别把外壳长度写死在断言里。
+    const overhead = JSON.stringify({ blob: '' }).length
+    const make = (blobLength: number) => JSON.stringify({ blob: 'x'.repeat(blobLength) })
+    const atLimit = make(JOURNEY_METADATA_MAX - overhead)
+    const overLimit = make(JOURNEY_METADATA_MAX - overhead + 1)
+    const isOver = (json: string) => json.length > JOURNEY_METADATA_MAX
+
+    expect(atLimit.length).toBe(JOURNEY_METADATA_MAX)
+    expect(isOver(atLimit)).toBe(false)
+    expect(isOver(overLimit)).toBe(true)
+    // 关键：被判定超限的字符串仍然是完整可解析的 JSON（没有被截断）
+    expect(() => JSON.parse(overLimit)).not.toThrow()
+    expect(JSON.parse(overLimit).blob).toHaveLength(JOURNEY_METADATA_MAX - overhead + 1)
   })
 })
 

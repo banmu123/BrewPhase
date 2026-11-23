@@ -51,6 +51,11 @@ import {
 } from '../../database/repositories/agent-journeys'
 import { lookupIdempotency, recordIdempotency } from '../../database/repositories/mcp-idempotency'
 import { JOURNEY_METADATA_MAX, JOURNEY_TEXT_LIMITS, redactDeep, sanitizeJourneyContent } from './sanitize'
+import {
+  JOURNEY_DETAIL_KEY,
+  journeyDetailV1Schema,
+  parseJourneyMetadataJson
+} from '../../../shared/contracts/entities/agent-journey'
 
 /**
  * AgentJourneyService：一次 Agent 任务执行历程的应用服务（R6-1）。
@@ -789,8 +794,13 @@ export class AgentJourneyService {
         reason: event.reason,
         source_agent: event.sourceAgent,
         model: event.model,
+        // R6-4.2 §3：这两个字段此前在 Renderer 侧整条断链——
+        // MCP 读路径早就有，Renderer 却拿不到，UI 因此无从区分
+        // 「Agent 自述」与「可追溯证据」，也读不到结构化执行详情。
+        evidence_level: event.evidenceLevel,
         occurred_at: event.occurredAt,
-        updated_at: event.updatedAt
+        updated_at: event.updatedAt,
+        metadata: parseJourneyMetadataJson(event.metadata)
       })),
       edges: detail.edges.map((edge) => ({
         id: edge.id,
@@ -1042,6 +1052,24 @@ function serializeMetadata(metadata: Record<string, unknown> | null | undefined)
   if (metadata === null || metadata === undefined) return null
   if (typeof metadata !== 'object' || Array.isArray(metadata)) {
     throw new AgentJourneyError('VALIDATION_ERROR', 'metadata must be an object')
+  }
+  /*
+   * 结构化详情在这里**再校验一次**（MCP 入参已经校验过，但这条路径同时
+   * 服务未来其它写入口，且合并发生在 Handler）：`.strict()` 拒绝多余字段，
+   * 枚举拒绝不存在的 change_type / result——AI 不能靠自由组合 JSON 溜进来。
+   * 失败信息带上 Zod 的 path，调用方能直接定位到是哪个文件哪一项写错了。
+   */
+  const detail = metadata[JOURNEY_DETAIL_KEY]
+  if (detail !== undefined && detail !== null) {
+    const parsed = journeyDetailV1Schema.safeParse(detail)
+    if (!parsed.success) {
+      const first = parsed.error.issues[0]
+      const where = first?.path.join('.') || JOURNEY_DETAIL_KEY
+      throw new AgentJourneyError(
+        'VALIDATION_ERROR',
+        `metadata.${JOURNEY_DETAIL_KEY}.${where}: ${first?.message ?? 'invalid structure'}`
+      )
+    }
   }
   // 递归脱敏叶子字符串后再序列化：直接对整段 JSON 跑正则会吃掉成对引号。
   const json = JSON.stringify(redactDeep(metadata))
