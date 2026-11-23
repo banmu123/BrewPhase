@@ -70,15 +70,17 @@ Trigger on the *situation*, not on a keyword:
    run is still an agent description. It is not `tool_result` or
    `runtime_observed`, and the server rejects those values. Do not dress your
    own report up as system-observed fact.
-9. **Never raise `capture_mode` through parameters.** Capture mode is not a
-   tool parameter at all; only the user changes it in BrewPhase settings.
+9. **Never raise `capture_mode` through parameters.** `capture_mode` is not
+   exposed in any MCP tool schema — there is no field to send, and inventing
+   one does nothing. An Agent must never raise its own capture level. See
+   "Capture Mode — current version" below.
 10. **Never write tokens, passwords, cookies, private keys, `.env` contents or
     other credentials** — not in `title`, `summary`, `content`, `reason` or
     `metadata`. The server redacts known patterns before storage, but that is a
     safety net, not permission to include them.
 11. **Do not save full terminal dumps, raw tool output or whole conversations
-    by default.** Store the necessary summary; the default capture mode is
-    `workflow_summary`.
+    by default.** Store the necessary summary; the current MCP creation path
+    uses `workflow_summary`.
 12. **If the user says stop recording, stop.** Do not append another event.
 
 ### When the tools are unavailable or unauthorized
@@ -154,8 +156,21 @@ A successful start returns `journey.status = "created"`.
 
 ### 3. Record the user's goal and the plan
 
-For a goal worth keeping verbatim, append `user_input` with a faithful,
-trimmed restatement of what the user asked for and the constraints they gave.
+Append `user_input` for the user's **actual expression** of the task goal and
+their key constraints:
+
+- **Keep the user's original wording and original language** wherever it fits
+  the length limit. A quotation beats a paraphrase.
+- **Never pass off your own interpretation, inference or summary as the
+  user's words.** If you had to condense, say so — write it as a summary of
+  what they asked, not as a quote. A reader must be able to tell which is
+  which.
+- Your planning and analysis belong in `plan` (and your conclusions in
+  `observation`), not in `user_input`.
+- Long requests: keep only the fragments that matter to the task — the goal,
+  the constraints, the acceptance criteria. Do not save an entire transcript
+  indiscriminately just to be complete.
+- Never store hidden chain of thought as if it were something the user said.
 
 Then append `plan` — the plan you showed the user:
 
@@ -323,14 +338,35 @@ replay a stale request.
 
 - Storage is local to the user's machine (`agent_journeys` and
   `agent_journey_events` tables). Not synced to iOS, not sent to Cloud.
-- Default capture mode is `workflow_summary`: goal, plan, decisions, key
-  executions, failures and revisions, verifications, outcome.
-- Raw conversation capture and detailed execution capture are **not** on by
-  default and are not controlled by this skill.
 - Content is length-limited before storage (`title` 200, `summary` 2000,
   `content` 20000, `reason` 2000) with an explicit `…[truncated]` marker.
 - Known credential patterns are redacted before the write. That filter is
   best-effort: keeping secrets out in the first place is your responsibility.
+
+### Capture Mode — current version
+
+The current MCP creation path uses `workflow_summary`.
+
+`capture_mode` is not exposed in any MCP tool schema.
+The current Desktop Settings UI does not yet provide an Agent Journey
+Capture Mode control. This is planned for R6-5.
+
+Do not claim that the user can change this setting in the current version.
+When the user-controlled setting is implemented, only the user may change
+it through BrewPhase. An Agent must never raise the capture level itself.
+
+Concretely, for the work you do right now:
+
+- `workflow_summary` is what every journey you create actually records:
+  goal, plan, decisions, key executions, failures and revisions,
+  verifications, outcome.
+- `conversation_capture` and `detailed_capture` are **not** available to you.
+  They are not parameters you can send, and there is no setting you can flip.
+- If the user asks "can I store the full conversation instead?", answer that
+  the control does not exist in this version. Do not describe the R6-5 plan
+  as a shipped feature, and do not work around it by pasting raw transcript
+  text into `content` — that would reach the same goal by violating the
+  capture boundary rather than respecting it.
 
 ## Tone when reporting
 

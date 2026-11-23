@@ -13,12 +13,26 @@ WorkBuddy looks for skills, then restarting the app.
 # 1. clone once, somewhere durable
 git clone https://github.com/banmu123/BrewPhase ~/BrewPhase
 
-# 2. link the skill into WorkBuddy's user-level skills directory
-ln -s ~/BrewPhase/skills/brewphase-agent-journey \
-      ~/.workbuddy/skills/brewphase-agent-journey
+# 2. create WorkBuddy's user-level skills directory if it does not exist yet
+#    (a fresh machine has no ~/.workbuddy/ at all)
+mkdir -p ~/.workbuddy/skills
 
-# 3. restart WorkBuddy, then ask it something worth recording
+# 3. link the skill into it (only if nothing is there yet)
+if [ ! -e ~/.workbuddy/skills/brewphase-agent-journey ]; then
+  ln -s ~/BrewPhase/skills/brewphase-agent-journey \
+        ~/.workbuddy/skills/brewphase-agent-journey
+else
+  echo "already exists — inspect before replacing:"
+  ls -la ~/.workbuddy/skills/brewphase-agent-journey
+fi
+
+# 4. restart WorkBuddy, then ask it something worth recording
 ```
+
+The `[ ! -e … ]` guard matters: it stops you from overwriting a link, a real
+directory, or **another skill** that happens to share the name. If something
+is already there, look at it first — do not delete content you did not
+create.
 
 Windows users: see the PowerShell section below — `ln -s` needs Developer Mode
 on or an elevated shell.
@@ -56,38 +70,68 @@ actual filesystem instead of guessing your home directory.
 
 ### Option B — install manually (macOS / Linux)
 
+User-level (all projects):
+
 ```bash
 mkdir -p ~/.workbuddy/skills
-ln -s ~/BrewPhase/skills/brewphase-agent-journey \
-      ~/.workbuddy/skills/brewphase-agent-journey
+if [ ! -e ~/.workbuddy/skills/brewphase-agent-journey ]; then
+  ln -s ~/BrewPhase/skills/brewphase-agent-journey \
+        ~/.workbuddy/skills/brewphase-agent-journey
+else
+  echo "exists — inspect:"; ls -la ~/.workbuddy/skills/brewphase-agent-journey
+fi
 ```
 
-Project-scoped instead (only this repository):
+Project-scoped instead (only this repository). `mkdir -p` is required here
+too: `.workbuddy/` will not exist in a clean clone:
 
 ```bash
 mkdir -p <workspace>/.workbuddy/skills
-ln -s <path-to-repo>/skills/brewphase-agent-journey \
-      <workspace>/.workbuddy/skills/brewphase-agent-journey
+if [ ! -e <workspace>/.workbuddy/skills/brewphase-agent-journey ]; then
+  ln -s <path-to-repo>/skills/brewphase-agent-journey \
+        <workspace>/.workbuddy/skills/brewphase-agent-journey
+else
+  echo "exists — inspect:"; ls -la <workspace>/.workbuddy/skills/brewphase-agent-journey
+fi
 ```
+
+Do not run both — pick one scope, or WorkBuddy will see the same skill twice.
 
 ### Windows — PowerShell
 
+Create the directory first (`-Force` creates missing parents and does not
+touch existing content), then link only if the target is absent:
+
 ```powershell
-New-Item -ItemType Directory -Force -Path $env:USERPROFILE\.workbuddy\skills
-New-Item -ItemType SymbolicLink `
-  -Path   "$env:USERPROFILE\.workbuddy\skills\brewphase-agent-journey" `
-  -Target "$env:USERPROFILE\BrewPhase\skills\brewphase-agent-journey"
+New-Item -ItemType Directory -Force -Path $env:USERPROFILE\.workbuddy\skills | Out-Null
+
+if (-not (Test-Path "$env:USERPROFILE\.workbuddy\skills\brewphase-agent-journey")) {
+  New-Item -ItemType SymbolicLink `
+    -Path   "$env:USERPROFILE\.workbuddy\skills\brewphase-agent-journey" `
+    -Target "$env:USERPROFILE\BrewPhase\skills\brewphase-agent-journey" | Out-Null
+}
 ```
+
+If the path already exists, inspect it before doing anything else
+(`Get-Item "$env:USERPROFILE\.workbuddy\skills\brewphase-agent-journey" | Format-List *`)
+— it may be an old link, a real directory, or a different skill.
 
 Without Developer Mode, `New-Item -ItemType SymbolicLink` fails with
 "Administrator privilege required". Copy instead — and remember it is now a
 fork:
 
 ```powershell
-Copy-Item -Recurse `
-  "$env:USERPROFILE\BrewPhase\skills\brewphase-agent-journey" `
-  "$env:USERPROFILE\.workbuddy\skills\brewphase-agent-journey"
+$dst = "$env:USERPROFILE\.workbuddy\skills\brewphase-agent-journey"
+if (-not (Test-Path $dst)) {
+  Copy-Item -Recurse `
+    "$env:USERPROFILE\BrewPhase\skills\brewphase-agent-journey" $dst
+} else {
+  Write-Host "$dst already exists — inspect before replacing"
+}
 ```
+
+The `Test-Path` guard is what keeps `Copy-Item -Recurse` from silently
+merging into or overwriting an existing install.
 
 ---
 

@@ -16,40 +16,94 @@ moment either side changes.
 Codex and other agents following the `.agents/skills` convention read
 repository-level skills from `.agents/skills/<name>/`.
 
+Run everything below **from the repository root**, so the `../..` in the
+symlink resolves to the repo.
+
+### macOS / Linux
+
+Create the parent directories first — a clean checkout has neither `.agents/`
+nor `.codex/`, and `ln -s` fails with `No such file or directory` if the
+parent is missing:
+
 ```bash
-ln -s ../../skills/brewphase-agent-journey .agents/skills/brewphase-agent-journey
+mkdir -p .agents/skills .codex/skills
 ```
 
-The same link is expected under `.codex/skills/` for loaders that use that path:
+Then link the skill into both locations:
 
 ```bash
+ln -s ../../skills/brewphase-agent-journey .agents/skills/brewphase-agent-journey
 ln -s ../../skills/brewphase-agent-journey .codex/skills/brewphase-agent-journey
 ```
 
-Run both from the repository root. If your loader only reads one of the two
-paths, creating both is harmless and saves a round trip when you switch tools.
+Creating both is harmless even if your loader only reads one path, and it
+saves a round trip when you switch tools.
+
+**If the link already exists**, do not overwrite it blindly:
+
+```bash
+# Already the right link? Leave it alone.
+readlink .agents/skills/brewphase-agent-journey 2>/dev/null \
+  | grep -qx '../../skills/brewphase-agent-journey' \
+  && echo "already correct" \
+  || echo "missing or different — inspect it before replacing"
+```
+
+If the path already exists and is **not** this link (for example a real
+directory from an earlier manual install), stop and inspect it. Removing or
+clobbering it could delete content you did not put there:
+
+```bash
+ls -la .agents/skills/ .codex/skills/
+```
+
+Replace it only after you have confirmed it contains nothing you need.
 
 ### Windows (PowerShell)
 
 Enable Developer Mode first, otherwise `New-Item -ItemType SymbolicLink`
-requires an elevated shell:
+requires an elevated shell. Then create **both** parent directories and
+**both** links — one block for `.agents\skills`, one for `.codex\skills`:
 
 ```powershell
-New-Item -ItemType Directory -Force -Path .agents\skills
-New-Item -ItemType SymbolicLink `
-  -Path   .agents\skills\brewphase-agent-journey `
-  -Target ..\..\skills\brewphase-agent-journey
+# parent directories (idempotent — -Force does not touch existing content)
+New-Item -ItemType Directory -Force -Path .agents\skills | Out-Null
+New-Item -ItemType Directory -Force -Path .codex\skills  | Out-Null
+
+# .agents/skills
+if (-not (Test-Path .agents\skills\brewphase-agent-journey)) {
+  New-Item -ItemType SymbolicLink `
+    -Path   .agents\skills\brewphase-agent-journey `
+    -Target ..\..\skills\brewphase-agent-journey | Out-Null
+}
+
+# .codex/skills
+if (-not (Test-Path .codex\skills\brewphase-agent-journey)) {
+  New-Item -ItemType SymbolicLink `
+    -Path   .codex\skills\brewphase-agent-journey `
+    -Target ..\..\skills\brewphase-agent-journey | Out-Null
+}
 ```
 
-Without Developer Mode, point the loader at `skills/brewphase-agent-journey`
-directly rather than copying it — **copies drift**, and a stale copy will keep
-using removed tool names.
+The `if (-not (Test-Path …))` guards keep an existing link or directory from
+being overwritten. If a path exists and is **not** this link, inspect it
+(`Get-Item .agents\skills\brewphase-agent-journey | Format-List *`) before
+replacing it — do not delete content you did not create.
+
+Without Developer Mode, `New-Item -ItemType SymbolicLink` fails with
+"Administrator privilege required". Point the loader at
+`skills/brewphase-agent-journey` directly rather than copying it — **copies
+drift**, and a stale copy will keep using removed tool names.
 
 ## Verify the link and the frontmatter
 
+Check **both** locations:
+
 ```bash
 readlink .agents/skills/brewphase-agent-journey     # → ../../skills/brewphase-agent-journey
+readlink .codex/skills/brewphase-agent-journey      # → ../../skills/brewphase-agent-journey
 test -f  .agents/skills/brewphase-agent-journey/SKILL.md && echo ok
+test -f  .codex/skills/brewphase-agent-journey/SKILL.md  && echo ok
 head -3  .agents/skills/brewphase-agent-journey/SKILL.md
 ```
 
