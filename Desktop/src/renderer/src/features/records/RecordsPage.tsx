@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { RecordCarrier, RecordDraft, RecordItem, RecordTag } from '@shared/contracts'
+import type {
+  JourneyCard,
+  JourneyDetail,
+  RecordCarrier,
+  RecordDraft,
+  RecordItem,
+  RecordTag
+} from '@shared/contracts'
 import { coalesce } from '@shared/coalesce'
 import { canOpenInBrowser } from '@shared/browser-url'
 import { api } from '../../shared/api'
@@ -14,6 +21,8 @@ import { LinkPlayer } from './preview/LinkPlayer'
 import { RecordTilePreview } from './preview/RecordTilePreview'
 import { detectPlatform } from './preview/platform'
 import { buildPreview, formatCount, recordDisplayTitle, type RecordPreview } from './preview/preview-model'
+import { JourneyTile } from './JourneyTile'
+import { JourneyDetailView } from './JourneyDetail'
 import {
   createInspectorForm,
   editField,
@@ -27,6 +36,12 @@ import {
 const CARRIERS: (RecordCarrier | null)[] = [null, 'link', 'image', 'video', 'text']
 
 /**
+ * 内容类型筛选里多出的一档：`'journey'` 表示只看 Agent Journey。
+ * Journey **不写进 `records` 表**——它是独立领域，只在展示层与 Record 并列。
+ */
+type ContentFilter = RecordCarrier | 'journey'
+
+/**
  * Records：四种载体、标签多对多、搜索与载体筛选。
  *
  * 视觉上是一间「个人资料图书馆」：内容以收藏网格呈现，图片/封面是主角，
@@ -38,9 +53,10 @@ export function RecordsPage() {
   /** 浏览器浮窗：链接记录的「在 BrewPhase 中打开」走这个入口。 */
   const openBrowser = useBrowserStore((store) => store.open)
   const [items, setItems] = useState<RecordItem[]>([])
+  const [journeys, setJourneys] = useState<JourneyCard[]>([])
   const [tags, setTags] = useState<RecordTag[]>([])
   const [search, setSearch] = useState('')
-  const [carrier, setCarrier] = useState<RecordCarrier | null>(null)
+  const [carrier, setCarrier] = useState<ContentFilter | null>(null)
   const [tagId, setTagId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -54,6 +70,12 @@ export function RecordsPage() {
    */
   const [pinnedRecord, setPinnedRecord] = useState<RecordItem | null>(null)
   const selected = items.find((item) => item.id === selectedId) ?? pinnedRecord
+
+  /** Journey 详情：独立取数（不塞进 RecordItem 列表，两者类型不同）。 */
+  const [selectedJourneyId, setSelectedJourneyId] = useState<string | null>(null)
+  const [journeyDetail, setJourneyDetail] = useState<JourneyDetail | null>(null)
+  const selectedJourney =
+    journeys.find((item) => item.id === selectedJourneyId) ?? journeyDetail?.journey ?? null
   const previewCopy = useMemo(
     () => ({ webPlatform: t.records.platform.web, socialPost: t.records.preview.socialPost }),
     [t]
@@ -128,16 +150,25 @@ export function RecordsPage() {
   const load = useCallback(async () => {
     const seq = ++loadSeq.current
     try {
-      const [nextItems, nextTags] = await Promise.all([
-        api.records.list({ search, carrier, tagId, limit: 100, offset: 0 }),
-        api.records.listTags()
+      // `carrier` 可能是 'journey'——那是**内容类型**筛选，不是 Record 载体，
+      // 传给 records.list 会得到空列表，所以只在非 journey 时才作为载体传。
+      const recordCarrier = carrier === 'journey' ? null : carrier
+      const [nextItems, nextTags, nextJourneys] = await Promise.all([
+        api.records.list({ search, carrier: recordCarrier, tagId, limit: 100, offset: 0 }),
+        api.records.listTags(),
+        // Journey 与 Record 是两个领域，各自取数，在展示层并列。
+        api.agentJourneys.list({ search, limit: 100, offset: 0 })
       ])
       if (seq !== loadSeq.current) return
       setItems(nextItems)
       setTags(nextTags)
+      setJourneys(nextJourneys.journeys)
       // 选中的记录被手机删掉（或不再匹配当前筛选）时，退回列表第一条；
       // 列表为空则清空选中，不让详情栏继续显示已经不存在的记录。
       setSelectedId((current) => (nextItems.some((item) => item.id === current) ? current : null))
+      setSelectedJourneyId((current) =>
+        nextJourneys.journeys.some((item) => item.id === current) ? current : null
+      )
     } catch (cause) {
       if (seq === loadSeq.current) setError((cause as Error).message)
     }
@@ -193,10 +224,29 @@ export function RecordsPage() {
   useEffect(
     () =>
       api.app.onChanged((domain) => {
-        if (domain === 'records') void load()
+        // Journey 是独立领域：MCP 写入、笔记、关系都会广播 'agentJourneys'。
+        if (domain === 'records' || domain === 'agentJourneys') void load()
       }),
     [load]
   )
+
+  // Journey 详情单独取：列表数据里没有 events/edges/notes/links 全量。
+  useEffect(() => {
+    if (!selectedJourneyId) {
+      setJourneyDetail(null)
+      return
+    }
+    let alive = true
+    api.agentJourneys
+      .get(selectedJourneyId)
+      .then((detail) => {
+        if (alive) setJourneyDetail(detail)
+      })
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [selectedJourneyId])
 
   const tagName = useMemo(() => new Map(tags.map((tag) => [tag.id, tag.name])), [tags])
 
@@ -282,6 +332,19 @@ export function RecordsPage() {
                     {item ? t.records.carrier[item] : t.common.all}
                   </button>
                 ))}
+                {/*
+                  * Agent Journey 是**独立内容类型**，不是第五种载体：
+                  * 它不写 `records` 表，只在展示层与 Record 并列。
+                  * 单独一档，点它只看 Journey。
+                  */}
+                <button
+                  type="button"
+                  className="chip chip--journey"
+                  data-active={carrier === 'journey'}
+                  onClick={() => setCarrier(carrier === 'journey' ? null : 'journey')}
+                >
+                  {t.records.journey.chip}
+                </button>
               </div>
               <select
                 value={tagId ?? ''}
@@ -298,29 +361,75 @@ export function RecordsPage() {
               {error && <span className="error">{error}</span>}
             </div>
 
-            {items.length === 0 ? (
-              <div className="empty">{t.records.empty}</div>
-            ) : (
-              <div className="record-masonry">
-                {items.map((item) => (
-                  <RecordTile
-                    key={item.id}
-                    item={item}
-                    mediaUrl={mediaUrl}
-                    active={item.id === selected?.id}
-                    tagNames={item.tagIds
-                      .slice(0, 2)
-                      .map((id) => tagName.get(id))
-                      .filter((name): name is string => Boolean(name))}
-                    onClick={() => {
-                      setSelectedId(item.id)
-                      setPanelOpen(true)
-                    }}
-                  />
-                ))}
-              </div>
-            )}
+            {(() => {
+              // 筛选决定展示哪一类内容：'journey' 只看 Journey，其余看 Record。
+              const showJourneys = carrier === 'journey' || carrier === null
+              const showRecords = carrier !== 'journey'
+              const visibleRecords = showRecords ? items : []
+              const visibleJourneys = showJourneys ? journeys : []
+              if (visibleRecords.length === 0 && visibleJourneys.length === 0) {
+                return (
+                  <div className="empty">
+                    {carrier === 'journey' ? t.records.journey.empty : t.records.empty}
+                  </div>
+                )
+              }
+              return (
+                <div className="record-masonry">
+                  {visibleJourneys.map((journey) => (
+                    <JourneyTile
+                      key={journey.id}
+                      journey={journey}
+                      active={journey.id === selectedJourney?.id}
+                      onClick={() => {
+                        setSelectedJourneyId(journey.id)
+                        setSelectedId(null)
+                        setPanelOpen(true)
+                      }}
+                    />
+                  ))}
+                  {visibleRecords.map((item) => (
+                    <RecordTile
+                      key={item.id}
+                      item={item}
+                      mediaUrl={mediaUrl}
+                      active={item.id === selected?.id}
+                      tagNames={item.tagIds
+                        .slice(0, 2)
+                        .map((id) => tagName.get(id))
+                        .filter((name): name is string => Boolean(name))}
+                      onClick={() => {
+                        setSelectedId(item.id)
+                        setSelectedJourneyId(null)
+                        setPanelOpen(true)
+                      }}
+                    />
+                  ))}
+                </div>
+              )
+            })()}
           </section>
+
+          {/*
+            * Journey 详情与 Record 详情**互斥**：两者是不同内容类型，
+            * 共用同一个浮层位，但渲染完全不同的内容。
+            */}
+          {panelOpen && selectedJourney && journeyDetail && (
+            <aside
+              className="float-panel"
+              role="dialog"
+              aria-label={t.records.journey.detailAria}
+            >
+              <JourneyDetailView
+                detail={journeyDetail}
+                onChanged={() => void load()}
+                onClose={() => {
+                  setPanelOpen(false)
+                  setSelectedJourneyId(null)
+                }}
+              />
+            </aside>
+          )}
 
           {panelOpen && selected && (
           <aside className="float-panel" role="dialog" aria-label={t.records.detail.ariaLabel}>

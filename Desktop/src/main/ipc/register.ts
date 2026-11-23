@@ -19,6 +19,8 @@ import {
 import type { McpClientService } from '../application/authorization/permission-service'
 import type { RecordService } from '../application/records/record-service'
 import type { WorkContextService } from '../application/work-context/work-context-service'
+import type { CanvasService } from '../application/canvas/canvas-service'
+import type { AgentJourneyService } from '../application/agent-journey/agent-journey-service'
 import type { McpBridgeStatus } from '../../shared/contracts/mcp'
 import {
   addNode,
@@ -103,6 +105,13 @@ export function registerIpc(params: {
     clients: McpClientService
     workContexts: WorkContextService
     personalDirection: PersonalDirectionService
+    /**
+     * R6-4.1：**必须是 MCP Bridge 拿到的同一个实例**（main/index.ts 构造一次）。
+     * 第二个 AgentJourneyService / CanvasService 会各自持有自己的
+     * ApplicationEvents，Renderer 就只能收到一半的 `app:changed`。
+     */
+    canvas: CanvasService
+    agentJourneys: AgentJourneyService
   }
   bridgeStatus: () => McpBridgeStatus
   /** Multi-AI：后台页面与并行调度。 */
@@ -333,6 +342,89 @@ export function registerIpc(params: {
   handle(IPC.canvasStrokeRemove, (input) => removeStroke(db.db, db.deviceId, (input as { id: string }).id))
   handle(IPC.canvasNodeRemove, (input) => {
     removeNode(db.db, db.deviceId, (input as { id: string }).id)
+    return null
+  })
+
+  // MARK: - Agent Journey × Records × Canvas 融合（R6-4.1）
+  //
+  // 全部走 `services.agentJourneys` / `services.canvas`——与 MCP Bridge
+  // **同一个实例**，共享同一个 ApplicationEvents，Renderer 才收得到
+  // `app:changed('agentJourneys')`。
+  //
+  // 这些通道**没有任何一条**能改 Agent 原始事件内容：
+  // 笔记写 `agent_journey_notes`，关系写 `journey_record_links`，
+  // 摆位写 `canvas_journey_placements`——三张独立表，事件与业务 Edge 不可达。
+
+  handle(IPC.agentJourneysList, (input) =>
+    services.agentJourneys.listForRecords(input as { search?: string; limit?: number; offset?: number })
+  )
+  handle(IPC.agentJourneyGet, (input) =>
+    services.agentJourneys.getDetailForRenderer((input as { journeyId: string }).journeyId)
+  )
+  handle(IPC.agentJourneyNoteCreate, (input) => {
+    const value = input as { journeyId: string; eventId?: string | null; body: string }
+    // eventId 缺省/空串 → Journey 级笔记；否则 Event 级。
+    return value.eventId
+      ? services.agentJourneys.addEventNote({
+          journeyId: value.journeyId,
+          eventId: value.eventId,
+          body: value.body
+        })
+      : services.agentJourneys.addJourneyNote({ journeyId: value.journeyId, body: value.body })
+  })
+  handle(IPC.agentJourneyNoteUpdate, (input) => {
+    const value = input as { id: string; body: string }
+    return services.agentJourneys.updateJourneyNote(value)
+  })
+  handle(IPC.agentJourneyNoteRemove, (input) => {
+    services.agentJourneys.removeJourneyNote((input as { id: string }).id)
+    return null
+  })
+  handle(IPC.agentJourneyLinkCreate, (input) =>
+    services.agentJourneys.addRecordLink(
+      input as {
+        journeyId: string
+        eventId: string
+        recordId: string
+        relationshipType: string
+      }
+    )
+  )
+  handle(IPC.agentJourneyLinkRemove, (input) => {
+    services.agentJourneys.removeRecordLink((input as { id: string }).id)
+    return null
+  })
+
+  handle(IPC.canvasJourneys, (input) =>
+    services.canvas.journeysForCanvas((input as { canvasId: string }).canvasId)
+  )
+  handle(IPC.canvasJourneyAdd, (input) => {
+    const value = input as { canvasId: string; journeyId: string }
+    return services.canvas.placeJourneyOnCanvas(value)
+  })
+  handle(IPC.canvasJourneyMove, (input) => {
+    const value = input as {
+      canvasId: string
+      journeyId: string
+      positionX: number
+      positionY: number
+    }
+    services.canvas.moveJourneyGroupOnCanvas(value)
+    return null
+  })
+  handle(IPC.canvasJourneyEventMove, (input) => {
+    const value = input as { canvasId: string; eventId: string; positionX: number; positionY: number }
+    services.canvas.moveJourneyEventOnCanvas(value)
+    return null
+  })
+  handle(IPC.canvasJourneyCollapse, (input) => {
+    const value = input as { canvasId: string; journeyId: string; collapsed: boolean }
+    services.canvas.setJourneyCollapsedOnCanvas(value)
+    return null
+  })
+  handle(IPC.canvasJourneyRemove, (input) => {
+    const value = input as { canvasId: string; journeyId: string }
+    services.canvas.removeJourneyFromCanvas(value)
     return null
   })
 

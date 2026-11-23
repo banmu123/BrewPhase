@@ -48,6 +48,71 @@ export const records = {
     recordDeleted: 'The record you tried to open has been deleted.',
     openFailed: (message: string) => `Couldn't open the record: ${message}`
   },
+  journey: {
+    typeLabel: 'Agent Journey',
+    chip: 'Agent Journey',
+    empty: 'No Agent Journey yet.',
+    emptyHint: 'Agents create one when they finish a multi-step task.',
+    events: (count: number) => `${count} events`,
+    links: (count: number) => `${count} links`,
+    notes: (count: number) => `${count} notes`,
+    status: {
+      created: 'Created',
+      running: 'Running',
+      paused: 'Paused',
+      completed: 'Completed',
+      failed: 'Failed',
+      cancelled: 'Cancelled',
+      abandoned: 'Abandoned'
+    },
+    detailAria: 'Agent Journey detail',
+    goal: 'Goal',
+    timeline: 'Execution',
+    sequence: (value: number) => `#${value}`,
+    eventType: {
+      user_input: 'User request',
+      plan: 'Plan',
+      decision: 'Decision',
+      execution: 'Execution',
+      observation: 'Observation',
+      revision: 'Revision',
+      verification: 'Verification',
+      outcome: 'Outcome',
+      user_annotation: 'User note'
+    },
+    eventStatus: {
+      planned: 'Planned',
+      running: 'Running',
+      completed: 'Completed',
+      failed: 'Failed',
+      skipped: 'Skipped',
+      cancelled: 'Cancelled'
+    },
+    edgeLabel: (kind: string) => `Relation: ${kind}`,
+    source: (name: string) => `Source: ${name}`,
+    selfReported: 'Agent reported',
+    addToCanvas: 'Add to canvas',
+    addToCanvasPick: 'Pick a canvas',
+    addToCanvasDone: (name: string) => `Added to “${name}”`,
+    addToCanvasFailed: (error: string) => `Could not add to canvas: ${error}`,
+    notesTitle: 'My notes',
+    notePlaceholder: 'Your own experience, reminders or critique — never rewrites the agent record.',
+    noteSave: 'Save',
+    noteDelete: 'Delete',
+    noteEmpty: 'No notes yet.',
+    linksTitle: 'Linked records',
+    linkEmpty: 'No linked records yet.',
+    linkRemove: 'Remove link',
+    linkType: {
+      references: 'references',
+      supports: 'supports',
+      produces: 'produces',
+      validates: 'validates',
+      related_to: 'related to'
+    },
+    outcome: 'Outcome'
+  },
+
   metadata: {
     pending: 'Fetching preview…',
     ok: 'Preview updated',

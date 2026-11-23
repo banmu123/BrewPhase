@@ -184,7 +184,11 @@ describe('Migration 13 → 14', () => {
 
     migrate(sqlite)
 
-    expect(Number(sqlite.pragma('user_version', { simple: true }))).toBe(14)
+    // `migrate()` 总是跑到最新一版（R6-4.1 加了 migration 15）。
+    // 断言「到达最新」比硬编码某个版本号更强：漏跑任何一版都会红。
+    const latest = migrations[migrations.length - 1].version
+    expect(Number(sqlite.pragma('user_version', { simple: true }))).toBe(latest)
+    expect(latest).toBeGreaterThanOrEqual(14)
     for (const name of [
       'agent_journeys',
       'agent_journey_events',

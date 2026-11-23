@@ -74,6 +74,86 @@ export const canvas = {
       `已加入 ${added} 项${names.length ? `（${names.join('、')}）` : ''}；${failed} 项加入失败：${error}`
   },
 
+  journey: {
+    section: 'Agent Journey',
+    sectionHint: '一次完整执行记录，放进画布会展开成流程图',
+    add: '加入画布',
+    added: '已在画布',
+    empty: '还没有 Agent Journey。',
+    emptyHint: 'Agent 执行多步骤任务时会自动沉淀成 Journey。',
+    status: {
+      created: '已创建',
+      running: '进行中',
+      paused: '已暂停',
+      completed: '已完成',
+      failed: '已失败',
+      cancelled: '已取消',
+      abandoned: '已放弃'
+    },
+    collapse: '折叠分组',
+    expand: '展开分组',
+    removeFromCanvas: '从画布移除',
+    removeFromCanvasHint: '只移除画布上的摆位，Journey 本身与笔记、关系都还在。',
+    eventCount: (count: number) => `${count} 个事件`,
+    linkedCount: (count: number) => `${count} 条关联`,
+    linkToRecord: '连接到记录',
+    linkType: {
+      references: '参考',
+      supports: '支持',
+      produces: '产生',
+      validates: '验证',
+      related_to: '相关'
+    },
+    linkPickRecord: '选择目标记录',
+    linkCreate: '建立连接',
+    linkRemove: '删除连接',
+    linkEmpty: '还没有建立连接。',
+    noteLabel: '我的笔记',
+    notePlaceholder: '写下你的经验、提醒或评价——只属于你，不会改写 Agent 的原始记录。',
+    noteJourneyLevel: '整条 Journey 的笔记',
+    noteEventLevel: '这个节点的笔记',
+    noteSave: '保存笔记',
+    noteDelete: '删除笔记',
+    noteEmpty: '还没有笔记。',
+    notesCount: (count: number) => `${count} 条笔记`,
+    timeline: '执行时间线',
+    sequence: (value: number) => `#${value}`,
+    eventType: {
+      user_input: '用户需求',
+      plan: '计划',
+      decision: '决策',
+      execution: '执行',
+      observation: '观察',
+      revision: '修订',
+      verification: '验证',
+      outcome: '结果',
+      user_annotation: '用户补充'
+    },
+    eventStatus: {
+      planned: '待执行',
+      running: '执行中',
+      completed: '已完成',
+      failed: '已失败',
+      skipped: '已跳过',
+      cancelled: '已取消'
+    },
+    edgeType: {
+      depends_on: '依赖',
+      branch_from: '分支',
+      revises: '修订',
+      retries: '重试'
+    },
+    addRecordTarget: '添加记录到画布后再连接',
+    selectEventFirst: '先选中一个事件节点',
+    detailTitle: 'Journey 详情',
+    goal: '目标',
+    outcome: '最终结果',
+    source: (name: string) => `来源：${name}`,
+    createdAt: (value: string) => `创建：${value}`,
+    updatedAt: (value: string) => `更新：${value}`,
+    openInRecords: '在记录中查看'
+  },
+
   inspector: {
     title: '选中内容',
     overline: '已选中',

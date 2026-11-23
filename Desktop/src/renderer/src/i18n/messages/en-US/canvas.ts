@@ -71,6 +71,86 @@ export const canvas = {
       `Added ${added}${names.length ? ` (${names.join(', ')})` : ''}; ${failed} failed to add: ${error}`
   },
 
+  journey: {
+    section: 'Agent Journey',
+    sectionHint: 'A complete execution record — drops onto the canvas as a flow group',
+    add: 'Add to canvas',
+    added: 'Already on canvas',
+    empty: 'No Agent Journey yet.',
+    emptyHint: 'Agents create journeys while running multi-step tasks.',
+    status: {
+      created: 'Created',
+      running: 'Running',
+      paused: 'Paused',
+      completed: 'Completed',
+      failed: 'Failed',
+      cancelled: 'Cancelled',
+      abandoned: 'Abandoned'
+    },
+    collapse: 'Collapse group',
+    expand: 'Expand group',
+    removeFromCanvas: 'Remove from canvas',
+    removeFromCanvasHint: 'Only removes the placement — the journey, its notes and links stay.',
+    eventCount: (count: number) => `${count} events`,
+    linkedCount: (count: number) => `${count} links`,
+    linkToRecord: 'Link to record',
+    linkType: {
+      references: 'references',
+      supports: 'supports',
+      produces: 'produces',
+      validates: 'validates',
+      related_to: 'related to'
+    },
+    linkPickRecord: 'Pick a target record',
+    linkCreate: 'Create link',
+    linkRemove: 'Delete link',
+    linkEmpty: 'No links yet.',
+    noteLabel: 'My note',
+    notePlaceholder: 'Your own experience, reminders or critique — never rewrites the agent record.',
+    noteJourneyLevel: 'Note on the whole journey',
+    noteEventLevel: 'Note on this node',
+    noteSave: 'Save note',
+    noteDelete: 'Delete note',
+    noteEmpty: 'No notes yet.',
+    notesCount: (count: number) => `${count} notes`,
+    timeline: 'Execution timeline',
+    sequence: (value: number) => `#${value}`,
+    eventType: {
+      user_input: 'User request',
+      plan: 'Plan',
+      decision: 'Decision',
+      execution: 'Execution',
+      observation: 'Observation',
+      revision: 'Revision',
+      verification: 'Verification',
+      outcome: 'Outcome',
+      user_annotation: 'User note'
+    },
+    eventStatus: {
+      planned: 'Planned',
+      running: 'Running',
+      completed: 'Completed',
+      failed: 'Failed',
+      skipped: 'Skipped',
+      cancelled: 'Cancelled'
+    },
+    edgeType: {
+      depends_on: 'depends on',
+      branch_from: 'branches from',
+      revises: 'revises',
+      retries: 'retries'
+    },
+    addRecordTarget: 'Add the record to this canvas first',
+    selectEventFirst: 'Select an event node first',
+    detailTitle: 'Journey detail',
+    goal: 'Goal',
+    outcome: 'Outcome',
+    source: (name: string) => `Source: ${name}`,
+    createdAt: (value: string) => `Created: ${value}`,
+    updatedAt: (value: string) => `Updated: ${value}`,
+    openInRecords: 'View in Records'
+  },
+
   inspector: {
     title: 'Selected item',
     overline: 'Selected',

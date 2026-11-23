@@ -127,6 +127,23 @@ export const IPC = {
   canvasStrokeSave: 'canvas:stroke:save',
   canvasStrokeRemove: 'canvas:stroke:remove',
 
+  // ---- Agent Journey × Records × Canvas 融合（R6-4.1）----
+  // 全部 Local-only：Journey 不进 iOS 同步 / change_log / Cloud，
+  // 这些通道也只在本机 Renderer ↔ 主进程之间存在。
+  agentJourneysList: 'agent-journeys:list',
+  agentJourneyGet: 'agent-journeys:get',
+  agentJourneyNoteCreate: 'agent-journey:note:create',
+  agentJourneyNoteUpdate: 'agent-journey:note:update',
+  agentJourneyNoteRemove: 'agent-journey:note:remove',
+  agentJourneyLinkCreate: 'agent-journey:link:create',
+  agentJourneyLinkRemove: 'agent-journey:link:remove',
+  canvasJourneys: 'canvas:journeys',
+  canvasJourneyAdd: 'canvas:journey:add',
+  canvasJourneyMove: 'canvas:journey:move',
+  canvasJourneyEventMove: 'canvas:journey:event:move',
+  canvasJourneyCollapse: 'canvas:journey:collapse',
+  canvasJourneyRemove: 'canvas:journey:remove',
+
   // 内置浏览器（Phase 2）：Chrome 书签导入。入参只有 Profile 目录名，
   // 从不接受文件路径——路径解析全部留在主进程。
   browserChromeDetect: 'browser:chrome:detect',
@@ -357,6 +374,55 @@ export const ipcRequestSchemas = {
   [IPC.canvasStrokes]: z.object({ canvasId: z.string().uuid() }),
   [IPC.canvasStrokeSave]: canvasStrokeSchema,
   [IPC.canvasStrokeRemove]: z.object({ id: z.string().uuid() }),
+
+  // Agent Journey × Records × Canvas 融合（R6-4.1）
+  [IPC.agentJourneysList]: z
+    .object({
+      search: z.string().max(200).default(''),
+      limit: z.number().int().min(1).max(200).default(100),
+      offset: z.number().int().min(0).default(0)
+    })
+    .default({ search: '', limit: 100, offset: 0 }),
+  [IPC.agentJourneyGet]: z.object({ journeyId: z.string().uuid() }),
+  // 笔记：journeyId 恒定；eventId 为 undefined/空串表示 Journey 级笔记。
+  [IPC.agentJourneyNoteCreate]: z.object({
+    journeyId: z.string().uuid(),
+    eventId: z.string().uuid().nullish(),
+    body: z.string().min(1).max(20_000)
+  }),
+  [IPC.agentJourneyNoteUpdate]: z.object({
+    id: z.string().uuid(),
+    body: z.string().min(1).max(20_000)
+  }),
+  [IPC.agentJourneyNoteRemove]: z.object({ id: z.string().uuid() }),
+  // 跨记录关系：五种类型白名单，来源端必须是 Journey 内的真实事件。
+  [IPC.agentJourneyLinkCreate]: z.object({
+    journeyId: z.string().uuid(),
+    eventId: z.string().uuid(),
+    recordId: z.string().uuid(),
+    relationshipType: z.enum(['references', 'supports', 'produces', 'validates', 'related_to'])
+  }),
+  [IPC.agentJourneyLinkRemove]: z.object({ id: z.string().uuid() }),
+  [IPC.canvasJourneys]: z.object({ canvasId: z.string().uuid() }),
+  [IPC.canvasJourneyAdd]: z.object({ canvasId: z.string().uuid(), journeyId: z.string().uuid() }),
+  [IPC.canvasJourneyMove]: z.object({
+    canvasId: z.string().uuid(),
+    journeyId: z.string().uuid(),
+    positionX: z.number().finite(),
+    positionY: z.number().finite()
+  }),
+  [IPC.canvasJourneyEventMove]: z.object({
+    canvasId: z.string().uuid(),
+    eventId: z.string().uuid(),
+    positionX: z.number().finite(),
+    positionY: z.number().finite()
+  }),
+  [IPC.canvasJourneyCollapse]: z.object({
+    canvasId: z.string().uuid(),
+    journeyId: z.string().uuid(),
+    collapsed: z.boolean()
+  }),
+  [IPC.canvasJourneyRemove]: z.object({ canvasId: z.string().uuid(), journeyId: z.string().uuid() }),
 
   // 内置浏览器 · Chrome 书签导入
   [IPC.browserChromeDetect]: z.void(),

@@ -259,7 +259,31 @@ const api: RendererApi = {
     removeNote: (id) => invoke(IPC.canvasNoteRemove, { id }),
     strokes: (canvasId) => invoke(IPC.canvasStrokes, { canvasId }),
     saveStroke: (stroke) => invoke(IPC.canvasStrokeSave, stroke),
-    removeStroke: (id) => invoke(IPC.canvasStrokeRemove, { id })
+    removeStroke: (id) => invoke(IPC.canvasStrokeRemove, { id }),
+    journeys: (canvasId) => invoke(IPC.canvasJourneys, { canvasId }),
+    addJourney: (canvasId, journeyId) => invoke(IPC.canvasJourneyAdd, { canvasId, journeyId }),
+    moveJourney: (canvasId, journeyId, positionX, positionY) =>
+      invoke(IPC.canvasJourneyMove, { canvasId, journeyId, positionX, positionY }),
+    moveJourneyEvent: (canvasId, eventId, positionX, positionY) =>
+      invoke(IPC.canvasJourneyEventMove, { canvasId, eventId, positionX, positionY }),
+    collapseJourney: (canvasId, journeyId, collapsed) =>
+      invoke(IPC.canvasJourneyCollapse, { canvasId, journeyId, collapsed }),
+    removeJourney: (canvasId, journeyId) =>
+      invoke(IPC.canvasJourneyRemove, { canvasId, journeyId })
+  },
+  /**
+   * Agent Journey（R6-4.1）。全部走 `agent-journeys:*` / `agent-journey:*`
+   * 通道——**没有**任何通道能改 Agent 原始事件内容，笔记与关系是独立表。
+   */
+  agentJourneys: {
+    list: (query = {}) => invoke(IPC.agentJourneysList, query),
+    get: (journeyId) => invoke(IPC.agentJourneyGet, { journeyId }),
+    createNote: (journeyId, body, eventId = null) =>
+      invoke(IPC.agentJourneyNoteCreate, { journeyId, body, eventId }),
+    updateNote: (id, body) => invoke(IPC.agentJourneyNoteUpdate, { id, body }),
+    removeNote: (id) => invoke(IPC.agentJourneyNoteRemove, { id }),
+    createLink: (input) => invoke(IPC.agentJourneyLinkCreate, input),
+    removeLink: (id) => invoke(IPC.agentJourneyLinkRemove, { id })
   },
   mcp: {
     listClients: () => invoke(IPC.mcpClientsList),

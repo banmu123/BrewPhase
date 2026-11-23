@@ -860,12 +860,17 @@ flowchart LR
 | 默认布局 | 纯函数按 `event_type` 分层（左→右 DAG），同一 `sequence` 竖排；`revision`/`retries` 用 `branch_from` 折到下一层 |
 | 节点尺寸 | 按类型给默认宽高（如 240×140），详情在侧栏展开，不撑大画布 |
 | 分支 | 由 `branch_from`/`revises` 边驱动换行；`follows` 不参与（§8.3） |
-| 折叠 | `agent_journey_layouts.collapsed` 标记；默认把 `sequence` 连续的 `execution`+`observation` 折成一组 |
-| 详情 | 点击 → 侧栏读 `get_agent_journey(event_types=[该事件])`，**不一次性拉全量** |
+| 折叠 | **R6-4.1 修正**：折叠是**分组级**状态，存 `canvas_journey_placements.collapsed`（分组行）；默认展开，用户可整组收起（§4.3） |
+| 详情 | **R6-4.1 实现**：点击节点 → Canvas Inspector 读 `agent-journeys:get`（一次拿 events + edges + notes + links）；Records 侧同一接口 |
 | 实时刷新 | `app:changed` → `'agentJourneys'` → Renderer 重取（沿用 `application-events.ts` 只带域名的模式） |
-| 手动布局保存 | 写 `agent_journey_layouts`（`UNIQUE(journey_id,event_id)`，乐观锁 `updated_at`），**只写覆盖项，算法默认值不落库** |
+| 手动布局保存 | **R6-4.1 修正**：Canvas 写 `canvas_journey_placements`（带 `canvas_id`，见 §21.2），**不写** `agent_journey_layouts`——后者的 `UNIQUE(journey_id,event_id)` 表达不了「同一条 Journey 在多块画布各自摆位」 |
 
-**[待实现]** `agent_journey_layouts` 建表排期 **R6-4**（第一版不开发 Renderer，但表结构已在 §7 定死）。
+**[已实现（R6-4.1）]** Renderer 与摆位均已落地，但**落点与本节原计划不同**，
+详见 §21：Canvas 用的是 `canvas_journey_placements`（新表，带 `canvas_id`），
+`agent_journey_layouts`（迁移 14）保持原样、**当前无写入者**——它的
+`UNIQUE(journey_id, event_id)` 缺 `canvas_id`，无法表达「同一条 Journey 放进
+两块画布各自摆位」，硬用会退化成 §7.2 明令禁止的「多 Canvas 共用全局绝对坐标」。
+该表定位改为**画布无关的默认摆位**，预留给时间线/详情页等非画布视图。
 
 ---
 
@@ -1176,7 +1181,7 @@ Remote MCP（future）────┘   （复用，不重新实现）
 | **R6-1** | migration 14（4 张表）+ Drizzle schema + Repository + `AgentJourneyApplication Service`（含事务幂等、sequence、sanitize） | T2/T3/T5/T6/T17/T20/T21；`pnpm typecheck/test/build` |
 | **R6-2** | `ToolExecutionContext`（ADR-R6-01）+ 6 个 MCP 工具 + 2 个 Scope + 分组/i18n/preset 同步 | T1/T4/T7/T9/T10/T11/T12/T22/T23/T27 |
 | **R6-3** | `skills/brewphase-agent-journey/`（SKILL.md + 2 adapters） | Skill 场景测试；Codex 与 WorkBuddy 各自实机跑通一次 |
-| **R6-4** | Canvas Journey 可视化适配层 + `agent_journey_layouts` + 详情/时间线 | T24/T25；布局不改业务关系 |
+| **R6-4** | Canvas Journey 可视化适配层 + 详情/时间线 → **R6-4.1 已按 §21 落地**（实际用 `canvas_journey_placements`，非 `agent_journey_layouts`） | T24/T25；布局不改业务关系 |
 | **R6-5** | JSON/Markdown 导出 + Journey 删除 + Capture Mode 设置 + 敏感过滤接入 + 端到端 | T8/T14/T15/T16/T18/T19/T25 |
 | **R7** | Remote MCP 写入安全（OQ-16）与扩展 | §17.3 十条门槛逐条验证 + T13 反向解除 |
 
@@ -1401,10 +1406,144 @@ Service」结构断言，且等同于为 MCP 工具铺路。装配留到 R6-2。
 
 ### 20.4 已知留白
 
-- **Layout Repository / 读写**：R6-4。
-- **Skill、Canvas Renderer、导出 UI、Capture Mode 设置页**：R6-3 / R6-4 / R6-5。
+- **Layout Repository / 读写**：**R6-4.1 已落地**（`canvas-journey.ts` / `agent-journey-supplements.ts`），但落点是 `canvas_journey_placements`，不是 `agent_journey_layouts`——见 §21.2。
+- **Skill、Canvas Renderer**：R6-3 / **R6-4.1 已落地**；**导出 UI、Capture Mode 设置页**：R6-5（未做）。
 - **Remote 写入**：仍被 OQ-16 挡住（§17 十条门槛未变）；`REMOTE_TOOLS` 与 Cloud `mcp-http/tools.ts` 均**未改动**。
 - **`mcp-bridge/audit-log.ts` 未改**：跨工具幂等键的拒绝已同时落在 Service 层（R6-1.1）与 `replayFromIdempotency`（本阶段），无需再动审计。
+
+---
+
+## 21. R6-4.1 实现落地（Records × Canvas 融合）
+
+### 21.1 产品定位的落点
+
+**Records 负责沉淀，Canvas 负责关联和表达，MCP 负责让 Agent 再次理解和复用。**
+
+| 环节 | 实现 | 状态 |
+|---|---|---|
+| Journey 作为独立内容类型出现在 Records | `RecordsPage` 新增 `journey` 筛选档 + `JourneyTile` 卡片 + `JourneyDetailView` 详情 | **[已实现]** |
+| Journey 进入现有 Canvas | Picker 面板新增 Journey 区 → `canvas:journey:add` → `JourneyGroupShape` 渲染分组 | **[已实现]** |
+| Journey 展开为多类型事件节点 | `JourneyGroupShape` 按 `event_type` 给九种低饱和色条 + 类型标签 | **[已实现]** |
+| 普通 Record 与 Journey 共存 | 同一 `Layer`、同一世界坐标系、同一套平移缩放/选中/拖动 | **[已实现]** |
+| Journey 节点 ↔ 普通 Record 连接 | `journey_record_links` 五种关系 + Inspector 建连 + 画布上暖色连线 | **[已实现]** |
+| Journey 与节点的个人笔记 | `agent_journey_notes`（Journey 级 `event_id IS NULL` / Event 级非空） | **[已实现]** |
+| MCP 复用读取 | 数据接口已就位（`agent-journeys:get` 一次返回 events+edges+notes+links） | **[结构就绪，工具面未扩]** |
+
+**明确未做**（本阶段禁止）：Journey UI 的独立管理页、一级导航、Skill、MCP 工具改动、
+自动采集 Hook、模型自动推断关系、Cloud/iOS 同步。
+
+### 21.2 数据架构：Migration 15（`canvas-journey-fusion`）
+
+**先回答 §7.2 的四个问题**（这是本阶段的设计核心）：
+
+| 问题 | 判断 | 理由 |
+|---|---|---|
+| `agent_journey_layouts`（迁移 14）能否满足 Canvas 组合场景 | **不能** | `UNIQUE(journey_id, event_id)` **没有 `canvas_id`**：同一条 Journey 放进两块画布只能共用一份坐标 → 退化成 §7.2 明令禁止的「多 Canvas 共用全局绝对坐标」 |
+| 同一条 Journey 能否出现在多个 Canvas | **能** | 新表以 `(canvas_id, journey_id)` 为分组唯一键 |
+| 节点布局是否需要按 Canvas 独立 | **需要** | 用户在画布 A 拖动节点，不应改变画布 B 的摆位（集成测试有直接断言） |
+| Journey Group 整体位置/尺寸是否独立保存 | **位置按 Canvas 独立；尺寸由组内事件包围盒推导** | 尺寸是派生值，存两份必然漂移 |
+
+**一张表两种行**（`event_id` 可空），用**两个部分唯一索引**分别约束——
+SQLite 里 `NULL` 不参与普通唯一索引，单靠 `UNIQUE(canvas_id, event_id)` 兜不住分组行：
+
+```sql
+canvas_journey_placements (
+  id, canvas_id → canvases ON DELETE CASCADE,
+  journey_id → agent_journeys ON DELETE CASCADE,
+  event_id   → agent_journey_events ON DELETE CASCADE,   -- NULL = 分组行
+  position_x, position_y, width, height, z_index, collapsed, updated_at
+);
+UNIQUE (canvas_id, journey_id) WHERE event_id IS NULL;      -- 分组行
+UNIQUE (canvas_id, event_id)   WHERE event_id IS NOT NULL;  -- 事件行
+```
+
+**迁移 14 的表不改、不删、不重建**：`agent_journey_layouts` 定位改为
+「画布无关的默认摆位」，当前无写入者，预留给时间线/详情页等非画布视图。
+
+#### 跨记录关系归属：**Agent Journey 领域**（不是 Canvas 展示层）
+
+`journey_record_links (journey_id, event_id, record_id, relationship_type)`，
+五种类型 `references / supports / produces / validates / related_to`。选 Journey 领域的理由：
+
+1. 两端（Event ↔ Record）**与画布无关**——画布只是发现入口，不是关系的归属；
+2. 未来 MCP 复用要在读 Journey 时一并读到，不能要求先打开某块画布；
+3. **删画布不得销毁知识关系**（集成测试直接断言这一点）；
+4. 与用户笔记同属「用户对 Journey 的补充」，归领域一致。
+
+外键全 `CASCADE`：删事件/删记录/删 Journey 都连带删关系——但**删关系本身绝不删任一端**（场景 D.6）。
+
+#### 用户笔记：**新建独立表**，不复用 `canvas_notes`
+
+`agent_journey_notes (journey_id, event_id NULL=Journey级, body, …)`。
+§6.3 要求先检查现有 Canvas Notes 能否复用——**不能**：
+`canvas_notes.canvas_id NOT NULL` 且带位置/颜色，生命周期绑画布，
+**删画布会连带销毁用户经验**；且它没有类型与证据字段，表达不了「这条笔记属于哪个事件」。
+
+### 21.3 三条线必须分清（§4.5 的实现）
+
+| 线 | 来源 | 画法 | 绝不做什么 |
+|---|---|---|---|
+| 时间顺序 | `sequence` | **只体现为节点排布**（列号 = sequence 下标），**不画线** | 不因时间相邻就长出一条依赖线 |
+| 业务关系 | `agent_journey_edges` | 组内实线，`retries` 虚线 | 不改写、不新增、不镜像 |
+| 跨记录关系 | `journey_record_links` | 暖色线，event → 画布上的 Record 节点 | 目标不在画布上就不画（先加进画布，§5.2.5） |
+
+布局是**纯函数** `@shared/domain/journey-layout.ts`：同一份 events+edges 永远算出同一份坐标
+（重开画布不跳位）。规则：列号 = sequence 下标（唯一 → 永不重叠）；
+只有**非相邻**的 `branch_from`/`revises`/`retries` 才换行，`depends_on` 留在主干。
+
+### 21.4 IPC 白名单（§7.5）
+
+新增 **13 个通道**，全部走 `registerIpc` 注入的**同一实例**（`services.agentJourneys` / `services.canvas`——
+与 MCP Bridge、Remote 拿到的是同一个对象，共享同一个 `ApplicationEvents`）：
+
+| 分组 | 通道 |
+|---|---|
+| Records 读 | `agent-journeys:list` `agent-journeys:get` |
+| 笔记 | `agent-journey:note:create/update/remove` |
+| 跨记录关系 | `agent-journey:link:create/remove` |
+| 画布摆位 | `canvas:journeys/add/move/event:move/collapse/remove` |
+
+**修复了一处既有枚举漂移**：`APP_DOMAINS`（shared，7 项）早就不含 `agentJourneys`，
+而 main 侧 `ApplicationEvents.AppDomain` 一直有它（R6-2 起 MCP 写入就在广播）——
+Renderer 收得到字符串却过不了类型检查。§7.5 要求检查并补齐，本阶段补上，
+并加测试锁死两份枚举必须一致。
+
+**没有任何通道能改 Agent 原始事件**：笔记写 `agent_journey_notes`、关系写 `journey_record_links`、
+摆位写 `canvas_journey_placements`——三张独立表，`agent_journey_events` 在这些路径上不可达。
+
+### 21.5 local-first 边界（场景 F）
+
+- 三张新表**都不写 `recordChange`** → 不进 `change_log`、不进 iOS 快照、不进 Cloud；
+- `SYNC_ENTITY_TYPES`（`wipe.ts`）与 `snapshot-importer` 白名单**均未新增实体**（有测试锁死）；
+- 未改 `REMOTE_TOOLS`、Cloud 工具列表、MCP 工具与 Schema、Migration 14、既有 Skill。
+
+### 21.6 与后续阶段的边界
+
+| 项 | 归属 | 状态 |
+|---|---|---|
+| Journey 内容读取的 MCP 工具面 | R6-5+ | **本阶段不动 MCP 工具**（§九禁止）；数据接口已就绪 |
+| 导出 / 删除 / Capture Mode 设置页 | R6-5 | 未做 |
+| Remote MCP 写入 | R7 | OQ-16 十条门槛未变 |
+| Canvas 分组区域/框选/图层 | `CANVAS_SPEC.md` 后续清单 | 未做（Journey Group 是独立的领域分组，不是通用分组功能） |
+
+### 21.7 验证状态
+
+| 项 | 结果 |
+|---|---|
+| Migration 15 真实 SQLite（空库全量、13→最新、14→15 升级、部分唯一索引、级联） | **已验证** |
+| 布局纯函数单测（确定性/列号唯一/分叉规则） | **18 通过**；变异 3 处各被抓到 |
+| 融合集成测试（场景 B/D/E/F + Repository 边界 + 领域事件） | **30 通过**；变异 5 处各被抓到 |
+| IPC 契约测试（白名单完整性、入参校验、枚举一致、preload/register 覆盖） | **19 通过** |
+| `pnpm typecheck` / `pnpm mcp:build` / `pnpm test` / `pnpm build` | **全 0**；**102 文件 / 1524 测试通过** |
+| Cloud 回归 | **82 文件 / 1703 测试通过**（Cloud 零改动） |
+| **Playwright E2E（真实 Electron 里拖动 Journey、连线、重开画布）** | **未运行** —— 见下 |
+| **真实 Codex / WorkBuddy 客户端** | 不适用（本阶段未改 Skill） |
+
+> **诚实标注**：仓库没有 jsdom / testing-library，vitest 是 `environment: node`，
+> **不存在 `.tsx` 组件测试基建**（`glob **/*.{test,spec}.tsx` = 0）。
+> 因此 Canvas 的覆盖 = **纯函数单测 + 真实 SQLite 集成 + IPC 契约测试**；
+> 「场景 B 重开画布位置保持」「场景 C 缩放平移拖动」这类**需要真实渲染与交互**的验收
+> 需要 Playwright，本阶段**未运行**，不声称已通过。
 
 ---
 

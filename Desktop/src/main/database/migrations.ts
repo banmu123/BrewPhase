@@ -676,6 +676,87 @@ CREATE TABLE IF NOT EXISTS agent_journey_layouts (
 CREATE UNIQUE INDEX IF NOT EXISTS agent_journey_layouts_uidx ON agent_journey_layouts (journey_id, event_id);
 `
 
+// MARK: - Agent Journey × Canvas 融合（migration 015）
+//
+// R6-4.1：把 Journey 放进现有 Canvas，同时保持 Journey 领域独立。
+//
+// 为什么不能复用 `agent_journey_layouts`（迁移 14）：
+//   它的唯一键是 `(journey_id, event_id)`，**没有 canvas_id**——
+//   同一条 Journey 放进两块画布时无法各自保存摆位，会退化成
+//   「多个 Canvas 共用一份全局绝对坐标」（§7.2 明确禁止）。
+//   迁移 14 的表保持原样，定位改为「画布无关的默认摆位」（当前无写入者，
+//   预留给时间线/详情页等非画布视图）；Canvas 用下面这张按画布独立的表。
+//
+// 一张表两种行（`event_id` 可空）：
+//   - `event_id IS NULL`  → Journey Group 分组行（整组位置/尺寸/折叠）
+//   - `event_id NOT NULL` → 组内事件节点行（节点摆位）
+//   两个**部分唯一索引**分别约束，避免 NULL 不参与唯一性的坑。
+//
+// 跨记录关系与用户笔记**不放这里**：它们与画布无关（换块画布关系仍在），
+// 归 Agent Journey 领域，见 `journey_record_links` / `agent_journey_notes`。
+//
+// 本地优先：本版**不写任何 recordChange / 同步表**——不进 change_log、
+// 不进 iOS 快照、不进 Cloud。
+const CANVAS_JOURNEY_SQL = `
+CREATE TABLE IF NOT EXISTS canvas_journey_placements (
+  id TEXT PRIMARY KEY NOT NULL,
+  canvas_id TEXT NOT NULL REFERENCES canvases(id) ON DELETE CASCADE,
+  journey_id TEXT NOT NULL REFERENCES agent_journeys(id) ON DELETE CASCADE,
+  event_id TEXT REFERENCES agent_journey_events(id) ON DELETE CASCADE,
+  position_x REAL NOT NULL DEFAULT 0,
+  position_y REAL NOT NULL DEFAULT 0,
+  width REAL NOT NULL DEFAULT 240,
+  height REAL NOT NULL DEFAULT 140,
+  z_index INTEGER NOT NULL DEFAULT 0,
+  collapsed INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS canvas_journey_group_uidx
+  ON canvas_journey_placements (canvas_id, journey_id) WHERE event_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS canvas_journey_event_uidx
+  ON canvas_journey_placements (canvas_id, event_id) WHERE event_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS canvas_journey_placements_canvas_idx
+  ON canvas_journey_placements (canvas_id);
+CREATE INDEX IF NOT EXISTS canvas_journey_placements_journey_idx
+  ON canvas_journey_placements (journey_id);
+
+-- 跨记录关系：Journey Event ↔ 普通 Record。归属 Agent Journey 领域
+-- （不是 Canvas 展示层）：两端与画布无关，画布只是发现入口；未来 MCP 复用
+-- 要在读 Journey 时一并读到，且删画布不得销毁知识关系。
+-- relationship_type: references / supports / produces / validates / related_to
+CREATE TABLE IF NOT EXISTS journey_record_links (
+  id TEXT PRIMARY KEY NOT NULL,
+  journey_id TEXT NOT NULL REFERENCES agent_journeys(id) ON DELETE CASCADE,
+  event_id TEXT NOT NULL REFERENCES agent_journey_events(id) ON DELETE CASCADE,
+  record_id TEXT NOT NULL REFERENCES records(id) ON DELETE CASCADE,
+  relationship_type TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS journey_record_links_uidx
+  ON journey_record_links (event_id, record_id, relationship_type);
+CREATE INDEX IF NOT EXISTS journey_record_links_journey_idx
+  ON journey_record_links (journey_id);
+CREATE INDEX IF NOT EXISTS journey_record_links_record_idx
+  ON journey_record_links (record_id);
+
+-- 用户笔记：Journey 级（event_id 为 NULL）与 Event 级（event_id 非空）。
+-- 不复用 canvas_notes：那张表 canvas_id NOT NULL 且带位置/颜色，生命周期绑画布，
+-- 删画布会连带销毁用户经验。这里只存内容，与画布解耦。
+CREATE TABLE IF NOT EXISTS agent_journey_notes (
+  id TEXT PRIMARY KEY NOT NULL,
+  journey_id TEXT NOT NULL REFERENCES agent_journeys(id) ON DELETE CASCADE,
+  event_id TEXT REFERENCES agent_journey_events(id) ON DELETE CASCADE,
+  body TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS agent_journey_notes_journey_idx
+  ON agent_journey_notes (journey_id);
+CREATE INDEX IF NOT EXISTS agent_journey_notes_event_idx
+  ON agent_journey_notes (event_id);
+`
+
 export const migrations: Migration[] = [
   { version: 1, name: 'init', sql: INIT_SQL },
   { version: 2, name: 'sync-align-ios', sql: SYNC_ALIGN_SQL },
@@ -690,7 +771,8 @@ export const migrations: Migration[] = [
   { version: 11, name: 'roundtable-panels', sql: ROUNDTABLE_PANELS_SQL },
   { version: 12, name: 'local-workspaces', sql: LOCAL_WORKSPACES_SQL },
   { version: 13, name: 'reply-intelligence', sql: REPLY_INTELLIGENCE_SQL },
-  { version: 14, name: 'agent-journeys', sql: AGENT_JOURNEY_SQL }
+  { version: 14, name: 'agent-journeys', sql: AGENT_JOURNEY_SQL },
+  { version: 15, name: 'canvas-journey-fusion', sql: CANVAS_JOURNEY_SQL }
 ]
 
 /**

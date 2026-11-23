@@ -1,9 +1,23 @@
 import { randomUUID } from 'node:crypto'
+import { eq } from 'drizzle-orm'
 import { ApplicationError } from '../errors'
 import type { ApplicationEvents } from '../events/application-events'
 import type { Db } from '../../database/client'
 import type { McpErrorCode } from '../../../shared/contracts/mcp'
 import { selectWorkContext } from '../../database/repositories/work-contexts'
+import { records } from '../../database/schema'
+import {
+  countLinksForJourney,
+  countNotesForJourney,
+  createLink,
+  createNote,
+  isJourneyLinkType,
+  listLinksForJourney,
+  listNotesForJourney,
+  removeLink,
+  removeNote,
+  updateNote
+} from '../../database/repositories/agent-journey-supplements'
 import {
   AGENT_JOURNEY_CAPTURE_MODES,
   AGENT_JOURNEY_EDGE_TYPES,
@@ -709,6 +723,256 @@ export class AgentJourneyService {
       journey,
       events: selectEvents(this.db, journeyId, options),
       edges: selectEdges(this.db, journeyId)
+    }
+  }
+
+  // ================================================================
+  // R6-4.1：Records / Canvas 融合（Renderer 侧）
+  //
+  // 这些方法**复用同一个 AgentJourneyService 实例**（main/index.ts:257 构造的
+  // 那一个，也是 MCP Bridge 拿到的那一个）——不新建第二个 Service，否则
+  // `app:changed` 会只有一半窗口收到。
+  //
+  // 与 MCP 写路径的差别：这里没有 MCP Client 身份，也不需要幂等键——
+  // 调用方是本机 Renderer（已过 IPC 白名单 + zod 校验），语义是「用户在
+  // 自己的机器上补一条笔记 / 建一条关系」，不是「Agent 提交一次执行事实」。
+  // 因此**不写** `source_client_id`、不写 `mcp_idempotency`、不发审计。
+  //
+  // 铁律：本区域任何写入都**不触碰** `agent_journey_events` / `agent_journey_edges`
+  // ——用户笔记与跨记录关系是独立持久化，Agent 原始执行记录一个字节都不改。
+  // ================================================================
+
+  /** Records 页的 Journey 卡片列表（含事件数、关联数、笔记数）。 */
+  listForRecords(filter: { limit?: number; offset?: number; search?: string } = {}) {
+    const journeys = selectJourneys(this.db, {
+      limit: filter.limit ?? 100,
+      offset: filter.offset ?? 0
+    })
+    const search = (filter.search ?? '').trim().toLowerCase()
+    const cards = journeys.map((journey) => this.toRecordCard(journey))
+    const visible = search
+      ? cards.filter(
+          (card) =>
+            card.title.toLowerCase().includes(search) ||
+            card.goal.toLowerCase().includes(search) ||
+            card.source_agent.toLowerCase().includes(search)
+        )
+      : cards
+    return { journeys: visible, total: visible.length }
+  }
+
+  /**
+   * Journey 详情（Records 详情页 + Canvas Inspector 共用）：
+   * 原始目标 + 全部事件（按 sequence 升序）+ 业务 Edge + 用户笔记 + 跨记录关系。
+   *
+   * **必须做 camelCase → snake_case 的 DTO 映射**：契约
+   * （`shared/contracts/entities/agent-journey.ts`）是 snake_case，而 Repository
+   * 返回的是领域对象（`eventId` / `occurredAt` / `createdAt`…）。直接透传
+   * 编译器不会报错（IPC 的 invoke 返回值是宽松类型），但运行时
+   * `note.event_id` 恒为 undefined——笔记与关系会「静默消失」。
+   */
+  getDetailForRenderer(journeyId: string) {
+    const detail = this.getJourney(journeyId)
+    const card = this.toRecordCard(detail.journey)
+    return {
+      journey: card,
+      events: detail.events.map((event) => ({
+        id: event.id,
+        journey_id: event.journeyId,
+        sequence: event.sequence,
+        event_type: event.eventType,
+        role: event.role,
+        status: event.status,
+        title: event.title,
+        summary: event.summary,
+        content: event.content,
+        reason: event.reason,
+        source_agent: event.sourceAgent,
+        model: event.model,
+        occurred_at: event.occurredAt,
+        updated_at: event.updatedAt
+      })),
+      edges: detail.edges.map((edge) => ({
+        id: edge.id,
+        journey_id: edge.journeyId,
+        from_event_id: edge.fromEventId,
+        to_event_id: edge.toEventId,
+        relationship_type: edge.relationshipType,
+        created_at: edge.createdAt
+      })),
+      notes: listNotesForJourney(this.db, journeyId).map((note) => ({
+        id: note.id,
+        journey_id: note.journeyId,
+        event_id: note.eventId,
+        body: note.body,
+        created_at: note.createdAt,
+        updated_at: note.updatedAt
+      })),
+      links: listLinksForJourney(this.db, journeyId).map((link) => ({
+        id: link.id,
+        journey_id: link.journeyId,
+        event_id: link.eventId,
+        record_id: link.recordId,
+        relationship_type: link.relationshipType,
+        created_at: link.createdAt,
+        updated_at: link.updatedAt
+      }))
+    }
+  }
+
+  /** Journey 级笔记。 */
+  addJourneyNote(input: { journeyId: string; body: string }) {
+    const body = this.assertNoteBody(input.body)
+    this.requireJourney(input.journeyId)
+    const note = createNote(this.db, {
+      journeyId: input.journeyId,
+      eventId: null,
+      body,
+      now: Date.now()
+    })
+    this.events.emit('agentJourneys')
+    return note
+  }
+
+  /** Event 级笔记：事件必须存在且属于该 Journey。 */
+  addEventNote(input: { journeyId: string; eventId: string; body: string }) {
+    const body = this.assertNoteBody(input.body)
+    this.requireEvent(input.journeyId, input.eventId)
+    const note = createNote(this.db, {
+      journeyId: input.journeyId,
+      eventId: input.eventId,
+      body,
+      now: Date.now()
+    })
+    this.events.emit('agentJourneys')
+    return note
+  }
+
+  /** 编辑笔记：只写 `agent_journey_notes`，Agent 原始事件不可达。 */
+  updateJourneyNote(input: { id: string; body: string }) {
+    const body = this.assertNoteBody(input.body)
+    const note = updateNote(this.db, input.id, body, Date.now())
+    if (!note) throw new AgentJourneyError('NOT_FOUND', `note ${input.id} does not exist`)
+    this.events.emit('agentJourneys')
+    return note
+  }
+
+  /** 删除笔记：只删笔记行，Journey 与事件原样保留。 */
+  removeJourneyNote(id: string): { removed: boolean } {
+    const result = removeNote(this.db, id)
+    if (result.removed) this.events.emit('agentJourneys')
+    return result
+  }
+
+  /**
+   * 建立 Event ↔ Record 关系。
+   *
+   * 归属 Journey 领域：两端必须真实存在且 Event 属于该 Journey。
+   * **不创建任何 Journey 事件或业务 Edge**——这是纯用户侧补充。
+   */
+  addRecordLink(input: {
+    journeyId: string
+    eventId: string
+    recordId: string
+    relationshipType: string
+  }) {
+    if (!isJourneyLinkType(input.relationshipType)) {
+      throw new AgentJourneyError(
+        'VALIDATION_ERROR',
+        `unknown relationship_type: ${input.relationshipType}`
+      )
+    }
+    this.requireEvent(input.journeyId, input.eventId)
+    const record = this.db
+      .select({ id: records.id })
+      .from(records)
+      .where(eq(records.id, input.recordId))
+      .get()
+    if (!record) throw new AgentJourneyError('NOT_FOUND', `record ${input.recordId} does not exist`)
+
+    const link = createLink(this.db, {
+      journeyId: input.journeyId,
+      eventId: input.eventId,
+      recordId: input.recordId,
+      relationshipType: input.relationshipType,
+      now: Date.now()
+    })
+    this.events.emit('agentJourneys')
+    return link
+  }
+
+  /** 删除关系：只删关系行，**原始 Record 与 Journey 事件都必须原样保留**。 */
+  removeRecordLink(id: string): { removed: boolean } {
+    const result = removeLink(this.db, id)
+    if (result.removed) this.events.emit('agentJourneys')
+    return result
+  }
+
+  /** 某条 Journey 的全部事件 ID（放进画布时要给每个事件建摆位行）。 */
+  eventIdsFor(journeyId: string): string[] {
+    return selectEvents(this.db, journeyId).map((event) => event.id)
+  }
+
+  // ---- 内部校验 ----
+
+  private assertNoteBody(body: string): string {
+    if (typeof body !== 'string') {
+      throw new AgentJourneyError('VALIDATION_ERROR', 'body must be a string')
+    }
+    const trimmed = body.trim()
+    if (trimmed.length === 0) {
+      throw new AgentJourneyError('VALIDATION_ERROR', 'body is required')
+    }
+    // 笔记同样走脱敏：用户贴日志时难免带出 token。
+    return sanitizeJourneyContent(trimmed, { max: JOURNEY_TEXT_LIMITS.content })
+  }
+
+  private requireJourney(journeyId: string): AgentJourney {
+    if (!UUID_RE.test(journeyId)) {
+      throw new AgentJourneyError('VALIDATION_ERROR', 'journey_id must be a uuid')
+    }
+    const journey = selectJourney(this.db, journeyId)
+    if (!journey) throw new AgentJourneyError('NOT_FOUND', `journey ${journeyId} does not exist`)
+    return journey
+  }
+
+  /** 事件必须存在**且属于给定 Journey**——防止跨 Journey 借用事件 ID。 */
+  private requireEvent(journeyId: string, eventId: string): AgentJourneyEvent {
+    this.requireJourney(journeyId)
+    if (!UUID_RE.test(eventId)) {
+      throw new AgentJourneyError('VALIDATION_ERROR', 'event_id must be a uuid')
+    }
+    const event = selectEvent(this.db, eventId)
+    if (!event) throw new AgentJourneyError('NOT_FOUND', `event ${eventId} does not exist`)
+    if (event.journeyId !== journeyId) {
+      throw new AgentJourneyError(
+        'VALIDATION_ERROR',
+        `event ${eventId} does not belong to journey ${journeyId}`
+      )
+    }
+    return event
+  }
+
+  private toRecordCard(journey: AgentJourney) {
+    const events = selectEvents(this.db, journey.id)
+    return {
+      id: journey.id,
+      title: journey.title,
+      goal: journey.goal,
+      status: journey.status,
+      source_client_id: journey.sourceClientId,
+      source_agent: journey.sourceAgent,
+      model: journey.model,
+      created_at: journey.createdAt,
+      updated_at: journey.updatedAt,
+      completed_at: journey.completedAt,
+      event_count: events.length,
+      link_count: countLinksForJourney(this.db, journey.id),
+      note_count: countNotesForJourney(this.db, journey.id),
+      /** 卡片上的执行摘要：取最后一个非空 summary，没有就退回 goal。 */
+      summary:
+        [...events].reverse().find((event) => event.summary.trim().length > 0)?.summary.trim() ??
+        journey.goal
     }
   }
 }

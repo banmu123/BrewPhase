@@ -51,6 +51,71 @@ export const records = {
     recordDeleted: '要打开的记录已经被删除。',
     openFailed: (message: string) => `没能打开记录：${message}`
   },
+  journey: {
+    typeLabel: 'Agent Journey',
+    chip: 'Agent Journey',
+    empty: '还没有 Agent Journey。',
+    emptyHint: 'Agent 执行多步骤任务时会自动沉淀成一条完整记录。',
+    events: (count: number) => `${count} 个事件`,
+    links: (count: number) => `${count} 条关联`,
+    notes: (count: number) => `${count} 条笔记`,
+    status: {
+      created: '已创建',
+      running: '进行中',
+      paused: '已暂停',
+      completed: '已完成',
+      failed: '已失败',
+      cancelled: '已取消',
+      abandoned: '已放弃'
+    },
+    detailAria: 'Agent Journey 详情',
+    goal: '任务目标',
+    timeline: '执行过程',
+    sequence: (value: number) => `#${value}`,
+    eventType: {
+      user_input: '用户需求',
+      plan: '计划',
+      decision: '决策',
+      execution: '执行',
+      observation: '观察',
+      revision: '修订',
+      verification: '验证',
+      outcome: '结果',
+      user_annotation: '用户补充'
+    },
+    eventStatus: {
+      planned: '待执行',
+      running: '执行中',
+      completed: '已完成',
+      failed: '已失败',
+      skipped: '已跳过',
+      cancelled: '已取消'
+    },
+    edgeLabel: (kind: string) => `关系：${kind}`,
+    source: (name: string) => `来源：${name}`,
+    selfReported: 'Agent 自述',
+    addToCanvas: '添加到画布',
+    addToCanvasPick: '选择画布',
+    addToCanvasDone: (name: string) => `已加入「${name}」`,
+    addToCanvasFailed: (error: string) => `加入画布失败：${error}`,
+    notesTitle: '我的笔记',
+    notePlaceholder: '写下你的经验、提醒或评价——只属于你，不会改写 Agent 的原始记录。',
+    noteSave: '保存',
+    noteDelete: '删除',
+    noteEmpty: '还没有笔记。',
+    linksTitle: '关联记录',
+    linkEmpty: '还没有关联记录。',
+    linkRemove: '删除关联',
+    linkType: {
+      references: '参考',
+      supports: '支持',
+      produces: '产生',
+      validates: '验证',
+      related_to: '相关'
+    },
+    outcome: '最终结果'
+  },
+
   metadata: {
     pending: '正在获取预览…',
     ok: '预览信息已更新',

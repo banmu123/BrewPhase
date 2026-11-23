@@ -10108,3 +10108,337 @@ textarea {
   border-radius: 5px;
   padding: 5px 7px;
 }
+
+/* ================================================================
+   Agent Journey（R6-4.1）
+   设计语言沿用 A quiet bright personal creative space：
+   明亮、安静、留白足够；类型靠**低饱和色条 + 图形**区分，不用大色块。
+   ================================================================ */
+
+/* ---- 内容类型筛选里的 Journey 档 ---- */
+.chip--journey {
+  border-style: dashed;
+}
+
+/* ---- Records 网格里的 Journey 卡片 ---- */
+.record-tile--journey {
+  position: relative;
+  padding: 14px 15px 12px;
+  gap: 9px;
+  /* 左侧一条状态色条：与四种载体的 Record 卡片一眼区分开 */
+  border-left: 3px solid var(--hairline-strong);
+}
+
+.record-tile--journey[data-status='running'] {
+  border-left-color: var(--roast);
+}
+.record-tile--journey[data-status='completed'] {
+  border-left-color: #7a9a72;
+}
+.record-tile--journey[data-status='failed'] {
+  border-left-color: #b57f6a;
+}
+.record-tile--journey[data-status='paused'] {
+  border-left-color: var(--latte);
+}
+.record-tile--journey[data-status='cancelled'],
+.record-tile--journey[data-status='abandoned'] {
+  border-left-color: var(--hairline-strong);
+}
+
+.record-tile__journey-badge {
+  align-self: flex-start;
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  background: var(--sheet-warm);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.record-tile__journey-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.record-tile__journey-summary {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+  /* 摘要最多三行，卡片高度保持可比 */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.record-tile__journey-meta,
+.record-tile__journey-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+
+.record-tile__journey-foot {
+  justify-content: space-between;
+  border-top: 1px solid var(--hairline-faint);
+  padding-top: 8px;
+  margin-top: auto;
+}
+
+.record-tile__journey-status {
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+.record-tile__journey-status[data-status='running'] {
+  color: var(--roast);
+}
+.record-tile__journey-status[data-status='completed'] {
+  color: #5f7f58;
+}
+.record-tile__journey-status[data-status='failed'] {
+  color: #a36a55;
+}
+
+.record-tile__journey-source {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+
+/* ---- Journey 详情浮层 ---- */
+.journey-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.journey-status {
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+.journey-status[data-status='running'] {
+  color: var(--roast);
+}
+.journey-status[data-status='completed'] {
+  color: #5f7f58;
+}
+.journey-status[data-status='failed'] {
+  color: #a36a55;
+}
+
+.journey-section {
+  margin-top: 16px;
+}
+
+.journey-section__title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0 0 8px;
+}
+
+.journey-inline {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.journey-inline input {
+  flex: 1;
+  min-width: 0;
+}
+.journey-inline select {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 执行时间线：sequence 驱动的竖排，事件类型靠左侧色点区分 */
+.journey-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 14px;
+  border-left: 2px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.journey-event {
+  position: relative;
+  padding-left: 12px;
+}
+
+.journey-event::before {
+  content: '';
+  position: absolute;
+  left: -21px;
+  top: 5px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--event-dot, var(--hairline-strong));
+  border: 2px solid var(--card);
+}
+
+/* 九种事件类型的低饱和色点（统一色系，避免花哨） */
+.journey-event[data-event-type='user_input'] {
+  --event-dot: #8fa8c4;
+}
+.journey-event[data-event-type='plan'] {
+  --event-dot: #9db8a4;
+}
+.journey-event[data-event-type='decision'] {
+  --event-dot: #b8a6c4;
+}
+.journey-event[data-event-type='execution'] {
+  --event-dot: #c4a882;
+}
+.journey-event[data-event-type='observation'] {
+  --event-dot: #a4b0be;
+}
+.journey-event[data-event-type='revision'] {
+  --event-dot: #c49a8f;
+}
+.journey-event[data-event-type='verification'] {
+  --event-dot: #8bb0b8;
+}
+.journey-event[data-event-type='outcome'] {
+  --event-dot: #8fae7f;
+}
+.journey-event[data-event-type='user_annotation'] {
+  --event-dot: #c9b98f;
+}
+
+.journey-event__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+
+.journey-event__seq {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+
+.journey-event__type {
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.journey-event__status {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--well);
+  border: 1px solid var(--hairline);
+}
+.journey-event__status[data-status='failed'] {
+  color: #a36a55;
+}
+.journey-event__status[data-status='running'] {
+  color: var(--roast);
+}
+
+.journey-event__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-top: 3px;
+}
+
+.journey-event__summary {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+  margin-top: 3px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 业务关系：与时间线明确区分——虚线 + 「关系：」前缀 */
+.journey-event__edge {
+  margin-top: 5px;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  border-left: 2px dashed var(--hairline-strong);
+  padding-left: 8px;
+}
+
+.journey-event__link {
+  margin-top: 5px;
+  font-size: 11.5px;
+  color: var(--roast);
+  border-left: 2px solid var(--latte);
+  padding-left: 8px;
+}
+
+.journey-event__note,
+.journey-note {
+  margin-top: 7px;
+  padding: 8px 10px;
+  background: var(--sheet-warm);
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.journey-note p,
+.journey-event__note p {
+  margin: 0 0 6px;
+}
+
+.journey-note__label {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: 3px;
+}
+
+.journey-event__addnote {
+  margin-top: 7px;
+}
+
+.journey-notes {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ---- Canvas 侧：Picker 的 Journey 区与 Journey Inspector ---- */
+.picker-list--journeys {
+  max-height: 220px;
+}
+
+.add-card--journey {
+  border-left: 3px solid var(--roast);
+}
+
+.journey-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+/* 折叠态下标题栏是主要命中区，给它一个明确的指针反馈 */
+.konvajs-content {
+  cursor: default;
+}

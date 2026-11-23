@@ -38,6 +38,15 @@ import type {
   StageGoalPatch
 } from './personal-direction'
 import type { Canvas, CanvasNode, CanvasNodeWithRecord, CanvasNote, CanvasStroke } from './entities/canvas'
+import type {
+  CanvasJourney,
+  CanvasJourneyPlacement,
+  JourneyCard,
+  JourneyDetail,
+  JourneyLinkType,
+  JourneyNote,
+  JourneyRecordLink
+} from './entities/agent-journey'
 import type { ImportImageResult, RecordDraft, RecordItem, RecordQuery, RecordTag } from './entities/records'
 import type { SyncStatus, SyncConflictItem, WipeResult } from './sync'
 import type {
@@ -93,6 +102,7 @@ export * from './version'
 export * from './entities/coffee'
 export * from './entities/records'
 export * from './entities/canvas'
+export * from './entities/agent-journey'
 export * from './sync'
 export * from './mcp'
 export * from './browser'
@@ -121,7 +131,10 @@ export const APP_DOMAINS = [
   'workContexts',
   'personalDirection',
   'localWorkspaces',
-  'replyIntelligence'
+  'replyIntelligence',
+  // R6-4.1：补齐——main 侧 ApplicationEvents.AppDomain 早就有它（MCP 写入会广播），
+  // shared 这份漏了，Renderer 收到 'agentJourneys' 却过不了类型检查。
+  'agentJourneys'
 ] as const
 export type AppDomain = (typeof APP_DOMAINS)[number]
 
@@ -290,6 +303,35 @@ export interface RendererApi {
     strokes: (canvasId: string) => Promise<CanvasStroke[]>
     saveStroke: (stroke: CanvasStroke) => Promise<CanvasStroke>
     removeStroke: (id: string) => Promise<void>
+    /** 画布上已放置的 Journey（分组 + 组内事件摆位 + 内容）。 */
+    journeys: (canvasId: string) => Promise<CanvasJourney[]>
+    /** 把一条 Journey 放进画布；已存在则幂等地返回现状。 */
+    addJourney: (canvasId: string, journeyId: string) => Promise<CanvasJourney>
+    /** 挪动分组（组内事件同步平移）。 */
+    moveJourney: (canvasId: string, journeyId: string, positionX: number, positionY: number) => Promise<void>
+    /** 挪动单个事件节点；只写摆位，不碰 sequence 与业务 Edge。 */
+    moveJourneyEvent: (canvasId: string, eventId: string, positionX: number, positionY: number) => Promise<void>
+    collapseJourney: (canvasId: string, journeyId: string, collapsed: boolean) => Promise<void>
+    /** 从画布移除：只删摆位，Journey 与事件、笔记、关系全部保留。 */
+    removeJourney: (canvasId: string, journeyId: string) => Promise<void>
+  }
+  /**
+   * Agent Journey（R6-4.1）：Records 页的完整执行记录 + 用户笔记 + 跨记录关系。
+   * Local-only——不进 iOS 同步 / change_log / Cloud。
+   */
+  agentJourneys: {
+    list: (query?: { search?: string; limit?: number; offset?: number }) => Promise<{ journeys: JourneyCard[]; total: number }>
+    get: (journeyId: string) => Promise<JourneyDetail>
+    createNote: (journeyId: string, body: string, eventId?: string | null) => Promise<JourneyNote>
+    updateNote: (id: string, body: string) => Promise<JourneyNote>
+    removeNote: (id: string) => Promise<void>
+    createLink: (input: {
+      journeyId: string
+      eventId: string
+      recordId: string
+      relationshipType: JourneyLinkType
+    }) => Promise<JourneyRecordLink>
+    removeLink: (id: string) => Promise<void>
   }
   /**
    * AI 连接（MCP）。token 只在 createClient 的返回值里出现一次，

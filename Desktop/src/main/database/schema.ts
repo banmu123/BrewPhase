@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import {
   index,
   integer,
@@ -926,4 +927,120 @@ export const agentJourneyLayouts = sqliteTable(
     updatedAt: integer('updated_at').notNull()
   },
   (table) => [uniqueIndex('agent_journey_layouts_uidx').on(table.journeyId, table.eventId)]
+)
+
+/**
+ * Journey 在**某块画布**上的摆位（R6-4.1，migration 015）。
+ *
+ * 与 `agent_journey_layouts`（迁移 14）的区别：这张表带 `canvas_id`，
+ * 同一条 Journey 放进两块画布时各自保存位置——不能共用全局绝对坐标。
+ *
+ * 一张表两种行：
+ * - `eventId === null` → Journey Group 分组行（整组位置/尺寸/折叠）
+ * - `eventId !== null` → 组内事件节点行
+ * 两个部分唯一索引分别约束分组与事件，避免 SQLite 里 NULL 不参与唯一性。
+ *
+ * 纯展示层：拖动只写这张表，**永不**改 `sequence`、`agent_journey_edges`
+ * 或 `journey_record_links`。不进 change_log / iOS 同步。
+ */
+export const canvasJourneyPlacements = sqliteTable(
+  'canvas_journey_placements',
+  {
+    id: text('id').primaryKey(),
+    canvasId: text('canvas_id')
+      .notNull()
+      .references(() => canvases.id, { onDelete: 'cascade' }),
+    journeyId: text('journey_id')
+      .notNull()
+      .references(() => agentJourneys.id, { onDelete: 'cascade' }),
+    /** null = 分组行；非空 = 组内事件节点行。 */
+    eventId: text('event_id').references((): AnySQLiteColumn => agentJourneyEvents.id, {
+      onDelete: 'cascade'
+    }),
+    positionX: real('position_x').notNull().default(0),
+    positionY: real('position_y').notNull().default(0),
+    width: real('width').notNull().default(240),
+    height: real('height').notNull().default(140),
+    zIndex: integer('z_index').notNull().default(0),
+    collapsed: integer('collapsed', { mode: 'boolean' }).notNull().default(false),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (table) => [
+    uniqueIndex('canvas_journey_group_uidx')
+      .on(table.canvasId, table.journeyId)
+      .where(sql`${table.eventId} is null`),
+    uniqueIndex('canvas_journey_event_uidx')
+      .on(table.canvasId, table.eventId)
+      .where(sql`${table.eventId} is not null`),
+    index('canvas_journey_placements_canvas_idx').on(table.canvasId),
+    index('canvas_journey_placements_journey_idx').on(table.journeyId)
+  ]
+)
+
+/**
+ * Journey Event ↔ 普通 Record 的**跨记录关系**（R6-4.1，migration 015）。
+ *
+ * 归属 **Agent Journey 领域**而非 Canvas 展示层：两端与画布无关，画布只是
+ * 发现入口；未来 MCP 复用要在读 Journey 时一并读到；删画布不得销毁知识关系。
+ *
+ * `relationship_type` ∈ references / supports / produces / validates / related_to。
+ * 外键全 CASCADE：删事件、删记录、删 Journey 都连带删关系，但**删关系本身
+ * 绝不删**事件或记录。
+ */
+export const journeyRecordLinks = sqliteTable(
+  'journey_record_links',
+  {
+    id: text('id').primaryKey(),
+    journeyId: text('journey_id')
+      .notNull()
+      .references(() => agentJourneys.id, { onDelete: 'cascade' }),
+    eventId: text('event_id')
+      .notNull()
+      .references(() => agentJourneyEvents.id, { onDelete: 'cascade' }),
+    recordId: text('record_id')
+      .notNull()
+      .references(() => records.id, { onDelete: 'cascade' }),
+    relationshipType: text('relationship_type').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (table) => [
+    uniqueIndex('journey_record_links_uidx').on(
+      table.eventId,
+      table.recordId,
+      table.relationshipType
+    ),
+    index('journey_record_links_journey_idx').on(table.journeyId),
+    index('journey_record_links_record_idx').on(table.recordId)
+  ]
+)
+
+/**
+ * 用户在 Journey 上沉淀的**个人笔记**（R6-4.1，migration 015）。
+ *
+ * `eventId === null` → Journey 级笔记；非空 → Event 级笔记。
+ * **不复用 `canvas_notes`**：那张表 `canvas_id NOT NULL` 且带位置/颜色，
+ * 生命周期绑画布，删画布会连带销毁用户经验。这里只存内容，与画布解耦，
+ * local-first，不进 change_log / iOS 同步。
+ *
+ * 与 Agent 原始事件**完全分离**：改笔记绝不写 `agent_journey_events`。
+ */
+export const agentJourneyNotes = sqliteTable(
+  'agent_journey_notes',
+  {
+    id: text('id').primaryKey(),
+    journeyId: text('journey_id')
+      .notNull()
+      .references(() => agentJourneys.id, { onDelete: 'cascade' }),
+    eventId: text('event_id').references((): AnySQLiteColumn => agentJourneyEvents.id, {
+      onDelete: 'cascade'
+    }),
+    body: text('body').notNull().default(''),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (table) => [
+    index('agent_journey_notes_journey_idx').on(table.journeyId),
+    index('agent_journey_notes_event_idx').on(table.eventId)
+  ]
 )

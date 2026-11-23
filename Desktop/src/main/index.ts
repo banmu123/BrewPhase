@@ -637,7 +637,9 @@ function bootstrap(): void {
     sync: syncService,
     account,
     remote: remoteService,
-    services: { records, clients, workContexts, personalDirection },
+    // R6-4.1：canvas 与 agentJourneys 必须是**同一个实例**——它们同时被
+    // MCP Bridge（下方 BridgeServer）与 Remote 拿走，共享同一个 ApplicationEvents。
+    services: { records, clients, workContexts, personalDirection, canvas, agentJourneys },
     aiChat: aiChatService,
     roundtableAI: participantService,
     roundtableLayout: roundtableLayoutManager,
