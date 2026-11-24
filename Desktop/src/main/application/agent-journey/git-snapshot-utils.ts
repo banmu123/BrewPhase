@@ -225,12 +225,36 @@ export function countTrackedPaths(text: string): number {
   return seen.size
 }
 
-/** Git 规范对象模式（+ git 容忍的遗留 100664）。非法 mode 一律判 malformed。 */
-const VALID_GIT_MODES = new Set(['040000', '100644', '100664', '100755', '120000', '160000'])
-/** 对象类型**只允许这三种**——绝不把未知类型降级成 blob（修复二）。 */
-const VALID_GIT_TYPES = new Set(['blob', 'tree', 'commit'])
+/**
+ * mode → 合法 type 的对应表（R6-4.3.2.4 §二）：组合不匹配 = malformed，
+ * 绝不产生有效 TreeEntry（也顺带杜绝未知 type「降级成 blob」）。
+ * 100664 是 git 容忍的遗留模式（非规范但真实存在于老仓库）。
+ */
+const MODE_TYPE_RULES: Record<string, 'blob' | 'tree' | 'commit'> = {
+  '040000': 'tree',
+  '100644': 'blob',
+  '100664': 'blob',
+  '100755': 'blob',
+  '120000': 'blob',
+  '160000': 'commit'
+}
 /** 对象 sha：SHA-1（40）或 SHA-256（64）仓库格式——不默认永远 40 位。 */
 const OBJECT_SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
+
+/**
+ * 仓库相对路径规则（§二）：非空、非绝对（POSIX ` / `与 Windows 盘符）、
+ * 无空段、无 `.` / `..` 路径段；**保留**空格 / Tab / 换行 / Unicode /
+ * 前导连字符等合法文件名。
+ */
+function isValidTreePath(path: string): boolean {
+  if (path.length === 0) return false
+  if (path.startsWith('/')) return false // 绝对路径
+  if (/^[A-Za-z]:[\\/]/.test(path)) return false // Windows 盘符绝对路径
+  for (const segment of path.split('/')) {
+    if (segment === '' || segment === '.' || segment === '..') return false
+  }
+  return true
+}
 
 /**
  * 单条 `ls-tree -z` 严格校验：`<mode> SP <type> SP <sha> TAB <path>`。
@@ -252,9 +276,10 @@ function parseLsTreeRecord(record: string): {
   const parts = header.split(' ')
   if (parts.length !== 3) return null // header 字段数必须恰好 3
   const [mode, type, sha] = parts
-  if (!VALID_GIT_MODES.has(mode)) return null // 非法 mode
-  if (!VALID_GIT_TYPES.has(type)) return null // 非法 type（不降级）
+  // mode/type 对应表（§二）：组合不匹配即 malformed
+  if (MODE_TYPE_RULES[mode] !== type) return null
   if (!OBJECT_SHA_RE.test(sha)) return null // 非法 / 长度错误 sha
+  if (!isValidTreePath(path)) return null // 绝对路径 / 路径穿越 / 非法路径段
   return { mode, type: type as 'blob' | 'tree' | 'commit', sha, path }
 }
 

@@ -2364,3 +2364,139 @@ describe('Symlink lstat/readlink 一致性（规格 §六）', () => {
     expect(JSON.stringify(diff)).not.toContain('two')
   })
 })
+
+
+// MARK: - R6-4.3.2.4 修复一：元数据与读取结果同源（规格 §一）
+
+describe('元数据与读取结果同源（R6-4.3.2.4 修复一）', () => {
+  /**
+   * 注入点是 `afterInitialLstat`——**首次 lstat（T0）之后、读取窗口 T1 之前**。
+   * 与 R6-4.3.2.3 的 `beforeFileOpen`（T1 之后）是两个不同的窗口，
+   * 本组测试专门验证 T0×T1 交叉校验。
+   * 全部用 untracked 文件：status 前后都是 `?`，不会被「状态漂移重试」掩盖。
+   */
+  const isRace = (full: string): boolean => full.endsWith(`${sep}race.txt`)
+
+  it('1) 首次 lstat 后、读取前同尺寸改写 → torn_read（旧 size 配不上新内容）', async () => {
+    const dir = makeDir('bp-meta-rewrite-')
+    initRepo(dir, { 'app.ts': 'x\n' })
+    write(dir, 'race.txt', 'AAAA\n')
+    const baseline = await engine.capture(dir)
+    expect(baseline.baselineStore.get('race.txt')).toBeDefined()
+
+    const engine2 = new GitSnapshotEngine({
+      hooks: {
+        afterInitialLstat: (full) => {
+          if (isRace(full)) writeFileSync(full, 'BBBB\n') // 同尺寸：size 证据失效
+        }
+      }
+    })
+    const current = await engine2.capture(dir)
+    const entry = snapOf(current, 'race.txt')
+    expect(entry?.unread_reason).toBe('torn_read')
+    expect(entry?.worktree_hash).toBeNull() // 不产生有效 hash
+    // 旧元数据不与新内容组合：没有内容 → baseline 侧明确不可重建
+    expect(entry?.baseline_content).toEqual({ kind: 'not_stored', reason: 'torn_read' })
+
+    const diff = await engine.compare(baseline, current)
+    const file = fileOf(diff, 'race.txt')
+    expect(file?.observation).toBe('unavailable')
+    expect(file?.insertions).toBeNull()
+    expect(JSON.stringify(diff)).not.toContain('BBBB') // 新内容从未被采用
+  })
+
+  it('2) 首次 lstat 后改变未跟踪文件执行权限 → torn_read（mode/ctime 证据）', async () => {
+    const dir = makeDir('bp-meta-chmod-')
+    initRepo(dir, { 'app.ts': 'x\n' })
+    write(dir, 'perm.txt', 'p\n')
+    const baseline = await engine.capture(dir)
+
+    const engine2 = new GitSnapshotEngine({
+      hooks: {
+        afterInitialLstat: (full) => {
+          if (full.endsWith(`${sep}perm.txt`)) chmodSync(full, 0o755)
+        }
+      }
+    })
+    const current = await engine2.capture(dir)
+    const entry = snapOf(current, 'perm.txt')
+    expect(entry?.unread_reason).toBe('torn_read')
+    expect(entry?.worktree_hash).toBeNull()
+
+    const diff = await engine.compare(baseline, current)
+    expect(fileOf(diff, 'perm.txt')?.observation).toBe('unavailable')
+  })
+
+  it('3) 首次 lstat 后改变文件大小 → torn_read', async () => {
+    const dir = makeDir('bp-meta-grow-')
+    initRepo(dir, { 'app.ts': 'x\n' })
+    write(dir, 'race.txt', 'small\n')
+    const baseline = await engine.capture(dir)
+
+    const engine2 = new GitSnapshotEngine({
+      hooks: {
+        afterInitialLstat: (full) => {
+          if (isRace(full)) appendFileSync(full, 'grew-a-lot-more-content\n')
+        }
+      }
+    })
+    const current = await engine2.capture(dir)
+    const entry = snapOf(current, 'race.txt')
+    expect(entry?.unread_reason).toBe('torn_read')
+    expect(entry?.worktree_hash).toBeNull()
+  })
+
+  it('4) 首次 lstat 后替换符号链接 → torn_read（最初 lstat × linkBefore 身份不符）', async () => {
+    const dir = makeDir('bp-meta-link-')
+    initRepo(dir, { 'app.ts': 'x\n', 'g1.txt': 'one\n', 'g2.txt': 'two\n' })
+    symlinkSync('g1.txt', join(dir, 'race.txt')) // untracked 链接
+    const baseline = await engine.capture(dir)
+
+    const engine2 = new GitSnapshotEngine({
+      hooks: {
+        afterInitialLstat: (full) => {
+          if (isRace(full)) {
+            rmSync(full)
+            symlinkSync('g2.txt', full) // T0 之后整链接被换
+          }
+        }
+      }
+    })
+    const current = await engine2.capture(dir)
+    const entry = snapOf(current, 'race.txt')
+    expect(entry?.unread_reason).toBe('torn_read')
+    expect(entry?.worktree_hash).toBeNull() // 不采用被污染的 target
+
+    const diff = await engine.compare(baseline, current)
+    expect(fileOf(diff, 'race.txt')?.observation).toBe('unavailable')
+  })
+
+  it('5) 稳定文件正常采集：size / mode / hash 与实际文件同源一致', async () => {
+    const dir = makeDir('bp-meta-stable-')
+    initRepo(dir, { 'app.ts': 'x\n' })
+    // untracked 可执行文件：mode 由读取窗口的 fstat 归一
+    const execContent = '#!/bin/sh\necho hi\n'
+    write(dir, 'exec.sh', execContent)
+    chmodSync(join(dir, 'exec.sh'), 0o755)
+    // tracked 脏文件：mode 来自 porcelain mW，size/hash 来自同一读取窗口
+    const dirtyContent = 'modified line\n'
+    write(dir, 'app.ts', dirtyContent)
+
+    const snapshot = await engine.capture(dir)
+    const exec = snapOf(snapshot, 'exec.sh')
+    expect(exec?.unread_reason).toBeNull()
+    expect(exec?.size_bytes).toBe(Buffer.byteLength(execContent))
+    expect(exec?.worktree_mode).toBe('100755')
+    expect(exec?.worktree_hash).toBe(sha256Hex(Buffer.from(execContent)))
+
+    const dirty = snapOf(snapshot, 'app.ts')
+    expect(dirty?.unread_reason).toBeNull()
+    expect(dirty?.size_bytes).toBe(Buffer.byteLength(dirtyContent))
+    expect(dirty?.worktree_mode).toBe('100644') // porcelain mW（git 视角）
+    expect(dirty?.worktree_hash).toBe(sha256Hex(Buffer.from(dirtyContent)))
+    // 同源旁证：驻留的 baseline 字节长度与 size_bytes 一致
+    const stored = snapshot.baselineStore.get('app.ts')
+    expect(stored).toBeDefined()
+    expect(stored!.length).toBe(dirty?.size_bytes)
+  })
+})

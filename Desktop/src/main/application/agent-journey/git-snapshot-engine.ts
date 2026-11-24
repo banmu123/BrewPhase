@@ -101,6 +101,12 @@ export type GitSnapshotEngineOptions = {
 export type GitSnapshotHooks = {
   /** 打开每个工作区文件**之前**调用（路径/文件替换竞态注入）。 */
   beforeFileOpen?: (fullPath: string) => void | Promise<void>
+  /**
+   * **首次 lstat 之后、正式读取（或链接核验）之前**——两个 lstat 阶段之间的
+   * 确定性注入点（R6-4.3.2.4 §一）；与 `beforeFileOpen`（T1 之后）不同，
+   * 它专门用于验证 T0×T1 交叉校验真的生效。
+   */
+  afterInitialLstat?: (fullPath: string) => void | Promise<void>
   /** no-follow 打开成功、读取**之前**（「open 后、读取前」替换注入）。 */
   afterFileOpen?: (fullPath: string) => void | Promise<void>
   /**
@@ -153,6 +159,26 @@ type Side = {
   /** `lazy` 待取的 git blob sha。 */
   blobSha: string | null
   unknownWhy: UnknownWhy | null
+}
+
+/** 与内容来自**同一核验窗口**的稳定读取结果（修复一：元数据与内容同源）。 */
+type VerifiedRead = {
+  bytes: Buffer
+  /** T4 fstat 的 size（T7 复核与之相等）。 */
+  size: bigint
+  mode: bigint
+  mtimeNs: bigint
+  ctimeNs: bigint
+}
+
+/** 首次 lstat（T0）的身份快照：与读取窗口内的 T1 交叉校验。 */
+type InitialStat = {
+  ino: bigint
+  dev: bigint
+  size: bigint
+  mode: bigint
+  mtimeNs: bigint
+  ctimeNs: bigint
 }
 
 const NUL = String.fromCharCode(0)
@@ -748,10 +774,24 @@ async function readFileNoFollow(
   limit: number,
   /** 打开前复核父级：true = 父级出现 symlink（逃逸）→ fail-closed。 */
   recheckParents: () => Promise<boolean>,
-  hooks: GitSnapshotHooks
-): Promise<Buffer> {
+  hooks: GitSnapshotHooks,
+  /** 首次 lstat（T0）：与 T1 交叉校验，两次状态必须一致（R6-4.3.2.4 修复一）。 */
+  initial: InitialStat
+): Promise<VerifiedRead> {
   // T1：读取前 lstat（bigint：ns 级时间 + 完整身份）
   const before = await lstat(full, { bigint: true })
+  // T0 × T1 交叉校验：两次 lstat 之间内容/权限/大小/身份被改 → 撕裂，
+  // 绝不把 T0 的旧元数据与 T1 之后读到的新内容拼成一个「看似有效」的快照。
+  if (
+    before.ino !== initial.ino ||
+    before.dev !== initial.dev ||
+    before.size !== initial.size ||
+    before.mode !== initial.mode ||
+    before.mtimeNs !== initial.mtimeNs ||
+    before.ctimeNs !== initial.ctimeNs
+  ) {
+    throw new SnapshotReadError('torn')
+  }
   if (before.isSymbolicLink()) throw new SnapshotReadError('symlink_swap')
   if (!before.isFile()) throw new SnapshotReadError('unreadable')
   if (before.size > BigInt(limit)) throw new SnapshotReadError('too_large')
@@ -773,6 +813,7 @@ async function readFileNoFollow(
     }
     if (
       opened.size !== before.size ||
+      opened.mode !== before.mode ||
       opened.mtimeNs !== before.mtimeNs ||
       opened.ctimeNs !== before.ctimeNs
     ) {
@@ -825,7 +866,8 @@ async function readFileNoFollow(
       throw new SnapshotReadError('torn')
     }
 
-    return buf
+    // 元数据与内容同源：全部取自通过 T4/T7/T8b 复核的 opened 状态
+    return { bytes: buf, size: opened.size, mode: opened.mode, mtimeNs: opened.mtimeNs, ctimeNs: opened.ctimeNs }
   } finally {
     await handle.close().catch(() => undefined) // 任何异常路径都保证关闭（T6-H）
   }
@@ -869,16 +911,31 @@ async function buildFileSnapshot(
       unreadReason = 'symlink_escape' // ② 父级 symlink 逃逸：绝不触碰
     } else {
       try {
-        const info = await lstat(full)
+        // T0：首次 lstat（bigint）——后续所有元数据要么与它交叉校验、
+        // 要么来自与内容同一次核验窗口的 fstat（R6-4.3.2.4 修复一）。
+        const info = await lstat(full, { bigint: true })
         exists = true
-        lstatMode = gitModeFromStat(info.mode, info.isSymbolicLink())
+        lstatMode = gitModeFromStat(Number(info.mode), info.isSymbolicLink())
         if (info.isSymbolicLink()) {
           // symlink：hash 与驻留内容都是**目标字符串**——readlink 不跟随链接
           isSymlink = true
+          await ctx.hooks.afterInitialLstat?.(full) // T0 × linkBefore 注入点
           // lstat1（外层 info）→ readlink → lstat2：三者必须是同一个链接。
           // 链接在窗口内被替换 → 不采用本次 target（torn_read，绝不跟随）。
           const linkBefore = await lstat(full, { bigint: true })
           if (!linkBefore.isSymbolicLink()) throw new SnapshotReadError('torn')
+          // 修复一.5：最初 lstat 与 linkBefore 必须是**同一个链接**（不只校验
+          // readlink 前后的两次 lstat）
+          if (
+            linkBefore.ino !== info.ino ||
+            linkBefore.dev !== info.dev ||
+            linkBefore.size !== info.size ||
+            linkBefore.mode !== info.mode ||
+            linkBefore.mtimeNs !== info.mtimeNs ||
+            linkBefore.ctimeNs !== info.ctimeNs
+          ) {
+            throw new SnapshotReadError('torn')
+          }
           await ctx.hooks.aroundReadlink?.(full, 'before')
           const target = await readlink(full)
           await ctx.hooks.aroundReadlink?.(full, 'after')
@@ -898,17 +955,24 @@ async function buildFileSnapshot(
           isBinary = false
           worktreeHash = sha256Hex(bytes)
         } else if (info.isFile()) {
-          sizeBytes = info.size
+          sizeBytes = Number(info.size)
           if (sizeBytes > GIT_HASH_MAX_SOURCE_BYTES) {
             unreadReason = 'too_large'
           } else {
-            // ③ no-follow + 打开前父级复核 + 打开后身份/时间复核（修复四/五）
-            const buf = await readFileNoFollow(
+            await ctx.hooks.afterInitialLstat?.(full) // T0 × T1 注入点（修复一）
+            // ③ no-follow + T0×T1 交叉校验 + 打开前父级复核 + 打开后身份/时间复核
+            const read = await readFileNoFollow(
               full,
               GIT_HASH_MAX_SOURCE_BYTES,
               () => hasSymlinkParent(ctx.root, rel),
-              ctx.hooks
+              ctx.hooks,
+              info
             )
+            const buf = read.bytes
+            // 修复一：size/mode 取自与内容同一核验窗口的 fstat——
+            // 绝不用 T0 的旧元数据去搭配这次读到的新内容。
+            sizeBytes = Number(read.size)
+            lstatMode = gitModeFromStat(Number(read.mode), false)
             isBinary =
               isProbablyBinary(buf) || BINARY_EXTENSIONS.has(extname(rel).toLowerCase())
             worktreeHash = sha256Hex(buf)

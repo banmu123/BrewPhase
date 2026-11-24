@@ -401,3 +401,94 @@ describe('ls-tree 记录严格校验（规格 §四）', () => {
     expect(parsed.entries.map((e) => e.path)).toEqual(['good1.ts', 'link'])
   })
 })
+
+// MARK: - R6-4.3.2.4 修复二：mode/type 对应与路径规则（规格 §二）
+
+describe('ls-tree mode/type 对应与路径规则（R6-4.3.2.4 §二）', () => {
+  const SHA = 'a'.repeat(40)
+  const one = (record: string) => parseLsTreeAll(record + NUL)
+
+  it('每种合法 mode/type 组合都通过', () => {
+    const legal: Array<[string, string]> = [
+      ['040000', 'tree'],
+      ['100644', 'blob'],
+      ['100664', 'blob'],
+      ['100755', 'blob'],
+      ['120000', 'blob'],
+      ['160000', 'commit']
+    ]
+    for (const [mode, type] of legal) {
+      const parsed = one(`${mode} ${type} ${SHA}\tpath-${mode}`)
+      expect(parsed.malformed, `${mode}/${type}`).toBe(0)
+      expect(parsed.entries[0].mode).toBe(mode)
+      expect(parsed.entries[0].type).toBe(type)
+    }
+  })
+
+  it('非法 mode/type 组合一律 malformed（至少两种，绝不产生有效 entry）', () => {
+    const illegal: Array<[string, string]> = [
+      ['040000', 'blob'], // tree 的 mode 配 blob
+      ['160000', 'blob'], // gitlink 的 mode 配 blob
+      ['100644', 'tree'],
+      ['120000', 'commit'],
+      ['100755', 'tree'],
+      ['999999', 'blob']
+    ]
+    for (const [mode, type] of illegal) {
+      const parsed = one(`${mode} ${type} ${SHA}\tx`)
+      expect(parsed.malformed, `${mode}/${type}`).toBe(1)
+      expect(parsed.entries).toHaveLength(0)
+    }
+  })
+
+  it('路径规则：绝对路径 / 路径穿越 / 非法路径段 → malformed', () => {
+    const badPaths = [
+      '/etc/passwd', // POSIX 绝对路径
+      'C:/win/system32', // Windows 盘符绝对路径
+      '../evil', // 上穿
+      'a/../b', // 中段穿越
+      'a//b', // 空路径段
+      './x', // 当前段
+      'a/', // 尾部空段
+      '.', // 当前段整体
+      '..' // 上穿整体
+    ]
+    for (const path of badPaths) {
+      const parsed = one(`100644 blob ${SHA}\t${path}`)
+      expect(parsed.malformed, JSON.stringify(path)).toBe(1)
+      expect(parsed.entries, JSON.stringify(path)).toHaveLength(0)
+    }
+  })
+
+  it('合法特殊文件名仍正确解析（前导连字符/空格/Tab/换行/中文/点文件）', () => {
+    const good = [
+      '-leading.txt',
+      'a b.txt',
+      'tab\there.txt',
+      'nl\nhere.txt',
+      '中文文件.txt',
+      '.hidden',
+      'dir/.keep',
+      ':(magic).txt',
+      'star*.txt'
+    ]
+    for (const path of good) {
+      const parsed = one(`100644 blob ${SHA}\t${path}`)
+      expect(parsed.malformed, JSON.stringify(path)).toBe(0)
+      expect(parsed.entries[0].path).toBe(path)
+    }
+  })
+
+  it('混合：合法 entries 保留，非法记录逐条计数（含 mode/type 错配与坏路径）', () => {
+    const records = [
+      `100644 blob ${SHA}\tgood.ts`,
+      `040000 blob ${SHA}\tbad-combo`, // mode/type 错配
+      `100644 blob ${SHA}\t../traversal`, // 路径穿越
+      `120000 commit ${SHA}\tbad-link`, // mode/type 错配
+      `100644 blob ${'b'.repeat(40)}\tfine-two.txt`
+    ]
+    const parsed = parseLsTreeAll(records.join(NUL) + NUL)
+    expect(parsed.malformed).toBe(3)
+    expect(parsed.entries.map((e) => e.path)).toEqual(['good.ts', 'fine-two.txt'])
+  })
+})
