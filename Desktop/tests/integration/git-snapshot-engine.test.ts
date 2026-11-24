@@ -19,6 +19,7 @@ import type {
   GitFileDiff,
   GitWorkspaceSnapshot
 } from '../../src/main/application/agent-journey/git-snapshot-types'
+import { sha256Hex } from '../../src/main/application/agent-journey/git-snapshot-utils'
 
 /**
  * Git Snapshot Engine 的**真实 Git 仓库**集成测试（R6-4.3.2 §十一）。
@@ -326,7 +327,7 @@ describe('Dirty 基线与净变化（§7）', () => {
     write(dir, 'file.ts', 'B'.repeat(600) + '\n')
     const small = new GitSnapshotEngine({ baselineStoreBytes: 50 })
     const baseline = await small.capture(dir)
-    expect(baseline.baseline_complete).toBe(false)
+    expect(baseline.baseline_store_complete).toBe(false)
     expect(snapOf(baseline, 'file.ts')?.baseline_content).toEqual({
       kind: 'not_stored',
       reason: 'budget'
@@ -337,7 +338,7 @@ describe('Dirty 基线与净变化（§7）', () => {
     const entry = fileOf(diff, 'file.ts')
     expect(entry?.artifact.kind).toBe('unavailable')
     expect(entry?.insertions).toBeNull()
-    expect(diff.baseline_complete).toBe(false)
+    expect(diff.baseline_store_complete).toBe(false)
     // 绝不回退成 HEAD→C
     expect(text(entry!.artifact)).not.toContain('+C')
   })
@@ -690,13 +691,19 @@ describe('错误与边界（§十一 24–27）', () => {
     expect(diff.files).toEqual([])
     expect(JSON.stringify(diff)).not.toContain('CHANGED_OUTSIDE')
 
-    // 删除链接 → deleted，diff 内容是目标路径字符串（与 git 语义一致）
+    // 删除链接 → deleted + **独立 symlink artifact**（修复二 §四.7-9）：
+    // 绝对目标替换为占位符，绝不把机器绝对路径或外部内容写进对外 Diff。
     rmSync(join(dir, 'evil.txt'))
     const diff2 = await engine.compare(baseline, await engine.capture(dir))
     const removed = fileOf(diff2, 'evil.txt')
     expect(removed?.change_kind).toBe('deleted')
-    expect(text(removed!.artifact)).toContain(join(outside, 'secret.txt'))
-    expect(text(removed!.artifact)).not.toContain('OUTSIDE_SECRET_CONTENT')
+    expect(removed?.artifact.kind).toBe('symlink')
+    if (removed?.artifact.kind === 'symlink') {
+      expect(removed.artifact.target_before).toBe('<absolute-target>')
+      expect(removed.artifact.target_after).toBeNull()
+    }
+    expect(JSON.stringify(diff2)).not.toContain(join(outside, 'secret.txt'))
+    expect(JSON.stringify(diff2)).not.toContain('OUTSIDE_SECRET_CONTENT')
   })
 })
 
@@ -873,5 +880,550 @@ describe('只读保证（§十一 额外）', () => {
     // 任何外部程序 / hook 都没有被执行
     const executed = readdirSync(markers).filter((name) => name.endsWith('.marker'))
     expect(executed).toEqual([])
+  })
+})
+
+
+// MARK: - 修复一：HEAD Tree 清单与 Commit 场景（规格 §三 A–F）
+
+describe('HEAD Tree 清单与 Commit 场景（修复一）', () => {
+  it('Tree 清单字段：path/mode/type/sha，按 NUL 解析特殊文件名', async () => {
+    const dir = makeDir('bp-tree-fields-')
+    initRepo(dir, { '中文 文件.txt': 'x\n', 'tab\there.txt': 'y\n', 'plain.ts': 'z\n' })
+    const snapshot = await engine.capture(dir)
+    expect(snapshot.head_tree.status).toBe('ok')
+    const paths = snapshot.head_tree.entries.map((entry) => entry.path).sort()
+    expect(paths).toEqual(['plain.ts', 'tab\there.txt', '中文 文件.txt'].sort())
+    for (const entry of snapshot.head_tree.entries) {
+      expect(entry.mode).toMatch(/^\d{6}$/)
+      expect(['blob', 'tree', 'commit']).toContain(entry.type)
+      expect(entry.sha).toMatch(/^[0-9a-f]{40}$/)
+    }
+    // 只存元数据：序列化结果不含文件内容
+    expect(JSON.stringify(snapshot.head_tree)).not.toContain('x\n')
+    // 身份/序列化仍不含绝对路径
+    expect(JSON.stringify(snapshot)).not.toContain(dir)
+  })
+
+  it('空仓库 → 明确的空 Tree 状态（empty，不是 unavailable）', async () => {
+    const dir = makeDir('bp-tree-empty-')
+    mkdirSync(dir, { recursive: true })
+    git(['init', '-q'], dir)
+    git(['config', 'user.email', 'e2e@brewphase.test'], dir)
+    git(['config', 'user.name', 'e2e'], dir)
+    const snapshot = await engine.capture(dir)
+    expect(snapshot.head_tree.status).toBe('empty')
+    expect(snapshot.head_tree.entries).toEqual([])
+    expect(snapshot.head_tree.error_code).toBeNull()
+  })
+
+  it('输出上限是硬限制：超限 → 结构化 output_limit（不假装完整）', async () => {
+    const dir = makeDir('bp-tree-limit-')
+    initRepo(dir, { 'a.txt': 'one\n' })
+    const tiny = new GitSnapshotEngine({ maxOutputBytes: 50 })
+    const snapshot = await tiny.capture(dir)
+    expect(snapshot.capture_status).toBe('error')
+    expect(snapshot.error_code).toBe('output_limit')
+    // error 快照的 Tree 状态同样明确为 unavailable，而非空清单
+    expect(snapshot.head_tree.status).toBe('unavailable')
+    expect(snapshot.head_tree.error_code).toBe('output_limit')
+  })
+
+  it('Tree 清单不可用 → compare 不把受影响路径伪装成「无变化」', async () => {
+    const dir = makeDir('bp-tree-unavail-')
+    initRepo(dir, { 'a.txt': 'one\n' })
+    const baseline = await engine.capture(dir)
+    const current = await engine.capture(dir)
+    // 人为把 baseline 的 Tree 标成不可用（等价于超限/读取失败后的快照）
+    const broken: GitWorkspaceSnapshot = {
+      ...baseline,
+      head_tree: { status: 'unavailable', error_code: 'output_limit', entries: [] }
+    }
+    const diff = await engine.compare(broken, current)
+    expect(diff.status).toBe('ok')
+    // a.txt 在 current Tree 里、baseline 侧存在性未知 → 不可判定条目，而不是静默跳过
+    const entry = fileOf(diff, 'a.txt')
+    expect(entry).toBeDefined()
+    expect(entry?.observation).toBe('unavailable')
+    expect(entry?.artifact.kind).toBe('unavailable')
+    expect(diff.stats.undetermined).toBeGreaterThanOrEqual(1)
+    expect(diff.stats.changed_files).toBe(0)
+  })
+
+  it('场景 A：窗口内 commit（A→B）→ head_moved + Diff 不丢失', async () => {
+    const dir = makeDir('bp-scen-a-')
+    initRepo(dir, { 'file.ts': 'A\n' })
+    const baseline = await engine.capture(dir) // T1 干净 A
+
+    write(dir, 'file.ts', 'B\n') // T2 修改
+    git(['add', 'file.ts'], dir)
+    git(['commit', '-qm', 'B'], dir) // T3 提交
+    const current = await engine.capture(dir) // T4 干净 B
+
+    const diff = await engine.compare(baseline, current)
+    expect(diff.head_moved).toBe(true)
+    const entry = fileOf(diff, 'file.ts')
+    expect(entry, 'commit 后工作区干净，变化也不许丢').toBeDefined()
+    expect(entry?.observation).toBe('changed')
+    expect(entry?.status_origin).toBe('committed') // 不是普通 index 变化
+    expect(entry?.pre_existing_dirty).toBe(false)
+    const body = text(entry!.artifact)
+    expect(body).toContain('-A')
+    expect(body).toContain('+B')
+  })
+
+  it('场景 B：提交新增文件 → added（origin committed）', async () => {
+    const dir = makeDir('bp-scen-b-')
+    initRepo(dir, { 'base.ts': 'b\n' })
+    const baseline = await engine.capture(dir)
+
+    write(dir, 'new.ts', 'brand new\n')
+    git(['add', 'new.ts'], dir)
+    git(['commit', '-qm', 'add new'], dir)
+    const diff = await engine.compare(baseline, await engine.capture(dir))
+
+    const entry = fileOf(diff, 'new.ts')
+    expect(entry?.change_kind).toBe('added')
+    expect(entry?.status_origin).toBe('committed')
+    expect(text(entry!.artifact)).toContain('+brand new')
+  })
+
+  it('场景 C：提交删除文件 → deleted（origin committed）', async () => {
+    const dir = makeDir('bp-scen-c-')
+    initRepo(dir, { 'doomed.ts': 'bye\n', 'keep.ts': 'k\n' })
+    const baseline = await engine.capture(dir)
+
+    rmSync(join(dir, 'doomed.ts'))
+    git(['add', '-A', '.'], dir)
+    git(['commit', '-qm', 'remove doomed'], dir)
+    const diff = await engine.compare(baseline, await engine.capture(dir))
+
+    const entry = fileOf(diff, 'doomed.ts')
+    expect(entry?.change_kind).toBe('deleted')
+    expect(entry?.status_origin).toBe('committed')
+    expect(text(entry!.artifact)).toContain('-bye')
+    expect(fileOf(diff, 'keep.ts')).toBeUndefined()
+  })
+
+  it('场景 D：提交重命名 → 恰好一条 renamed，不重复 added/deleted', async () => {
+    const dir = makeDir('bp-scen-d-')
+    initRepo(dir, { 'old.ts': 'alpha\nbeta\ngamma\ndelta\n' })
+    const baseline = await engine.capture(dir)
+
+    git(['mv', 'old.ts', 'new.ts'], dir)
+    git(['commit', '-qm', 'rename'], dir)
+    const diff = await engine.compare(baseline, await engine.capture(dir))
+
+    expect(diff.stats.renamed).toBe(1)
+    expect(diff.stats.added).toBe(0)
+    expect(diff.stats.deleted).toBe(0)
+    const renamed = diff.files.filter((entry) => entry.change_kind === 'renamed')
+    expect(renamed).toHaveLength(1)
+    expect(renamed[0].repo_relative_path).toBe('new.ts')
+    expect(renamed[0].rename_from_path).toBe('old.ts')
+    // 旧路径绝不再单独报 deleted
+    expect(fileOf(diff, 'old.ts')).toBeUndefined()
+  })
+
+  it('场景 E：提交 B 后继续改 C → 窗口净变化是 A→C（不是 B→C）', async () => {
+    const dir = makeDir('bp-scen-e-')
+    initRepo(dir, { 'file.ts': 'A\n' })
+    const baseline = await engine.capture(dir)
+
+    write(dir, 'file.ts', 'B\n')
+    git(['add', 'file.ts'], dir)
+    git(['commit', '-qm', 'B'], dir)
+    write(dir, 'file.ts', 'C\n') // 提交后继续修改
+    const diff = await engine.compare(baseline, await engine.capture(dir))
+
+    const entry = fileOf(diff, 'file.ts')
+    expect(entry).toBeDefined()
+    const body = text(entry!.artifact)
+    expect(body).toContain('-A')
+    expect(body).toContain('+C')
+    expect(body).not.toContain('-B') // B 只是窗口中间态，不是基线
+    expect(entry?.status_origin).toBe('worktree') // 终点是工作区脏态
+  })
+
+  it('场景 F：HEAD 移动但工作区内容无净变化 → head_moved=true、零文件条目', async () => {
+    const dir = makeDir('bp-scen-f-')
+    initRepo(dir, { 'file.ts': 'A\n' })
+    write(dir, 'file.ts', 'B\n')
+    git(['add', 'file.ts'], dir)
+    const baseline = await engine.capture(dir) // staged：内容已是 B
+
+    git(['commit', '-qm', 'B'], dir) // 只是提交，内容不变
+    const diff = await engine.compare(baseline, await engine.capture(dir))
+    expect(diff.head_moved).toBe(true)
+    expect(diff.files).toEqual([])
+    expect(diff.stats.changed_files).toBe(0)
+  })
+})
+
+// MARK: - 修复二：Symlink 安全（规格 §四）
+
+describe('Symlink 安全（修复二）', () => {
+  it('指向含敏感内容的外部文件：内容与绝对路径都不进 Diff / JSON', async () => {
+    const outside = makeDir('bp-link-secret-out-')
+    write(outside, 'creds.txt', 'AWS_SECRET=AKIA_SUPER_SECRET_VALUE\n')
+    const dir = makeDir('bp-link-secret-')
+    initRepo(dir, { 'app.ts': 'x\n' })
+    symlinkSync(join(outside, 'creds.txt'), join(dir, 'creds.link'))
+    git(['add', '-A', '.'], dir)
+    git(['commit', '-qm', 'link'], dir)
+
+    const baseline = await engine.capture(dir)
+    expect(JSON.stringify(baseline)).not.toContain('AKIA_SUPER_SECRET_VALUE')
+    expect(JSON.stringify(baseline)).not.toContain(outside)
+
+    rmSync(join(dir, 'creds.link'))
+    const diff = await engine.compare(baseline, await engine.capture(dir))
+    const entry = fileOf(diff, 'creds.link')
+    expect(entry?.change_kind).toBe('deleted')
+    expect(entry?.artifact.kind).toBe('symlink')
+    expect(JSON.stringify(diff)).not.toContain('AKIA_SUPER_SECRET_VALUE')
+    expect(JSON.stringify(diff)).not.toContain(outside)
+  })
+
+  it('baseline 后把链接换成另一个外部目标 → 链接事实变化（两侧绝对目标都变占位符）', async () => {
+    const outA = makeDir('bp-link-out-a-')
+    const outB = makeDir('bp-link-out-b-')
+    write(outA, 'a.txt', 'CONTENT_A_MUST_NOT_APPEAR\n')
+    write(outB, 'b.txt', 'CONTENT_B_MUST_NOT_APPEAR\n')
+    const dir = makeDir('bp-link-swap-')
+    initRepo(dir, { 'app.ts': 'x\n' })
+    symlinkSync(join(outA, 'a.txt'), join(dir, 'link.txt'))
+    git(['add', '-A', '.'], dir)
+    git(['commit', '-qm', 'link a'], dir)
+    const baseline = await engine.capture(dir)
+
+    rmSync(join(dir, 'link.txt'))
+    symlinkSync(join(outB, 'b.txt'), join(dir, 'link.txt'))
+    const diff = await engine.compare(baseline, await engine.capture(dir))
+
+    const entry = fileOf(diff, 'link.txt')
+    expect(entry?.observation).toBe('changed')
+    expect(entry?.artifact.kind).toBe('symlink')
+    if (entry?.artifact.kind === 'symlink') {
+      expect(entry.artifact.target_before).toBe('<absolute-target>')
+      expect(entry.artifact.target_after).toBe('<absolute-target>')
+    }
+    expect(JSON.stringify(diff)).not.toContain('CONTENT_A_MUST_NOT_APPEAR')
+    expect(JSON.stringify(diff)).not.toContain('CONTENT_B_MUST_NOT_APPEAR')
+    expect(JSON.stringify(diff)).not.toContain(outA)
+    expect(JSON.stringify(diff)).not.toContain(outB)
+  })
+
+  it('相对路径目标：目标字符串原样保留（不含机器信息）', async () => {
+    const dir = makeDir('bp-link-rel-')
+    initRepo(dir, { 'g.txt': 'g\n', 'other.txt': 'o\n' })
+    symlinkSync('g.txt', join(dir, 'link.txt'))
+    git(['add', '-A', '.'], dir)
+    git(['commit', '-qm', 'rel link'], dir)
+    const baseline = await engine.capture(dir)
+
+    // 换成另一个相对目标
+    rmSync(join(dir, 'link.txt'))
+    symlinkSync('other.txt', join(dir, 'link.txt'))
+    const diff = await engine.compare(baseline, await engine.capture(dir))
+    const entry = fileOf(diff, 'link.txt')
+    expect(entry?.artifact.kind).toBe('symlink')
+    if (entry?.artifact.kind === 'symlink') {
+      expect(entry.artifact.target_before).toBe('g.txt')
+      expect(entry.artifact.target_after).toBe('other.txt')
+    }
+    // 仍是 symlink → git 报 M（modified），type_changed 只属于 file↔link 互换
+    expect(entry?.change_kind).toBe('modified')
+  })
+
+  it('父级目录被换成指向外部的 symlink → 拒绝触碰（symlink_escape），不读外部内容', async () => {
+    const outside = makeDir('bp-link-parent-out-')
+    write(outside, 'f.txt', 'OUTSIDE_PARENT_CONTENT\n')
+    const dir = makeDir('bp-link-parent-')
+    initRepo(dir, { 'sub/f.txt': 'inside\n' })
+    const baseline = await engine.capture(dir)
+    // 干净文件不进 status manifest，但必须在 HEAD Tree 清单里
+    expect(baseline.head_tree.entries.some((e) => e.path === 'sub/f.txt')).toBe(true)
+
+    // 窗口内：把 sub 目录换成指向外部的链接
+    rmSync(join(dir, 'sub'), { recursive: true, force: true })
+    symlinkSync(outside, join(dir, 'sub'))
+    const current = await engine.capture(dir)
+
+    const entry = snapOf(current, 'sub/f.txt')
+    // git 仍会报 sub/f.txt 的状态，但引擎拒绝跟随父级 symlink
+    if (entry) {
+      expect(entry.unread_reason).toBe('symlink_escape')
+      expect(entry.worktree_hash).toBeNull()
+      expect(entry.baseline_content).toEqual({ kind: 'not_stored', reason: 'symlink_escape' })
+    }
+    const diff = await engine.compare(baseline, current)
+    expect(JSON.stringify(diff)).not.toContain('OUTSIDE_PARENT_CONTENT')
+    expect(JSON.stringify(diff)).not.toContain(outside)
+    // 不能读到外部内容就绝不产出「看似准确」的文本 Diff
+    for (const file of diff.files) {
+      if (file.repo_relative_path.startsWith('sub')) {
+        expect(file.artifact.kind).not.toBe('diff')
+      }
+    }
+  })
+
+  it('全链路序列化：capture 与 compare 的 JSON 都不含外部内容与绝对目标', async () => {
+    const outside = makeDir('bp-link-json-out-')
+    write(outside, 'hidden.txt', 'HIDDEN_OUTSIDE_BODY\n')
+    const dir = makeDir('bp-link-json-')
+    initRepo(dir, { 'app.ts': 'x\n' })
+    symlinkSync(join(outside, 'hidden.txt'), join(dir, 'h.link'))
+    const baseline = await engine.capture(dir)
+    rmSync(join(dir, 'h.link'))
+    const diff = await engine.compare(baseline, await engine.capture(dir))
+
+    for (const payload of [JSON.stringify(baseline), JSON.stringify(diff)]) {
+      expect(payload).not.toContain('HIDDEN_OUTSIDE_BODY')
+      expect(payload).not.toContain(outside)
+      expect(payload).not.toContain('hidden.txt') // 目标文件名（绝对目标已占位）
+    }
+  })
+})
+
+// MARK: - 修复三：Snapshot 时间点一致性（规格 §五）
+
+describe('Snapshot 时间点一致性（修复三）', () => {
+  it('capture current 后、compare 前修改文件 → Diff 用采集时刻内容（B，不是 C）', async () => {
+    const dir = makeDir('bp-consist-mod-')
+    initRepo(dir, { 'file.ts': 'A\n' })
+    const baseline = await engine.capture(dir)
+
+    write(dir, 'file.ts', 'B\n')
+    const current = await engine.capture(dir)
+    write(dir, 'file.ts', 'C\n') // compare 之前才改的：必须被无视
+
+    const diff = await engine.compare(baseline, current)
+    const entry = fileOf(diff, 'file.ts')
+    const body = text(entry!.artifact)
+    expect(body).toContain('-A')
+    expect(body).toContain('+B')
+    expect(body).not.toContain('+C')
+    // 内容 hash 与采集时刻一致（不产生与 hash 不一致的 Diff）
+    expect(entry?.content_hash_after).toBe(sha256Hex(Buffer.from('B\n')))
+  })
+
+  it('capture current 后把文件替换成 symlink → 不跟随、Diff 仍是采集内容', async () => {
+    const outside = makeDir('bp-consist-out-')
+    write(outside, 'x.txt', 'EXTERNAL_AFTER_CAPTURE\n')
+    const dir = makeDir('bp-consist-link-')
+    initRepo(dir, { 'file.ts': 'A\n' })
+    const baseline = await engine.capture(dir)
+
+    write(dir, 'file.ts', 'B\n')
+    const current = await engine.capture(dir)
+    rmSync(join(dir, 'file.ts'))
+    symlinkSync(join(outside, 'x.txt'), join(dir, 'file.ts'))
+
+    const diff = await engine.compare(baseline, current)
+    const body = text(fileOf(diff, 'file.ts')!.artifact)
+    expect(body).toContain('-A')
+    expect(body).toContain('+B')
+    expect(JSON.stringify(diff)).not.toContain('EXTERNAL_AFTER_CAPTURE')
+    expect(JSON.stringify(diff)).not.toContain(outside)
+  })
+
+  it('capture current 后删除文件 → Diff 仍用采集时刻内容', async () => {
+    const dir = makeDir('bp-consist-del-')
+    initRepo(dir, { 'file.ts': 'A\n' })
+    const baseline = await engine.capture(dir)
+
+    write(dir, 'file.ts', 'B\n')
+    const current = await engine.capture(dir)
+    rmSync(join(dir, 'file.ts')) // compare 之前才删的
+
+    const diff = await engine.compare(baseline, current)
+    const body = text(fileOf(diff, 'file.ts')!.artifact)
+    expect(body).toContain('-A')
+    expect(body).toContain('+B')
+    expect(fileOf(diff, 'file.ts')?.content_hash_after).toBe(sha256Hex(Buffer.from('B\n')))
+  })
+
+  it('大文件绝不无上限读取：>8MB 只标记、不产出文本 Diff', async () => {
+    const dir = makeDir('bp-consist-huge-')
+    initRepo(dir, { 'app.ts': 'x\n' })
+    write(dir, 'huge.txt', 'a'.repeat(8 * 1024 * 1024 + 5))
+    const baseline = await engine.capture(dir)
+    expect(snapOf(baseline, 'huge.txt')?.unread_reason).toBe('too_large')
+    expect(snapOf(baseline, 'huge.txt')?.worktree_hash).toBeNull() // 没整读
+
+    write(dir, 'huge.txt', 'b'.repeat(8 * 1024 * 1024 + 9))
+    const diff = await engine.compare(baseline, await engine.capture(dir))
+    const entry = fileOf(diff, 'huge.txt')
+    expect(entry?.artifact.kind).not.toBe('diff')
+    expect(entry?.insertions).toBeNull()
+  })
+})
+
+// MARK: - 修复四：不可观测状态（规格 §六）
+
+describe('不可观测状态（修复四）', () => {
+  it('同一大小的大文件内容变化（size 与 status 都相同）→ unavailable 条目，绝不跳过', async () => {
+    const dir = makeDir('bp-unknown-same-')
+    initRepo(dir, { 'app.ts': 'x\n' })
+    const size = 9 * 1024 * 1024
+    write(dir, 'big.bin.txt', 'a'.repeat(size))
+    const baseline = await engine.capture(dir)
+    expect(snapOf(baseline, 'big.bin.txt')?.unread_reason).toBe('too_large')
+
+    write(dir, 'big.bin.txt', 'b'.repeat(size)) // 同尺寸、同 status（仍 untracked）
+    const current = await engine.capture(dir)
+    expect(snapOf(current, 'big.bin.txt')?.size_bytes).toBe(size)
+
+    const diff = await engine.compare(baseline, current)
+    const entry = fileOf(diff, 'big.bin.txt')
+    expect(entry, '无法确认时必须给出条目，不能伪装无变化').toBeDefined()
+    // 判定不可用（没有 hash、尺寸又相同 → 无法确认），但内容本身是「超限拿不到」
+    expect(entry?.observation).toBe('unavailable')
+    expect(entry?.artifact.kind).toBe('over_budget')
+    if (entry?.artifact.kind === 'over_budget') {
+      expect(entry.artifact.reason).toBe('source_too_large')
+      expect(entry.artifact.insertions).toBeNull() // 绝不伪造 0
+    }
+    expect(diff.stats.undetermined).toBe(1)
+    expect(diff.stats.changed_files).toBe(0)
+  })
+
+  it('大文件大小变化 → 可确认 changed（尺寸是证据）', async () => {
+    const dir = makeDir('bp-unknown-size-')
+    initRepo(dir, { 'app.ts': 'x\n' })
+    write(dir, 'big.txt', 'a'.repeat(9 * 1024 * 1024))
+    const baseline = await engine.capture(dir)
+
+    write(dir, 'big.txt', 'b'.repeat(9 * 1024 * 1024 + 64))
+    const diff = await engine.compare(baseline, await engine.capture(dir))
+    const entry = fileOf(diff, 'big.txt')
+    expect(entry?.observation).toBe('changed')
+    expect(entry?.artifact.kind).toBe('over_budget')
+    if (entry?.artifact.kind === 'over_budget') {
+      expect(entry.artifact.reason).toBe('source_too_large')
+      expect(entry.artifact.insertions).toBeNull()
+    }
+  })
+
+  it('基线侧读取权限消失（unreadable、size 相同）→ unavailable，不按「status 相同」跳过', async () => {
+    const dir = makeDir('bp-unknown-perm-')
+    initRepo(dir, { 'app.ts': 'x\n', 'locked.txt': 'original\n' })
+    write(dir, 'locked.txt', 'modified\n') // 变脏，让基线有条目
+    const file = join(dir, 'locked.txt')
+    chmodSync(file, 0o000)
+    let baseline: GitWorkspaceSnapshot
+    try {
+      baseline = await engine.capture(dir)
+    } finally {
+      chmodSync(file, 0o644)
+    }
+    expect(snapOf(baseline, 'locked.txt')?.unread_reason).toBe('unreadable')
+    expect(snapOf(baseline, 'locked.txt')?.worktree_hash).toBeNull()
+
+    // 窗口内恢复可读，内容与基线相同 → 仍不能凭空断言「没变」（基线无 hash）
+    const diff = await engine.compare(baseline, await engine.capture(dir))
+    const entry = fileOf(diff, 'locked.txt')
+    expect(entry).toBeDefined()
+    expect(entry?.observation).toBe('unavailable')
+    expect(entry?.insertions).toBeNull()
+  })
+
+  it('当前侧读取权限消失（unreadable、size 相同）→ unavailable', async () => {
+    const dir = makeDir('bp-unknown-perm2-')
+    initRepo(dir, { 'app.ts': 'x\n', 'locked.txt': 'original\n' })
+    const baseline = await engine.capture(dir)
+
+    write(dir, 'locked.txt', 'modified\n')
+    const file = join(dir, 'locked.txt')
+    chmodSync(file, 0o000)
+    let current: GitWorkspaceSnapshot
+    try {
+      current = await engine.capture(dir)
+    } finally {
+      chmodSync(file, 0o644)
+    }
+    expect(snapOf(current, 'locked.txt')?.unread_reason).toBe('unreadable')
+
+    const diff = await engine.compare(baseline, current)
+    const entry = fileOf(diff, 'locked.txt')
+    expect(entry).toBeDefined()
+    expect(entry?.observation).toBe('unavailable')
+    expect(entry?.insertions).toBeNull()
+  })
+
+  it('无法重建 Git blob → unavailable(blob_missing)，不是无变化', async () => {
+    const dir = makeDir('bp-unknown-blob-')
+    initRepo(dir, { 'file.ts': 'A\n' })
+    const baseline = await engine.capture(dir)
+    const current = await engine.capture(dir)
+    expect(current.capture_status).toBe('ok')
+
+    // 篡改 baseline 的 Tree sha（等价于对象被 gc 后无法 cat-file）
+    const broken: GitWorkspaceSnapshot = {
+      ...baseline,
+      head_tree: {
+        ...baseline.head_tree,
+        entries: baseline.head_tree.entries.map((entry) =>
+          entry.path === 'file.ts' ? { ...entry, sha: 'a'.repeat(40) } : entry
+        )
+      }
+    }
+    const diff = await engine.compare(broken, current)
+    const entry = fileOf(diff, 'file.ts')
+    expect(entry).toBeDefined()
+    expect(entry?.observation).toBe('changed') // git sha 已证实 HEAD 变了
+    expect(entry?.artifact.kind).toBe('unavailable')
+    if (entry?.artifact.kind === 'unavailable') {
+      expect(entry.artifact.reason).toBe('blob_missing')
+      expect(entry.artifact.insertions).toBeNull()
+    }
+  })
+
+  it('驻留字节与快照 hash 不一致 → stale（完整性守卫，拒绝产出 Diff）', async () => {
+    const dir = makeDir('bp-unknown-stale-')
+    initRepo(dir, { 'file.ts': 'A\n' })
+    write(dir, 'file.ts', 'B\n')
+    const baseline = await engine.capture(dir)
+    expect(snapOf(baseline, 'file.ts')?.baseline_content.kind).toBe('stored')
+
+    // 篡改驻留字节（模拟内存态被破坏）
+    const tampered: GitWorkspaceSnapshot = {
+      ...baseline,
+      baselineStore: new Map([[ 'file.ts', Buffer.from('TAMPERED\n') ]])
+    }
+    write(dir, 'file.ts', 'C\n')
+    const diff = await engine.compare(tampered, await engine.capture(dir))
+    const entry = fileOf(diff, 'file.ts')
+    expect(entry).toBeDefined()
+    expect(entry?.artifact.kind).toBe('unavailable')
+    if (entry?.artifact.kind === 'unavailable') {
+      expect(entry.artifact.reason).toBe('stale')
+    }
+    expect(JSON.stringify(diff)).not.toContain('TAMPERED')
+  })
+
+  it('baseline_store_complete 只表达预算语义；单文件可否重建看 artifact 原因', async () => {
+    const dir = makeDir('bp-unknown-budget-')
+    initRepo(dir, { 'file.ts': 'A\n' })
+    write(dir, 'file.ts', 'B'.repeat(600) + '\n')
+    const small = new GitSnapshotEngine({ baselineStoreBytes: 50 })
+    const baseline = await small.capture(dir)
+    // 预算溢出 → 旗标 false（预算语义）
+    expect(baseline.baseline_store_complete).toBe(false)
+    // 未溢出的快照 → true（即便它有 dirty 文件）
+    const normal = await engine.capture(dir)
+    expect(normal.baseline_store_complete).toBe(true)
+
+    write(dir, 'file.ts', 'C\n')
+    const diff = await small.compare(baseline, await small.capture(dir))
+    expect(diff.baseline_store_complete).toBe(false)
+    const entry = fileOf(diff, 'file.ts')
+    expect(entry?.artifact.kind).toBe('unavailable')
+    if (entry?.artifact.kind === 'unavailable') {
+      expect(entry.artifact.reason).toBe('baseline_not_stored')
+    }
+    // 有 hash 的一侧仍可确认「变了」，只是产不出内容
+    expect(entry?.observation).toBe('changed')
   })
 })

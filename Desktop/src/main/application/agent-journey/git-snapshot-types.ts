@@ -57,11 +57,15 @@ export type GitChangeKind =
 /**
  * 变化来源。设计文档 §7.2 的 `status_origin` 扩展出 `both` 与 `untracked`：
  * 同一文件可能 staged 与 unstaged 同时变化，**必须分列**，不能压成一种。
+ *
+ * `committed`（R6-4.3.2.1 新增，向后兼容的超集）：两侧 status 清单里都
+ * **没有**该路径——变化只能由 HEAD Tree 清单观察到（例如窗口内发生了
+ * commit）。绝不能把它错标成普通 index/worktree 变化。
  */
-export type GitStatusOrigin = 'index' | 'worktree' | 'both' | 'untracked'
+export type GitStatusOrigin = 'index' | 'worktree' | 'both' | 'untracked' | 'committed'
 
 /** 内容没读到的原因（敏感文件永远不读）。 */
-export type GitUnreadReason = 'sensitive' | 'too_large' | 'unreadable'
+export type GitUnreadReason = 'sensitive' | 'too_large' | 'unreadable' | 'symlink_escape'
 
 /**
  * 基线内容的重建方式（Dirty baseline，设计文档 §9）。
@@ -81,6 +85,32 @@ export type GitBaselineContentRef =
       reason: 'budget' | 'index_missing' | GitUnreadReason | 'binary'
     }
   | { kind: 'absent' }
+
+/**
+ * HEAD Tree 清单元数据（R6-4.3.2.1 修复一）：来自
+ * `git ls-tree -r -z --full-tree HEAD`——**只存 path/mode/type/sha**，
+ * 不复制文件内容，因此窗口内 commit 掉的变化不会从 status 清单里消失后
+ * 就无从发现。
+ *
+ * `status` 三态：
+ * - `ok`：完整读到（`entries` 可为空 = 空树提交）；
+ * - `empty`：没有 HEAD（空仓库 / 非 Git 目录）——**明确的空 Tree 状态**；
+ * - `unavailable`：超输出上限或读取失败——**绝不返回看似完整的空清单**，
+ *   此时 compare 会把受影响路径标成不可判定而不是「无变化」。
+ */
+export type GitTreeEntry = {
+  path: string
+  mode: string
+  type: 'blob' | 'tree' | 'commit'
+  sha: string
+}
+
+export type GitHeadTree = {
+  status: 'ok' | 'empty' | 'unavailable'
+  /** status==='unavailable' 时非 null（如 `output_limit` / `git_failed`）。 */
+  error_code: GitErrorCode | null
+  entries: GitTreeEntry[]
+}
 
 /** 单文件在快照中的状态（manifest 条目；来自 `git status --porcelain=v2`）。 */
 export type GitFileSnapshot = {
@@ -154,6 +184,9 @@ export type GitWorkspaceSnapshot = {
   counts: GitSnapshotCounts
   files: GitFileSnapshot[]
 
+  /** HEAD Tree 清单（R6-4.3.2.1）：commit 过的文件变化靠它不丢。 */
+  head_tree: GitHeadTree
+
   /**
    * 内部字段：工作区根绝对路径。**不可枚举**——`JSON.stringify(snapshot)`
    * 不会包含它，误入 DTO 的概率被结构性排除。仅供 compare 内部使用。
@@ -164,8 +197,16 @@ export type GitWorkspaceSnapshot = {
    * **不可枚举**，且是内存态：本阶段不承诺重启后可恢复（P3 负责入 SQLite）。
    */
   baselineStore: Map<string, Uint8Array>
-  /** 基线内容是否全部可重建（false = 至少一个脏文件超预算未存）。 */
-  baseline_complete: boolean
+  /**
+   * **预算语义**（R6-4.3.2.1 重新定义，原 `baseline_complete` 改名）：
+   * 所有应驻留的脏**文本**基线内容都在内存预算内（没有发生预算溢出）。
+   *
+   * 它**不**表示「所有文件都能重建」——单文件能否重建看每条
+   * `baseline_content` / compare 里每条 `artifact` 的 unavailable 原因；
+   * 是否存在不可判定文件看 `diff.stats.undetermined`。拆开是为了不让 P3
+   * 把一个布尔值误读成「Diff 一定都可生成」。
+   */
+  baseline_store_complete: boolean
 }
 
 // MARK: - Diff（compare 输出）
@@ -177,10 +218,34 @@ export type GitWorkspaceSnapshot = {
  *   能算则给（敏感/二进制不读内容 → null），**绝不写 0 冒充「没有变化」**；
  * - `unavailable`：基线内容无法重建（未存 / blob 已被 gc），明确不可用。
  */
+/** 不可重建 / 不可观测的原因（R6-4.3.2.1 扩展：分侧、stale、不可观测）。 */
+export type GitUnavailableReason =
+  /** 基线侧内容没驻留内存且无 blob 可重建。 */
+  | 'baseline_not_stored'
+  /** 当前侧内容没驻留内存且无 blob 可重建。 */
+  | 'current_not_stored'
+  /** git 对象缺失（被 gc 等），无法重建。 */
+  | 'blob_missing'
+  /** 内容不是合法 UTF-8，不能产出文本 diff。 */
+  | 'decode_failed'
+  /** 该侧没有有效 hash / 内容（超大、不可读、Tree 清单不可用）——无法判定是否变化。 */
+  | 'not_observable'
+  /** 驻留字节与快照 hash 不一致（完整性守卫），拒绝产出看似准确的 Diff。 */
+  | 'stale'
+
 export type GitDiffArtifact =
   | { kind: 'diff'; text: string; insertions: number; deletions: number; byte_size: number }
   | { kind: 'binary' }
   | { kind: 'sensitive' }
+  /**
+   * Symlink 变化（R6-4.3.2.1 修复二）：只展示**链接事实**（两侧目标字符串，
+   * 绝对目标已替换为占位符），绝不读取、也绝不展示链接外部的目标内容。
+   */
+  | {
+      kind: 'symlink'
+      target_before: string | null
+      target_after: string | null
+    }
   | {
       kind: 'over_budget'
       reason: 'file_budget' | 'snapshot_budget' | 'source_too_large' | 'algorithm_budget'
@@ -189,15 +254,26 @@ export type GitDiffArtifact =
     }
   | {
       kind: 'unavailable'
-      reason: 'baseline_not_stored' | 'blob_missing' | 'decode_failed' | 'current_unreadable'
+      reason: GitUnavailableReason
       insertions: number | null
       deletions: number | null
     }
+
+/**
+ * 判定三态（R6-4.3.2.1 修复四）：
+ * - `confirmed_unchanged`：有足够证据确认内容一致 → **不产生条目**；
+ * - `changed`：可以确定净变化 → 条目 `observation='changed'`；
+ * - `unavailable`：无法确定 → 条目 `observation='unavailable'`
+ *   （宁可给出不可判定条目，也绝不伪造「无变化」或 insertions=0）。
+ */
+export type GitObservation = 'confirmed_unchanged' | 'changed' | 'unavailable'
 
 export type GitFileDiff = {
   repo_relative_path: string
   change_kind: GitChangeKind
   status_origin: GitStatusOrigin
+  /** 本条目的判定结果（`confirmed_unchanged` 不会出现——它不产生条目）。 */
+  observation: 'changed' | 'unavailable'
   content_hash_before: string | null
   content_hash_after: string | null
   pre_existing_dirty: boolean
@@ -210,7 +286,10 @@ export type GitFileDiff = {
 }
 
 export type GitDiffStats = {
+  /** `observation='changed'` 的条目数（不可判定的**不**混进来）。 */
   changed_files: number
+  /** `observation='unavailable'` 的条目数：无法确认是否变化的文件。 */
+  undetermined: number
   added: number
   modified: number
   deleted: number
@@ -232,10 +311,11 @@ export type GitWorkspaceDiff = {
   /** 窗口内 HEAD 是否移动（归因置信度降级信号，设计文档 §8）。 */
   head_moved: boolean
   /**
-   * 基线内容是否完整：false = 有脏文件的基线内容超预算未存，
-   * 对应文件的 Diff 明确不可用。**内存态，重启后不可依赖**（§九）。
+   * 沿用 baseline 快照的**预算语义**（原 `baseline_complete` 改名）：
+   * false = 至少一个脏文本基线超预算未存。单文件可否重建看 `artifact`，
+   * 不可判定文件数看 `stats.undetermined`。**内存态，重启后不可依赖**（§九）。
    */
-  baseline_complete: boolean
+  baseline_store_complete: boolean
   files: GitFileDiff[]
   stats: GitDiffStats
 }

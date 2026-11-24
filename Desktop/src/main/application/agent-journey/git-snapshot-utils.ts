@@ -16,9 +16,11 @@ import {
   GIT_DIFF_MAX_BYTES_PER_FILE,
   GIT_DIFF_MAX_HUNKS_PER_FILE,
   GIT_DIFF_MAX_LINES_PER_FILE,
-  type GitChangeKind
+  type GitChangeKind,
+  type GitTreeEntry
 } from './git-snapshot-types'
 import { isSensitiveName } from '../local-workspace/workspace-file-service'
+import { redactSecrets } from './sanitize'
 
 const NUL = String.fromCharCode(0)
 
@@ -202,15 +204,55 @@ export function countTrackedPaths(text: string): number {
   return seen.size
 }
 
-/** `git ls-tree -z <sha> -- <path>` → `{ sha, path }`；无匹配返回 null。 */
-export function parseLsTree(text: string): { mode: string; type: string; sha: string; path: string } | null {
-  const record = text.split(NUL)[0]
+/** 单条 `ls-tree -z` 记录：`<mode> SP <type> SP <sha> TAB <path>`。 */
+function parseLsTreeRecord(record: string): { mode: string; type: string; sha: string; path: string } | null {
   if (!record) return null
   const tab = record.indexOf('\t')
   if (tab < 0) return null
   const head = record.slice(0, tab).split(' ')
   if (head.length < 3) return null
-  return { mode: head[0], type: head[1], sha: head[2], path: record.slice(tab + 1) }
+  const type = head[1]
+  return {
+    mode: head[0],
+    type: type === 'blob' || type === 'tree' || type === 'commit' ? type : 'blob',
+    sha: head[2],
+    path: record.slice(tab + 1)
+  }
+}
+
+/** `git ls-tree -z <sha> -- <path>` → 首条；无匹配返回 null。 */
+export function parseLsTree(text: string): { mode: string; type: string; sha: string; path: string } | null {
+  return parseLsTreeRecord(text.split(NUL)[0] ?? '')
+}
+
+/**
+ * `git ls-tree -r -z --full-tree HEAD` 全量解析（R6-4.3.2.1 修复一）。
+ * 按 NUL 切分——中文 / 空格 / Tab / 换行等文件名原样保留（§4.4）。
+ */
+export function parseLsTreeAll(text: string): GitTreeEntry[] {
+  const entries: GitTreeEntry[] = []
+  for (const record of text.split(NUL)) {
+    const parsed = parseLsTreeRecord(record)
+    if (parsed) {
+      entries.push({
+        path: parsed.path,
+        mode: parsed.mode,
+        type: parsed.type as GitTreeEntry['type'],
+        sha: parsed.sha
+      })
+    }
+  }
+  return entries
+}
+
+/**
+ * Symlink 目标脱敏（R6-4.3.2.1 修复二 §四.7-9）：
+ * - **绝对目标一律替换为占位符**——绝不把机器绝对路径写进对外 Diff；
+ * - 相对目标是链接文本本身（不含机器信息），过一遍 `redactSecrets` 兜底。
+ */
+export function sanitizeLinkTarget(target: string): string {
+  if (/^([A-Za-z]:[\\/]|\/|\\\\)/.test(target)) return '<absolute-target>'
+  return redactSecrets(target)
 }
 
 /** 状态码 → 变更种类（`.` / `u` 等不产生种类）。 */
