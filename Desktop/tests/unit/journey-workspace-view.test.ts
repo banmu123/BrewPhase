@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
+  INITIAL_WORKSPACE_LIST_STATE,
   journeyWorkspaceView,
   JOURNEY_EXECUTION_EVENT_TYPES,
-  JOURNEY_WORKSPACE_LOCKED_STATUSES
+  JOURNEY_WORKSPACE_LOCKED_STATUSES,
+  workspaceListFailure,
+  workspaceListStart,
+  workspaceListSuccess,
+  type JourneyWorkspaceListState
 } from '../../src/renderer/src/features/records/journey-workspace-view'
 import type { LocalWorkspace } from '../../src/shared/contracts'
 
@@ -39,12 +44,25 @@ function workspace(
 const WS_A = workspace({ id: 'aaaaaaaa-0000-4000-8000-000000000001', name: 'BrewPhase' })
 const WS_B = workspace({ id: 'bbbbbbbb-0000-4000-8000-000000000002', name: 'ChromeExt' })
 
+/** 列表已成功加载的包装（R6-4.3.1.1 起输入是状态机而不是裸数组）。 */
+function loadedList(workspaces: LocalWorkspace[]): JourneyWorkspaceListState {
+  return { status: 'loaded', seq: 0, workspaces }
+}
+
+function viewWith(
+  journey: { status: string; workspace_id: string | null },
+  list: JourneyWorkspaceListState,
+  events: Array<{ event_type: string; status: string }> = []
+) {
+  return journeyWorkspaceView({ journey, events, list })
+}
+
 function viewOf(
   journey: { status: string; workspace_id: string | null },
   events: Array<{ event_type: string; status: string }> = [],
   workspaces: LocalWorkspace[] = [WS_A, WS_B]
 ) {
-  return journeyWorkspaceView({ journey, events, workspaces })
+  return viewWith(journey, loadedList(workspaces), events)
 }
 
 describe('四种关联状态', () => {
@@ -166,5 +184,148 @@ describe('安全与常量', () => {
       'failed',
       'abandoned'
     ])
+  })
+})
+
+// MARK: - R6-4.3.1.1 列表加载状态（loading / failed 绝不等于 deleted）
+
+describe('列表未加载时的展示（规格 §二）', () => {
+  const bound = { status: 'created', workspace_id: WS_A.id }
+
+  it('loading：显示 loading，**即使已绑定也绝不判成 deleted**', () => {
+    const view = viewWith(bound, { status: 'loading', seq: 1 })
+    expect(view.state).toBe('loading')
+    expect(view.state).not.toBe('deleted')
+    expect(view.listLoaded).toBe(false)
+    expect(view.label).toBeNull() // 没加载出来就不假装知道名字
+    expect(view.options).toEqual([])
+  })
+
+  it('failed：显示 load_failed，既不判 deleted 也不装作列表为空', () => {
+    const view = viewWith(bound, { status: 'failed', seq: 2 })
+    expect(view.state).toBe('load_failed')
+    expect(view.state).not.toBe('deleted')
+    expect(view.state).not.toBe('none')
+    expect(view.listLoaded).toBe(false)
+    expect(view.options).toEqual([])
+  })
+
+  it('failed 且未绑定 → 仍是 load_failed（不是「未关联工作区」的空态）', () => {
+    const view = viewWith({ status: 'created', workspace_id: null }, { status: 'failed', seq: 3 })
+    expect(view.state).toBe('load_failed')
+    expect(view.listLoaded).toBe(false)
+  })
+
+  it('只有列表成功加载后才允许用 ID 匹配判 deleted', () => {
+    const unknownId = 'cccccccc-0000-4000-8000-000000000003'
+    const unknown = { status: 'created', workspace_id: unknownId }
+    // 未加载：不知道 → loading / load_failed
+    expect(viewWith(unknown, { status: 'loading', seq: 1 }).state).toBe('loading')
+    expect(viewWith(unknown, { status: 'failed', seq: 1 }).state).toBe('load_failed')
+    // 已加载且列表里没有 → 才是 deleted
+    expect(viewWith(unknown, loadedList([WS_A])).state).toBe('deleted')
+  })
+
+  it('加载成功且列表为空：未绑定 = none（确实没登记），已绑定 = deleted', () => {
+    const empty = loadedList([])
+    expect(viewWith({ status: 'created', workspace_id: null }, empty).state).toBe('none')
+    expect(viewWith({ status: 'created', workspace_id: WS_A.id }, empty).state).toBe('deleted')
+    // 空列表也算 loaded——「确实没有」必须能与「没加载」区分开
+    expect(viewWith({ status: 'created', workspace_id: null }, empty).listLoaded).toBe(true)
+  })
+
+  it('已加载但文件夹失效：仍显示名字（unavailable 不是 deleted）', () => {
+    const missing = workspace({ id: WS_A.id, name: 'BrewPhase', availability: 'missing' })
+    const view = viewWith(bound, loadedList([missing]))
+    expect(view.state).toBe('unavailable')
+    expect(view.label).toBe('BrewPhase')
+  })
+
+  it('生命周期锁定在加载中 / 失败时依然成立（两条规则互不覆盖）', () => {
+    const locked = { status: 'completed', workspace_id: WS_A.id }
+    expect(viewWith(locked, { status: 'loading', seq: 1 }).canManage).toBe(false)
+    expect(viewWith(locked, { status: 'failed', seq: 1 }).canManage).toBe(false)
+    expect(viewWith(locked, { status: 'loading', seq: 1 }).lockedReason).toBe('journey_finished')
+  })
+
+  it('任何状态下序列化结果都不含绝对路径', () => {
+    for (const list of [
+      { status: 'loading', seq: 1 },
+      { status: 'failed', seq: 1 },
+      loadedList([WS_A]),
+      loadedList([])
+    ] as JourneyWorkspaceListState[]) {
+      const serialized = JSON.stringify(
+        viewWith({ status: 'created', workspace_id: WS_A.id }, list)
+      )
+      expect(serialized).not.toContain(PROJECT_PATH)
+      expect(serialized).not.toContain('/Users/')
+    }
+  })
+})
+
+// MARK: - R6-4.3.1.1 列表状态机（规格 §2.1）
+
+describe('workspace 列表读取状态机', () => {
+  it('初始即 loading，且不携带数组（空数组 ≠ 未加载）', () => {
+    expect(INITIAL_WORKSPACE_LIST_STATE).toEqual({ status: 'loading', seq: 0 })
+    expect('workspaces' in INITIAL_WORKSPACE_LIST_STATE).toBe(false)
+  })
+
+  it('首次加载 → loading；成功（哪怕空数组）→ loaded', () => {
+    const loading = workspaceListStart(INITIAL_WORKSPACE_LIST_STATE, 1, true)
+    expect(loading).toEqual({ status: 'loading', seq: 1 })
+    const loaded = workspaceListSuccess(loading, 1, [])
+    expect(loaded).toEqual({ status: 'loaded', seq: 1, workspaces: [] })
+    expect('workspaces' in loaded).toBe(true)
+  })
+
+  it('失败 → failed，且不携带数组（不得吞成空列表）', () => {
+    const loading = workspaceListStart(INITIAL_WORKSPACE_LIST_STATE, 1, true)
+    const failed = workspaceListFailure(loading, 1)
+    expect(failed).toEqual({ status: 'failed', seq: 1 })
+    expect('workspaces' in failed).toBe(false)
+  })
+
+  it('较旧请求的结果不得覆盖较新状态（序号守卫）', () => {
+    // 请求 1 发出 → 请求 2（重试）发出 → 请求 1 的结果才回来
+    const req1 = workspaceListStart(INITIAL_WORKSPACE_LIST_STATE, 1, true)
+    const req2 = workspaceListStart(req1, 2, true)
+    expect(req2).toEqual({ status: 'loading', seq: 2 })
+    // 请求 1 的成功/失败都必须被丢弃
+    expect(workspaceListSuccess(req2, 1, [WS_A])).toEqual(req2)
+    expect(workspaceListFailure(req2, 1)).toEqual(req2)
+    // 只有请求 2 的结果能落库
+    expect(workspaceListSuccess(req2, 2, [WS_A]).status).toBe('loaded')
+  })
+
+  it('后台刷新（非 initial）保持当前状态，只推进序号', () => {
+    const loaded = workspaceListSuccess(
+      workspaceListStart(INITIAL_WORKSPACE_LIST_STATE, 1, true),
+      1,
+      [WS_A]
+    )
+    const refreshing = workspaceListStart(loaded, 2, false)
+    expect(refreshing.status).toBe('loaded')
+    expect(refreshing.seq).toBe(2)
+    // 刷新期间列表数据仍在（不闪回 loading）
+    expect(refreshing).toHaveProperty('workspaces', [WS_A])
+
+    const failed = workspaceListFailure(workspaceListStart(INITIAL_WORKSPACE_LIST_STATE, 1, true), 1)
+    const retryByEvent = workspaceListStart(failed, 2, false)
+    expect(retryByEvent.status).toBe('failed') // 后台事件不悄悄清掉失败态
+    expect(retryByEvent.seq).toBe(2)
+  })
+
+  it('重试链：failed →（initial）loading → 成功 → loaded', () => {
+    const failed = workspaceListFailure(
+      workspaceListStart(INITIAL_WORKSPACE_LIST_STATE, 1, true),
+      1
+    )
+    const retrying = workspaceListStart(failed, 2, true)
+    expect(retrying).toEqual({ status: 'loading', seq: 2 })
+    const recovered = workspaceListSuccess(retrying, 2, [WS_A, WS_B])
+    expect(recovered.status).toBe('loaded')
+    expect(recovered).toHaveProperty('workspaces', [WS_A, WS_B])
   })
 })

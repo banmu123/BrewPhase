@@ -189,7 +189,11 @@ export const records = {
     workspaceBindDone: (name: string) => `Linked to "${name}"`,
     workspaceBindFailed: (error: string) => `Link failed: ${error}`,
     workspaceUnbindDone: 'Workspace link removed',
-    workspaceUnbindFailed: (error: string) => `Unlink failed: ${error}`
+    workspaceUnbindFailed: (error: string) => `Unlink failed: ${error}`,
+    // R6-4.3.1.1: list loading states (strictly distinct from "deleted")
+    workspaceLoading: 'Loading workspace information…',
+    workspaceLoadFailed: 'Cannot read workspace information right now. Please retry.',
+    workspaceRetry: 'Retry'
   },
 
   metadata: {

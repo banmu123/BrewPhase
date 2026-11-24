@@ -1,17 +1,23 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   Canvas,
   JourneyDetail as Detail,
   JourneyNote,
-  JourneyRecordLink,
-  LocalWorkspace
+  JourneyRecordLink
 } from '@shared/contracts'
 import { api } from '../../shared/api'
 import { useI18n } from '../../i18n'
 import { EventGlyph, eventTypeAccent } from '../../shared/EventGlyph'
 import { EventDetailSections } from '../../shared/EventDetailSections'
 import { parseJourneyDetail } from '@shared/contracts'
-import { journeyWorkspaceView } from './journey-workspace-view'
+import {
+  INITIAL_WORKSPACE_LIST_STATE,
+  journeyWorkspaceView,
+  workspaceListFailure,
+  workspaceListStart,
+  workspaceListSuccess,
+  type JourneyWorkspaceListState
+} from './journey-workspace-view'
 
 /**
  * Agent Journey 的**完整详情**（R6-4.1 §3.2，R6-4.1.1 §7 精修）。
@@ -49,8 +55,18 @@ export function JourneyDetailView(props: {
     Map<string, { title: string; carrier: string } | null>
   >(new Map())
 
-  /** R6-4.3.1：已登记工作区（只用于下拉与显示名，主进程才是权限）。 */
-  const [workspaces, setWorkspaces] = useState<LocalWorkspace[]>([])
+  /**
+   * R6-4.3.1.1：已登记工作区的**读取状态**（loading / loaded / failed）。
+   *
+   * 不能用空数组同时代表「还没加载」「加载失败」和「确实没登记」——
+   * 状态机与序号守卫在 `journey-workspace-view.ts`（纯函数，可单测）。
+   * 只用于下拉与显示名，主进程才是权限。
+   */
+  const [listState, setListState] = useState<JourneyWorkspaceListState>(
+    INITIAL_WORKSPACE_LIST_STATE
+  )
+  /** 已发出的最新请求序号；卸载或新请求都会推进它，在途旧结果一律作废。 */
+  const listSeqRef = useRef(0)
   const [pickedWorkspace, setPickedWorkspace] = useState('')
   const [workspaceMessage, setWorkspaceMessage] = useState<string | null>(null)
   /**
@@ -60,26 +76,32 @@ export function JourneyDetailView(props: {
    */
   const [workspaceOverride, setWorkspaceOverride] = useState<string | null | undefined>(undefined)
 
+  const loadWorkspaces = useCallback((initial: boolean) => {
+    const seq = ++listSeqRef.current
+    setListState((prev) => workspaceListStart(prev, seq, initial))
+    void api.localWorkspace.list().then(
+      (items) => setListState((prev) => workspaceListSuccess(prev, seq, items)),
+      // 失败明确进 failed，**绝不**吞掉异常当成空列表。
+      () => setListState((prev) => workspaceListFailure(prev, seq))
+    )
+  }, [])
+
+  /** 读取失败后的重试入口（规格 §三）：重新调用 `api.localWorkspace.list()`。 */
+  const retryWorkspaceList = useCallback(() => loadWorkspaces(true), [loadWorkspaces])
+
   useEffect(() => {
-    let alive = true
-    const loadWorkspaces = (): void => {
-      api.localWorkspace
-        .list()
-        .then((items) => {
-          if (alive) setWorkspaces(items)
-        })
-        .catch(() => undefined)
-    }
-    loadWorkspaces()
-    // 工作区登记在别处增删时同步（与 CardWorkspaceToolbar 同一事件）。
+    loadWorkspaces(true)
+    // 工作区登记在别处增删时同步（与 CardWorkspaceToolbar 同一事件）；
+    // 后台刷新不回退到 loading，保持当前状态只换数据。
     const off = api.app.onChanged((domain) => {
-      if (domain === 'localWorkspaces') loadWorkspaces()
+      if (domain === 'localWorkspaces') loadWorkspaces(false)
     })
     return () => {
-      alive = false
+      // 卸载：推进序号让在途结果全部失效（IPC 无法中止，但结果不再写回）。
+      listSeqRef.current += 1
       off()
     }
-  }, [])
+  }, [loadWorkspaces])
 
   // 换了一条 Journey（或父级已拉到最新数据）时清掉本地覆盖。
   useEffect(() => {
@@ -171,14 +193,18 @@ export function JourneyDetailView(props: {
     try {
       const updated = await api.agentJourneys.bindWorkspace(journey.id, pickedWorkspace)
       setWorkspaceOverride(updated.workspace_id)
-      const name = workspaces.find((workspace) => workspace.id === pickedWorkspace)?.name ?? ''
+      // 绑定按钮只在列表 loaded 时可点，这里一定能拿到名字。
+      const name =
+        listState.status === 'loaded'
+          ? (listState.workspaces.find((workspace) => workspace.id === pickedWorkspace)?.name ?? '')
+          : ''
       setWorkspaceMessage(t.records.journey.workspaceBindDone(name))
       props.onChanged()
     } catch (cause) {
       // 主进程的拒绝原因（不存在 / 不可用 / 执行已开始）原样呈现。
       setWorkspaceMessage(t.records.journey.workspaceBindFailed((cause as Error).message))
     }
-  }, [pickedWorkspace, journey.id, workspaces, t, props])
+  }, [pickedWorkspace, journey.id, listState, t, props])
 
   const unlinkWorkspace = useCallback(async () => {
     setWorkspaceMessage(null)
@@ -223,7 +249,7 @@ export function JourneyDetailView(props: {
       workspace_id: workspaceOverride !== undefined ? workspaceOverride : journey.workspace_id
     },
     events,
-    workspaces
+    list: listState
   })
 
   return (
@@ -276,10 +302,14 @@ export function JourneyDetailView(props: {
 
       {/* ── R6-4.3.1 工作区关联：授权范围的显式管理 ───────────
           只显示已登记工作区的**名字**，不展示机器绝对路径；
-          执行已开始 / Journey 终态时锁定（服务端也会再拒一次）。 */}
+          执行已开始 / Journey 终态时锁定（服务端也会再拒一次）。
+          R6-4.3.1.1：加载中 / 加载失败是**独立状态**——既不显示「已删除」，
+          也不把接口异常吞成空列表；列表没加载出来前不渲染绑定操作。 */}
       <section className="journey-section">
         <h3 className="journey-section__title">{t.records.journey.workspaceTitle}</h3>
         <p className="note">
+          {workspaceView.state === 'loading' && t.records.journey.workspaceLoading}
+          {workspaceView.state === 'load_failed' && t.records.journey.workspaceLoadFailed}
           {workspaceView.state === 'none' && t.records.journey.workspaceNone}
           {workspaceView.state === 'linked' &&
             t.records.journey.workspaceLinked(workspaceView.label ?? '')}
@@ -288,7 +318,29 @@ export function JourneyDetailView(props: {
           {workspaceView.state === 'deleted' && t.records.journey.workspaceDeleted}
         </p>
 
-        {workspaceView.canManage ? (
+        {workspaceView.state === 'load_failed' && (
+          <div className="journey-inline">
+            <button
+              type="button"
+              className="button"
+              onClick={() => retryWorkspaceList()}
+            >
+              {t.records.journey.workspaceRetry}
+            </button>
+          </div>
+        )}
+
+        {/* 锁定提示只在「本该出现绑定操作」的时机出现——列表没加载出来时
+            控件缺席的原因是读取状态，不是生命周期。 */}
+        {!workspaceView.canManage && workspaceView.listLoaded && (
+          <p className="page-sub journey-inline__feedback">
+            {workspaceView.lockedReason === 'journey_finished'
+              ? t.records.journey.workspaceLockedFinished
+              : t.records.journey.workspaceLockedStarted}
+          </p>
+        )}
+
+        {workspaceView.canManage && workspaceView.listLoaded ? (
           <div className="journey-inline">
             <select
               value={pickedWorkspace}
@@ -323,17 +375,13 @@ export function JourneyDetailView(props: {
               </button>
             )}
           </div>
-        ) : (
-          <p className="page-sub journey-inline__feedback">
-            {workspaceView.lockedReason === 'journey_finished'
-              ? t.records.journey.workspaceLockedFinished
-              : t.records.journey.workspaceLockedStarted}
-          </p>
-        )}
+        ) : null}
 
-        {workspaceView.canManage && workspaceView.options.length === 0 && (
-          <p className="page-sub">{t.records.journey.workspaceNoRegistered}</p>
-        )}
+        {workspaceView.canManage &&
+          workspaceView.listLoaded &&
+          workspaceView.options.length === 0 && (
+            <p className="page-sub">{t.records.journey.workspaceNoRegistered}</p>
+          )}
         {workspaceMessage && (
           <p className="page-sub journey-inline__feedback">{workspaceMessage}</p>
         )}

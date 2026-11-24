@@ -192,7 +192,11 @@ export const records = {
     workspaceBindDone: (name: string) => `已关联「${name}」`,
     workspaceBindFailed: (error: string) => `关联失败：${error}`,
     workspaceUnbindDone: '已解除关联',
-    workspaceUnbindFailed: (error: string) => `解除关联失败：${error}`
+    workspaceUnbindFailed: (error: string) => `解除关联失败：${error}`,
+    // R6-4.3.1.1：列表读取状态（与「已删除」严格区分）
+    workspaceLoading: '正在读取工作区信息……',
+    workspaceLoadFailed: '暂时无法读取工作区信息，请重试。',
+    workspaceRetry: '重试'
   },
 
   metadata: {
