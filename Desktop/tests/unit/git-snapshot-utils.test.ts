@@ -310,3 +310,94 @@ describe('parseLsTreeAll 的 malformed 计数（修复二：绝不静默跳过�
     expect(parseLsTreeAll('')).toEqual({ entries: [], malformed: 0 })
   })
 })
+
+// MARK: - 修复二：ls-tree 记录严格校验（规格 §四 13 项）
+
+describe('ls-tree 记录严格校验（规格 §四）', () => {
+  const SHA1 = 'a'.repeat(40)
+  const SHA256 = 'b'.repeat(64)
+  const one = (record: string) => parseLsTreeAll(record + String.fromCharCode(0))
+
+  it('1-3) 合法 blob / tree / gitlink commit 正常解析', () => {
+    const blob = one(`100644 blob ${SHA1}\tf.txt`)
+    expect(blob).toEqual({
+      entries: [{ mode: '100644', type: 'blob', sha: SHA1, path: 'f.txt' }],
+      malformed: 0
+    })
+    const tree = one(`040000 tree ${SHA1}\tsubdir`)
+    expect(tree.entries[0].type).toBe('tree')
+    expect(tree.malformed).toBe(0)
+    const gitlink = one(`160000 commit ${SHA1}\tkid`)
+    expect(gitlink.entries[0].type).toBe('commit')
+    expect(gitlink.entries[0].mode).toBe('160000')
+    expect(gitlink.malformed).toBe(0)
+  })
+
+  it('4) 非法 mode → malformed（绝不当作正常模式）', () => {
+    expect(one(`999999 blob ${SHA1}\tf`).malformed).toBe(1)
+    expect(one(`10064x blob ${SHA1}\tf`).malformed).toBe(1)
+    expect(one(`1006444 blob ${SHA1}\tf`).malformed).toBe(1)
+    expect(one(`abcde blob ${SHA1}\tf`).malformed).toBe(1)
+  })
+
+  it('5) 非法 type → malformed（绝不降级成 blob）', () => {
+    expect(one(`100644 blobb ${SHA1}\tf`).malformed).toBe(1)
+    expect(one(`100644 submod ${SHA1}\tf`).malformed).toBe(1)
+    expect(one(`100644 BLOB ${SHA1}\tf`).malformed).toBe(1)
+    expect(one(`100644 ${'x'.repeat(4)} ${SHA1}\tf`).malformed).toBe(1)
+  })
+
+  it('6) 非法 SHA（非 hex）→ malformed', () => {
+    expect(one(`100644 blob ${'z'.repeat(40)}\tf`).malformed).toBe(1)
+    expect(one(`100644 blob ${'A'.repeat(40)}\tf`).malformed).toBe(1) // 大写非规范
+    expect(one(`100644 blob not-a-sha-at-all-here-but-long-enough\tf`).malformed).toBe(1)
+  })
+
+  it('7) SHA 长度错误 → malformed；40（SHA-1）与 64（SHA-256）都合法', () => {
+    for (const bad of ['a'.repeat(39), 'a'.repeat(41), 'a'.repeat(43), 'a'.repeat(63), 'a'.repeat(65)]) {
+      expect(one(`100644 blob ${bad}\tf`).malformed, `len=${bad.length}`).toBe(1)
+    }
+    expect(one(`100644 blob ${SHA1}\tf`).malformed).toBe(0)
+    expect(one(`100644 blob ${SHA256}\tf`).malformed).toBe(0)
+  })
+
+  it('8) 缺少 TAB（用空格分隔 path）→ malformed', () => {
+    expect(one(`100644 blob ${SHA1} f.txt`).malformed).toBe(1)
+    expect(one(`100644 blob ${SHA1}`).malformed).toBe(1)
+  })
+
+  it('9) Header 字段数量错误 → malformed', () => {
+    expect(one(`100644 blob ${SHA1} extra\tf`).malformed).toBe(1) // 4 段
+    expect(one(`100644 blob\tf`).malformed).toBe(1) // 2 段
+    expect(one(` blob ${SHA1}\tf`).malformed).toBe(1) // 首段为空 → 4 段含空串
+  })
+
+  it('10) 空路径 → malformed', () => {
+    expect(one(`100644 blob ${SHA1}\t`).malformed).toBe(1)
+  })
+
+  it('11) 特殊文件名（Tab / 换行 / 空格 / 中文 / 前导连字符）正常解析', () => {
+    const weird = 'weird\t\n name-中文.txt'
+    const parsed = one(`100644 blob ${SHA1}\t${weird}`)
+    expect(parsed.malformed).toBe(0)
+    expect(parsed.entries[0].path).toBe(weird)
+  })
+
+  it('12) SHA-256 对象格式（64 位）整体解析正常', () => {
+    const parsed = one(`100755 blob ${SHA256}\tbin.sh`)
+    expect(parsed.malformed).toBe(0)
+    expect(parsed.entries[0].sha).toBe(SHA256)
+  })
+
+  it('13) 合法与非法记录混合：合法保留、非法逐条计数', () => {
+    const NUL2 = String.fromCharCode(0)
+    const good1 = `100644 blob ${SHA1}\tgood1.ts`
+    const bad1 = `999999 blob ${SHA1}\tbad-mode.ts`
+    const bad2 = `100644 alien ${SHA1}\tbad-type.ts`
+    const good2 = `120000 blob ${SHA1}\tlink`
+    const text = [good1, bad1, bad2, good2].join(NUL2) + NUL2
+    const parsed = parseLsTreeAll(text)
+    expect(parsed.malformed).toBe(2)
+    expect(parsed.entries.map((e) => e.path)).toEqual(['good1.ts', 'link'])
+  })
+})

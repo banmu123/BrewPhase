@@ -5,6 +5,8 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  truncateSync,
+  utimesSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -2025,5 +2027,340 @@ describe('采集一致性核验（修复五）', () => {
     const snapshot = await engine.capture(dir)
     expect(snapshot.capture_status).toBe('ok')
     expect(snapshot.files.some((f) => f.repo_relative_path === 'dirty.txt')).toBe(true)
+  })
+})
+
+
+// MARK: - 修复一：完整读取窗口 T1–T8（规格 §三 A–H）
+
+describe('文件读取窗口完整性（规格 §三）', () => {
+  /** 建仓并让目标文件先变脏：status1==status2，注入不会被「状态漂移重试」掩盖。 */
+  function dirtyRepo(prefix: string, committed: string, dirty: string): string {
+    const dir = makeDir(prefix)
+    initRepo(dir, { 'target.txt': committed })
+    write(dir, 'target.txt', dirty)
+    return dir
+  }
+  const isTarget = (full: string): boolean => full.endsWith(`${sep}target.txt`)
+
+  it('A) open 前（T1 之后）内容被同尺寸改写 → torn_read（mtime/ctime 证据）', async () => {
+    const dir = dirtyRepo('bp-window-a-', 'committed\n', 'aaaa\n')
+    const baseline = await engine.capture(dir)
+    expect(snapOf(baseline, 'target.txt')?.worktree_hash).toBeTruthy()
+
+    const engine2 = new GitSnapshotEngine({
+      hooks: {
+        beforeFileOpen: (full) => {
+          if (isTarget(full)) writeFileSync(full, 'bbbb\n') // 同尺寸：size 证据失效
+        }
+      }
+    })
+    const current = await engine2.capture(dir)
+    const entry = snapOf(current, 'target.txt')
+    expect(entry?.unread_reason).toBe('torn_read')
+    expect(entry?.worktree_hash).toBeNull() // 撕裂内容绝不产生 hash
+    expect(entry?.baseline_content).toEqual({ kind: 'not_stored', reason: 'torn_read' })
+
+    const diff = await engine.compare(baseline, current)
+    const file = fileOf(diff, 'target.txt')
+    expect(file?.observation).toBe('unavailable')
+    expect(file?.insertions).toBeNull()
+  })
+
+  it('B) open 后、读取前文件被替换（新 inode）→ 路径复核拒绝', async () => {
+    const dir = dirtyRepo('bp-window-b-', 'committed\n', 'original dirty\n')
+    const baseline = await engine.capture(dir)
+
+    const engine2 = new GitSnapshotEngine({
+      hooks: {
+        afterFileOpen: (full) => {
+          if (isTarget(full)) {
+            rmSync(full)
+            writeFileSync(full, 'REPLACED_AFTER_OPEN\n')
+          }
+        }
+      }
+    })
+    const current = await engine2.capture(dir)
+    const entry = snapOf(current, 'target.txt')
+    expect(entry?.unread_reason).toBe('torn_read')
+    expect(entry?.worktree_hash).toBeNull()
+
+    const diff = await engine.compare(baseline, current)
+    expect(JSON.stringify(diff)).not.toContain('REPLACED_AFTER_OPEN')
+    expect(fileOf(diff, 'target.txt')?.observation).toBe('unavailable')
+  })
+
+  it('C) 读取第一段后追加内容 → T7 尺寸漂移 → torn_read', async () => {
+    const dir = dirtyRepo('bp-window-c-', 'committed\n', 'x'.repeat(9000) + '\n')
+    const baseline = await engine.capture(dir)
+
+    const engine2 = new GitSnapshotEngine({
+      hooks: {
+        afterFirstChunkRead: (full) => {
+          if (isTarget(full)) appendFileSync(full, 'appended-during-read\n')
+        }
+      }
+    })
+    const current = await engine2.capture(dir)
+    const entry = snapOf(current, 'target.txt')
+    expect(entry?.unread_reason).toBe('torn_read')
+    expect(entry?.worktree_hash).toBeNull()
+  })
+
+  it('D) 读取第一段后截断文件 → bytesRead 与预期不符 → torn_read', async () => {
+    const dir = dirtyRepo('bp-window-d-', 'committed\n', 'y'.repeat(9000) + '\n')
+    const baseline = await engine.capture(dir)
+
+    const engine2 = new GitSnapshotEngine({
+      hooks: {
+        afterFirstChunkRead: (full) => {
+          if (isTarget(full)) truncateSync(full, 100)
+        }
+      }
+    })
+    const current = await engine2.capture(dir)
+    const entry = snapOf(current, 'target.txt')
+    expect(entry?.unread_reason).toBe('torn_read')
+    expect(entry?.worktree_hash).toBeNull()
+  })
+
+  it('E) 读取期间同尺寸内容改写 → mtimeNs/ctimeNs 漂移 → torn_read', async () => {
+    const dir = dirtyRepo('bp-window-e-', 'committed\n', 'a'.repeat(5000))
+    const baseline = await engine.capture(dir)
+
+    const engine2 = new GitSnapshotEngine({
+      hooks: {
+        afterFirstChunkRead: (full) => {
+          if (isTarget(full)) writeFileSync(full, 'b'.repeat(5000)) // 同字节数
+        }
+      }
+    })
+    const current = await engine2.capture(dir)
+    const entry = snapOf(current, 'target.txt')
+    expect(entry?.unread_reason).toBe('torn_read')
+    expect(entry?.worktree_hash).toBeNull()
+  })
+
+  it('F) 读取期间 mtime 被拨动（内容不变）→ 时间元数据漂移 → torn_read', async () => {
+    const dir = dirtyRepo('bp-window-f-', 'committed\n', 'stable content\n')
+    const baseline = await engine.capture(dir)
+
+    const engine2 = new GitSnapshotEngine({
+      hooks: {
+        afterFirstChunkRead: (full) => {
+          if (isTarget(full)) {
+            const epoch = new Date(0)
+            utimesSync(full, epoch, epoch) // 只动时间：不能只凭内容相同就放行
+          }
+        }
+      }
+    })
+    const current = await engine2.capture(dir)
+    const entry = snapOf(current, 'target.txt')
+    expect(entry?.unread_reason).toBe('torn_read')
+    expect(entry?.worktree_hash).toBeNull()
+  })
+
+  it('G) 读取窗口内文件保持稳定 → 正常读取（注入点触发但不修改）', async () => {
+    const dir = dirtyRepo('bp-window-g-', 'committed\n', 'stable-after-hook\n')
+    let hookFired = 0
+    const engine2 = new GitSnapshotEngine({
+      hooks: {
+        afterFirstChunkRead: () => {
+          hookFired += 1 // 只观察，不修改
+        }
+      }
+    })
+    const current = await engine2.capture(dir)
+    expect(hookFired).toBe(1) // 注入点确实覆盖了读取期间
+    const entry = snapOf(current, 'target.txt')
+    expect(entry?.unread_reason).toBeNull()
+    expect(entry?.worktree_hash).toBe(sha256Hex(Buffer.from('stable-after-hook\n')))
+  })
+
+  it('H) 读取异常时 FileHandle 一定被关闭（finally 保证）', async () => {
+    const dir = dirtyRepo('bp-window-h-', 'committed\n', 'z'.repeat(9000) + '\n')
+    let captured: unknown = null
+    let fdDuringRead: number | undefined
+    const engine2 = new GitSnapshotEngine({
+      hooks: {
+        afterFirstChunkRead: (full, handle) => {
+          if (isTarget(full)) {
+            captured = handle
+            fdDuringRead = (handle as { fd?: number }).fd
+            truncateSync(full, 10) // 制造读取中异常
+          }
+        }
+      }
+    })
+    const current = await engine2.capture(dir)
+    expect(captured, '必须拿到读取句柄').not.toBeNull()
+    expect(snapOf(current, 'target.txt')?.unread_reason).toBe('torn_read')
+    // 读取期间句柄是打开的（fd ≥ 0）；异常路径走 finally 后 fd 置 -1 = 已关闭
+    expect(fdDuringRead).toBeGreaterThanOrEqual(0)
+    expect((captured as { fd?: number }).fd).toBe(-1)
+  })
+})
+
+// MARK: - 修复三：malformed Tree 下的路径存在性（规格 §五）
+
+describe('malformed Tree 的路径存在性（规格 §五）', () => {
+  /** 把指定路径的 ls-tree 记录替换成坏记录（该路径因此解析不出来）。 */
+  function damagingRunner(watchPath: string): typeof runGit {
+    return async (root, sub, args, opts) => {
+      const result = await runGit(root, sub, args, opts)
+      if (sub === 'ls-tree') {
+        const sep0 = String.fromCharCode(0)
+        const text = result.text
+          .split(sep0)
+          .map((record) => (record.endsWith(`\t${watchPath}`) ? 'BROKEN-RECORD' : record))
+          .join(sep0)
+        return { ...result, text, stdout: Buffer.from(text, 'utf8') }
+      }
+      return result
+    }
+  }
+
+  it('A) baseline 侧目标路径未解析出来 → unavailable，绝不是 added', async () => {
+    const dir = makeDir('bp-mal-a-')
+    initRepo(dir, { 'watched.ts': 'W\n', 'other.ts': 'O\n' })
+    const bad = new GitSnapshotEngine({ runner: damagingRunner('watched.ts') })
+
+    const baseline = await bad.capture(dir)
+    expect(baseline.head_tree.malformed_records).toBe(1)
+    expect(baseline.head_tree.entries.some((e) => e.path === 'watched.ts')).toBe(false)
+
+    const current = await engine.capture(dir) // 完整 Tree，watched.ts 存在
+    const diff = await engine.compare(baseline, current)
+    const entry = fileOf(diff, 'watched.ts')
+    expect(entry, '无法确认时必须给出条目').toBeDefined()
+    expect(entry?.observation).toBe('unavailable')
+    expect(entry?.change_kind).not.toBe('added')
+    expect(entry?.insertions).toBeNull()
+    expect(diff.manifest_completeness).toBe('partial')
+  })
+
+  it('B) current 侧目标路径未解析出来 → unavailable，绝不是 deleted', async () => {
+    const dir = makeDir('bp-mal-b-')
+    initRepo(dir, { 'watched.ts': 'W\n', 'other.ts': 'O\n' })
+    const bad = new GitSnapshotEngine({ runner: damagingRunner('watched.ts') })
+
+    const baseline = await engine.capture(dir) // 完整 Tree
+    const current = await bad.capture(dir) // 损坏 Tree
+    expect(current.head_tree.malformed_records).toBe(1)
+
+    const diff = await engine.compare(baseline, current)
+    const entry = fileOf(diff, 'watched.ts')
+    expect(entry).toBeDefined()
+    expect(entry?.observation).toBe('unavailable')
+    expect(entry?.change_kind).not.toBe('deleted')
+    expect(diff.manifest_completeness).toBe('partial')
+  })
+
+  it('F) 损坏一侧的**其它合法路径**照常比较（不作废整份清单）', async () => {
+    const dir = makeDir('bp-mal-f-')
+    initRepo(dir, { 'watched.ts': 'W\n', 'other.ts': 'O\n' })
+    const bad = new GitSnapshotEngine({ runner: damagingRunner('other.ts') })
+
+    const baseline = await bad.capture(dir) // other.ts 记录损坏，watched.ts 正常
+    expect(baseline.head_tree.malformed_records).toBe(1)
+    expect(baseline.head_tree.entries.some((e) => e.path === 'watched.ts')).toBe(true)
+
+    write(dir, 'watched.ts', 'W\nchanged\n')
+    git(['add', '-A', '.'], dir)
+    git(['commit', '-qm', 'change watched'], dir)
+    const diff = await engine.compare(baseline, await engine.capture(dir))
+
+    // 合法路径：正常产出有效 Diff，而不是 unavailable
+    const entry = fileOf(diff, 'watched.ts')
+    expect(entry?.observation).toBe('changed')
+    expect(entry?.artifact.kind).toBe('diff')
+    if (entry?.artifact.kind === 'diff') {
+      expect(entry.artifact.text).toContain('+changed')
+    }
+    expect(diff.manifest_completeness).toBe('partial') // 全局仍诚实降级
+  })
+})
+
+// MARK: - 修复四：Symlink lstat/readlink 一致性（规格 §六）
+
+describe('Symlink lstat/readlink 一致性（规格 §六）', () => {
+  /** 已提交的链接 + 窗口内换目标（让链接在 current capture 时是脏的、会被读取）。 */
+  async function linkFixture(prefix: string): Promise<{ dir: string; baseline: GitWorkspaceSnapshot }> {
+    const dir = makeDir(prefix)
+    initRepo(dir, { 'app.ts': 'x\n', 'g1.txt': 'one\n', 'g2.txt': 'two\n', 'g3.txt': 'three\n' })
+    symlinkSync('g1.txt', join(dir, 'link.txt'))
+    git(['add', '-A', '.'], dir)
+    git(['commit', '-qm', 'link'], dir)
+    const baseline = await engine.capture(dir)
+    // 窗口：换目标 → current capture 时链接是脏的（status M，会触发 readlink）
+    rmSync(join(dir, 'link.txt'))
+    symlinkSync('g2.txt', join(dir, 'link.txt'))
+    return { dir, baseline }
+  }
+
+  it('readlink 窗口前半被替换（before 钩子）→ torn_read，不采用本次 target', async () => {
+    const { dir, baseline } = await linkFixture('bp-link-win-before-')
+    const engine2 = new GitSnapshotEngine({
+      hooks: {
+        aroundReadlink: (full, phase) => {
+          if (phase === 'before' && full.endsWith(`${sep}link.txt`)) {
+            rmSync(full)
+            symlinkSync('g3.txt', full) // lstat1 之后、readlink 之前换掉
+          }
+        }
+      }
+    })
+    const current = await engine2.capture(dir)
+    const entry = snapOf(current, 'link.txt')
+    expect(entry?.unread_reason).toBe('torn_read')
+    expect(entry?.worktree_hash).toBeNull() // 不采用被污染的 target
+
+    const diff = await engine.compare(baseline, current)
+    const file = fileOf(diff, 'link.txt')
+    expect(file?.observation).toBe('unavailable')
+    expect(file?.artifact.kind).not.toBe('diff')
+  })
+
+  it('readlink 窗口后半被替换（after 钩子）→ torn_read', async () => {
+    const { dir, baseline } = await linkFixture('bp-link-win-after-')
+    const engine2 = new GitSnapshotEngine({
+      hooks: {
+        aroundReadlink: (full, phase) => {
+          if (phase === 'after' && full.endsWith(`${sep}link.txt`)) {
+            rmSync(full)
+            symlinkSync('g3.txt', full) // readlink 之后、lstat2 之前换掉
+          }
+        }
+      }
+    })
+    const current = await engine2.capture(dir)
+    const entry = snapOf(current, 'link.txt')
+    expect(entry?.unread_reason).toBe('torn_read')
+    expect(entry?.worktree_hash).toBeNull()
+
+    const diff = await engine.compare(baseline, current)
+    expect(fileOf(diff, 'link.txt')?.observation).toBe('unavailable')
+  })
+
+  it('窗口稳定时：链接目标字符串正常采集，且从不跟随读取目标内容', async () => {
+    const { dir, baseline } = await linkFixture('bp-link-win-stable-')
+    const current = await engine.capture(dir) // 不注入：g2 目标正常读取
+    const entry = snapOf(current, 'link.txt')
+    expect(entry?.is_symlink).toBe(true)
+    expect(entry?.unread_reason).toBeNull()
+    // 目标是相对路径字符串的 hash（g2.txt），不是目标文件内容（two）
+    expect(entry?.worktree_hash).toBe(sha256Hex(Buffer.from('g2.txt')))
+
+    const diff = await engine.compare(baseline, current)
+    const file = fileOf(diff, 'link.txt')
+    expect(file?.artifact.kind).toBe('symlink')
+    if (file?.artifact.kind === 'symlink') {
+      expect(file.artifact.target_before).toBe('g1.txt')
+      expect(file.artifact.target_after).toBe('g2.txt')
+    }
+    // 目标文件的内容（one/two/three）绝不出现
+    expect(JSON.stringify(diff)).not.toContain('two')
   })
 })

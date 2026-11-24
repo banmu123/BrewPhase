@@ -20,7 +20,15 @@
  * 4. **不可观测三态**：confirmed_unchanged（不产生条目）/ changed /
  *    unavailable——没有有效 hash 时**绝不**用「大小相同」推断内容相同。
  */
-import { constants as fsConstants, open as openFile, lstat, readlink, realpath, stat } from 'node:fs/promises'
+import {
+  constants as fsConstants,
+  open as openFile,
+  lstat,
+  readlink,
+  realpath,
+  stat,
+  type FileHandle
+} from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { extname, resolve as resolvePath, sep } from 'node:path'
 import {
@@ -93,6 +101,15 @@ export type GitSnapshotEngineOptions = {
 export type GitSnapshotHooks = {
   /** 打开每个工作区文件**之前**调用（路径/文件替换竞态注入）。 */
   beforeFileOpen?: (fullPath: string) => void | Promise<void>
+  /** no-follow 打开成功、读取**之前**（「open 后、读取前」替换注入）。 */
+  afterFileOpen?: (fullPath: string) => void | Promise<void>
+  /**
+   * 读取**第一段之后**（读取期间的追加/截断/同尺寸改写注入）；
+   * 附带已打开的 FileHandle，供测试断言异常路径下句柄一定被关闭。
+   */
+  afterFirstChunkRead?: (fullPath: string, handle: FileHandle) => void | Promise<void>
+  /** readlink **前后**（链接替换注入；phase = 'before' | 'after'）。 */
+  aroundReadlink?: (fullPath: string, phase: 'before' | 'after') => void | Promise<void>
   /** 收尾核验（HEAD/Index/Status 复查）**之前**调用（采集期状态漂移注入）。 */
   beforeFinalize?: () => void | Promise<void>
 }
@@ -108,6 +125,7 @@ type UnknownWhy =
   | 'stale'
   | 'blob_missing'
   | 'tree_unavailable'
+  | 'tree_malformed'
   | 'gitlink'
   | 'torn_read'
 
@@ -730,16 +748,16 @@ async function readFileNoFollow(
   limit: number,
   /** 打开前复核父级：true = 父级出现 symlink（逃逸）→ fail-closed。 */
   recheckParents: () => Promise<boolean>,
-  /** 测试注入点：确定性地在 open 之前替换路径（验证身份复核真的兜底）。 */
-  beforeOpen?: (fullPath: string) => void | Promise<void>
+  hooks: GitSnapshotHooks
 ): Promise<Buffer> {
-  const before = await lstat(full)
+  // T1：读取前 lstat（bigint：ns 级时间 + 完整身份）
+  const before = await lstat(full, { bigint: true })
   if (before.isSymbolicLink()) throw new SnapshotReadError('symlink_swap')
   if (!before.isFile()) throw new SnapshotReadError('unreadable')
-  if (before.size > limit) throw new SnapshotReadError('too_large')
-  // C：open 之前再核一次父级——B 与 open 之间父级被换成 symlink 时拒绝
+  if (before.size > BigInt(limit)) throw new SnapshotReadError('too_large')
+  // T2：open 之前再核一次父级——B 与 open 之间父级被换成 symlink 时拒绝
   if (await recheckParents()) throw new SnapshotReadError('symlink_swap')
-  await beforeOpen?.(full)
+  await hooks.beforeFileOpen?.(full)
 
   const noFollow =
     process.platform !== 'win32' && typeof fsConstants.O_NOFOLLOW === 'number'
@@ -747,26 +765,69 @@ async function readFileNoFollow(
       : 0
   const handle = await openFile(full, fsConstants.O_RDONLY | noFollow)
   try {
-    const after = await handle.stat()
-    if (!after.isFile()) throw new SnapshotReadError('symlink_swap')
-    // E：身份复核（修复四核心兜底）——打开前后必须是同一个文件；
-    // 修复五：大小与 mtime 也在读取窗口内校验，撕裂内容一律拒绝采用。
-    if (after.ino !== before.ino || after.dev !== before.dev) {
+    // T4/T5：打开后 fstat，与 T1 比对身份、大小与时间元数据（ns 级）
+    const opened = await handle.stat({ bigint: true })
+    if (!opened.isFile()) throw new SnapshotReadError('symlink_swap')
+    if (opened.ino !== before.ino || opened.dev !== before.dev) {
       throw new SnapshotReadError('symlink_swap')
     }
-    if (after.size !== before.size || after.mtimeMs !== before.mtimeMs) {
+    if (
+      opened.size !== before.size ||
+      opened.mtimeNs !== before.mtimeNs ||
+      opened.ctimeNs !== before.ctimeNs
+    ) {
       throw new SnapshotReadError('torn')
     }
-    const buf = Buffer.allocUnsafe(after.size)
+    await hooks.afterFileOpen?.(full)
+
+    // T6：分段读取（首段后提供注入点）；bytesRead 必须精确等于预期字节数
+    const expected = Number(opened.size)
+    const buf = Buffer.allocUnsafe(expected)
+    const CHUNK = 4096
     let offset = 0
-    while (offset < after.size) {
-      const { bytesRead } = await handle.read(buf, offset, after.size - offset, offset)
-      if (bytesRead <= 0) break
+    let firstChunk = true
+    while (offset < expected) {
+      const { bytesRead } = await handle.read(
+        buf,
+        offset,
+        Math.min(CHUNK, expected - offset),
+        offset
+      )
+      if (bytesRead <= 0) break // 提前 EOF（被截断）
       offset += bytesRead
+      if (firstChunk) {
+        firstChunk = false
+        await hooks.afterFirstChunkRead?.(full, handle)
+      }
     }
-    return offset === after.size ? buf : buf.subarray(0, offset)
+    if (offset !== expected) throw new SnapshotReadError('torn')
+
+    // T7：读取完成后再次 fstat；T8：与 T4 比对（截断/增长/改写/替换都拦下）
+    const afterRead = await handle.stat({ bigint: true })
+    if (
+      afterRead.ino !== opened.ino ||
+      afterRead.dev !== opened.dev ||
+      afterRead.size !== opened.size ||
+      afterRead.mtimeNs !== opened.mtimeNs ||
+      afterRead.ctimeNs !== opened.ctimeNs
+    ) {
+      throw new SnapshotReadError('torn')
+    }
+
+    // T8b：路径本体复核——读取期间路径被替换成别的文件/链接（open 后被换）
+    let finalPath: Awaited<ReturnType<typeof lstat>>
+    try {
+      finalPath = await lstat(full, { bigint: true })
+    } catch {
+      throw new SnapshotReadError('torn') // 读完就没了 → 状态已变，拒绝
+    }
+    if (finalPath.ino !== opened.ino || finalPath.dev !== opened.dev || !finalPath.isFile()) {
+      throw new SnapshotReadError('torn')
+    }
+
+    return buf
   } finally {
-    await handle.close().catch(() => undefined)
+    await handle.close().catch(() => undefined) // 任何异常路径都保证关闭（T6-H）
   }
 }
 
@@ -814,7 +875,23 @@ async function buildFileSnapshot(
         if (info.isSymbolicLink()) {
           // symlink：hash 与驻留内容都是**目标字符串**——readlink 不跟随链接
           isSymlink = true
+          // lstat1（外层 info）→ readlink → lstat2：三者必须是同一个链接。
+          // 链接在窗口内被替换 → 不采用本次 target（torn_read，绝不跟随）。
+          const linkBefore = await lstat(full, { bigint: true })
+          if (!linkBefore.isSymbolicLink()) throw new SnapshotReadError('torn')
+          await ctx.hooks.aroundReadlink?.(full, 'before')
           const target = await readlink(full)
+          await ctx.hooks.aroundReadlink?.(full, 'after')
+          const linkAfter = await lstat(full, { bigint: true })
+          if (
+            !linkAfter.isSymbolicLink() ||
+            linkAfter.ino !== linkBefore.ino ||
+            linkAfter.dev !== linkBefore.dev ||
+            linkAfter.mtimeNs !== linkBefore.mtimeNs ||
+            linkAfter.ctimeNs !== linkBefore.ctimeNs
+          ) {
+            throw new SnapshotReadError('torn')
+          }
           const bytes = Buffer.from(target, 'utf8')
           content = bytes
           sizeBytes = bytes.length
@@ -830,7 +907,7 @@ async function buildFileSnapshot(
               full,
               GIT_HASH_MAX_SOURCE_BYTES,
               () => hasSymlinkParent(ctx.root, rel),
-              ctx.hooks.beforeFileOpen
+              ctx.hooks
             )
             isBinary =
               isProbablyBinary(buf) || BINARY_EXTENSIONS.has(extname(rel).toLowerCase())
@@ -1077,7 +1154,19 @@ function describeSide(
     return { ...base, kind: 'unknown', unknownWhy: 'tree_unavailable', existenceKnown: false }
   }
   const found = tree.get(path)
-  if (!found) return { ...base, kind: 'absent' }
+  if (!found) {
+    if (treeState.malformed_records > 0) {
+      // 修复三：没有找到 ≠ 不存在——Tree 部分损坏时，该路径可能就在坏记录里，
+      // 只有**完整** Tree 才能用「未找到」证明 absent。
+      return {
+        ...base,
+        kind: 'unknown',
+        unknownWhy: 'tree_malformed',
+        existenceKnown: false
+      }
+    }
+    return { ...base, kind: 'absent' }
+  }
   const treeSide = {
     ...base,
     gitSha: found.sha,

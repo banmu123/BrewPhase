@@ -225,20 +225,37 @@ export function countTrackedPaths(text: string): number {
   return seen.size
 }
 
-/** 单条 `ls-tree -z` 记录：`<mode> SP <type> SP <sha> TAB <path>`。 */
-function parseLsTreeRecord(record: string): { mode: string; type: string; sha: string; path: string } | null {
+/** Git 规范对象模式（+ git 容忍的遗留 100664）。非法 mode 一律判 malformed。 */
+const VALID_GIT_MODES = new Set(['040000', '100644', '100664', '100755', '120000', '160000'])
+/** 对象类型**只允许这三种**——绝不把未知类型降级成 blob（修复二）。 */
+const VALID_GIT_TYPES = new Set(['blob', 'tree', 'commit'])
+/** 对象 sha：SHA-1（40）或 SHA-256（64）仓库格式——不默认永远 40 位。 */
+const OBJECT_SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
+
+/**
+ * 单条 `ls-tree -z` 严格校验：`<mode> SP <type> SP <sha> TAB <path>`。
+ * 任何字段不合法 → null（计入 malformed，绝不伪装成有效条目）。
+ * path 可含 Tab/换行/Unicode（按**第一个** TAB 切 header，path 取其余原样）。
+ */
+function parseLsTreeRecord(record: string): {
+  mode: string
+  type: 'blob' | 'tree' | 'commit'
+  sha: string
+  path: string
+} | null {
   if (!record) return null
   const tab = record.indexOf('\t')
-  if (tab < 0) return null
-  const head = record.slice(0, tab).split(' ')
-  if (head.length < 3) return null
-  const type = head[1]
-  return {
-    mode: head[0],
-    type: type === 'blob' || type === 'tree' || type === 'commit' ? type : 'blob',
-    sha: head[2],
-    path: record.slice(tab + 1)
-  }
+  if (tab < 0) return null // 缺少 TAB
+  const header = record.slice(0, tab)
+  const path = record.slice(tab + 1)
+  if (path.length === 0) return null // 空路径
+  const parts = header.split(' ')
+  if (parts.length !== 3) return null // header 字段数必须恰好 3
+  const [mode, type, sha] = parts
+  if (!VALID_GIT_MODES.has(mode)) return null // 非法 mode
+  if (!VALID_GIT_TYPES.has(type)) return null // 非法 type（不降级）
+  if (!OBJECT_SHA_RE.test(sha)) return null // 非法 / 长度错误 sha
+  return { mode, type: type as 'blob' | 'tree' | 'commit', sha, path }
 }
 
 /** `git ls-tree -z <sha> -- <path>` → 首条；无匹配返回 null。 */
