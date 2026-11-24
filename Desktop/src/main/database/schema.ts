@@ -776,15 +776,20 @@ export const actionDrafts = sqliteTable(
 // 一次 Agent 任务的执行历程。**Desktop 本地数据**：不进 change_log、不进 iOS
 // 同步（与 Work Context / Personal Direction 同一惯例）。
 //
-// 三条与既有表不同的设计：
+// 四条与既有表不同的设计：
 // 1. `source_client_id` **不设外键**——撤销/删除 MCP Client 绝不能连带删除
 //    用户的历史资产（与 `mcp_operation_log.client_id` 同一取舍）。
 // 2. `work_context_id` 用 `ON DELETE SET NULL`——删项目保留个人历史。
 // 3. 事件顺序的唯一真相是 `sequence`；`occurred_at` 只是 Agent 声称的时间。
+// 4. `workspace_id` 同样 `ON DELETE SET NULL`（R6-4.3.1）——删授权不删历史。
 
 /**
  * 一次具体的 Agent 任务历程。一个 Work Context 可以关联多次 Journey，
  * Journey 也可以独立存在（`work_context_id` 可空）。
+ *
+ * `workspace_id`（R6-4.3.1）：一个 Journey 同一时刻至多关联一个**已登记**
+ * 的 Local Workspace，用于后续在授权范围内观察工作区变化。MCP 侧只收
+ * UUID、绝不收路径；删工作区登记时列自动置空，Journey 与它的历史证据保留。
  */
 export const agentJourneys = sqliteTable(
   'agent_journeys',
@@ -802,6 +807,10 @@ export const agentJourneys = sqliteTable(
     workContextId: text('work_context_id').references(() => workContexts.id, {
       onDelete: 'set null'
     }),
+    /** `local_workspaces.id`，`ON DELETE SET NULL`——删授权不删个人历史（R6-4.3.1）。 */
+    workspaceId: text('workspace_id').references(() => localWorkspaces.id, {
+      onDelete: 'set null'
+    }),
     createdAt: integer('created_at').notNull(),
     /** 首次进入 running 时写入；此前为 null。 */
     startedAt: integer('started_at'),
@@ -815,6 +824,7 @@ export const agentJourneys = sqliteTable(
   (table) => [
     index('agent_journeys_status_idx').on(table.status, table.updatedAt),
     index('agent_journeys_work_context_idx').on(table.workContextId),
+    index('agent_journeys_workspace_idx').on(table.workspaceId),
     index('agent_journeys_source_client_idx').on(table.sourceClientId)
   ]
 )

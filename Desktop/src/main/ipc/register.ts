@@ -394,6 +394,12 @@ export function registerIpc(params: {
     services.agentJourneys.removeRecordLink((input as { id: string }).id)
     return null
   })
+  // R6-4.3.1：绑定 / 换绑 / 解绑工作区。Zod 已保证形状，生命周期与
+  // 可用性由 Service 在事务内校验（下拉框不是权限），返回更新后的卡片。
+  handle(IPC.agentJourneyWorkspaceBind, (input) => {
+    const value = input as { journeyId: string; workspaceId: string | null }
+    return services.agentJourneys.bindWorkspace(value.journeyId, value.workspaceId)
+  })
 
   handle(IPC.canvasJourneys, (input) =>
     services.canvas.journeysForCanvas((input as { canvasId: string }).canvasId)

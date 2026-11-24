@@ -30,6 +30,8 @@ export const journeyCardSchema = z.object({
   source_client_id: z.string(),
   source_agent: z.string(),
   model: z.string(),
+  /** `local_workspaces.id`；null = 未关联（R6-4.3.1）。旧数据升级后恒为 null。 */
+  workspace_id: z.string().uuid().nullable(),
   created_at: z.number().int(),
   updated_at: z.number().int(),
   completed_at: z.number().int().nullable(),

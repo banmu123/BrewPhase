@@ -128,6 +128,8 @@ export type CreateJourneyInput = {
   title: string
   goal?: string
   workContextId?: string | null
+  /** R6-4.3.1：`local_workspaces.id`；null/省略 = 不关联（与旧行为一致）。 */
+  workspaceId?: string | null
   sourceAgent?: string
   model?: string
   captureMode?: AgentJourneyCaptureMode
@@ -219,6 +221,37 @@ const JOURNEY_TRANSITIONS: Record<AgentJourneyStatus, readonly AgentJourneyStatu
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DIGEST_RE = /^[0-9a-f]{64}$/
 
+/**
+ * R6-4.3.1：进入这些状态后**不再允许**改 Journey 的工作区关联——观察范围
+ * 不能在任务已经出结果之后才被换掉。`paused` 不在其内：暂停是用户级中断。
+ *
+ * 注意不能只看 `journey.status` 判断「是否已开始」：`plan` / `decision`
+ * 这类陈述事件也会把 Journey 推成 `running`。真实判据是**执行类事件**
+ * 是否已离开 `planned`（见 `bindWorkspace`）。
+ */
+const JOURNEY_WORKSPACE_LOCKED_STATUSES: readonly AgentJourneyStatus[] = [
+  'completed',
+  'cancelled',
+  'failed',
+  'abandoned'
+]
+
+/**
+ * Journey 对 Local Workspace 的**授权校验窄接口**（R6-4.3.1）。
+ *
+ * 只回答「这个 id 现在能不能用」，只回显示名——不暴露绝对路径，也不把
+ * `LocalWorkspaceService` 的对话框 / 卡片绑定 / 文件读取能力带进 Journey。
+ * 实现方是 `LocalWorkspaceService.authorize()`（结构化匹配，两个 Service
+ * 互不 import 类型，因此不存在循环依赖）。
+ *
+ * **可选注入 + 失败关闭**：装配层（`main/index.ts`）必须注入真实实现；
+ * 未注入时任何带 `workspace_id` 的请求都会被显式拒绝，绝不静默放行。
+ * 仓库测试里 19 处夹具不关心工作区，因此不必逐个改构造。
+ */
+export type JourneyWorkspaceAuthorizer = {
+  authorize(workspaceId: string): { name: string }
+}
+
 function isStatementEvent(type: AgentJourneyEventType): boolean {
   return AGENT_JOURNEY_STATEMENT_EVENT_TYPES.includes(type)
 }
@@ -241,8 +274,35 @@ function derivedRole(type: AgentJourneyEventType): AgentJourneyRole {
 export class AgentJourneyService {
   constructor(
     private readonly db: Db,
-    private readonly events: ApplicationEvents
+    private readonly events: ApplicationEvents,
+    /** R6-4.3.1：工作区授权校验（窄接口注入，见 `JourneyWorkspaceAuthorizer`）。 */
+    private readonly workspaces?: JourneyWorkspaceAuthorizer
   ) {}
+
+  /**
+   * workspace 校验：把工作区层的错误翻译成 MCP 错误码。
+   *
+   * 未注入实现时**失败关闭**——没有校验能力就不放行任何 workspace 引用，
+   * 而不是当作「校验通过」。错误文案只含 id / 显示名，绝不含绝对路径。
+   */
+  private authorizeWorkspace(workspaceId: string): { name: string } {
+    if (!this.workspaces) {
+      throw new AgentJourneyError(
+        'VALIDATION_ERROR',
+        'workspace authorization is not available in this process'
+      )
+    }
+    try {
+      return this.workspaces.authorize(workspaceId)
+    } catch (error) {
+      const code = (error as { code?: string }).code
+      const message = error instanceof Error ? error.message : 'workspace is unavailable'
+      throw new AgentJourneyError(
+        code === 'NOT_FOUND' ? 'NOT_FOUND' : 'VALIDATION_ERROR',
+        message
+      )
+    }
+  }
 
   // ---- 写：创建 Journey ----
 
@@ -289,6 +349,13 @@ export class AgentJourneyService {
     }
     // **Work Context 是否存在必须放到事务内的创建分支里查**（见下面的注释）。
 
+    // R6-4.3.1：只收 UUID——绝对路径 / 目录字符串在这一行就死掉，
+    // Agent 因此无法借参数拿到任意目录的访问权。存在性与可用性在事务内查。
+    const workspaceId = input.workspaceId ?? null
+    if (workspaceId !== null && !UUID_RE.test(workspaceId)) {
+      throw new AgentJourneyError('VALIDATION_ERROR', 'workspace_id must be a uuid')
+    }
+
     const outcome = this.db.transaction((tx): CreateJourneyResult => {
       const scoped = tx as unknown as Db
 
@@ -319,7 +386,8 @@ export class AgentJourneyService {
         // 回放**不看** Work Context 是否还在：原始请求创建成功之后，
         // 用户可能已经删掉了那个上下文（`ON DELETE SET NULL` 保留了 Journey）。
         // 这时再用完全相同的请求重放，必须拿回原来那条 Journey，
-        // 而不是在幂等检查之前先抛 NOT_FOUND。
+        // 而不是在幂等检查之前先抛 NOT_FOUND。Workspace 同理——
+        // **同一个幂等键 + 不同参数**在上面的 requestDigest 比对处就已拒绝。
         return { journey: replayed, created: false, replayed: true }
       }
 
@@ -327,6 +395,9 @@ export class AgentJourneyService {
       if (workContextId !== null && !selectWorkContext(scoped, workContextId)) {
         throw new AgentJourneyError('NOT_FOUND', `work context ${workContextId} does not exist`)
       }
+      // R6-4.3.1：存在 + available + resolveRoot 可解析，任一不满足即拒绝，
+      // 且发生在**写入之前**。未带 workspace_id 的旧客户端完全走不到这里。
+      if (workspaceId !== null) this.authorizeWorkspace(workspaceId)
 
       const journey = insertJourney(scoped, {
         title,
@@ -336,6 +407,7 @@ export class AgentJourneyService {
         sourceAgent,
         model,
         workContextId,
+        workspaceId,
         captureMode,
         now
       })
@@ -353,6 +425,74 @@ export class AgentJourneyService {
     // 事务提交之后才广播；回滚（异常）时根本走不到这里。
     if (outcome.created) this.events.emit('agentJourneys')
     return outcome
+  }
+
+  // ---- 写：工作区绑定（R6-4.3.1，B 通道）----
+
+  /**
+   * 绑定 / 换绑 / 解绑 Journey 的 Local Workspace（`workspaceId = null` 解绑）。
+   *
+   * 生命周期规则（规格 §四.4）：
+   * - 一个 Journey 同一时刻只有一个 workspace（单列，不是关联表）；
+   * - 还没有任何**执行类事件**离开 `planned`、且 Journey 未进终态时才可改；
+   * - 相同 workspace 重复绑定是幂等的：不写库、不 bump `updated_at`、不广播；
+   * - 解绑只把列置空，**绝不删 Journey**；
+   * - 校验全在主进程这一层——Renderer 下拉框只是展示，不是权限。
+   *
+   * 是否已开始**不看 `journey.status`**：`plan` / `decision` 也会把 Journey
+   * 推成 `running`。判据是执行类事件（execution / verification）的真实状态。
+   *
+   * 返回更新后的 Journey 卡片（与 `list` / `get` 同一套 DTO 字段）。
+   */
+  bindWorkspace(journeyId: string, workspaceId: string | null) {
+    if (workspaceId !== null && !UUID_RE.test(workspaceId)) {
+      throw new AgentJourneyError('VALIDATION_ERROR', 'workspace_id must be a uuid')
+    }
+    const now = Date.now()
+    const outcome = this.db.transaction(
+      (tx): { journey: AgentJourney; changed: boolean } => {
+        const scoped = tx as unknown as Db
+        const journey = selectJourney(scoped, journeyId)
+        if (!journey) {
+          throw new AgentJourneyError('NOT_FOUND', `journey ${journeyId} does not exist`)
+        }
+        if (JOURNEY_WORKSPACE_LOCKED_STATUSES.includes(journey.status)) {
+          throw new AgentJourneyError(
+            'VALIDATION_ERROR',
+            `journey is already ${journey.status}; the workspace link can no longer be changed`
+          )
+        }
+        // 真实执行事件是否已离开 planned（见方法注释：不能用 journey.status）。
+        const started = selectEvents(scoped, journeyId).some(
+          (event) => isExecutionEvent(event.eventType) && event.status !== 'planned'
+        )
+        if (started) {
+          throw new AgentJourneyError(
+            'VALIDATION_ERROR',
+            'an execution has already started; the workspace link can no longer be changed'
+          )
+        }
+        // 存在 + available + 根目录可解析；错误文案不含绝对路径。
+        if (workspaceId !== null) this.authorizeWorkspace(workspaceId)
+        // 幂等：绑定的是同一个工作区就什么都不做（不写库、不 bump 版本）。
+        if (journey.workspaceId === workspaceId) {
+          return { journey, changed: false }
+        }
+        const updated = updateJourney(
+          scoped,
+          journeyId,
+          journey.updatedAt,
+          { workspaceId },
+          now
+        )
+        if (!updated) {
+          throw new AgentJourneyError('STALE_RECORD', 'journey was modified concurrently')
+        }
+        return { journey: updated, changed: true }
+      }
+    )
+    if (outcome.changed) this.events.emit('agentJourneys')
+    return this.toRecordCard(outcome.journey)
   }
 
   // ---- 写：追加事件 ----
@@ -974,6 +1114,8 @@ export class AgentJourneyService {
       source_client_id: journey.sourceClientId,
       source_agent: journey.sourceAgent,
       model: journey.model,
+      /** R6-4.3.1：null = 未关联；旧数据升级后恒为 null。 */
+      workspace_id: journey.workspaceId,
       created_at: journey.createdAt,
       updated_at: journey.updatedAt,
       completed_at: journey.completedAt,

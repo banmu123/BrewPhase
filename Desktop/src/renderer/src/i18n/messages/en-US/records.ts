@@ -171,7 +171,25 @@ export const records = {
       validates: 'validates',
       related_to: 'related to'
     },
-    outcome: 'Outcome'
+    outcome: 'Outcome',
+    // R6-4.3.1：workspace link (registered names only, never machine paths)
+    workspaceTitle: 'Workspace',
+    workspaceNone: 'No workspace linked',
+    workspaceLinked: (name: string) => `Linked: ${name}`,
+    workspaceUnavailable: (name: string) => `Workspace unavailable: ${name} (folder missing)`,
+    workspaceDeleted: 'The original workspace was removed; the link was cleared',
+    workspacePick: 'Choose a workspace',
+    workspaceOptionUnavailable: ' (unavailable)',
+    workspaceNoRegistered: 'No workspace registered yet — add one on the Workspace page first.',
+    workspaceBind: 'Link',
+    workspaceRebind: 'Relink',
+    workspaceUnbind: 'Unlink',
+    workspaceLockedStarted: 'Execution has started; the workspace link can no longer be changed.',
+    workspaceLockedFinished: 'This journey has finished; the workspace link can no longer be changed.',
+    workspaceBindDone: (name: string) => `Linked to "${name}"`,
+    workspaceBindFailed: (error: string) => `Link failed: ${error}`,
+    workspaceUnbindDone: 'Workspace link removed',
+    workspaceUnbindFailed: (error: string) => `Unlink failed: ${error}`
   },
 
   metadata: {

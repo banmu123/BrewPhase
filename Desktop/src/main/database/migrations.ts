@@ -757,6 +757,20 @@ CREATE INDEX IF NOT EXISTS agent_journey_notes_event_idx
   ON agent_journey_notes (event_id);
 `
 
+/**
+ * R6-4.3.1：Journey ↔ Local Workspace 绑定。
+ *
+ * - 只追加列，不动 Migration 1–15；旧 Journey 升级后 `workspace_id` 恒为 NULL
+ *   （`ADD COLUMN` 无 DEFAULT 即 NULL，无需回填）。
+ * - `ON DELETE SET NULL` 与 `work_context_id` 同一语义：删掉的是「这台机器
+ *   授权过哪个文件夹」，个人历史与后续证据都不能连带销毁。
+ * - SQLite 要求带 REFERENCES 的新增列默认值必须为 NULL——正好是我们要的。
+ */
+const JOURNEY_WORKSPACE_SQL = `
+ALTER TABLE agent_journeys ADD COLUMN workspace_id TEXT REFERENCES local_workspaces(id) ON DELETE SET NULL;
+CREATE INDEX agent_journeys_workspace_idx ON agent_journeys (workspace_id);
+`
+
 export const migrations: Migration[] = [
   { version: 1, name: 'init', sql: INIT_SQL },
   { version: 2, name: 'sync-align-ios', sql: SYNC_ALIGN_SQL },
@@ -772,7 +786,8 @@ export const migrations: Migration[] = [
   { version: 12, name: 'local-workspaces', sql: LOCAL_WORKSPACES_SQL },
   { version: 13, name: 'reply-intelligence', sql: REPLY_INTELLIGENCE_SQL },
   { version: 14, name: 'agent-journeys', sql: AGENT_JOURNEY_SQL },
-  { version: 15, name: 'canvas-journey-fusion', sql: CANVAS_JOURNEY_SQL }
+  { version: 15, name: 'canvas-journey-fusion', sql: CANVAS_JOURNEY_SQL },
+  { version: 16, name: 'journey-workspace-binding', sql: JOURNEY_WORKSPACE_SQL }
 ]
 
 /**

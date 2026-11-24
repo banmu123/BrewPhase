@@ -174,7 +174,25 @@ export const records = {
       validates: '验证',
       related_to: '相关'
     },
-    outcome: '最终结果'
+    outcome: '最终结果',
+    // R6-4.3.1：工作区关联（只显示登记名，不显示机器绝对路径）
+    workspaceTitle: '工作区',
+    workspaceNone: '未关联工作区',
+    workspaceLinked: (name: string) => `已关联：${name}`,
+    workspaceUnavailable: (name: string) => `工作区不可用：${name}（文件夹已失效）`,
+    workspaceDeleted: '原工作区已删除，关联已解除',
+    workspacePick: '选择工作区',
+    workspaceOptionUnavailable: '（不可用）',
+    workspaceNoRegistered: '还没有登记的工作区，可先到工作区页面添加。',
+    workspaceBind: '关联',
+    workspaceRebind: '换绑',
+    workspaceUnbind: '解除关联',
+    workspaceLockedStarted: '执行已开始，不能再更改工作区关联。',
+    workspaceLockedFinished: 'Journey 已结束，不能再更改工作区关联。',
+    workspaceBindDone: (name: string) => `已关联「${name}」`,
+    workspaceBindFailed: (error: string) => `关联失败：${error}`,
+    workspaceUnbindDone: '已解除关联',
+    workspaceUnbindFailed: (error: string) => `解除关联失败：${error}`
   },
 
   metadata: {

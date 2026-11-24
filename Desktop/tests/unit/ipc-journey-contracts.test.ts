@@ -21,6 +21,8 @@ const FUSION_CHANNELS = [
   'agentJourneyNoteRemove',
   'agentJourneyLinkCreate',
   'agentJourneyLinkRemove',
+  /** R6-4.3.1：工作区绑定（绑定 / 换绑 / 解绑）。 */
+  'agentJourneyWorkspaceBind',
   'canvasJourneys',
   'canvasJourneyAdd',
   'canvasJourneyMove',
@@ -35,7 +37,7 @@ function schemaFor(channel: string) {
 }
 
 describe('融合通道的白名单完整性', () => {
-  it('13 个通道都在 IPC 常量表里，且通道名带命名空间', () => {
+  it('融合通道都在 IPC 常量表里，且通道名带命名空间', () => {
     for (const key of FUSION_CHANNELS) {
       expect(IPC[key as keyof typeof IPC], `IPC.${key}`).toBeTruthy()
       const channel = IPC[key as keyof typeof IPC] as string
@@ -86,6 +88,24 @@ describe('入参校验（脏参数必须在边界上被拒）', () => {
     expect(parse(IPC.agentJourneyGet, { journeyId: crypto.randomUUID() }).success).toBe(true)
     expect(parse(IPC.agentJourneyNoteRemove, { id: '123' }).success).toBe(false)
     expect(parse(IPC.agentJourneyLinkRemove, { id: '123' }).success).toBe(false)
+  })
+
+  it('R6-4.3.1 工作区绑定：uuid 绑定 / null 解绑合法，路径与缺省被拒', () => {
+    const journeyId = crypto.randomUUID()
+    const parseBind = (payload: unknown) => parse(IPC.agentJourneyWorkspaceBind, payload)
+    // 绑定 / 换绑：uuid。
+    expect(parseBind({ journeyId, workspaceId: crypto.randomUUID() }).success).toBe(true)
+    // 解绑：必须显式传 null（不给默认值，避免「忘了传」被静默当成解绑）。
+    expect(parseBind({ journeyId, workspaceId: null }).success).toBe(true)
+    expect(parseBind({ journeyId }).success).toBe(false)
+    // 绝对路径在 IPC 边界就被拒——渲染层同样拿不到目录访问权。
+    expect(parseBind({ journeyId, workspaceId: '/Users/me/project' }).success).toBe(false)
+    expect(parseBind({ journeyId, workspaceId: 'not-a-uuid' }).success).toBe(false)
+    expect(parseBind({ journeyId: 'bad', workspaceId: null }).success).toBe(false)
+    // 身份字段照旧不收：zod 默认 strip，多余字段不会被透传给主进程。
+    const spoofed = parseBind({ journeyId, workspaceId: null, source_client_id: 'spoofed' })
+    expect(spoofed.success).toBe(true)
+    expect(spoofed.success && 'source_client_id' in (spoofed.data as object)).toBe(false)
   })
 
   it('笔记：空 body 被拒、超长被拒', () => {

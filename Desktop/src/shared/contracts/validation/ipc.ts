@@ -137,6 +137,8 @@ export const IPC = {
   agentJourneyNoteRemove: 'agent-journey:note:remove',
   agentJourneyLinkCreate: 'agent-journey:link:create',
   agentJourneyLinkRemove: 'agent-journey:link:remove',
+  /** R6-4.3.1：绑定 / 换绑 / 解绑 Journey 的工作区（null = 解绑）。 */
+  agentJourneyWorkspaceBind: 'agent-journey:workspace:bind',
   canvasJourneys: 'canvas:journeys',
   canvasJourneyAdd: 'canvas:journey:add',
   canvasJourneyMove: 'canvas:journey:move',
@@ -403,6 +405,13 @@ export const ipcRequestSchemas = {
     relationshipType: z.enum(['references', 'supports', 'produces', 'validates', 'related_to'])
   }),
   [IPC.agentJourneyLinkRemove]: z.object({ id: z.string().uuid() }),
+  // R6-4.3.1 工作区绑定：`workspaceId` 必须显式给出——uuid = 绑定/换绑，
+  // null = 解绑。存在性、可用性与**生命周期**（执行是否已开始）由主进程
+  // Service 校验，下拉框选项不是权限。
+  [IPC.agentJourneyWorkspaceBind]: z.object({
+    journeyId: z.string().uuid(),
+    workspaceId: z.string().uuid().nullable()
+  }),
   [IPC.canvasJourneys]: z.object({ canvasId: z.string().uuid() }),
   [IPC.canvasJourneyAdd]: z.object({ canvasId: z.string().uuid(), journeyId: z.string().uuid() }),
   [IPC.canvasJourneyMove]: z.object({

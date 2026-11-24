@@ -409,11 +409,18 @@ export const TOOL_DEFINITIONS = {
       'kept as a personal asset the user can read, relate and reuse later. Creates the journey ' +
       'in `created` state with the caller identity taken from authentication, never from this ' +
       'payload. Only do this for work worth keeping (a real debugging/analysis/build task); ' +
-      'skip it for one-off questions, translation or formatting. Reuse `idempotency_key` on retry.',
+      'skip it for one-off questions, translation or formatting. Reuse `idempotency_key` on retry. ' +
+      'Optionally pass `workspace_id` to link the journey to a Local Workspace the user has ' +
+      'registered in BrewPhase — it is a UUID, never a path, and the server rejects unknown or ' +
+      'unavailable workspaces.',
     input: z.object({
       title: z.string().trim().min(1).max(200),
       goal: z.string().max(2_000).optional(),
       work_context_id: uuid.optional(),
+      // R6-4.3.1：只收「用户已在 BrewPhase 登记」的工作区 UUID——**绝不收
+      // 路径**，Agent 因此无法借这个参数取得任意目录的访问权；未传时行为
+      // 与旧版本完全一致（不关联任何工作区）。
+      workspace_id: uuid.optional(),
       source_agent: z.string().max(120).optional(),
       model: z.string().max(120).optional(),
       idempotency_key: idempotencyKey

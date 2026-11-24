@@ -360,6 +360,9 @@ export const TOOL_HANDLERS: Record<ToolName, ToolHandler> = {
       title: params.title as string,
       goal: params.goal as string | undefined,
       workContextId: (params.work_context_id as string | undefined) ?? null,
+      // R6-4.3.1：snake_case → camelCase 在这一处映射（与 edges 同一惯例）。
+      // 未传 = null = 不关联，与旧版本行为逐字节一致。
+      workspaceId: (params.workspace_id as string | undefined) ?? null,
       sourceAgent: params.source_agent as string | undefined,
       model: params.model as string | undefined
     })
@@ -605,6 +608,8 @@ export function agentJourneyDto(journey: AgentJourney): Record<string, unknown> 
     source_agent: journey.sourceAgent,
     model: journey.model,
     work_context_id: journey.workContextId,
+    /** R6-4.3.1：与 IPC 详情的 `workspace_id` 同名同值——两端不许漂移。 */
+    workspace_id: journey.workspaceId,
     created_at: journey.createdAt,
     started_at: journey.startedAt,
     updated_at: journey.updatedAt,

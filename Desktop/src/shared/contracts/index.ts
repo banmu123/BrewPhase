@@ -332,6 +332,11 @@ export interface RendererApi {
       relationshipType: JourneyLinkType
     }) => Promise<JourneyRecordLink>
     removeLink: (id: string) => Promise<void>
+    /**
+     * R6-4.3.1：绑定 / 换绑 / 解绑 Journey 的工作区（null = 解绑）。
+     * 返回更新后的卡片；执行已开始或 Journey 终态时主进程拒绝。
+     */
+    bindWorkspace: (journeyId: string, workspaceId: string | null) => Promise<JourneyCard>
   }
   /**
    * AI 连接（MCP）。token 只在 createClient 的返回值里出现一次，

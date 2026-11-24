@@ -283,7 +283,10 @@ const api: RendererApi = {
     updateNote: (id, body) => invoke(IPC.agentJourneyNoteUpdate, { id, body }),
     removeNote: (id) => invoke(IPC.agentJourneyNoteRemove, { id }),
     createLink: (input) => invoke(IPC.agentJourneyLinkCreate, input),
-    removeLink: (id) => invoke(IPC.agentJourneyLinkRemove, { id })
+    removeLink: (id) => invoke(IPC.agentJourneyLinkRemove, { id }),
+    /** R6-4.3.1：绑定 / 换绑 / 解绑（null = 解绑），返回更新后的卡片。 */
+    bindWorkspace: (journeyId, workspaceId) =>
+      invoke(IPC.agentJourneyWorkspaceBind, { journeyId, workspaceId })
   },
   mcp: {
     listClients: () => invoke(IPC.mcpClientsList),

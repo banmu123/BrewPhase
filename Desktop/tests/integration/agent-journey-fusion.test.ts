@@ -679,7 +679,7 @@ describe('场景 F：数据边界（local-first）', () => {
     expect(ddl.sql).toMatch(/REFERENCES agent_journeys\(id\) ON DELETE CASCADE/i)
   })
 
-  it('从版本 14 升级到 15：旧库数据原样保留', () => {
+  it('从版本 14 升级到最新：旧库数据原样保留', () => {
     // 上面 beforeEach 已经跑到最新版；这里再造一个只到 14 的库验证升级路径
     const oldDir = mkdtempSync(join(tmpdir(), 'r641-v14-'))
     try {
@@ -704,7 +704,11 @@ describe('场景 F：数据边界（local-first）', () => {
       expect(sqlite.pragma('user_version', { simple: true })).toBe(14)
 
       migrate(sqlite)
-      expect(sqlite.pragma('user_version', { simple: true })).toBe(15)
+      // 最新版由 `migrations` 数组自己说了算：以后再追加迁移版本时，
+      // 这条「旧数据在升级后原样保留」的断言不用跟着改（R6-4.3.1 起）。
+      expect(sqlite.pragma('user_version', { simple: true })).toBe(
+        migrations[migrations.length - 1].version
+      )
       // 旧数据原样
       expect(sqlite.prepare(`select count(*) c from canvases`).get()).toEqual({ c: 1 })
       expect(sqlite.prepare(`select count(*) c from agent_journeys`).get()).toEqual({ c: 1 })

@@ -122,6 +122,8 @@ export type AgentJourney = {
   sourceAgent: string
   model: string
   workContextId: string | null
+  /** `local_workspaces.id`；null = 未关联（R6-4.3.1）。 */
+  workspaceId: string | null
   createdAt: number
   startedAt: number | null
   updatedAt: number
@@ -186,6 +188,7 @@ function toJourney(row: JourneyRow): AgentJourney {
     sourceAgent: row.sourceAgent,
     model: row.model,
     workContextId: row.workContextId,
+    workspaceId: row.workspaceId,
     createdAt: row.createdAt,
     startedAt: row.startedAt,
     updatedAt: row.updatedAt,
@@ -260,6 +263,8 @@ export type InsertJourneyInput = {
   sourceAgent: string
   model: string
   workContextId: string | null
+  /** R6-4.3.1：可省略（省略 = 不关联，与旧行为一致）。 */
+  workspaceId?: string | null
   captureMode: AgentJourneyCaptureMode
   now: number
 }
@@ -274,6 +279,7 @@ export function insertJourney(db: Db, input: InsertJourneyInput): AgentJourney {
     sourceAgent: input.sourceAgent,
     model: input.model,
     workContextId: input.workContextId,
+    workspaceId: input.workspaceId ?? null,
     createdAt: input.now,
     startedAt: input.status === 'created' ? null : input.now,
     updatedAt: input.now,
@@ -329,6 +335,8 @@ export type JourneyPatch = Partial<{
   title: string
   goal: string
   status: AgentJourneyStatus
+  /** R6-4.3.1：绑定 / 换绑 / 解绑（null = 解绑）。 */
+  workspaceId: string | null
   startedAt: number
   completedAt: number | null
   updatedAt: number

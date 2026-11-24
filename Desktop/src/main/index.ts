@@ -252,11 +252,13 @@ function bootstrap(): void {
   const clients = new McpClientService(db.db)
   const workContexts = new WorkContextService(db.db, events)
   const personalDirection = new PersonalDirectionService(db.db, events)
+  // AI Card Workspace Bridge（Phase 1）：登记 / 绑定 / 只读文件 / 上下文。
+  // 必须建在 AgentJourneyService 之前——R6-4.3.1 把它的 `authorize` 注入
+  // Journey（窄接口：只校验、只回显示名，不带绝对路径，也不产生循环依赖）。
+  const localWorkspaceService = new LocalWorkspaceService(db.db, events)
   // Agent Journey（R6-2）：复用**同一个** ApplicationEvents——第二份实例会让
   // Renderer 只收到一半的 `app:changed`。
-  const agentJourneys = new AgentJourneyService(db.db, events)
-  // AI Card Workspace Bridge（Phase 1）：登记 / 绑定 / 只读文件 / 上下文。
-  const localWorkspaceService = new LocalWorkspaceService(db.db, events)
+  const agentJourneys = new AgentJourneyService(db.db, events, localWorkspaceService)
   const workspaceFileService = new WorkspaceFileService(db.db)
   const contextBuilder = new ContextBuilder(db.db, workspaceFileService)
   // AI Reply Intelligence（Phase 2）：来源识别用 tab 的真实 URL；tab 已关闭

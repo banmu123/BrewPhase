@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { Canvas, JourneyDetail as Detail, JourneyNote, JourneyRecordLink } from '@shared/contracts'
+import type {
+  Canvas,
+  JourneyDetail as Detail,
+  JourneyNote,
+  JourneyRecordLink,
+  LocalWorkspace
+} from '@shared/contracts'
 import { api } from '../../shared/api'
 import { useI18n } from '../../i18n'
 import { EventGlyph, eventTypeAccent } from '../../shared/EventGlyph'
 import { EventDetailSections } from '../../shared/EventDetailSections'
 import { parseJourneyDetail } from '@shared/contracts'
+import { journeyWorkspaceView } from './journey-workspace-view'
 
 /**
  * Agent Journey 的**完整详情**（R6-4.1 §3.2，R6-4.1.1 §7 精修）。
@@ -41,6 +48,43 @@ export function JourneyDetailView(props: {
   const [recordInfo, setRecordInfo] = useState<
     Map<string, { title: string; carrier: string } | null>
   >(new Map())
+
+  /** R6-4.3.1：已登记工作区（只用于下拉与显示名，主进程才是权限）。 */
+  const [workspaces, setWorkspaces] = useState<LocalWorkspace[]>([])
+  const [pickedWorkspace, setPickedWorkspace] = useState('')
+  const [workspaceMessage, setWorkspaceMessage] = useState<string | null>(null)
+  /**
+   * 绑定成功后主进程返回的新卡片。父级 detail 只在**切换选中**时才重新
+   * 拉取，所以这里用返回值覆盖展示，让关联状态立即更新；父级下次拉到
+   * 一致的数据后由下面的 effect 清掉覆盖。
+   */
+  const [workspaceOverride, setWorkspaceOverride] = useState<string | null | undefined>(undefined)
+
+  useEffect(() => {
+    let alive = true
+    const loadWorkspaces = (): void => {
+      api.localWorkspace
+        .list()
+        .then((items) => {
+          if (alive) setWorkspaces(items)
+        })
+        .catch(() => undefined)
+    }
+    loadWorkspaces()
+    // 工作区登记在别处增删时同步（与 CardWorkspaceToolbar 同一事件）。
+    const off = api.app.onChanged((domain) => {
+      if (domain === 'localWorkspaces') loadWorkspaces()
+    })
+    return () => {
+      alive = false
+      off()
+    }
+  }, [])
+
+  // 换了一条 Journey（或父级已拉到最新数据）时清掉本地覆盖。
+  useEffect(() => {
+    setWorkspaceOverride(undefined)
+  }, [journey.id, journey.workspace_id])
 
   useEffect(() => {
     let alive = true
@@ -118,6 +162,37 @@ export function JourneyDetailView(props: {
     [props]
   )
 
+  // MARK: R6-4.3.1 工作区关联（绑定 / 换绑 / 解绑）
+
+  const bindPicked = useCallback(async () => {
+    if (!pickedWorkspace) return
+    setWorkspaceMessage(null)
+    setError(null)
+    try {
+      const updated = await api.agentJourneys.bindWorkspace(journey.id, pickedWorkspace)
+      setWorkspaceOverride(updated.workspace_id)
+      const name = workspaces.find((workspace) => workspace.id === pickedWorkspace)?.name ?? ''
+      setWorkspaceMessage(t.records.journey.workspaceBindDone(name))
+      props.onChanged()
+    } catch (cause) {
+      // 主进程的拒绝原因（不存在 / 不可用 / 执行已开始）原样呈现。
+      setWorkspaceMessage(t.records.journey.workspaceBindFailed((cause as Error).message))
+    }
+  }, [pickedWorkspace, journey.id, workspaces, t, props])
+
+  const unlinkWorkspace = useCallback(async () => {
+    setWorkspaceMessage(null)
+    setError(null)
+    try {
+      const updated = await api.agentJourneys.bindWorkspace(journey.id, null)
+      setWorkspaceOverride(updated.workspace_id)
+      setWorkspaceMessage(t.records.journey.workspaceUnbindDone)
+      props.onChanged()
+    } catch (cause) {
+      setWorkspaceMessage(t.records.journey.workspaceUnbindFailed((cause as Error).message))
+    }
+  }, [journey.id, t, props])
+
   const addToCanvas = useCallback(async () => {
     if (!pickedCanvas) return
     setCanvasMessage(null)
@@ -140,6 +215,16 @@ export function JourneyDetailView(props: {
     },
     [recordInfo, t]
   )
+
+  /** R6-4.3.1：关联状态 + 能否修改的纯函数判定（规则单测覆盖）。 */
+  const workspaceView = journeyWorkspaceView({
+    journey: {
+      status: journey.status,
+      workspace_id: workspaceOverride !== undefined ? workspaceOverride : journey.workspace_id
+    },
+    events,
+    workspaces
+  })
 
   return (
     <div className="journey-detail">
@@ -188,6 +273,71 @@ export function JourneyDetailView(props: {
           <p className="note">{journey.goal}</p>
         </section>
       )}
+
+      {/* ── R6-4.3.1 工作区关联：授权范围的显式管理 ───────────
+          只显示已登记工作区的**名字**，不展示机器绝对路径；
+          执行已开始 / Journey 终态时锁定（服务端也会再拒一次）。 */}
+      <section className="journey-section">
+        <h3 className="journey-section__title">{t.records.journey.workspaceTitle}</h3>
+        <p className="note">
+          {workspaceView.state === 'none' && t.records.journey.workspaceNone}
+          {workspaceView.state === 'linked' &&
+            t.records.journey.workspaceLinked(workspaceView.label ?? '')}
+          {workspaceView.state === 'unavailable' &&
+            t.records.journey.workspaceUnavailable(workspaceView.label ?? '')}
+          {workspaceView.state === 'deleted' && t.records.journey.workspaceDeleted}
+        </p>
+
+        {workspaceView.canManage ? (
+          <div className="journey-inline">
+            <select
+              value={pickedWorkspace}
+              onChange={(event) => setPickedWorkspace(event.target.value)}
+              aria-label={t.records.journey.workspacePick}
+            >
+              <option value="">{t.records.journey.workspacePick}</option>
+              {workspaceView.options.map((option) => (
+                <option key={option.id} value={option.id} disabled={option.disabled}>
+                  {option.name}
+                  {option.available ? '' : t.records.journey.workspaceOptionUnavailable}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="button"
+              disabled={!pickedWorkspace}
+              onClick={() => void bindPicked()}
+            >
+              {workspaceView.workspaceId
+                ? t.records.journey.workspaceRebind
+                : t.records.journey.workspaceBind}
+            </button>
+            {workspaceView.workspaceId && (
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={() => void unlinkWorkspace()}
+              >
+                {t.records.journey.workspaceUnbind}
+              </button>
+            )}
+          </div>
+        ) : (
+          <p className="page-sub journey-inline__feedback">
+            {workspaceView.lockedReason === 'journey_finished'
+              ? t.records.journey.workspaceLockedFinished
+              : t.records.journey.workspaceLockedStarted}
+          </p>
+        )}
+
+        {workspaceView.canManage && workspaceView.options.length === 0 && (
+          <p className="page-sub">{t.records.journey.workspaceNoRegistered}</p>
+        )}
+        {workspaceMessage && (
+          <p className="page-sub journey-inline__feedback">{workspaceMessage}</p>
+        )}
+      </section>
 
       {/* ── §4.2 的 Records 侧入口：添加到画布 ───────────────── */}
       <section className="journey-section">

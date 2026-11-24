@@ -118,6 +118,42 @@ describe('工具定义（B 组）', () => {
     expect(shapeOf('update_agent_journey_status').idempotency_key).toBeUndefined()
   })
 
+  it('R6-4.3.1: start 的 workspace_id 可选、只收 UUID、路径一律被拒', () => {
+    const shape = shapeOf('start_agent_journey')
+    expect(shape.workspace_id, 'start_agent_journey 缺 workspace_id').toBeDefined()
+    // 可省略：不传 = 不关联，与旧客户端行为逐字节一致。
+    expect(shape.workspace_id!.safeParse(undefined).success).toBe(true)
+    expect(shape.workspace_id!.safeParse(crypto.randomUUID()).success).toBe(true)
+    // 绝对路径 / 目录字符串在 schema 层就死掉——参数拿不到目录访问权。
+    for (const path of [
+      '/Users/me/project',
+      'C:\\Users\\me\\repo',
+      './repo',
+      'project/',
+      '/etc'
+    ]) {
+      expect(shape.workspace_id!.safeParse(path).success, path).toBe(false)
+    }
+    // 整包：不带 workspace_id 的旧请求仍然合法。
+    expect(
+      TOOL_DEFINITIONS.start_agent_journey.input.safeParse({
+        title: 'fix bug',
+        idempotency_key: 'evt:00000000-0000-4000-8000-000000000000'
+      }).success
+    ).toBe(true)
+    // 带 workspace_id 的新请求也合法（形状，不是存在性——存在性由 Service 校验）。
+    expect(
+      TOOL_DEFINITIONS.start_agent_journey.input.safeParse({
+        title: 'fix bug',
+        workspace_id: crypto.randomUUID(),
+        idempotency_key: 'evt:00000000-0000-4000-8000-000000000000'
+      }).success
+    ).toBe(true)
+    // 其它 Journey 工具不接受 workspace_id（只有创建时能关联）。
+    expect(shapeOf('append_agent_journey_event').workspace_id).toBeUndefined()
+    expect(shapeOf('get_agent_journey').workspace_id).toBeUndefined()
+  })
+
   it('12: Event status 可选且没有通用 default', () => {
     const status = shapeOf('append_agent_journey_event').status
     expect(status).toBeDefined()
