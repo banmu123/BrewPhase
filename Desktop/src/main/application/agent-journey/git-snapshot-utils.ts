@@ -88,6 +88,12 @@ export type PorcelainEntry = {
   worktreeStatus: string
   /** porcelain 的 `<sub>` 字段：以 `S` 开头 = 子模块路径（v1 不下钻）。 */
   subField: string
+  /** mH：HEAD 中的 mode（100644/100755/120000/160000）。 */
+  headMode: string | null
+  /** mI：index 中的 mode。 */
+  indexMode: string | null
+  /** mW：工作区 mode（`?`/`!` 记录没有该字段 → null，由 lstat 归一）。 */
+  worktreeMode: string | null
   hH: string | null
   hI: string | null
   path: string
@@ -131,6 +137,9 @@ export function parsePorcelainV2(text: string): {
         indexStatus: f[0]?.[0] ?? '.',
         worktreeStatus: f[0]?.[1] ?? '.',
         subField: f[1] ?? 'N...',
+        headMode: f[2] ?? null,
+        indexMode: f[3] ?? null,
+        worktreeMode: f[4] ?? null,
         hH: f[5] ?? null,
         hI: f[6] ?? null,
         path: f.slice(7).join(' '),
@@ -143,6 +152,9 @@ export function parsePorcelainV2(text: string): {
         indexStatus: f[0]?.[0] ?? '.',
         worktreeStatus: f[0]?.[1] ?? '.',
         subField: f[1] ?? 'N...',
+        headMode: f[2] ?? null,
+        indexMode: f[3] ?? null,
+        worktreeMode: f[4] ?? null,
         hH: f[5] ?? null,
         hI: f[6] ?? null,
         path: f.slice(8).join(' '),
@@ -158,6 +170,9 @@ export function parsePorcelainV2(text: string): {
         indexStatus: f[0]?.[0] ?? 'u',
         worktreeStatus: f[0]?.[1] ?? 'u',
         subField: f[1] ?? 'N...',
+        headMode: null,
+        indexMode: null,
+        worktreeMode: f[5] ?? null, // mW
         hH: null,
         hI: null,
         path: f.slice(9).join(' '),
@@ -170,6 +185,9 @@ export function parsePorcelainV2(text: string): {
         indexStatus: '?',
         worktreeStatus: '?',
         subField: 'N...',
+        headMode: null,
+        indexMode: null,
+        worktreeMode: null, // 由 lstat 按 git 规则归一（buildFileSnapshot）
         hH: null,
         hI: null,
         path: rest,
@@ -182,6 +200,9 @@ export function parsePorcelainV2(text: string): {
         indexStatus: '!',
         worktreeStatus: '!',
         subField: 'N...',
+        headMode: null,
+        indexMode: null,
+        worktreeMode: null,
         hH: null,
         hI: null,
         path: rest,
@@ -226,12 +247,21 @@ export function parseLsTree(text: string): { mode: string; type: string; sha: st
 }
 
 /**
- * `git ls-tree -r -z --full-tree HEAD` 全量解析（R6-4.3.2.1 修复一）。
+ * `git ls-tree -r -z --full-tree <commit>` 全量解析（R6-4.3.2.1 修复一）。
  * 按 NUL 切分——中文 / 空格 / Tab / 换行等文件名原样保留（§4.4）。
+ *
+ * R6-4.3.2.2 修复二：**无法解析的记录逐条计数**（`malformed`），绝不静默
+ * 跳过后还让调用方把清单标记为「完整」——已解析的 entries 照常可用
+ * （能确定的路径仍可比较），完整性由调用方按 malformed 降级。
  */
-export function parseLsTreeAll(text: string): GitTreeEntry[] {
+export function parseLsTreeAll(text: string): {
+  entries: GitTreeEntry[]
+  malformed: number
+} {
   const entries: GitTreeEntry[] = []
+  let malformed = 0
   for (const record of text.split(NUL)) {
+    if (!record) continue
     const parsed = parseLsTreeRecord(record)
     if (parsed) {
       entries.push({
@@ -240,9 +270,21 @@ export function parseLsTreeAll(text: string): GitTreeEntry[] {
         type: parsed.type as GitTreeEntry['type'],
         sha: parsed.sha
       })
+    } else {
+      malformed += 1
     }
   }
-  return entries
+  return { entries, malformed }
+}
+
+/**
+ * lstat 结果 → git 规则的 mode 字符串（修复三）：
+ * symlink → `120000`；可执行位（任一 x 位）→ `100755`；普通 → `100644`。
+ * 与 porcelain 的 mH/mI/mW 同一坐标系，可直接比较。
+ */
+export function gitModeFromStat(statMode: number, symlink: boolean): string {
+  if (symlink) return '120000'
+  return (statMode & 0o111) !== 0 ? '100755' : '100644'
 }
 
 /**

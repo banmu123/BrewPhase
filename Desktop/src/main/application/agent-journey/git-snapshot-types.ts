@@ -42,6 +42,10 @@ export type GitErrorCode =
   | 'command_not_allowed'
   /** 参数含 NUL（execFile 无法安全传递）。 */
   | 'invalid_argument'
+  /** 采集期间 HEAD/Index/Status 发生变化且重试后仍不稳定（R6-4.3.2.2 修复一/五）。 */
+  | 'snapshot_unstable'
+  /** Tree 清单含无法解析的记录——绝不静默跳过后仍标「完整」（修复二）。 */
+  | 'tree_malformed'
 
 // MARK: - Snapshot（capture 输出）
 
@@ -53,6 +57,8 @@ export type GitChangeKind =
   | 'renamed'
   | 'type_changed'
   | 'conflicted'
+  /** 仅权限/可执行位变化（内容 hash 相同或不可知），内容未变（修复三）。 */
+  | 'mode_changed'
 
 /**
  * 变化来源。设计文档 §7.2 的 `status_origin` 扩展出 `both` 与 `untracked`：
@@ -65,7 +71,13 @@ export type GitChangeKind =
 export type GitStatusOrigin = 'index' | 'worktree' | 'both' | 'untracked' | 'committed'
 
 /** 内容没读到的原因（敏感文件永远不读）。 */
-export type GitUnreadReason = 'sensitive' | 'too_large' | 'unreadable' | 'symlink_escape'
+export type GitUnreadReason =
+  | 'sensitive'
+  | 'too_large'
+  | 'unreadable'
+  | 'symlink_escape'
+  /** 读取期间文件身份/大小/时间元数据变化（修复五），拒绝采用撕裂内容。 */
+  | 'torn_read'
 
 /**
  * 基线内容的重建方式（Dirty baseline，设计文档 §9）。
@@ -110,6 +122,12 @@ export type GitHeadTree = {
   /** status==='unavailable' 时非 null（如 `output_limit` / `git_failed`）。 */
   error_code: GitErrorCode | null
   entries: GitTreeEntry[]
+  /**
+   * 无法解析的记录数（R6-4.3.2.2 修复二）：**parser 绝不静默跳过**——
+   * 只要 > 0，该侧 Tree 就不算「完整」，全局完整性降级为 partial/unavailable。
+   * 已解析出的 entries 仍可用于文件级比较（能确定的路径照常产出 Diff）。
+   */
+  malformed_records: number
 }
 
 /** 单文件在快照中的状态（manifest 条目；来自 `git status --porcelain=v2`）。 */
@@ -133,6 +151,15 @@ export type GitFileSnapshot = {
   index_hash: string | null
   /** HEAD 中该路径的 blob sha。 */
   head_hash: string | null
+  /** porcelain mH：HEAD 中该路径的 mode（100644/100755/120000/160000）。 */
+  head_mode: string | null
+  /** porcelain mI：index 中的 mode。 */
+  index_mode: string | null
+  /**
+   * 工作区 mode：porcelain mW；untracked 文件无 mW 字段，由 lstat 按 git
+   * 规则归一（symlink→120000、可执行→100755、普通→100644）。
+   */
+  worktree_mode: string | null
   /**
    * 工作区当前内容的 sha256（symlink 取**目标字符串**，绝不跟随读取外部）。
    * null = 文件不存在 / 未读取（见 `unread_reason`）。
@@ -238,6 +265,11 @@ export type GitDiffArtifact =
   | { kind: 'binary' }
   | { kind: 'sensitive' }
   /**
+   * 仅 mode 变化（R6-4.3.2.2 修复三）：内容 hash 相同、只有权限/可执行位
+   * 变了——**不产出伪造的内容 Diff**，只陈述 mode 事实。
+   */
+  | { kind: 'mode_only'; mode_before: string; mode_after: string }
+  /**
    * Symlink 变化（R6-4.3.2.1 修复二）：只展示**链接事实**（两侧目标字符串，
    * 绝对目标已替换为占位符），绝不读取、也绝不展示链接外部的目标内容。
    */
@@ -280,6 +312,9 @@ export type GitFileDiff = {
   /** 该文件的 HEAD sha 在窗口内是否变化（拿不到两侧时退回窗口级判定）。 */
   head_moved: boolean
   rename_from_path: string | null
+  /** 窗口前后该文件的 mode（能取到时恒填；mode_changed 的可读输出，修复三）。 */
+  mode_before: string | null
+  mode_after: string | null
   insertions: number | null
   deletions: number | null
   artifact: GitDiffArtifact
@@ -296,6 +331,7 @@ export type GitDiffStats = {
   renamed: number
   type_changed: number
   conflicted: number
+  mode_changed: number
   /** 可计算部分之和（省略/不可用的文件不计入，也不冒充 0）。 */
   insertions_total: number
   deletions_total: number
@@ -305,9 +341,27 @@ export type GitDiffStats = {
   unavailable: number
 }
 
+/**
+ * Tree 对比完整性（R6-4.3.2.2 修复二）——与 `stats.undetermined` **相互独立**：
+ * undetermined 统计的是「有路径但判不了」的文件条目；没有路径可枚举的未知
+ * 变化只能由这个全局字段表达，绝不写进任何文件计数。
+ *
+ * - `complete`：两侧 Tree 均可枚举（ok 且无 malformed，或 empty）；
+ * - `partial`：恰好一侧可枚举——已可枚举侧的路径照常比较；
+ * - `unavailable`：两侧都不可枚举——**绝不把空结果表达成完整成功**。
+ */
+export type GitManifestCompleteness = 'complete' | 'partial' | 'unavailable'
+
 export type GitWorkspaceDiff = {
   status: 'ok' | 'error'
   error_code: GitErrorCode | 'repository_mismatch' | 'baseline_not_ok' | 'current_not_ok' | null
+  /** 全局 Tree 可枚举性（见类型注释）。 */
+  manifest_completeness: GitManifestCompleteness
+  /** baseline 快照的 Tree 状态（原样透出，便于 P3 落库）。 */
+  baseline_tree_status: GitHeadTree['status']
+  current_tree_status: GitHeadTree['status']
+  /** completeness!==complete 时的原因（unavailable 的 error_code / tree_malformed）。 */
+  manifest_unavailable_reason: GitErrorCode | null
   /** 窗口内 HEAD 是否移动（归因置信度降级信号，设计文档 §8）。 */
   head_moved: boolean
   /**

@@ -5,10 +5,12 @@ import {
   countTrackedPaths,
   decodeUtf8Strict,
   diffLineOps,
+  gitModeFromStat,
   identityOf,
   isProbablyBinary,
   isSensitiveRepoPath,
   parseLsTree,
+  parseLsTreeAll,
   parsePorcelainV2,
   sha256Hex,
   splitLines
@@ -246,5 +248,65 @@ describe('Myers 差分与 Unified Diff（§八）', () => {
   it('内容一致 → 空 diff（insertions/deletions 都为 0）', () => {
     const outcome = buildUnifiedDiff('same\n', 'same\n')
     expect(outcome).toEqual({ kind: 'diff', text: '', insertions: 0, deletions: 0 })
+  })
+})
+
+// MARK: - R6-4.3.2.2：mode 解析与 Tree malformed（修复二/三）
+
+describe('porcelain v2 的 mH / mI / mW 解析（修复三）', () => {
+  it('type 1 记录：三个 mode 字段与 hash 字段不混', () => {
+    const text = `1 MM S... 100644 100755 100755 aaaa bbbb script.sh${NUL}`
+    const { entries } = parsePorcelainV2(text)
+    expect(entries[0].headMode).toBe('100644')
+    expect(entries[0].indexMode).toBe('100755')
+    expect(entries[0].worktreeMode).toBe('100755')
+    expect(entries[0].hH).toBe('aaaa')
+    expect(entries[0].hI).toBe('bbbb')
+  })
+
+  it('type 2（重命名）与 unmerged 记录的 mode', () => {
+    const rename = `2 R. N... 120000 120000 120000 aaaa bbbb R100 link${NUL}old${NUL}`
+    const r = parsePorcelainV2(rename).entries[0]
+    expect(r.headMode).toBe('120000')
+    expect(r.worktreeMode).toBe('120000')
+
+    const unmerged = `u UU N... 100644 100644 100644 100755 h1 h2 h3 conf${NUL}`
+    const u = parsePorcelainV2(unmerged).entries[0]
+    expect(u.worktreeMode).toBe('100755') // mW
+    expect(u.headMode).toBeNull() // 冲突态没有单一 head/index mode
+    expect(u.indexMode).toBeNull()
+  })
+
+  it('untracked / ignored 记录没有 mode 字段（由 lstat 归一）', () => {
+    const parsed = parsePorcelainV2(`? new.txt${NUL}! build/${NUL}`)
+    expect(parsed.entries[0].worktreeMode).toBeNull()
+    expect(parsed.entries[1].worktreeMode).toBeNull()
+  })
+})
+
+describe('gitModeFromStat（lstat → git mode 归一）', () => {
+  it('symlink → 120000；可执行 → 100755；普通 → 100644', () => {
+    expect(gitModeFromStat(0o755, true)).toBe('120000') // symlink 分支优先
+    expect(gitModeFromStat(0o755, false)).toBe('100755')
+    expect(gitModeFromStat(0o744, false)).toBe('100755') // 任一 x 位
+    expect(gitModeFromStat(0o644, false)).toBe('100644')
+    expect(gitModeFromStat(0o664, false)).toBe('100644')
+  })
+})
+
+describe('parseLsTreeAll 的 malformed 计数（修复二：绝不静默跳过）', () => {
+  it('坏记录逐条计数，好记录照常解析', () => {
+    const NUL2 = String.fromCharCode(0)
+    const good = `100644 blob ${'a'.repeat(40)}\tfine.txt`
+    const bad1 = 'no-tab-here'
+    const bad2 = `100644 blob ${'b'.repeat(40)}` // 缺 TAB 与路径
+    const { entries, malformed } = parseLsTreeAll(`${good}${NUL2}${bad1}${NUL2}${bad2}${NUL2}`)
+    expect(entries).toHaveLength(1)
+    expect(entries[0].path).toBe('fine.txt')
+    expect(malformed).toBe(2)
+  })
+
+  it('空输入 → 空清单、0 malformed（不虚报）', () => {
+    expect(parseLsTreeAll('')).toEqual({ entries: [], malformed: 0 })
   })
 })

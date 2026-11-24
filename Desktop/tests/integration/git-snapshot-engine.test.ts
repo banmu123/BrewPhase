@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import {
+  appendFileSync,
   chmodSync,
   existsSync,
   mkdirSync,
@@ -12,14 +13,15 @@ import {
 } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { GitSnapshotEngine } from '../../src/main/application/agent-journey/git-snapshot-engine'
 import type {
   GitFileDiff,
   GitWorkspaceSnapshot
 } from '../../src/main/application/agent-journey/git-snapshot-types'
-import { sha256Hex } from '../../src/main/application/agent-journey/git-snapshot-utils'
+import { parseLsTreeAll, sha256Hex } from '../../src/main/application/agent-journey/git-snapshot-utils'
+import { runGit } from '../../src/main/application/agent-journey/git-command-runner'
 
 /**
  * Git Snapshot Engine 的**真实 Git 仓库**集成测试（R6-4.3.2 §十一）。
@@ -937,7 +939,7 @@ describe('HEAD Tree 清单与 Commit 场景（修复一）', () => {
     // 人为把 baseline 的 Tree 标成不可用（等价于超限/读取失败后的快照）
     const broken: GitWorkspaceSnapshot = {
       ...baseline,
-      head_tree: { status: 'unavailable', error_code: 'output_limit', entries: [] }
+      head_tree: { status: 'unavailable', error_code: 'output_limit', entries: [], malformed_records: 0 }
     }
     const diff = await engine.compare(broken, current)
     expect(diff.status).toBe('ok')
@@ -1425,5 +1427,603 @@ describe('不可观测状态（修复四）', () => {
     }
     // 有 hash 的一侧仍可确认「变了」，只是产不出内容
     expect(entry?.observation).toBe('changed')
+  })
+})
+
+
+// MARK: - 修复一：HEAD 与 Tree 绑定同一 Commit（规格 §三）
+
+/** 可注入 Runner：在确定的调用点插入并发动作（不依赖 sleep）。 */
+function countingRunner(mutate: (event: { sub: string; args: readonly string[]; nth: number }) => void) {
+  let headReads = 0
+  let lsTreeReads = 0
+  return async (
+    root: string,
+    sub: 'rev-parse' | 'symbolic-ref' | 'status' | 'ls-files' | 'ls-tree' | 'cat-file',
+    args: readonly string[],
+    opts?: Parameters<typeof runGit>[3]
+  ) => {
+    if (sub === 'rev-parse' && args.includes('HEAD^{commit}')) {
+      headReads += 1
+      mutate({ sub, args, nth: headReads })
+    }
+    if (sub === 'ls-tree') {
+      lsTreeReads += 1
+      mutate({ sub, args, nth: lsTreeReads })
+    }
+    return runGit(root, sub, args, opts)
+  }
+}
+
+describe('HEAD 与 Tree 绑定同一 Commit（修复一）', () => {
+  it('正常采集：head_sha / tree_sha / head_tree 三者对应同一个 Commit', async () => {
+    const dir = makeDir('bp-bind-ok-')
+    initRepo(dir, { 'a.ts': 'A\n', 'b.ts': 'B\n' })
+    const snapshot = await engine.capture(dir)
+    expect(snapshot.capture_status).toBe('ok')
+    expect(snapshot.head_sha).toBeTruthy()
+
+    // 独立用 git 校验：Tree 清单必须精确等于该 Commit 的树
+    const raw = execFileSync(
+      'git',
+      ['ls-tree', '-r', '-z', '--full-tree', snapshot.head_sha as string],
+      { cwd: dir, encoding: 'utf8' }
+    )
+    const independent = parseLsTreeAll(raw)
+    expect(independent.malformed).toBe(0)
+    expect(snapshot.head_tree.status).toBe('ok')
+    expect(snapshot.head_tree.malformed_records).toBe(0)
+    expect(snapshot.head_tree.entries).toEqual(independent.entries)
+    // tree_sha 也由同一 Commit 派生
+    const treeSha = execFileSync('git', ['rev-parse', `${snapshot.head_sha}^{tree}`], {
+      cwd: dir,
+      encoding: 'utf8'
+    }).trim()
+    expect(snapshot.tree_sha).toBe(treeSha)
+  })
+
+  it('初始读 HEAD 之后发生新 Commit → 收尾核验发现漂移 → 重试一次后成功', async () => {
+    const dir = makeDir('bp-bind-retry-')
+    initRepo(dir, { 'a.ts': 'A\n' })
+    let midSha = ''
+    const engine2 = new GitSnapshotEngine({
+      runner: countingRunner(({ sub, nth }) => {
+        // 第 2 次 HEAD^{commit} 读取 = 第一次采集的收尾核验：
+        // 在它之前提交 → 开头/收尾的 HEAD 必然不一致
+        if (sub === 'rev-parse' && nth === 2) {
+          write(dir, 'a.ts', 'A\nmid\n')
+          git(['add', '-A', '.'], dir)
+          git(['commit', '-qm', 'mid'], dir)
+          midSha = git(['rev-parse', 'HEAD'], dir).trim()
+        }
+      })
+    })
+
+    const snapshot = await engine2.capture(dir)
+    expect(snapshot.capture_status).toBe('ok')
+    // 重试后的快照自洽：head 是那次中途提交，Tree 与它对应（没有混合版本）
+    expect(snapshot.head_sha).toBe(midSha)
+    const raw = execFileSync('git', ['ls-tree', '-r', '-z', '--full-tree', midSha], {
+      cwd: dir,
+      encoding: 'utf8'
+    })
+    expect(snapshot.head_tree.entries).toEqual(parseLsTreeAll(raw).entries)
+  })
+
+  it('Tree 采集过程中 HEAD 变化 → 钉住的 Commit 仍自洽，收尾核验触发重试成功', async () => {
+    const dir = makeDir('bp-bind-tree-')
+    initRepo(dir, { 'a.ts': 'A\n' })
+    let firstLsTree = true
+    const engine2 = new GitSnapshotEngine({
+      runner: countingRunner(({ sub }) => {
+        // 第一次 ls-tree（钉住旧 Commit）执行前提交：ls-tree 仍返回旧树，
+        // 但收尾 HEAD 已变 → 必须检测到漂移而不是拼出混合快照
+        if (sub === 'ls-tree' && firstLsTree) {
+          firstLsTree = false
+          write(dir, 'a.ts', 'A\nchanged\n')
+          git(['add', '-A', '.'], dir)
+          git(['commit', '-qm', 'during-ls-tree'], dir)
+        }
+      })
+    })
+
+    const snapshot = await engine2.capture(dir)
+    expect(snapshot.capture_status).toBe('ok')
+    // 最终快照对应的是「重试后」的 HEAD，Tree 与它一致
+    const head = git(['rev-parse', 'HEAD'], dir).trim()
+    expect(snapshot.head_sha).toBe(head)
+    const raw = execFileSync('git', ['ls-tree', '-r', '-z', '--full-tree', head], {
+      cwd: dir,
+      encoding: 'utf8'
+    })
+    expect(snapshot.head_tree.entries).toEqual(parseLsTreeAll(raw).entries)
+  })
+
+  it('重试仍不稳定（每次收尾 HEAD 都变）→ 明确的 snapshot_unstable', async () => {
+    const dir = makeDir('bp-bind-unstable-')
+    initRepo(dir, { 'a.ts': 'A\n' })
+    const engine2 = new GitSnapshotEngine({
+      runner: countingRunner(({ sub, nth }) => {
+        // 每次收尾核验读 HEAD（第 2、4 次）之前都提交 → 两次尝试全部漂移
+        if (sub === 'rev-parse' && nth >= 2 && nth % 2 === 0) {
+          write(dir, `drift-${nth}.txt`, 'x')
+          git(['add', '-A', '.'], dir)
+          git(['commit', '-qm', `drift ${nth}`], dir)
+        }
+      })
+    })
+
+    const snapshot = await engine2.capture(dir)
+    expect(snapshot.capture_status).toBe('error')
+    expect(snapshot.error_code).toBe('snapshot_unstable')
+    expect(snapshot.head_tree.status).toBe('unavailable')
+    expect(snapshot.head_tree.error_code).toBe('snapshot_unstable')
+    // 失败快照绝不伪装成正常结果
+    expect(snapshot.files).toEqual([])
+  })
+})
+
+// MARK: - 修复二：Tree 完整性的全局表达（规格 §四）
+
+describe('Tree 完整性（修复二）', () => {
+  const withTree = (
+    snap: GitWorkspaceSnapshot,
+    patch: Partial<GitWorkspaceSnapshot['head_tree']>
+  ): GitWorkspaceSnapshot => {
+    const next: GitWorkspaceSnapshot = {
+      ...snap,
+      head_tree: { ...snap.head_tree, ...patch }
+    }
+    // rootPath / baselineStore 是**不可枚举**内部字段，对象展开会丢——手动还原
+    Object.defineProperties(next, {
+      rootPath: { value: snap.rootPath, enumerable: false, configurable: true },
+      baselineStore: { value: snap.baselineStore, enumerable: false, configurable: true }
+    })
+    return next
+  }
+
+  it('baseline Tree unavailable / current ok → partial + 原因透出', async () => {
+    const dir = makeDir('bp-comp-partial-b-')
+    initRepo(dir, { 'a.ts': 'A\n' })
+    const baseline = await engine.capture(dir)
+    const current = await engine.capture(dir)
+    const broken = withTree(baseline, { status: 'unavailable', error_code: 'output_limit', entries: [] })
+
+    const diff = await engine.compare(broken, current)
+    expect(diff.status).toBe('ok')
+    expect(diff.manifest_completeness).toBe('partial')
+    expect(diff.baseline_tree_status).toBe('unavailable')
+    expect(diff.current_tree_status).toBe('ok')
+    expect(diff.manifest_unavailable_reason).toBe('output_limit')
+  })
+
+  it('baseline ok / current Tree unavailable → partial（镜像）', async () => {
+    const dir = makeDir('bp-comp-partial-c-')
+    initRepo(dir, { 'a.ts': 'A\n' })
+    const baseline = await engine.capture(dir)
+    const current = await engine.capture(dir)
+    const broken = withTree(current, { status: 'unavailable', error_code: 'git_failed', entries: [] })
+
+    const diff = await engine.compare(baseline, broken)
+    expect(diff.manifest_completeness).toBe('partial')
+    expect(diff.baseline_tree_status).toBe('ok')
+    expect(diff.current_tree_status).toBe('unavailable')
+    expect(diff.manifest_unavailable_reason).toBe('git_failed')
+  })
+
+  it('两侧 Tree 均 unavailable 且 Status 为空 → 绝不返回「完整成功」的空结果', async () => {
+    const dir = makeDir('bp-comp-unavail-')
+    initRepo(dir, { 'a.ts': 'A\n' }) // 干净仓库：status 为空
+    const baseline = await engine.capture(dir)
+    const current = await engine.capture(dir)
+    expect(baseline.files).toEqual([])
+
+    const b = withTree(baseline, { status: 'unavailable', error_code: 'output_limit', entries: [] })
+    const c = withTree(current, { status: 'unavailable', error_code: 'output_limit', entries: [] })
+    const diff = await engine.compare(b, c)
+
+    // 文件列表可以为空（确实没有可枚举路径），但全局完整性必须明确「不可用」
+    expect(diff.files).toEqual([])
+    expect(diff.status).toBe('ok')
+    expect(diff.manifest_completeness).toBe('unavailable')
+    expect(diff.baseline_tree_status).toBe('unavailable')
+    expect(diff.current_tree_status).toBe('unavailable')
+    expect(diff.manifest_unavailable_reason).toBe('output_limit')
+  })
+
+  it('两侧 Tree 均 unavailable 但 HEAD 不同 → head_moved 仍成立 + 完整性 unavailable', async () => {
+    const dir = makeDir('bp-comp-unavail-head-')
+    initRepo(dir, { 'a.ts': 'A\n' })
+    const baseline = await engine.capture(dir)
+    write(dir, 'a.ts', 'A\nmore\n')
+    git(['add', '-A', '.'], dir)
+    git(['commit', '-qm', 'move head'], dir)
+    const current = await engine.capture(dir)
+
+    const b = withTree(baseline, { status: 'unavailable', error_code: 'output_limit', entries: [] })
+    const c = withTree(current, { status: 'unavailable', error_code: 'output_limit', entries: [] })
+    const diff = await engine.compare(b, c)
+    expect(diff.head_moved).toBe(true)
+    expect(diff.manifest_completeness).toBe('unavailable')
+    // stats.undetermined 是文件级的，与全局完整性互不替代
+    expect(diff.stats.undetermined).toBe(0)
+  })
+
+  it('Tree 记录格式异常 → malformed 计数、绝不标完整（parser 不静默跳过）', async () => {
+    const dir = makeDir('bp-comp-malformed-')
+    initRepo(dir, { 'a.ts': 'A\n' })
+    const corruptRunner = async (
+      root: string,
+      sub: 'rev-parse' | 'symbolic-ref' | 'status' | 'ls-files' | 'ls-tree' | 'cat-file',
+      args: readonly string[],
+      opts?: Parameters<typeof runGit>[3]
+    ) => {
+      const result = await runGit(root, sub, args, opts)
+      if (sub === 'ls-tree') {
+        // 混入一条没有 TAB 的坏记录
+        const corrupt = `${result.text}garbage-record-without-tab${String.fromCharCode(0)}`
+        return { ...result, text: corrupt, stdout: Buffer.from(corrupt, 'utf8') }
+      }
+      return result
+    }
+    const bad = new GitSnapshotEngine({ runner: corruptRunner })
+    const good = new GitSnapshotEngine()
+
+    const baseline = await bad.capture(dir) // baseline 侧 malformed
+    const current = await good.capture(dir)
+    expect(baseline.head_tree.status).toBe('ok')
+    expect(baseline.head_tree.malformed_records).toBe(1)
+    // 已解析的记录仍然保留（能确定的路径照常可用）
+    expect(baseline.head_tree.entries.some((e) => e.path === 'a.ts')).toBe(true)
+
+    const diff = await engine.compare(baseline, current)
+    expect(diff.manifest_completeness).toBe('partial')
+    expect(diff.manifest_unavailable_reason).toBe('tree_malformed')
+
+    // 两侧都 malformed → unavailable
+    const both = await engine.compare(baseline, await bad.capture(dir))
+    expect(both.manifest_completeness).toBe('unavailable')
+    expect(both.manifest_unavailable_reason).toBe('tree_malformed')
+  })
+
+  it('partial：可枚举的一侧照常比较，不可枚举的一侧给出不可判定条目', async () => {
+    const dir = makeDir('bp-comp-partial-ranges-')
+    initRepo(dir, { 'a.ts': 'A\n', 'b.ts': 'B\n' })
+    const baseline = await engine.capture(dir)
+
+    write(dir, 'b.ts', 'B\nchanged\n') // b.ts 双侧 status 可比
+    const currentOk = await engine.capture(dir)
+    const currentBroken = withTree(currentOk, {
+      status: 'unavailable',
+      error_code: 'output_limit',
+      entries: []
+    })
+
+    // baseline 干净的 a.ts：current 侧 Tree 不可枚举 → 不可判定条目（不伪装无变化）
+    const diff = await engine.compare(baseline, currentBroken)
+    const a = fileOf(diff, 'a.ts')
+    expect(a).toBeDefined()
+    expect(a?.observation).toBe('unavailable')
+
+    // 双侧 Tree 都完好时同一场景是正常的（对照）
+    const diffOk = await engine.compare(baseline, currentOk)
+    expect(diffOk.manifest_completeness).toBe('complete')
+    expect(fileOf(diffOk, 'a.ts')).toBeUndefined() // a.ts 真的没变 → 无条目
+    expect(fileOf(diffOk, 'b.ts')?.observation).toBe('changed') // status 路径照常比较
+  })
+})
+
+// MARK: - 修复三：文件 Mode 变化（规格 §五）
+
+describe('文件 mode 变化（修复三）', () => {
+  function initWithMode(dir: string): void {
+    initRepo(dir, { 'script.sh': '#!/bin/sh\necho hi\n', 'plain.txt': 'p\n' })
+    git(['config', 'core.filemode', 'true'], dir) // 明确开启 mode 追踪（测试确定性）
+  }
+
+  it('1) 普通文件 chmod +x（未暂存）→ mode_changed + mode_only，origin=worktree', async () => {
+    const dir = makeDir('bp-mode-chmod-')
+    initWithMode(dir)
+    const baseline = await engine.capture(dir)
+    expect(baseline.head_tree.entries.find((e) => e.path === 'script.sh')?.mode).toBe('100644')
+
+    chmodSync(join(dir, 'script.sh'), 0o755)
+    const diff = await engine.compare(baseline, await engine.capture(dir))
+    const entry = fileOf(diff, 'script.sh')
+    expect(entry?.change_kind).toBe('mode_changed')
+    expect(entry?.observation).toBe('changed')
+    expect(entry?.status_origin).toBe('worktree')
+    expect(entry?.mode_before).toBe('100644')
+    expect(entry?.mode_after).toBe('100755')
+    expect(entry?.artifact.kind).toBe('mode_only')
+    if (entry?.artifact.kind === 'mode_only') {
+      expect(entry.artifact.mode_before).toBe('100644')
+      expect(entry.artifact.mode_after).toBe('100755')
+    }
+    // 内容没变：hash 相同、行数不可知（不伪造 0 行的“内容 Diff”）
+    expect(entry?.content_hash_before).toBe(entry?.content_hash_after)
+    expect(entry?.insertions).toBeNull()
+    expect(diff.stats.mode_changed).toBe(1)
+    // 内容相同的另一文件不受影响
+    expect(fileOf(diff, 'plain.txt')).toBeUndefined()
+  })
+
+  it('2) mode 变化后 git add → origin=index', async () => {
+    const dir = makeDir('bp-mode-add-')
+    initWithMode(dir)
+    const baseline = await engine.capture(dir)
+
+    chmodSync(join(dir, 'script.sh'), 0o755)
+    git(['add', 'script.sh'], dir)
+    const diff = await engine.compare(baseline, await engine.capture(dir))
+    const entry = fileOf(diff, 'script.sh')
+    expect(entry?.change_kind).toBe('mode_changed')
+    expect(entry?.status_origin).toBe('index')
+    expect(entry?.mode_after).toBe('100755')
+    expect(entry?.artifact.kind).toBe('mode_only')
+  })
+
+  it('3)+4) 仅提交 100644→100755 → origin=committed、内容相同、mode_only', async () => {
+    const dir = makeDir('bp-mode-commit-up-')
+    initWithMode(dir)
+    const baseline = await engine.capture(dir)
+
+    chmodSync(join(dir, 'script.sh'), 0o755)
+    git(['add', '-A', '.'], dir)
+    git(['commit', '-qm', 'chmod +x'], dir)
+    const diff = await engine.compare(baseline, await engine.capture(dir))
+    const entry = fileOf(diff, 'script.sh')
+    expect(entry?.change_kind).toBe('mode_changed')
+    expect(entry?.status_origin).toBe('committed')
+    expect(entry?.mode_before).toBe('100644')
+    expect(entry?.mode_after).toBe('100755')
+    expect(entry?.artifact.kind).toBe('mode_only')
+    // blob sha 相同（内容没变）但绝不能判成 confirmed_unchanged
+    expect(entry?.observation).toBe('changed')
+    expect(diff.stats.mode_changed).toBe(1)
+  })
+
+  it('5) 仅提交 100755→100644（反向）', async () => {
+    const dir = makeDir('bp-mode-commit-down-')
+    initRepo(dir, { 'script.sh': '#!/bin/sh\n' })
+    git(['config', 'core.filemode', 'true'], dir)
+    chmodSync(join(dir, 'script.sh'), 0o755)
+    git(['add', '-A', '.'], dir)
+    git(['commit', '-qm', 'exec first'], dir)
+    const baseline = await engine.capture(dir)
+    expect(baseline.head_tree.entries.find((e) => e.path === 'script.sh')?.mode).toBe('100755')
+
+    chmodSync(join(dir, 'script.sh'), 0o644)
+    git(['add', '-A', '.'], dir)
+    git(['commit', '-qm', 'back to 644'], dir)
+    const diff = await engine.compare(baseline, await engine.capture(dir))
+    const entry = fileOf(diff, 'script.sh')
+    expect(entry?.change_kind).toBe('mode_changed')
+    expect(entry?.mode_before).toBe('100755')
+    expect(entry?.mode_after).toBe('100644')
+    expect(entry?.artifact.kind).toBe('mode_only')
+  })
+
+  it('6) 内容 hash 相同、只有 mode 变化 → 不产出内容 Diff 文本', async () => {
+    const dir = makeDir('bp-mode-only-')
+    initWithMode(dir)
+    const baseline = await engine.capture(dir)
+    chmodSync(join(dir, 'script.sh'), 0o755)
+    const diff = await engine.compare(baseline, await engine.capture(dir))
+    const entry = fileOf(diff, 'script.sh')
+    expect(entry?.artifact.kind).not.toBe('diff')
+    expect(entry?.content_hash_before).toBe(entry?.content_hash_after)
+  })
+
+  it('7) 文件↔symlink 类型变化优先于 mode_changed', async () => {
+    const dir = makeDir('bp-mode-type-')
+    initWithMode(dir)
+    const baseline = await engine.capture(dir)
+
+    rmSync(join(dir, 'script.sh'))
+    symlinkSync('plain.txt', join(dir, 'script.sh'))
+    const diff = await engine.compare(baseline, await engine.capture(dir))
+    const entry = fileOf(diff, 'script.sh')
+    // mode 确实不同（100644→120000），但类型变化必须赢
+    expect(entry?.change_kind).toBe('type_changed')
+    expect(entry?.change_kind).not.toBe('mode_changed')
+    expect(entry?.mode_before).toBe('100644')
+    expect(entry?.mode_after).toBe('120000')
+  })
+
+  it('8) 子模块 gitlink（160000）与不下钻策略兼容：不产生伪 mode_changed', async () => {
+    const base = makeDir('bp-mode-gitlink-')
+    const child = join(base, 'child')
+    initRepo(child, { 'sub.txt': 'v1\n' })
+    const parent = join(base, 'parent')
+    initRepo(parent, { 'main.txt': 'm\n' })
+    git(['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', child, 'kid'], parent)
+    git(['commit', '-qm', 'add kid'], parent)
+
+    const baseline = await engine.capture(parent)
+    expect(baseline.head_tree.entries.find((e) => e.path === 'kid')?.mode).toBe('160000')
+
+    write(join(parent, 'kid'), 'sub.txt', 'v2\n')
+    git(['add', '-A', '.'], join(parent, 'kid'))
+    git(['commit', '-qm', 'v2'], join(parent, 'kid'))
+    const diff = await engine.compare(baseline, await engine.capture(parent))
+    const kid = fileOf(diff, 'kid')
+    expect(kid).toBeDefined()
+    expect(kid?.change_kind).not.toBe('mode_changed')
+    expect(kid?.mode_before).toBe('160000')
+    expect(kid?.mode_after).toBe('160000')
+    // 仍然不下钻
+    expect(diff.files.every((f) => !f.repo_relative_path.startsWith('kid/'))).toBe(true)
+  })
+})
+
+// MARK: - 修复四：Symlink 父级/文件替换竞态（规格 §六，确定性注入点）
+
+describe('Symlink 路径竞态（修复四）', () => {
+  it('打开文件前父级目录被替换成外部 symlink → 身份复核拒绝，绝不读外部内容', async () => {
+    const outside = makeDir('bp-race-parent-out-')
+    write(outside, 'f.txt', 'RACE_OUTSIDE_CONTENT\n')
+    const dir = makeDir('bp-race-parent-')
+    initRepo(dir, { 'sub/f.txt': 'inside\n' })
+    write(dir, 'sub/f.txt', 'inside changed\n') // 让它进 status（触发读取）
+    const baseline = await engine.capture(dir)
+
+    let swapped = false
+    const engine2 = new GitSnapshotEngine({
+      hooks: {
+        beforeFileOpen: (full) => {
+          // 确定性注入：lstat/父级复核之后、open 之前，把父级换成外部链接
+          if (!swapped && full.endsWith(`${sep}sub${sep}f.txt`)) {
+            swapped = true
+            rmSync(join(dir, 'sub'), { recursive: true, force: true })
+            symlinkSync(outside, join(dir, 'sub'))
+          }
+        }
+      }
+    })
+    const current = await engine2.capture(dir)
+    expect(swapped, '注入点必须真的触发').toBe(true)
+
+    const entry = snapOf(current, 'sub/f.txt')
+    // 身份复核（ino/dev 不匹配）→ 按链接逃逸处理
+    expect(entry?.unread_reason).toBe('symlink_escape')
+    expect(entry?.worktree_hash).toBeNull()
+
+    const diff = await engine.compare(baseline, current)
+    expect(JSON.stringify(diff)).not.toContain('RACE_OUTSIDE_CONTENT')
+    expect(JSON.stringify(diff)).not.toContain(outside)
+    for (const file of diff.files) {
+      if (file.repo_relative_path === 'sub/f.txt') {
+        expect(file.artifact.kind).not.toBe('diff')
+      }
+    }
+  })
+
+  it('打开前最终文件被替换成外部 symlink → O_NOFOLLOW 拒绝（ELOOP），不读外部内容', async () => {
+    const outside = makeDir('bp-race-file-out-')
+    write(outside, 'x.txt', 'SWAPPED_FILE_CONTENT\n')
+    const dir = makeDir('bp-race-file-')
+    initRepo(dir, { 'target.txt': 'original\n' })
+    write(dir, 'target.txt', 'original changed\n')
+    const baseline = await engine.capture(dir)
+
+    let swapped = false
+    const engine2 = new GitSnapshotEngine({
+      hooks: {
+        beforeFileOpen: (full) => {
+          if (!swapped && full.endsWith(`${sep}target.txt`)) {
+            swapped = true
+            rmSync(full)
+            symlinkSync(join(outside, 'x.txt'), full)
+          }
+        }
+      }
+    })
+    const current = await engine2.capture(dir)
+    expect(swapped).toBe(true)
+
+    const entry = snapOf(current, 'target.txt')
+    expect(entry, '条目必须存在').toBeDefined()
+    // 两条诚实路径之一：① 读取窗口内被换 → O_NOFOLLOW/ELOOP 拒绝（escape）；
+    // ② 状态漂移触发重试后，文件已是 symlink → 按链接合法采集（readlink 不跟随）。
+    // 任何路径都不得读取外部文件内容。
+    const rejected = entry?.unread_reason === 'symlink_escape'
+    const capturedAsLink = entry?.is_symlink === true
+    expect(rejected || capturedAsLink, JSON.stringify(entry)).toBe(true)
+    if (capturedAsLink) expect(entry?.worktree_hash).not.toBeNull()
+
+    const diff = await engine.compare(baseline, current)
+    expect(JSON.stringify(diff)).not.toContain('SWAPPED_FILE_CONTENT')
+    expect(JSON.stringify(diff)).not.toContain(outside)
+  })
+
+  it('读取窗口内文件被修改（torn read）→ 拒绝采用撕裂内容，判定不可用', async () => {
+    const dir = makeDir('bp-race-torn-')
+    initRepo(dir, { 'torn.txt': 'first\n' })
+    write(dir, 'torn.txt', 'dirty\n') // 先变脏：status1==status2（porcelain 不含内容哈希），
+    const baseline = await engine.capture(dir) // 这样 torn 才能存活到最终快照
+
+    const engine2 = new GitSnapshotEngine({
+      hooks: {
+        beforeFileOpen: (full) => {
+          if (full.endsWith(`${sep}torn.txt`)) {
+            // 在 lstat 与 fstat 之间改写：大小/mtime 必然漂移
+            appendFileSync(full, 'more\n')
+          }
+        }
+      }
+    })
+    const current = await engine2.capture(dir)
+
+    const entry = snapOf(current, 'torn.txt')
+    expect(entry?.unread_reason).toBe('torn_read')
+    expect(entry?.worktree_hash).toBeNull()
+    expect(entry?.baseline_content).toEqual({ kind: 'not_stored', reason: 'torn_read' })
+
+    const diff = await engine.compare(baseline, current)
+    const file = fileOf(diff, 'torn.txt')
+    expect(file).toBeDefined()
+    expect(file?.observation).toBe('unavailable')
+    expect(file?.insertions).toBeNull()
+  })
+})
+
+// MARK: - 修复五：采集期间 Index / Status 漂移（规格 §七）
+
+describe('采集一致性核验（修复五）', () => {
+  it('采集期间 Index 变化（git add）→ 收尾核验发现 → 重试一次后成功', async () => {
+    const dir = makeDir('bp-stable-index-')
+    initRepo(dir, { 'a.ts': 'A\n' })
+    write(dir, 'staged.txt', 'soon\n') // status1 视角：untracked
+    const baseline = await engine.capture(dir)
+
+    let added = false
+    const engine2 = new GitSnapshotEngine({
+      hooks: {
+        beforeFinalize: () => {
+          if (!added) {
+            added = true
+            git(['add', 'staged.txt'], dir) // 收尾前 index 漂移
+          }
+        }
+      }
+    })
+    const current = await engine2.capture(dir)
+    expect(added).toBe(true)
+    expect(current.capture_status).toBe('ok')
+    // 重试后的快照反映 add 之后的状态（staged 而非 untracked）
+    expect(snapOf(current, 'staged.txt')?.index_status).toBe('A')
+    expect(snapOf(current, 'staged.txt')?.untracked).toBe(false)
+    // 首次基线是 untracked 视角 → 对照仍然正确
+    const diff = await engine.compare(baseline, current)
+    expect(diff.status).toBe('ok')
+  })
+
+  it('采集期间 Status 每次都漂移（不断新增文件）→ 两次尝试都不稳定 → snapshot_unstable', async () => {
+    const dir = makeDir('bp-stable-status-')
+    initRepo(dir, { 'a.ts': 'A\n' })
+    let created = 0
+    const engine2 = new GitSnapshotEngine({
+      hooks: {
+        beforeFinalize: () => {
+          created += 1
+          write(dir, `drift-${created}.txt`, 'x') // 每次收尾都让 status 变化
+        }
+      }
+    })
+
+    const snapshot = await engine2.capture(dir)
+    expect(created).toBeGreaterThanOrEqual(2) // 两次尝试都走到收尾核验
+    expect(snapshot.capture_status).toBe('error')
+    expect(snapshot.error_code).toBe('snapshot_unstable')
+  })
+
+  it('正常采集（无并发动作）在双重核验下仍然成功——核验不误伤', async () => {
+    const dir = makeDir('bp-stable-ok-')
+    initRepo(dir, { 'a.ts': 'A\n' })
+    write(dir, 'dirty.txt', 'd\n')
+    const snapshot = await engine.capture(dir)
+    expect(snapshot.capture_status).toBe('ok')
+    expect(snapshot.files.some((f) => f.repo_relative_path === 'dirty.txt')).toBe(true)
   })
 })

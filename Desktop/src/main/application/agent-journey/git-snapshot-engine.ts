@@ -43,6 +43,7 @@ import {
   type GitFileDiff,
   type GitFileSnapshot,
   type GitHeadTree,
+  type GitManifestCompleteness,
   type GitObservation,
   type GitSnapshotCounts,
   type GitStatusOrigin,
@@ -57,6 +58,7 @@ import {
   changeKindFromStatusCode,
   countTrackedPaths,
   decodeUtf8Strict,
+  gitModeFromStat,
   identityOf,
   isProbablyBinary,
   isSensitiveRepoPath,
@@ -78,6 +80,21 @@ export type GitSnapshotEngineOptions = {
   gitPath?: string
   /** 脏文本基线内容的内存总预算（默认 8MB）。 */
   baselineStoreBytes?: number
+  /**
+   * 可注入 Git Runner（R6-4.3.2.2）：默认 `runGit`。测试用包装器在**确定的
+   * 调用点**（如第 N 次读 HEAD、ls-tree 时）插入并发动作，不依赖 sleep。
+   */
+  runner?: typeof runGit
+  /** 测试专用注入点：构造路径替换竞态与采集期状态漂移（见 `GitSnapshotHooks`）。 */
+  hooks?: GitSnapshotHooks
+}
+
+/** 测试专用注入点（R6-4.3.2.2 修复四/五）：确定性构造竞态，不引入概率性并发测试。 */
+export type GitSnapshotHooks = {
+  /** 打开每个工作区文件**之前**调用（路径/文件替换竞态注入）。 */
+  beforeFileOpen?: (fullPath: string) => void | Promise<void>
+  /** 收尾核验（HEAD/Index/Status 复查）**之前**调用（采集期状态漂移注入）。 */
+  beforeFinalize?: () => void | Promise<void>
 }
 
 // MARK: - compare 侧描述（不触发任何 IO）
@@ -92,6 +109,7 @@ type UnknownWhy =
   | 'blob_missing'
   | 'tree_unavailable'
   | 'gitlink'
+  | 'torn_read'
 
 /**
  * 一侧内容的**惰性描述**：`describeSide` 纯查表、零子进程；
@@ -109,6 +127,8 @@ type Side = {
   fromTree: boolean
   submodule: boolean
   symlink: boolean
+  /** 该侧内容对应的 mode（100644/100755/120000/160000）；取不到为 null（修复三）。 */
+  mode: string | null
   /** 该侧「文件是否存在」是否已知（Tree 清单不可用时为 false）。 */
   existenceKnown: boolean
   bytes: Buffer | null
@@ -123,6 +143,8 @@ const SHA_RE = /^[0-9a-f]{40,64}$/
 export class GitSnapshotEngine {
   private readonly runOptions: GitRunOptions
   private readonly baselineBudgetBytes: number
+  private readonly runner: typeof runGit
+  private readonly hooks: GitSnapshotHooks
 
   constructor(options: GitSnapshotEngineOptions = {}) {
     this.runOptions = {
@@ -131,6 +153,8 @@ export class GitSnapshotEngine {
       gitPath: options.gitPath
     }
     this.baselineBudgetBytes = options.baselineStoreBytes ?? GIT_BASELINE_STORE_TOTAL_BYTES
+    this.runner = options.runner ?? runGit
+    this.hooks = options.hooks ?? {}
   }
 
   // MARK: - capture
@@ -151,30 +175,50 @@ export class GitSnapshotEngine {
       return emptySnapshot(identityOf(rootPath), 'error', 'root_unavailable', rootPath)
     }
 
+    // 修复一/五：HEAD/Index/Status 在采集期间漂移 → 整体重试一次；
+    // 两次都不稳定 → 明确的 snapshot_unstable（绝不返回多时间点混合的快照）。
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const outcome = await this.captureOnce(resolved, identity)
+      if (outcome.kind === 'done') return outcome.snapshot
+    }
+    return emptySnapshot(identity, 'error', 'snapshot_unstable', resolved)
+  }
+
+  /** 单次采集尝试；`unstable` = 收尾核验发现 HEAD/Index/Status 漂移。 */
+  private async captureOnce(
+    resolved: string,
+    identity: ReturnType<typeof identityOf>
+  ): Promise<{ kind: 'done'; snapshot: GitWorkspaceSnapshot } | { kind: 'unstable' }> {
     try {
       // 1) 是否在工作树内：普通目录 → not_a_repository（结构化结果）
       try {
-        await runGit(resolved, 'rev-parse', ['--is-inside-work-tree'], this.runOptions)
+        await this.runner(resolved, 'rev-parse', ['--is-inside-work-tree'], this.runOptions)
       } catch (error) {
         if (error instanceof GitCommandError && error.gitError === 'git_failed') {
-          return emptySnapshot(identity, 'not_a_repository', null, resolved)
+          return {
+            kind: 'done',
+            snapshot: emptySnapshot(identity, 'not_a_repository', null, resolved)
+          }
         }
         throw error
       }
 
       // 2) 工作区根必须就是仓库根（v1 边界）
       const toplevelRaw = (
-        await runGit(resolved, 'rev-parse', ['--show-toplevel'], this.runOptions)
+        await this.runner(resolved, 'rev-parse', ['--show-toplevel'], this.runOptions)
       ).text.trim()
       const toplevel = await realpath(toplevelRaw)
       if (toplevel !== resolved) {
-        return emptySnapshot(identity, 'error', 'workspace_not_repo_root', resolved)
+        return {
+          kind: 'done',
+          snapshot: emptySnapshot(identity, 'error', 'workspace_not_repo_root', resolved)
+        }
       }
 
       // 3) 仓库事实
       let branch: string | null = null
       try {
-        branch = (await runGit(resolved, 'symbolic-ref', ['--short', '-q', 'HEAD'], this.runOptions))
+        branch = (await this.runner(resolved, 'symbolic-ref', ['--short', '-q', 'HEAD'], this.runOptions))
           .text.trim()
           .slice(0, 255)
         if (branch === '') branch = null
@@ -187,7 +231,7 @@ export class GitSnapshotEngine {
       let hasUnbornHead = false
       try {
         headSha = (
-          await runGit(resolved, 'rev-parse', ['--verify', 'HEAD^{commit}'], this.runOptions)
+          await this.runner(resolved, 'rev-parse', ['--verify', 'HEAD^{commit}'], this.runOptions)
         ).text.trim()
         if (headSha === '') headSha = null
       } catch (error) {
@@ -199,7 +243,13 @@ export class GitSnapshotEngine {
       if (headSha) {
         try {
           treeSha = (
-            await runGit(resolved, 'rev-parse', ['--verify', 'HEAD^{tree}'], this.runOptions)
+            await this.runner(
+              resolved,
+              'rev-parse',
+              // 修复一：由开头读到的 Commit 派生，绝不再次读动态 HEAD
+              ['--verify', `${headSha}^{tree}`],
+              this.runOptions
+            )
           ).text.trim()
           if (treeSha === '') treeSha = null
         } catch (error) {
@@ -213,22 +263,36 @@ export class GitSnapshotEngine {
       //    超输出上限/读取失败 → `unavailable` + error_code（绝不假装空清单）。
       let headTree: GitHeadTree
       if (!headSha) {
-        headTree = { status: 'empty', error_code: null, entries: [] }
+        headTree = { status: 'empty', error_code: null, entries: [], malformed_records: 0 }
       } else {
         try {
-          const out = await runGit(
+          const out = await this.runner(
             resolved,
             'ls-tree',
-            ['-r', '-z', '--full-tree', 'HEAD'],
+            // 修复一：绑定开头读到的 Commit（动态 HEAD 会在两命令间漂移）
+            ['-r', '-z', '--full-tree', headSha],
             this.runOptions
           )
-          headTree = { status: 'ok', error_code: null, entries: parseLsTreeAll(out.text) }
+          const parsedTree = parseLsTreeAll(out.text)
+          headTree = {
+            status: 'ok',
+            error_code: null,
+            // §八：敏感路径不进 Tree 元数据——P3 持久化不扩大敏感路径可见范围
+            entries: parsedTree.entries.filter((entry) => !isSensitiveRepoPath(entry.path)),
+            // 修复二：parser 绝不静默跳过——malformed>0 时该侧不算「完整」
+            malformed_records: parsedTree.malformed
+          }
         } catch (error) {
           if (
             error instanceof GitCommandError &&
             (error.gitError === 'output_limit' || error.gitError === 'git_failed')
           ) {
-            headTree = { status: 'unavailable', error_code: error.gitError, entries: [] }
+            headTree = {
+              status: 'unavailable',
+              error_code: error.gitError,
+              entries: [],
+              malformed_records: 0
+            }
           } else {
             throw error // 环境性失败（git 缺失/超时/权限）→ 整次采集失败
           }
@@ -236,26 +300,26 @@ export class GitSnapshotEngine {
       }
 
       // 5) Worktree / Submodule 识别
-      const gitDirRaw = (await runGit(resolved, 'rev-parse', ['--git-dir'], this.runOptions))
+      const gitDirRaw = (await this.runner(resolved, 'rev-parse', ['--git-dir'], this.runOptions))
         .text.trim()
       const commonDirRaw = (
-        await runGit(resolved, 'rev-parse', ['--git-common-dir'], this.runOptions)
+        await this.runner(resolved, 'rev-parse', ['--git-common-dir'], this.runOptions)
       ).text.trim()
       const gitDir = await softRealpath(resolvePath(resolved, gitDirRaw))
       const commonDir = await softRealpath(resolvePath(resolved, commonDirRaw))
       const isWorktree = gitDir !== commonDir
       const superproject = (
-        await runGit(resolved, 'rev-parse', ['--show-superproject-working-tree'], this.runOptions)
+        await this.runner(resolved, 'rev-parse', ['--show-superproject-working-tree'], this.runOptions)
       ).text.trim()
       const isSubmodule = superproject.length > 0
 
       // 6) index 指纹 + tracked 计数
-      const lsFiles = await runGit(resolved, 'ls-files', ['-s', '-z'], this.runOptions)
+      const lsFiles = await this.runner(resolved, 'ls-files', ['-s', '-z'], this.runOptions)
       const indexStateHash = sha256Hex(lsFiles.stdout)
       const trackedCount = countTrackedPaths(lsFiles.text)
 
       // 7) status manifest
-      const status = await runGit(
+      const status = await this.runner(
         resolved,
         'status',
         ['--porcelain=v2', '-z', '-uall', '--ignored=matching'],
@@ -268,7 +332,8 @@ export class GitSnapshotEngine {
         root: resolved,
         baselineStore: new Map<string, Uint8Array>(),
         budgetLeft: { value: this.baselineBudgetBytes },
-        storeComplete: { value: true }
+        storeComplete: { value: true },
+        hooks: this.hooks
       }
       const files: GitFileSnapshot[] = []
       const counts: GitSnapshotCounts = {
@@ -288,6 +353,33 @@ export class GitSnapshotEngine {
           if (entry.worktreeStatus !== '.') counts.unstaged += 1
         }
         files.push(await buildFileSnapshot(ctx, entry))
+      }
+
+      // 8.5) 收尾核验（修复五）：开头记录的 HEAD / Index / Status 必须原样。
+      //      任何漂移 = 多时间点混合的采集 → unstable（上层再重试一次）。
+      if (this.hooks.beforeFinalize) await this.hooks.beforeFinalize()
+      try {
+        let headEnd: string | null = null
+        try {
+          headEnd = (
+            await this.runner(resolved, 'rev-parse', ['--verify', 'HEAD^{commit}'], this.runOptions)
+          ).text.trim()
+          if (headEnd === '') headEnd = null
+        } catch {
+          headEnd = null // 读不到 HEAD；与开头的 null（未出生）比对同样有效
+        }
+        if (headEnd !== headSha) return { kind: 'unstable' }
+        const lsFilesEnd = await this.runner(resolved, 'ls-files', ['-s', '-z'], this.runOptions)
+        if (sha256Hex(lsFilesEnd.stdout) !== indexStateHash) return { kind: 'unstable' }
+        const statusEnd = await this.runner(
+          resolved,
+          'status',
+          ['--porcelain=v2', '-z', '-uall', '--ignored=matching'],
+          this.runOptions
+        )
+        if (statusEnd.text !== status.text) return { kind: 'unstable' }
+      } catch {
+        return { kind: 'unstable' } // 核验本身失败（仓库在采集中被破坏/删除）
       }
 
       // 9) worktree 状态指纹（排序后的 路径+内容hash）
@@ -322,10 +414,13 @@ export class GitSnapshotEngine {
         baselineStore: ctx.baselineStore,
         baseline_store_complete: ctx.storeComplete.value
       }
-      return hideInternals(snapshot)
+      return { kind: 'done', snapshot: hideInternals(snapshot) }
     } catch (error) {
       if (error instanceof GitCommandError) {
-        return emptySnapshot(identity, 'error', error.gitError, resolved)
+        return {
+          kind: 'done',
+          snapshot: emptySnapshot(identity, 'error', error.gitError, resolved)
+        }
       }
       throw error // 编程错误不吞
     }
@@ -344,10 +439,14 @@ export class GitSnapshotEngine {
     baseline: GitWorkspaceSnapshot,
     current: GitWorkspaceSnapshot
   ): Promise<GitWorkspaceDiff> {
-    if (baseline.capture_status !== 'ok') return diffError('baseline_not_ok')
-    if (current.capture_status !== 'ok') return diffError('current_not_ok')
+    if (baseline.capture_status !== 'ok') {
+      return diffError('baseline_not_ok', baseline, current)
+    }
+    if (current.capture_status !== 'ok') {
+      return diffError('current_not_ok', baseline, current)
+    }
     if (baseline.repository_identity !== current.repository_identity) {
-      return diffError('repository_mismatch')
+      return diffError('repository_mismatch', baseline, current)
     }
 
     const root = current.rootPath
@@ -402,7 +501,16 @@ export class GitSnapshotEngine {
           ? await this.materializeSide(root, decision.after)
           : decision.after
 
-        const artifact = buildArtifact(bFinal, aFinal, artifactBudget)
+        const kind = deriveKind(bFinal, aFinal, b, c, renameFrom)
+        const contentEqual =
+          bFinal.sha !== null && aFinal.sha !== null && bFinal.sha === aFinal.sha
+        let artifact: GitDiffArtifact
+        if (kind === 'mode_changed' && contentEqual && bFinal.mode && aFinal.mode) {
+          // 内容逐字节相同、只有 mode 变了 → 不产出伪造的内容 Diff（修复三）
+          artifact = { kind: 'mode_only', mode_before: bFinal.mode, mode_after: aFinal.mode }
+        } else {
+          artifact = buildArtifact(bFinal, aFinal, artifactBudget)
+        }
         if (artifact.kind === 'diff') {
           artifactBudget -= Buffer.byteLength(artifact.text)
         }
@@ -411,29 +519,36 @@ export class GitSnapshotEngine {
             path,
             b,
             c,
-            deriveKind(bFinal, aFinal, b, c, renameFrom),
+            kind,
             artifact,
             bFinal.kind === 'absent' ? null : bFinal.sha,
             aFinal.kind === 'absent' ? null : aFinal.sha,
             headMoved,
             renameFrom,
-            observation === 'changed' ? 'changed' : 'unavailable'
+            observation === 'changed' ? 'changed' : 'unavailable',
+            bFinal.mode,
+            aFinal.mode
           )
         )
       }
     } catch (error) {
       if (error instanceof GitCommandError && isStructuralGitError(error)) {
-        return diffError(error.gitError)
+        return diffError(error.gitError, baseline, current)
       }
       throw error
     }
 
     const reconciled = reconcileRenames(diffs)
+    const completeness = manifestCompleteness(baseline.head_tree, current.head_tree)
     return {
       status: 'ok',
       error_code: null,
       head_moved: headMoved,
       baseline_store_complete: baseline.baseline_store_complete,
+      manifest_completeness: completeness.completeness,
+      baseline_tree_status: baseline.head_tree.status,
+      current_tree_status: current.head_tree.status,
+      manifest_unavailable_reason: completeness.reason,
       files: reconciled,
       stats: aggregateStats(reconciled)
     }
@@ -469,6 +584,11 @@ export class GitSnapshotEngine {
     }
     if (before.kind === 'sensitive' || after.kind === 'sensitive') {
       return { observation: 'unavailable', before, after }
+    }
+    // mode：两侧都已知且不同 → 必然有变化（chmod / 100644↔100755 / 120000）。
+    // 必须在 sha 比较**之前**——内容逐字节相同但权限变了也算变化（修复三）。
+    if (before.mode && after.mode && before.mode !== after.mode) {
+      return { observation: 'changed', before, after }
     }
 
     // 1) 两侧都有 sha256（快照 worktree_hash / 驻留字节实算）
@@ -544,7 +664,7 @@ export class GitSnapshotEngine {
   ): Promise<{ kind: 'ok'; bytes: Buffer } | { kind: 'missing' } | { kind: 'too_large' }> {
     if (!SHA_RE.test(sha)) return { kind: 'missing' }
     try {
-      const result = await runGit(root, 'cat-file', ['blob', sha], this.runOptions)
+      const result = await this.runner(root, 'cat-file', ['blob', sha], this.runOptions)
       return { kind: 'ok', bytes: result.stdout }
     } catch (error) {
       if (error instanceof GitCommandError && error.gitError === 'output_limit') {
@@ -564,11 +684,12 @@ type CaptureContext = {
   budgetLeft: { value: number }
   /** 预算语义：脏文本基线是否全部驻留（预算没爆）。 */
   storeComplete: { value: boolean }
+  hooks: GitSnapshotHooks
 }
 
 /** 读取被安全策略拒绝的原因（映射到 `GitUnreadReason`）。 */
 class SnapshotReadError extends Error {
-  constructor(readonly reason: 'symlink_swap' | 'unreadable' | 'too_large') {
+  constructor(readonly reason: 'symlink_swap' | 'unreadable' | 'too_large' | 'torn') {
     super(reason)
     this.name = 'SnapshotReadError'
   }
@@ -604,11 +725,21 @@ async function hasSymlinkParent(root: string, rel: string): Promise<boolean> {
  *    文件被替换成 symlink 或其它文件的竞态一律拒绝**。
  * 读取上限在打开前后各查一次，绝不无上限读入。
  */
-async function readFileNoFollow(full: string, limit: number): Promise<Buffer> {
+async function readFileNoFollow(
+  full: string,
+  limit: number,
+  /** 打开前复核父级：true = 父级出现 symlink（逃逸）→ fail-closed。 */
+  recheckParents: () => Promise<boolean>,
+  /** 测试注入点：确定性地在 open 之前替换路径（验证身份复核真的兜底）。 */
+  beforeOpen?: (fullPath: string) => void | Promise<void>
+): Promise<Buffer> {
   const before = await lstat(full)
   if (before.isSymbolicLink()) throw new SnapshotReadError('symlink_swap')
   if (!before.isFile()) throw new SnapshotReadError('unreadable')
   if (before.size > limit) throw new SnapshotReadError('too_large')
+  // C：open 之前再核一次父级——B 与 open 之间父级被换成 symlink 时拒绝
+  if (await recheckParents()) throw new SnapshotReadError('symlink_swap')
+  await beforeOpen?.(full)
 
   const noFollow =
     process.platform !== 'win32' && typeof fsConstants.O_NOFOLLOW === 'number'
@@ -618,9 +749,13 @@ async function readFileNoFollow(full: string, limit: number): Promise<Buffer> {
   try {
     const after = await handle.stat()
     if (!after.isFile()) throw new SnapshotReadError('symlink_swap')
-    if (after.size > limit) throw new SnapshotReadError('too_large')
+    // E：身份复核（修复四核心兜底）——打开前后必须是同一个文件；
+    // 修复五：大小与 mtime 也在读取窗口内校验，撕裂内容一律拒绝采用。
     if (after.ino !== before.ino || after.dev !== before.dev) {
-      throw new SnapshotReadError('symlink_swap') // 打开前后不是同一个文件
+      throw new SnapshotReadError('symlink_swap')
+    }
+    if (after.size !== before.size || after.mtimeMs !== before.mtimeMs) {
+      throw new SnapshotReadError('torn')
     }
     const buf = Buffer.allocUnsafe(after.size)
     let offset = 0
@@ -660,6 +795,8 @@ async function buildFileSnapshot(
   let isSymlink = false
   let exists = false
   let content: Uint8Array | null = null
+  /** lstat 归一的 mode（untracked 无 porcelain mW 时用；修复三）。 */
+  let lstatMode: string | null = null
 
   if (sensitive) {
     unreadReason = 'sensitive'
@@ -673,6 +810,7 @@ async function buildFileSnapshot(
       try {
         const info = await lstat(full)
         exists = true
+        lstatMode = gitModeFromStat(info.mode, info.isSymbolicLink())
         if (info.isSymbolicLink()) {
           // symlink：hash 与驻留内容都是**目标字符串**——readlink 不跟随链接
           isSymlink = true
@@ -687,8 +825,13 @@ async function buildFileSnapshot(
           if (sizeBytes > GIT_HASH_MAX_SOURCE_BYTES) {
             unreadReason = 'too_large'
           } else {
-            // ③ no-follow + 打开后复核（含被替换竞态）
-            const buf = await readFileNoFollow(full, GIT_HASH_MAX_SOURCE_BYTES)
+            // ③ no-follow + 打开前父级复核 + 打开后身份/时间复核（修复四/五）
+            const buf = await readFileNoFollow(
+              full,
+              GIT_HASH_MAX_SOURCE_BYTES,
+              () => hasSymlinkParent(ctx.root, rel),
+              ctx.hooks.beforeFileOpen
+            )
             isBinary =
               isProbablyBinary(buf) || BINARY_EXTENSIONS.has(extname(rel).toLowerCase())
             worktreeHash = sha256Hex(buf)
@@ -701,8 +844,12 @@ async function buildFileSnapshot(
         if (error instanceof SnapshotReadError) {
           if (error.reason === 'too_large') {
             unreadReason = 'too_large'
+          } else if (error.reason === 'torn') {
+            // 读取窗口内文件被修改（修复五）：拒绝采用撕裂内容
+            unreadReason = 'torn_read'
+            exists = true
           } else if (error.reason === 'symlink_swap') {
-            // lstat 之后被换成 symlink：按「链接逃逸」处理，绝不跟随
+            // 打开前后不是同一个文件/父级被换：按「链接逃逸」处理，绝不跟随
             unreadReason = 'symlink_escape'
             exists = true
           } else {
@@ -730,8 +877,8 @@ async function buildFileSnapshot(
     baselineContent = { kind: 'absent' }
   } else if (unreadReason === 'too_large') {
     baselineContent = { kind: 'not_stored', reason: 'too_large' }
-  } else if (unreadReason === 'unreadable') {
-    baselineContent = { kind: 'not_stored', reason: 'unreadable' }
+  } else if (unreadReason === 'unreadable' || unreadReason === 'torn_read') {
+    baselineContent = { kind: 'not_stored', reason: unreadReason }
   } else if (isBinary === true) {
     baselineContent = { kind: 'not_stored', reason: 'binary' }
   } else if (untracked || conflicted || worktreeChange !== null) {
@@ -765,6 +912,10 @@ async function buildFileSnapshot(
     rename_from_path: entry.renameFrom,
     index_hash: entry.hI,
     head_hash: entry.hH,
+    head_mode: entry.headMode,
+    index_mode: entry.indexMode,
+    // porcelain mW 优先（git 的 core.filemode 视角）；untracked 无 mW → lstat 归一
+    worktree_mode: entry.worktreeMode ?? lstatMode,
     worktree_hash: worktreeHash,
     unread_reason: unreadReason,
     size_bytes: sizeBytes,
@@ -783,8 +934,8 @@ function emptySnapshot(
 ): GitWorkspaceSnapshot {
   const headTree: GitHeadTree =
     status === 'error'
-      ? { status: 'unavailable', error_code: errorCode, entries: [] }
-      : { status: 'empty', error_code: null, entries: [] }
+      ? { status: 'unavailable', error_code: errorCode, entries: [], malformed_records: 0 }
+      : { status: 'empty', error_code: null, entries: [], malformed_records: 0 }
   return hideInternals({
     capture_status: status,
     error_code: errorCode,
@@ -858,6 +1009,7 @@ function describeSide(
     fromTree: false,
     submodule: false,
     symlink: false,
+    mode: null as string | null,
     existenceKnown: true,
     bytes: null,
     blobSha: null,
@@ -870,14 +1022,20 @@ function describeSide(
       gitSha: entry.head_hash,
       submodule: entry.submodule_path,
       symlink: entry.is_symlink,
-      size: entry.size_bytes
+      size: entry.size_bytes,
+      // 工作区坐标系的 mode（内容若存在就是它的 mode；修复三）
+      mode: entry.worktree_mode
     }
     if (entry.unread_reason === 'sensitive') return { ...side, kind: 'sensitive' }
     if (entry.unread_reason === 'too_large') {
       return { ...side, kind: 'unknown', unknownWhy: 'too_large' }
     }
-    if (entry.unread_reason === 'unreadable') {
-      return { ...side, kind: 'unknown', unknownWhy: 'unreadable' }
+    if (entry.unread_reason === 'unreadable' || entry.unread_reason === 'torn_read') {
+      return {
+        ...side,
+        kind: 'unknown',
+        unknownWhy: entry.unread_reason === 'torn_read' ? 'torn_read' : 'unreadable'
+      }
     }
     if (entry.unread_reason === 'symlink_escape') {
       return { ...side, kind: 'unknown', unknownWhy: 'symlink_escape' }
@@ -888,7 +1046,7 @@ function describeSide(
     const ref: GitBaselineContentRef = entry.baseline_content
     if (ref.kind === 'absent') return { ...side, kind: 'absent' }
     if (ref.kind === 'stored') {
-      const bytes = snapshot.baselineStore.get(path)
+      const bytes = snapshot.baselineStore?.get(path)
       if (!bytes) return { ...side, kind: 'unknown', unknownWhy: 'not_stored' }
       const buf = Buffer.from(bytes)
       // 修复三·完整性守卫：驻留字节必须与采集时的 hash 一致，否则 stale
@@ -899,8 +1057,14 @@ function describeSide(
     }
     if (ref.kind === 'index_blob') {
       // 决策指纹用快照 hash（过滤器可能让 index blob ≠ 工作区原始字节）；
-      // Diff 文本在物化时取 blob 字节。
-      return { ...side, kind: 'lazy', sha: entry.worktree_hash, blobSha: ref.sha }
+      // Diff 文本在物化时取 blob 字节。mode 用 index 坐标系（mI）。
+      return {
+        ...side,
+        kind: 'lazy',
+        sha: entry.worktree_hash,
+        blobSha: ref.sha,
+        mode: entry.index_mode ?? entry.worktree_mode
+      }
     }
     // not_stored（预算等）：仍有快照 hash → 可与其他侧比对
     return { ...side, kind: 'hash', sha: entry.worktree_hash }
@@ -921,7 +1085,8 @@ function describeSide(
     // git 对象模型里 symlink 就是 blob：ls-tree 的 type 恒为 blob，
     // 链接靠 mode 120000 判定；子模块 gitlink 是 commit + mode 160000。
     submodule: found.type === 'commit' || found.mode === '160000',
-    symlink: found.mode === '120000'
+    symlink: found.mode === '120000',
+    mode: found.mode
   }
   if (found.type === 'commit') {
     // 子模块 gitlink：v1 不下钻，可观测维度就是记录 sha
@@ -961,6 +1126,9 @@ function sensitiveOnlyDiff(
     pre_existing_dirty: b?.pre_existing_dirty ?? false,
     head_moved: fileHeadMoved(b, c, headMoved),
     rename_from_path: c?.rename_from_path ?? null,
+    // 敏感文件连 mode 都不外带（只给存在性与状态事实）
+    mode_before: null,
+    mode_after: null,
     insertions: null,
     deletions: null,
     artifact: { kind: 'sensitive' }
@@ -977,7 +1145,9 @@ function makeFileDiff(
   hashAfter: string | null,
   headMoved: boolean,
   renameFrom: string | null | undefined,
-  observation: 'changed' | 'unavailable'
+  observation: 'changed' | 'unavailable',
+  modeBefore: string | null,
+  modeAfter: string | null
 ): GitFileDiff {
   return {
     repo_relative_path: path,
@@ -989,6 +1159,8 @@ function makeFileDiff(
     pre_existing_dirty: b?.pre_existing_dirty ?? false,
     head_moved: fileHeadMoved(b, c, headMoved),
     rename_from_path: renameFrom ?? c?.rename_from_path ?? null,
+    mode_before: modeBefore,
+    mode_after: modeAfter,
     insertions: artifactInsertions(artifact),
     deletions: artifactDeletions(artifact),
     artifact
@@ -1066,6 +1238,18 @@ function deriveKind(
   if (renameFrom) return 'renamed'
   if (!beforePresent && afterPresent) return 'added'
   if (beforePresent && !afterPresent) return 'deleted'
+  // 仅 mode 变化（内容相同，或内容不可知但 mode 已证实不同）→ mode_changed；
+  // 内容确实变了则归内容的 kind（mode_before/after 字段仍照常记录，修复三）。
+  const contentEqual = before.sha !== null && before.sha === after.sha
+  const contentUnknown = before.sha === null || after.sha === null
+  if (
+    before.mode &&
+    after.mode &&
+    before.mode !== after.mode &&
+    (contentEqual || contentUnknown)
+  ) {
+    return 'mode_changed'
+  }
   return 'modified'
 }
 
@@ -1262,6 +1446,7 @@ function aggregateStats(files: GitFileDiff[]): GitDiffStats {
     renamed: 0,
     type_changed: 0,
     conflicted: 0,
+    mode_changed: 0,
     insertions_total: 0,
     deletions_total: 0,
     omitted_sensitive: 0,
@@ -1278,6 +1463,7 @@ function aggregateStats(files: GitFileDiff[]): GitDiffStats {
     else if (file.change_kind === 'renamed') stats.renamed++
     else if (file.change_kind === 'type_changed') stats.type_changed++
     else if (file.change_kind === 'conflicted') stats.conflicted++
+    else if (file.change_kind === 'mode_changed') stats.mode_changed++
     if (file.insertions !== null) stats.insertions_total += file.insertions
     if (file.deletions !== null) stats.deletions_total += file.deletions
     if (file.artifact.kind === 'sensitive') stats.omitted_sensitive++
@@ -1288,12 +1474,54 @@ function aggregateStats(files: GitFileDiff[]): GitDiffStats {
   return stats
 }
 
-function diffError(errorCode: GitWorkspaceDiff['error_code']): GitWorkspaceDiff {
+/**
+ * Tree 对比完整性（修复二）：`ok` 且无 malformed、或 `empty` 才算「可枚举」。
+ * 与 `stats.undetermined` 相互独立——没有路径可枚举的未知只能由它表达。
+ */
+function manifestCompleteness(bTree: GitHeadTree, cTree: GitHeadTree): {
+  completeness: GitManifestCompleteness
+  reason: GitErrorCode | null
+} {
+  const enumerable = (tree: GitHeadTree): boolean =>
+    tree.status === 'empty' || (tree.status === 'ok' && tree.malformed_records === 0)
+  const reasonOf = (tree: GitHeadTree): GitErrorCode | null =>
+    tree.status === 'unavailable'
+      ? (tree.error_code ?? 'git_failed')
+      : tree.malformed_records > 0
+        ? 'tree_malformed'
+        : null
+  const bOk = enumerable(bTree)
+  const cOk = enumerable(cTree)
+  return {
+    completeness: bOk && cOk ? 'complete' : bOk || cOk ? 'partial' : 'unavailable',
+    reason: !bOk ? reasonOf(bTree) : !cOk ? reasonOf(cTree) : null
+  }
+}
+
+function diffError(
+  errorCode: GitWorkspaceDiff['error_code'],
+  baseline?: GitWorkspaceSnapshot,
+  current?: GitWorkspaceSnapshot
+): GitWorkspaceDiff {
+  // 没有建立可比性 → 一律 unavailable；Tree 状态尽量从快照透出
+  const bTree = baseline?.head_tree
+  const cTree = current?.head_tree
+  const fallback: GitHeadTree = {
+    status: 'unavailable',
+    error_code: null,
+    entries: [],
+    malformed_records: 0
+  }
+  const reason = manifestCompleteness(bTree ?? fallback, cTree ?? fallback).reason
   return {
     status: 'error',
     error_code: errorCode,
     head_moved: false,
     baseline_store_complete: false,
+    manifest_completeness: 'unavailable',
+    baseline_tree_status: bTree?.status ?? 'unavailable',
+    current_tree_status: cTree?.status ?? 'unavailable',
+    manifest_unavailable_reason: reason,
     files: [],
     stats: aggregateStats([])
   }
