@@ -23,7 +23,11 @@ import type {
   JourneyEvidence
 } from '../../../shared/contracts/entities/agent-journey'
 import { GitSnapshotEngine } from './git-snapshot-engine'
-import type { GitFileDiff, GitWorkspaceSnapshot } from './git-snapshot-types'
+import type {
+  GitFileDiff,
+  GitWorkspaceDiff,
+  GitWorkspaceSnapshot
+} from './git-snapshot-types'
 import {
   applyJourneyArtifactBudget,
   applyPersistenceDiffBudget,
@@ -113,6 +117,20 @@ const ZERO_STATS: { changedFiles: number; insertions: number; deletions: number 
   changedFiles: 0,
   insertions: 0,
   deletions: 0
+}
+
+/**
+ * 观察窗口是否完整（R6-4.3.4.1 §五）：**manifest 可枚举且没有不可判定文件**
+ * 才允许 `comparison_status='complete'`。
+ *
+ * 直接复用引擎既有统计——`manifest_completeness` 与 `stats.undetermined`，
+ * 不新增第二套状态定义。任一条件成立（manifest 不完整 / 有文件判不了 /
+ * 引擎返回无法判定的结果）→ 只能给 `partial`（观察不完整），下游对照
+ * 置信度据此必为 `unconfirmed`。**已确定的文件级 Diff 照常保存**——
+ * 一个文件判不了不丢其他文件的真实变化。
+ */
+function isCompleteComparison(diff: GitWorkspaceDiff): boolean {
+  return diff.manifest_completeness === 'complete' && diff.stats.undetermined === 0
 }
 
 export class WorkspaceEvidenceService {
@@ -638,8 +656,7 @@ export class WorkspaceEvidenceService {
             if (diff.status !== 'ok') {
               comparisonStatus = 'comparison_failed'
             } else {
-              comparisonStatus =
-                diff.manifest_completeness === 'complete' ? 'complete' : 'partial'
+              comparisonStatus = isCompleteComparison(diff) ? 'complete' : 'partial'
               files = persistedFiles(diff.files)
               stats = {
                 changedFiles: diff.stats.changed_files,
@@ -719,7 +736,7 @@ export class WorkspaceEvidenceService {
         if (diff.status !== 'ok') {
           comparisonStatus = 'comparison_failed'
         } else {
-          comparisonStatus = diff.manifest_completeness === 'complete' ? 'complete' : 'partial'
+          comparisonStatus = isCompleteComparison(diff) ? 'complete' : 'partial'
           files = persistedFiles(diff.files)
           stats = {
             changedFiles: diff.stats.changed_files,

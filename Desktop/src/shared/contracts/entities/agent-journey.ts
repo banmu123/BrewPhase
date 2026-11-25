@@ -645,7 +645,8 @@ export const journeyEvidenceSnapshotSchema = z.object({
   capture_status: z.string(),
   /**
    * 比较状态：not_applicable（该任务类型不做比较，或尚在 pending）/ complete /
-   * partial / baseline_unavailable（内存基线已失，不伪造比较）/ comparison_failed。
+   * partial（manifest 不完整或存在不可判定文件——观察窗口不完整） /
+   * baseline_unavailable（内存基线已失，不伪造比较）/ comparison_failed。
    */
   comparison_status: z.string(),
   /** 具体失败原因（如 git_not_found / workspace_unavailable / capture_interrupted）；成功为 null。 */

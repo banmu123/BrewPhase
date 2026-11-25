@@ -264,6 +264,88 @@ describe('重命名精确匹配（§5.2）', () => {
     expect(report.entries[0].repo_relative_path).toBe('src/b.ts')
     expect(report.entries[1].repo_relative_path).toBe('src/b.ts')
   })
+
+  it('§3.3 只有一方是重命名：Agent 报重命名、观察侧 rename_from 为 null → 不匹配', () => {
+    const event = makeEvent({
+      sequence: 1,
+      changes: [makeChange('src/b.ts', { change_type: 'renamed', previous_file_path: 'src/a.ts' })]
+    })
+    const snapshots = window(event.id, [
+      makeFile('src/b.ts', { change_kind: 'added', rename_from_path: null })
+    ])
+    const report = only(buildEvidenceComparison(detailOf(event), snapshots))
+    // 绝不把「观察到文件发生变化」升级成「观察到同一次重命名」
+    expect(report.entries.map((entry) => entry.attribution)).toEqual([
+      'reported_only',
+      'observed_only'
+    ])
+    expect(report.entries[0].observation).toBeNull()
+    expect(report.entries[1].agent_report).toBeNull()
+  })
+
+  it('§3.3 只有一方是重命名：Agent 只报 modified、观察侧却是重命名 → 同样拆开', () => {
+    const event = makeEvent({ sequence: 1, changes: [makeChange('src/b.ts')] })
+    const snapshots = window(event.id, [
+      makeFile('src/b.ts', { change_kind: 'renamed', rename_from_path: 'src/a.ts' })
+    ])
+    const report = only(buildEvidenceComparison(detailOf(event), snapshots))
+    expect(report.entries.map((entry) => entry.attribution)).toEqual([
+      'reported_only',
+      'observed_only'
+    ])
+  })
+
+  it('§3.4 旧路径是独立变化（modified，非删除侧）→ 不被吞，仍产出 observed_only', () => {
+    const event = makeEvent({
+      sequence: 1,
+      changes: [makeChange('src/new.ts', { change_type: 'renamed', previous_file_path: 'src/old.ts' })]
+    })
+    const snapshots = window(event.id, [
+      makeFile('src/new.ts', {
+        change_kind: 'renamed',
+        rename_from_path: 'src/old.ts',
+        content_hash_before: 'lineage-hash'
+      }),
+      makeFile('src/old.ts', {
+        change_kind: 'modified',
+        content_hash_before: 'unrelated-1',
+        content_hash_after: 'unrelated-2'
+      })
+    ])
+    const report = only(buildEvidenceComparison(detailOf(event), snapshots))
+    expect(
+      report.entries.map((entry) => [entry.repo_relative_path, entry.attribution])
+    ).toEqual([
+      ['src/new.ts', 'reported_and_observed'],
+      ['src/old.ts', 'observed_only'] // 路径相等也不能吞：它不是本次重命名的删除侧
+    ])
+  })
+
+  it('§3.4 旧路径虽是 deleted 但内容血缘不同 → 归属证明不了，不消费', () => {
+    const event = makeEvent({
+      sequence: 1,
+      changes: [makeChange('src/new.ts', { change_type: 'renamed', previous_file_path: 'src/old.ts' })]
+    })
+    const snapshots = window(event.id, [
+      makeFile('src/new.ts', {
+        change_kind: 'renamed',
+        rename_from_path: 'src/old.ts',
+        content_hash_before: 'lineage-hash'
+      }),
+      makeFile('src/old.ts', {
+        change_kind: 'deleted',
+        content_hash_before: 'some-other-content', // 与重命名 before 不同源 → 不是删除侧
+        content_hash_after: null
+      })
+    ])
+    const report = only(buildEvidenceComparison(detailOf(event), snapshots))
+    expect(
+      report.entries.map((entry) => [entry.repo_relative_path, entry.attribution])
+    ).toEqual([
+      ['src/new.ts', 'reported_and_observed'],
+      ['src/old.ts', 'observed_only']
+    ])
+  })
 })
 
 // MARK: - 路径精确匹配
@@ -394,13 +476,23 @@ describe('窗口隔离（§5.1）', () => {
     expect(reportA.entries).toHaveLength(1)
     expect(reportA.entries[0].attribution).toBe('reported_only')
     expect(reportA.entries[0].observation).toBeNull()
-    expect(reportA.end_snapshot_id).toBe(reportA.end_snapshot_id)
     // B 的观察只属于 B → observed_only（agent_report 为 null）
     expect(reportB.entries).toHaveLength(1)
     expect(reportB.entries[0].attribution).toBe('observed_only')
     expect(reportB.entries[0].agent_report).toBeNull()
-    // 各自的窗口快照 id 指向各自的 execution_event_id
+    // 各自的窗口快照 id 指向各自的 execution_event_id（真实归属，非自比较）
+    const endA = snapshots.find(
+      (snapshot) =>
+        snapshot.execution_event_id === eventA.id && snapshot.snapshot_type === 'execution_end'
+    )!
+    const endB = snapshots.find(
+      (snapshot) =>
+        snapshot.execution_event_id === eventB.id && snapshot.snapshot_type === 'execution_end'
+    )!
+    expect(reportA.end_snapshot_id).toBe(endA.id)
+    expect(reportB.end_snapshot_id).toBe(endB.id)
     expect(reportA.end_snapshot_id).not.toBe(reportB.end_snapshot_id)
+    expect(reportA.baseline_snapshot_id).not.toBe(reportB.baseline_snapshot_id)
   })
 
   it('Journey Final / baseline 快照的文件绝不冒充某次执行的观察结果', () => {
@@ -504,5 +596,128 @@ describe('报告结构', () => {
       'unconfirmed',
       'window_net_change'
     ])
+  })
+})
+
+// MARK: - 观察类型补齐（R6-4.3.4.1 §四）
+
+describe('观察类型补齐：type_changed / conflicted（§四）', () => {
+  it('type_changed 且前后 hash 相同 → 仍是观察到的净变化（不因 hash 相同判无变化）', () => {
+    const event = makeEvent({ sequence: 1 })
+    const snapshots = window(event.id, [
+      makeFile('src/f.txt', {
+        change_kind: 'type_changed',
+        content_hash_before: 'same-hash',
+        content_hash_after: 'same-hash',
+        artifact_kind: 'symlink',
+        artifact_status: 'available'
+      })
+    ])
+    const report = only(buildEvidenceComparison(detailOf(event), snapshots))
+    expect(report.entries).toHaveLength(1)
+    expect(report.entries[0].attribution).toBe('observed_only')
+    expect(report.entries[0].observation?.change_kind).toBe('type_changed')
+    // 文件级事实与窗口级置信度分开：窗口完整 → confirmed（不互相冒充）
+    expect(report.confidence).toBe('confirmed')
+    expect(report.confidence_title).toBe(EVIDENCE_CONFIDENCE_TEXT.confirmed.title)
+  })
+
+  it('conflicted 且 hash 双空不足以判断 → 不静默归入无变化；观察不推断作者', () => {
+    const event = makeEvent({ sequence: 1 })
+    const snapshots = window(event.id, [
+      makeFile('src/c.ts', {
+        change_kind: 'conflicted',
+        content_hash_before: null,
+        content_hash_after: null,
+        artifact_kind: 'unavailable',
+        artifact_status: 'omitted',
+        artifact_omission: 'not_observable'
+      })
+    ])
+    const report = only(buildEvidenceComparison(detailOf(event), snapshots))
+    expect(report.entries).toHaveLength(1)
+    const entry = report.entries[0]
+    expect(entry.attribution).toBe('observed_only')
+    expect(entry.agent_report).toBeNull()
+    expect(entry.title).toBe('仅系统观察到')
+    // 结构上不存在作者/归因字段：Workspace Observed 不指向任何 Agent
+    expect(Object.keys(entry)).not.toContain('author')
+    expect(Object.keys(entry.observation ?? {})).not.toContain('author')
+    // 不可判定文件在场 → 观察窗口不完整，绝不 confirmed
+    expect(report.confidence).toBe('unconfirmed')
+  })
+})
+
+// MARK: - 零文件变化的执行报告（R6-4.3.4.1 §六）
+
+describe('零文件变化的执行仍输出报告（§六）', () => {
+  it('完整 start + end、无变化文件 → 输出 confirmed + entries 为空（窗口 id 齐全）', () => {
+    const event = makeEvent({ sequence: 1 })
+    const snapshots = window(event.id, [])
+    const report = only(buildEvidenceComparison(detailOf(event), snapshots))
+    expect(report.confidence).toBe('confirmed')
+    expect(report.confidence_title).toBe(EVIDENCE_CONFIDENCE_TEXT.confirmed.title)
+    expect(report.entries).toEqual([])
+    expect(report.event_id).toBe(event.id)
+    expect(report.event_type).toBe('execution')
+    expect(report.baseline_snapshot_id).toBe(snapshots[0].id)
+    expect(report.end_snapshot_id).toBe(snapshots[1].id)
+  })
+
+  it('start 存在、end 缺失 → 输出 unconfirmed + entries 为空', () => {
+    const event = makeEvent({ sequence: 1 })
+    const start = makeSnapshot('execution_start', event.id)
+    const report = only(buildEvidenceComparison(detailOf(event), [start]))
+    expect(report.confidence).toBe('unconfirmed')
+    expect(report.entries).toEqual([])
+    expect(report.baseline_snapshot_id).toBe(start.id)
+    expect(report.end_snapshot_id).toBeNull()
+  })
+
+  it('没有 Agent Reported 且没有 start/end → 不输出（不给历史事件灌水）', () => {
+    const quiet = makeEvent({ sequence: 1 })
+    const active = makeEvent({ sequence: 2, changes: [makeChange('src/x.ts')] })
+    const snapshots = window(active.id, [makeFile('src/x.ts')])
+    const report = buildEvidenceComparison(detailOf(quiet, active), snapshots)
+    expect(report.map((entry) => entry.event_id)).toEqual([active.id])
+  })
+
+  it('Agent Reported 有文件、观察窗口无净变化 → reported_only 仍输出（entries 非空）', () => {
+    const event = makeEvent({ sequence: 1, changes: [makeChange('src/touched.ts')] })
+    const report = only(buildEvidenceComparison(detailOf(event), window(event.id, [])))
+    expect(report.entries.map((entry) => entry.attribution)).toEqual(['reported_only'])
+    expect(report.confidence).toBe('confirmed')
+  })
+})
+
+// MARK: - 置信度兜底：unavailable ≠ over_budget（R6-4.3.4.1 §五）
+
+describe('置信度兜底：unavailable 与 over_budget 严格区分（§五）', () => {
+  it('历史 complete 行但存在 unavailable 文件 → 兜底 unconfirmed（净变化无法判定）', () => {
+    const event = makeEvent({ sequence: 1, changes: [makeChange('src/a.ts')] })
+    const snapshots = window(event.id, [
+      makeFile('src/a.ts', {
+        artifact_kind: 'unavailable',
+        artifact_status: 'omitted',
+        artifact_omission: 'baseline_not_stored'
+      })
+    ])
+    const report = only(buildEvidenceComparison(detailOf(event), snapshots))
+    expect(report.confidence).toBe('unconfirmed')
+    expect(report.confidence).not.toBe('confirmed')
+  })
+
+  it('over_budget 只是正文不可展示 → 不降级（文件净变化仍可判定）', () => {
+    const event = makeEvent({ sequence: 1, changes: [makeChange('src/a.ts')] })
+    const snapshots = window(event.id, [
+      makeFile('src/a.ts', {
+        artifact_kind: 'over_budget',
+        artifact_status: 'omitted',
+        artifact_omission: 'file_budget'
+      })
+    ])
+    const report = only(buildEvidenceComparison(detailOf(event), snapshots))
+    expect(report.confidence).toBe('confirmed')
+    expect(report.entries[0].attribution).toBe('reported_and_observed')
   })
 })

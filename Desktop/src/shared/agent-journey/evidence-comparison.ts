@@ -140,8 +140,10 @@ export function buildEvidenceComparison(
 
     if (reported.length === 0 && !start && !end) continue // 无证据可对照
 
+    // §六：只要有 Agent Reported 或观察窗口（start/end）就保留报告——
+    // 零文件变化的完整执行同样要能回答「这次执行窗口完整、无净变化」；
+    // 没有任何报告也没有窗口的普通事件仍在此被跳过，不给历史事件灌水。
     const entries = compareEntries(reported, end?.files ?? [])
-    if (entries.length === 0) continue
 
     const confidence = computeConfidence(start, end)
     report.push({
@@ -171,15 +173,18 @@ function compareEntries(
   for (const change of reported) {
     const index = observed.findIndex((file, i) => !consumed.has(i) && matches(change, file))
     if (index >= 0) {
+      const matched = observed[index]
       consumed.add(index)
-      // 重命名的旧路径观察行由该报告一并覆盖（它不是「未报告的文件」）
+      // §3.4：旧路径伴随记录只有**确实属于这次重命名的删除侧**才被覆盖——
+      // 路径相等还不够；证明不了血缘（hash 为空）或它是别的独立变化 → 不吞，
+      // 照常产出 observed_only。
       if (change.change_type === 'renamed' && change.previous_file_path) {
         const companion = observed.findIndex(
-          (file, i) => !consumed.has(i) && file.repo_relative_path === change.previous_file_path
+          (file, i) => !consumed.has(i) && isRenameDeletionOf(change, matched, file)
         )
         if (companion >= 0) consumed.add(companion)
       }
-      entries.push(buildEntry(change, observed[index], 'reported_and_observed'))
+      entries.push(buildEntry(change, matched, 'reported_and_observed'))
     } else {
       entries.push(buildEntry(change, null, 'reported_only'))
     }
@@ -192,29 +197,70 @@ function compareEntries(
 }
 
 /**
- * 路径 join（§5.2）：**只允许 POSIX 仓库相对路径的精确字符串相等**。
- * 不忽略大小写、不删前缀、不按文件名匹配、不跨 Workspace。
- * 重命名两侧都有来源信息时必须一致（Agent `previous_file_path` ↔ 观察 `rename_from_path`）。
+ * §3.4：候选行是否**确实**是该次重命名的删除侧。四个条件全要满足：
+ * 路径等于 Agent 声明的旧路径、确为 `deleted`、自身不是另一个重命名源、
+ * 且内容血缘可证（候选行与匹配行的 `content_hash_before` 同源且非空——
+ * 引擎对重命名新路径的 before 取的就是旧路径内容，删除侧行取同一来源）。
+ * 任一条件不满足就不消费：宁可多列一条 observed_only，也不吞独立变化。
+ */
+function isRenameDeletionOf(
+  change: JourneyChange,
+  matched: JourneyEvidenceFile,
+  candidate: JourneyEvidenceFile
+): boolean {
+  if (candidate.repo_relative_path !== change.previous_file_path) return false
+  if (candidate.change_kind !== 'deleted') return false
+  if (candidate.rename_from_path !== null) return false
+  const lineage = matched.content_hash_before
+  return lineage !== null && candidate.content_hash_before === lineage
+}
+
+/**
+ * 路径 join（§5.2 + R6-4.3.4.1 §三）：**POSIX 精确字符串相等**，无模糊规则
+ * （不忽略大小写、不删前缀、不按文件名匹配、不跨 Workspace）。重命名规则：
+ * - §3.1 双方都不是重命名 → 按新路径精确匹配即可；
+ * - §3.2 双方都是重命名 → 新路径与**旧路径都必须明确存在且相等**
+ *   （`previous_file_path` / `rename_from_path` 缺失或 null 不能绕过）；
+ * - §3.3 只有一方是重命名 → 不匹配：绝不把「观察到文件变化」升级成
+ *   「观察到同一次重命名」，两侧分别落 reported_only / observed_only。
  */
 function matches(change: JourneyChange, file: JourneyEvidenceFile): boolean {
+  const agentRename = change.change_type === 'renamed'
+  const workspaceRename = file.rename_from_path !== null
+  if (agentRename !== workspaceRename) return false
   if (change.file_path !== file.repo_relative_path) return false
-  if (change.change_type === 'renamed' && file.rename_from_path !== null) {
-    if (change.previous_file_path !== file.rename_from_path) return false
+  if (agentRename) {
+    const agentFrom = change.previous_file_path
+    if (!agentFrom) return false // 缺失旧路径不算匹配（schema 层也拒绝，双保险）
+    if (agentFrom !== file.rename_from_path) return false
   }
   return true
 }
 
 /**
  * 观察侧「已确认净变化」的重建规则（只读存量列，纯函数）：
- * 1. 重命名 / mode 变化 → 是（路径与权限位的净变化不依赖内容 hash）；
+ * 1. 重命名 / mode / **类型变化（type_changed）** / **冲突（conflicted）** → 是——
+ *    git 明确报告的工作区事实，**不依赖内容 hash**（类型换了但内容 hash 恰好
+ *    相同、冲突态两侧 hash 不足以判断时，都不能算「没有变化」）；
  * 2. 两侧内容 hash 严格不等（含 null↔value 的新增/删除）→ 是；
  * 3. 敏感文件（两侧 hash 按策略为空、artifact=sensitive）→ 是——
  *    `git status` 已证实状态变化，内容按隐私策略永不读取；
  * 4. 其余（两侧同值 = 改后还原 / 双空不可判定 / 单侧不可观测）→ **否**，
  *    宁可不宣称观察到，也不伪造。
+ *
+ * 这里只陈述 **Workspace Observed**：条目结构不含作者字段，不把观察结果
+ * 归因给任何 Agent；置信度也由窗口级 `computeConfidence` 单独计算——
+ * 文件级变化事实绝不等同于「窗口完整」。
  */
 function hasObservedNetChange(file: JourneyEvidenceFile): boolean {
-  if (file.change_kind === 'renamed' || file.change_kind === 'mode_changed') return true
+  if (
+    file.change_kind === 'renamed' ||
+    file.change_kind === 'mode_changed' ||
+    file.change_kind === 'type_changed' ||
+    file.change_kind === 'conflicted'
+  ) {
+    return true
+  }
   const before = file.content_hash_before
   const after = file.content_hash_after
   if (before !== null && after !== null) return before !== after
@@ -225,10 +271,15 @@ function hasObservedNetChange(file: JourneyEvidenceFile): boolean {
 // MARK: - 置信度
 
 /**
- * 窗口级置信度（§5.4）——**只看窗口完整性与 HEAD 是否移动**，
+ * 窗口级置信度（§5.4 + R6-4.3.4.1 §五）——**只看窗口完整性与 HEAD 是否移动**，
  * 绝不根据某一个文件的 hash 就宣称整个 Execution 观察完整：
  * - 缺 start/end、任一侧采集失败、比较未完成（含 partial 观察不完整）
  *   → `unconfirmed`；
+ * - 结束快照里存在 `artifact_kind='unavailable'` 的文件（净变化无法判定 /
+ *   正文不可观测的历史记录）→ **兜底降级** `unconfirmed`——即便旧数据把
+ *   comparison_status 写成了 complete，也不得标 confirmed；
+ *   **注意 `over_budget` 不在此列**：容量超限只是「正文不可展示」，
+ *   文件净变化仍可判定，不降级；
  * - 窗口完整但 HEAD 移动（或任一文件 `head_moved`）→ `window_net_change`；
  * - 窗口完整且 HEAD 未动 → `confirmed`。
  */
@@ -239,6 +290,7 @@ function computeConfidence(
   if (!start || !end) return 'unconfirmed'
   if (start.capture_status !== 'ok' || end.capture_status !== 'ok') return 'unconfirmed'
   if (end.comparison_status !== 'complete') return 'unconfirmed'
+  if (end.files.some((file) => file.artifact_kind === 'unavailable')) return 'unconfirmed'
   const headMoved =
     (start.head_sha ?? '') !== (end.head_sha ?? '') || end.files.some((file) => file.head_moved)
   return headMoved ? 'window_net_change' : 'confirmed'

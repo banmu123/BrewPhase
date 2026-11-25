@@ -29,12 +29,17 @@ import { WorkspaceEvidenceService } from '../../src/main/application/agent-journ
 import { GitSnapshotEngine } from '../../src/main/application/agent-journey/git-snapshot-engine'
 import {
   GIT_DIFF_MAX_BYTES_PER_SNAPSHOT,
+  type GitDiffStats,
   type GitFileDiff,
   type GitWorkspaceSnapshot
 } from '../../src/main/application/agent-journey/git-snapshot-types'
 import { LocalWorkspaceService } from '../../src/main/application/local-workspace/local-workspace-service'
 import { ApplicationEvents } from '../../src/main/application/events/application-events'
-import { journeyEvidenceSchema } from '../../src/shared/contracts/entities/agent-journey'
+import {
+  journeyEvidenceSchema,
+  type JourneyEventDTO
+} from '../../src/shared/contracts/entities/agent-journey'
+import { buildEvidenceComparison } from '../../src/shared/agent-journey/evidence-comparison'
 import type { EvidenceFileInsert } from '../../src/main/database/repositories/agent-journey-evidence'
 
 /**
@@ -233,6 +238,8 @@ function makeStubEngine(options: {
   files: () => GitFileDiff[]
   /** 在 capture 里让出事件循环 → 两个实例的任务真正交错。 */
   delay?: boolean
+  /** 与默认统计合并（构造 undetermined>0 等引擎真实会出现的场景）。 */
+  extraStats?: Partial<GitDiffStats>
 }): GitSnapshotEngine {
   const engine = {
     capture: async () => {
@@ -266,7 +273,8 @@ function makeStubEngine(options: {
           omitted_sensitive: 0,
           omitted_binary: 0,
           omitted_over_budget: 0,
-          unavailable: 0
+          unavailable: 0,
+          ...options.extraStats
         }
       }
     }
@@ -756,5 +764,126 @@ describe('Artifact 写入失败（stub 引擎）', () => {
     expect(start[0].captureStatus).toBe('ok')
     // Journey 业务状态完全不受证据失败影响
     expect(selectEvent(handle.db, planned.event.id)!.status).toBe('completed')
+  })
+})
+
+// MARK: - 6) 比较完整性：undetermined 不能标 complete（R6-4.3.4.1 §五）
+
+describe('比较完整性与置信度（stub 引擎，确定性场景）', () => {
+  it('manifest complete 但 stats.undetermined>0 + unavailable 文件 → end 非 complete、对照非 confirmed', async () => {
+    const okText = '@@ -1 +1 @@\n-a\n+b\n'
+    const changedFile: GitFileDiff = {
+      repo_relative_path: 'ok.ts',
+      change_kind: 'modified',
+      status_origin: 'worktree',
+      observation: 'changed',
+      content_hash_before: 'hash-a',
+      content_hash_after: 'hash-b',
+      pre_existing_dirty: false,
+      head_moved: false,
+      rename_from_path: null,
+      mode_before: null,
+      mode_after: null,
+      insertions: 2,
+      deletions: 1,
+      artifact: {
+        kind: 'diff',
+        text: okText,
+        insertions: 2,
+        deletions: 1,
+        byte_size: Buffer.byteLength(okText)
+      }
+    }
+    const undeterminedFile: GitFileDiff = {
+      repo_relative_path: 'mystery.ts',
+      change_kind: 'modified',
+      status_origin: 'worktree',
+      observation: 'unavailable', // 引擎：有路径但判不了
+      content_hash_before: null,
+      content_hash_after: null,
+      pre_existing_dirty: false,
+      head_moved: false,
+      rename_from_path: null,
+      mode_before: null,
+      mode_after: null,
+      insertions: null,
+      deletions: null,
+      artifact: { kind: 'unavailable', reason: 'not_observable', insertions: null, deletions: null }
+    }
+    const stub = makeStubEngine({
+      files: () => [changedFile, undeterminedFile],
+      extraStats: { changed_files: 1, undetermined: 1 } // manifest 仍 complete
+    })
+    const stubEvidence = new WorkspaceEvidenceService(handle.db, events, workspaces, stub)
+    const stubService = new AgentJourneyService(handle.db, events, workspaces, stubEvidence)
+
+    const created = createJourney(stubService, { workspaceId })
+    await stubEvidence.flushPending()
+    const planned = append(stubService, created.journey.id, {
+      eventType: 'execution',
+      status: 'planned',
+      title: 'undetermined window'
+    })
+    const before = selectEvent(handle.db, planned.event.id)!
+    stubService.updateEventStatus({
+      eventId: planned.event.id,
+      status: 'running',
+      expectedUpdatedAt: before.updatedAt
+    })
+    const running = selectEvent(handle.db, planned.event.id)!
+    stubService.updateEventStatus({
+      eventId: planned.event.id,
+      status: 'completed',
+      expectedUpdatedAt: running.updatedAt
+    })
+    await stubEvidence.flushPending()
+
+    // 服务侧：manifest complete 但存在不可判定文件 → 绝不标 complete
+    const end = rowsSync(created.journey.id).filter(
+      (row) => row.snapshotType === 'execution_end'
+    )
+    expect(end).toHaveLength(1)
+    expect(end[0].comparisonStatus).toBe('partial')
+    expect(end[0].comparisonStatus).not.toBe('complete')
+
+    // 文件级可确定的变化照常保存（一个文件判不了不丢其他文件的真实 Diff）
+    const dto = evidence.listForJourney(created.journey.id)
+    const endDto = dto.snapshots.find(
+      (snapshot) => snapshot.snapshot_type === 'execution_end'
+    )!
+    const okRow = endDto.files.find((file) => file.repo_relative_path === 'ok.ts')!
+    expect(okRow.artifact_kind).toBe('diff')
+    const okArtifact = evidence.readArtifact(created.journey.id, endDto.id, okRow.id).artifact
+    expect(okArtifact.kind).toBe('diff')
+    // 不可判定文件如实入库
+    const mysteryRow = endDto.files.find((file) => file.repo_relative_path === 'mystery.ts')!
+    expect(mysteryRow.artifact_kind).toBe('unavailable')
+
+    // 对照侧：同窗口 + 同 DTO → 绝不输出 confirmed
+    const eventDto: JourneyEventDTO = {
+      id: planned.event.id,
+      journey_id: created.journey.id,
+      sequence: 1,
+      event_type: 'execution',
+      role: 'agent',
+      status: 'completed',
+      title: 'undetermined window',
+      summary: '',
+      content: '',
+      reason: '',
+      source_agent: 'codex',
+      model: 'gpt',
+      evidence_level: 'agent_reported',
+      occurred_at: 1,
+      updated_at: 1,
+      metadata: null
+    }
+    const report = buildEvidenceComparison({ events: [eventDto] }, dto.snapshots)
+    expect(report).toHaveLength(1)
+    expect(report[0].confidence).toBe('unconfirmed')
+    expect(report[0].confidence).not.toBe('confirmed')
+    expect(report[0].end_snapshot_id).toBe(endDto.id)
+    // 观察条目仍如实呈现（observed_only），只是窗口不完整
+    expect(report[0].entries.map((entry) => entry.repo_relative_path)).toEqual(['ok.ts'])
   })
 })
