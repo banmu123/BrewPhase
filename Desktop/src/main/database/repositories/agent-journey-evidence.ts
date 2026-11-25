@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { and, asc, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, inArray, like, sql } from 'drizzle-orm'
 import type { Db } from '../client'
 import { journeySnapshotFiles, journeyWorkspaceSnapshots } from '../schema'
 
@@ -83,6 +83,17 @@ export type SnapshotWriteResult =
   | { status: 'inserted'; id: string }
   /** 且仅于：确认命中 UNIQUE(journey_id, trigger_key)——幂等重复，不是错误。 */
   | { status: 'duplicate' }
+
+/**
+ * Journey 总量预算 hook（R6-4.3.4）：**在文件明细事务内**被调用——
+ * 传入「该 Journey 已落库的 artifact UTF-8 字节」，返回调整后的待写行。
+ * 预算统计与写入同事务，先查后写的竞态被事务结构消除。
+ * 由 Service（应用层）提供实现；仓储保持无领域知识。
+ */
+export type EvidenceBudgetHook = (
+  files: readonly EvidenceFileInsert[],
+  journeyArtifactBytesUsed: number
+) => EvidenceFileInsert[]
 
 export type EvidenceConstraintKind =
   /** 外键失败（journey / workspace / event 引用不存在）——必须显式暴露。 */
@@ -173,6 +184,36 @@ export function selectSnapshotByTrigger(
   return rows.length > 0
 }
 
+/**
+ * 按需取 Artifact 的**归属链校验**（R6-4.3.4）：snapshot 必须属于该 journey、
+ * file 必须属于该 snapshot——只凭 fileId 无法取到任何记录。
+ */
+export function selectOwnedSnapshot(db: Db, journeyId: string, snapshotId: string) {
+  const rows = db
+    .select()
+    .from(journeyWorkspaceSnapshots)
+    .where(
+      and(
+        eq(journeyWorkspaceSnapshots.id, snapshotId),
+        eq(journeyWorkspaceSnapshots.journeyId, journeyId)
+      )
+    )
+    .limit(1)
+    .all()
+  return rows[0] ?? null
+}
+
+/** 见 `selectOwnedSnapshot`：file 必须挂在该 snapshot 下。 */
+export function selectOwnedFile(db: Db, snapshotId: string, fileId: string) {
+  const rows = db
+    .select()
+    .from(journeySnapshotFiles)
+    .where(and(eq(journeySnapshotFiles.id, fileId), eq(journeySnapshotFiles.snapshotId, snapshotId)))
+    .limit(1)
+    .all()
+  return rows[0] ?? null
+}
+
 function snapshotRow(input: EvidenceSnapshotInsert, id: string) {
   return {
     id,
@@ -252,18 +293,25 @@ export function insertSnapshot(db: Db, input: EvidenceSnapshotInsert): SnapshotW
  * 复合持久化（§二）：Snapshot 主记录与其**全部** File rows 在同一个事务里写入。
  * 任何一条 File row 失败 → 主记录与已写文件一起回滚（不产生半成品）。
  * `files` 为空 → 只写主记录（不产生空文件记录）。
+ *
+ * `applyBudget`（可选）：在**同一事务内**、写文件之前调用，传入该 Journey
+ * 已落库的 artifact 字节——预算统计与写入原子完成，无超额竞态。
  */
 export function insertSnapshotWithFiles(
   db: Db,
   input: EvidenceSnapshotInsert,
-  files: readonly EvidenceFileInsert[]
+  files: readonly EvidenceFileInsert[],
+  applyBudget?: EvidenceBudgetHook
 ): SnapshotWriteResult {
   if (files.length === 0) return insertSnapshot(db, input)
   const id = input.id ?? randomUUID()
   try {
     db.transaction(() => {
       db.insert(journeyWorkspaceSnapshots).values(snapshotRow(input, id)).run()
-      insertFileRows(db, id, files)
+      const rows = applyBudget
+        ? applyBudget(files, journeyArtifactBytes(db, input.journeyId))
+        : files
+      insertFileRows(db, id, rows)
     })
     return { status: 'inserted', id }
   } catch (error) {
@@ -279,12 +327,16 @@ export function insertSnapshotWithFiles(
  *
  * 只允许 `pending → 最终状态`：行已被终结（ok/error/failed/interrupted）时
  * 返回 'stale'，**绝不覆盖已有结果**。
+ *
+ * `applyBudget`（可选）：同事务内、写文件之前按 Journey 已落库字节调整待写行
+ * （R6-4.3.4 的 2 MB 总量闸门）。
  */
 export function finalizeSnapshot(
   db: Db,
   snapshotId: string,
   patch: EvidenceSnapshotPatch,
-  files: readonly EvidenceFileInsert[]
+  files: readonly EvidenceFileInsert[],
+  applyBudget?: EvidenceBudgetHook
 ): 'updated' | 'stale' {
   try {
     return db.transaction(() => {
@@ -299,13 +351,54 @@ export function finalizeSnapshot(
         )
         .run()
       if (result.changes === 0) return 'stale' as const
-      if (files.length > 0) insertFileRows(db, snapshotId, files)
+      if (files.length > 0) {
+        const owner = db
+          .select({ journeyId: journeyWorkspaceSnapshots.journeyId })
+          .from(journeyWorkspaceSnapshots)
+          .where(eq(journeyWorkspaceSnapshots.id, snapshotId))
+          .limit(1)
+          .all()
+        const journeyId = owner[0]?.journeyId
+        const rows =
+          applyBudget && journeyId
+            ? applyBudget(files, journeyArtifactBytes(db, journeyId))
+            : files
+        insertFileRows(db, snapshotId, rows)
+      }
       return 'updated' as const
     })
   } catch (error) {
     // 文件明细唯一键冲突等 → 连同主记录更新一起回滚（行保持 pending）。
     throw asConstraintError(error)
   }
+}
+
+/**
+ * 该 Journey 已落库的 **Diff 正文字节**总量（UTF-8 字节，不是字符数）：
+ * `length(CAST(text AS BLOB))` 对 UTF-8 文本返回字节数——多字节字符按真实
+ * 占用计。只统计 `v1:diff:*`（§9.3 的配额针对 Diff 正文；binary/sensitive/
+ * over_budget 等元数据标记不占正文预算、恒存——它们是省略原因本身）。
+ * **必须在写入事务内调用**（先查后写会产生超额竞态）。
+ * 版本演进（v1→v2）时此处的前缀须与 codec 同步。
+ */
+export function journeyArtifactBytes(db: Db, journeyId: string): number {
+  const rows = db
+    .select({
+      bytes: sql<number>`coalesce(sum(length(CAST(${journeySnapshotFiles.artifactRef} AS BLOB))), 0)`
+    })
+    .from(journeySnapshotFiles)
+    .innerJoin(
+      journeyWorkspaceSnapshots,
+      eq(journeySnapshotFiles.snapshotId, journeyWorkspaceSnapshots.id)
+    )
+    .where(
+      and(
+        eq(journeyWorkspaceSnapshots.journeyId, journeyId),
+        like(journeySnapshotFiles.artifactRef, 'v1:diff:%')
+      )
+    )
+    .all()
+  return Number(rows[0]?.bytes ?? 0)
 }
 
 /**

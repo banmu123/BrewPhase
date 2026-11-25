@@ -25,6 +25,8 @@ const FUSION_CHANNELS = [
   'agentJourneyWorkspaceBind',
   /** R6-4.3.3：只读证据查询（P3）。 */
   'agentJourneyEvidence',
+  /** R6-4.3.4：按需取单文件 Diff Artifact（P4）。 */
+  'agentJourneyEvidenceArtifact',
   'canvasJourneys',
   'canvasJourneyAdd',
   'canvasJourneyMove',
@@ -102,6 +104,24 @@ describe('入参校验（脏参数必须在边界上被拒）', () => {
     expect(ok.success).toBe(true)
     if (ok.success && typeof ok.data === 'object' && ok.data !== null) {
       expect('rootPath' in ok.data).toBe(false)
+    }
+  })
+
+  it('R6-4.3.4 按需 Artifact：三个 UUID 缺一不可，非 UUID 与路径被拒', () => {
+    const journeyId = crypto.randomUUID()
+    const snapshotId = crypto.randomUUID()
+    const fileId = crypto.randomUUID()
+    const parseArtifact = (payload: unknown) => parse(IPC.agentJourneyEvidenceArtifact, payload)
+    expect(parseArtifact({ journeyId, snapshotId, fileId }).success).toBe(true)
+    expect(parseArtifact({ journeyId, snapshotId }).success).toBe(false)
+    expect(parseArtifact({ journeyId, fileId }).success).toBe(false)
+    expect(parseArtifact({}).success).toBe(false)
+    expect(parseArtifact({ journeyId, snapshotId, fileId: 'not-a-uuid' }).success).toBe(false)
+    // 不接受任何路径/工作区参数（多余字段 zod strip，不透传主进程）
+    const ok = parseArtifact({ journeyId, snapshotId, fileId, path: '/etc/passwd' })
+    expect(ok.success).toBe(true)
+    if (ok.success && typeof ok.data === 'object' && ok.data !== null) {
+      expect('path' in ok.data).toBe(false)
     }
   })
 

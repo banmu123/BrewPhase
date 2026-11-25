@@ -10,15 +10,28 @@ import {
   insertSnapshot,
   insertSnapshotWithFiles,
   selectFilesForSnapshots,
+  selectOwnedFile,
+  selectOwnedSnapshot,
   selectPendingSnapshots,
   selectSnapshotsForJourney,
   selectSnapshotByTrigger,
   type EvidenceFileInsert,
   type EvidenceSnapshotPatch
 } from '../../database/repositories/agent-journey-evidence'
-import type { JourneyEvidence } from '../../../shared/contracts/entities/agent-journey'
+import type {
+  JourneyArtifact,
+  JourneyEvidence
+} from '../../../shared/contracts/entities/agent-journey'
 import { GitSnapshotEngine } from './git-snapshot-engine'
 import type { GitFileDiff, GitWorkspaceSnapshot } from './git-snapshot-types'
+import {
+  applyJourneyArtifactBudget,
+  applyPersistenceDiffBudget,
+  describeArtifactRef,
+  encodeArtifactRef,
+  parseArtifactRef
+} from './evidence-artifact-codec'
+import { AgentJourneyError } from './agent-journey-service'
 
 /**
  * 工作区证据服务（R6-4.3.3 → 收尾 R6-4.3.3.1，P3）：把 R6-4.3.2 的
@@ -308,23 +321,64 @@ export class WorkspaceEvidenceService {
         changed_files_count: row.changedFilesCount,
         insertions: row.insertions,
         deletions: row.deletions,
-        files: (filesBySnapshot.get(row.id) ?? []).map((file) => ({
-          repo_relative_path: file.repoRelativePath,
-          change_kind: file.changeKind,
-          status_origin: file.statusOrigin,
-          content_hash_before: file.contentHashBefore,
-          content_hash_after: file.contentHashAfter,
-          pre_existing_dirty: file.preExistingDirty === 1,
-          head_moved: file.headMoved === 1,
-          rename_from_path: file.renameFromPath,
-          insertions: file.insertions,
-          deletions: file.deletions,
-          line_ranges: file.lineRanges,
-          artifact_ref: file.artifactRef,
-          attribution: file.attribution,
-          attribution_confidence: file.attributionConfidence
-        }))
+        files: (filesBySnapshot.get(row.id) ?? []).map((file) => {
+          // P4：只给轻量 Artifact 元数据——**Diff 正文绝不随普通 evidence 返回**，
+          // 完整正文只能经 `agent-journey:evidence:artifact` 按需读取。
+          const described = describeArtifactRef(file.artifactRef)
+          return {
+            id: file.id,
+            repo_relative_path: file.repoRelativePath,
+            change_kind: file.changeKind,
+            status_origin: file.statusOrigin,
+            content_hash_before: file.contentHashBefore,
+            content_hash_after: file.contentHashAfter,
+            pre_existing_dirty: file.preExistingDirty === 1,
+            head_moved: file.headMoved === 1,
+            rename_from_path: file.renameFromPath,
+            insertions: file.insertions,
+            deletions: file.deletions,
+            line_ranges: file.lineRanges,
+            artifact_kind: described.kind,
+            artifact_status: described.status,
+            artifact_omission: described.omission,
+            attribution: file.attribution,
+            attribution_confidence: file.attributionConfidence
+          }
+        })
       }))
+    }
+  }
+
+  /**
+   * 按需读取单文件 Diff Artifact（R6-4.3.4，IPC `agent-journey:evidence:artifact`）。
+   *
+   * 安全边界：
+   * - **三元组归属校验**：journey → snapshot → file 逐层核对，只凭 fileId
+   *   取不到任何记录（跨 Journey / 跨 Snapshot 一律 NOT_FOUND）；
+   * - **只读本地 SQLite**：不回工作区（不调 resolveRoot）、不跑 git、
+   *   不接受任何路径参数——历史 Diff 与 Workspace 之后怎么变无关；
+   * - MCP / Remote MCP 没有这条通道（IPC-only，33 工具/16 Scope 不变）。
+   */
+  readArtifact(journeyId: string, snapshotId: string, fileId: string): JourneyArtifact {
+    const snapshot = selectOwnedSnapshot(this.db, journeyId, snapshotId)
+    if (!snapshot) {
+      throw new AgentJourneyError('NOT_FOUND', 'the evidence snapshot does not exist for this journey')
+    }
+    const file = selectOwnedFile(this.db, snapshotId, fileId)
+    if (!file) {
+      throw new AgentJourneyError('NOT_FOUND', 'the evidence file does not exist for this snapshot')
+    }
+    const artifact = file.artifactRef === null ? null : parseArtifactRef(file.artifactRef)
+    if (!artifact) {
+      // 未存（旧数据 / 未比较 / 失败快照）或损坏——明确报错，绝不回空正文装成功
+      throw new AgentJourneyError('NOT_FOUND', 'no diff artifact was stored for this file')
+    }
+    return {
+      journey_id: journeyId,
+      snapshot_id: snapshotId,
+      file_id: fileId,
+      repo_relative_path: file.repoRelativePath,
+      artifact
     }
   }
 
@@ -586,7 +640,7 @@ export class WorkspaceEvidenceService {
             } else {
               comparisonStatus =
                 diff.manifest_completeness === 'complete' ? 'complete' : 'partial'
-              files = diff.files.map(toFileInsert)
+              files = persistedFiles(diff.files)
               stats = {
                 changedFiles: diff.stats.changed_files,
                 insertions: diff.stats.insertions_total,
@@ -666,7 +720,7 @@ export class WorkspaceEvidenceService {
           comparisonStatus = 'comparison_failed'
         } else {
           comparisonStatus = diff.manifest_completeness === 'complete' ? 'complete' : 'partial'
-          files = diff.files.map(toFileInsert)
+          files = persistedFiles(diff.files)
           stats = {
             changedFiles: diff.stats.changed_files,
             insertions: diff.stats.insertions_total,
@@ -782,7 +836,11 @@ export class WorkspaceEvidenceService {
       deletions: input.stats.deletions
     }
     if (input.rowId !== null) {
-      return finalizeSnapshot(this.db, input.rowId, patch, input.files) === 'updated'
+      // Journey 2 MB 总量闸门在事务内执行（hook 由仓储在同一事务调用）
+      return (
+        finalizeSnapshot(this.db, input.rowId, patch, input.files, applyJourneyArtifactBudget) ===
+        'updated'
+      )
     }
     // 无预留行（预留时库异常）→ 复合插入路径，同样原子
     const result = insertSnapshotWithFiles(
@@ -796,7 +854,8 @@ export class WorkspaceEvidenceService {
         triggerKey: input.triggerKey,
         ...patch
       },
-      input.files
+      input.files,
+      applyJourneyArtifactBudget
     )
     return result.status === 'inserted'
   }
@@ -877,7 +936,11 @@ export class WorkspaceEvidenceService {
   }
 }
 
-/** 文件级摘要 → 仓储输入（P4 字段恒 NULL，不伪造）。 */
+/**
+ * 文件级摘要 → 仓储输入（P4：真实 Artifact 编码进 `artifact_ref`；
+ * `line_ranges` 与 `attribution*` 仍恒 NULL——对照是读取时的纯函数计算，
+ * 不落库制造第二份事实）。
+ */
 function toFileInsert(diff: GitFileDiff): EvidenceFileInsert {
   return {
     repoRelativePath: diff.repo_relative_path,
@@ -890,9 +953,18 @@ function toFileInsert(diff: GitFileDiff): EvidenceFileInsert {
     renameFromPath: diff.rename_from_path,
     insertions: diff.insertions,
     deletions: diff.deletions,
-    lineRanges: null, // P4 展开
-    artifactRef: null, // P4 的 Diff 数据位置
-    attribution: null, // P4 统一计算
+    lineRanges: null, // Diff Viewer 行定位属 P5
+    artifactRef: encodeArtifactRef(diff.artifact), // P4：v1:<kind>:<json>
+    attribution: null, // 读取时由 buildEvidenceComparison 计算，绝不落库
     attributionConfidence: null
   }
+}
+
+/**
+ * 持久化前的正文预算（P4，§9.3）：单文件 64 KB / 单快照 512 KB 防御性核对
+ * （UTF-8 字节），超限降级为 `over_budget` 但**保留全部文件元数据与统计**。
+ * Journey 级 2 MB 闸门不在这里——它依赖已落库字节，由仓储在事务内调用 hook。
+ */
+function persistedFiles(diffs: readonly GitFileDiff[]): EvidenceFileInsert[] {
+  return applyPersistenceDiffBudget(diffs).map(toFileInsert)
 }

@@ -41,6 +41,7 @@ import type { Canvas, CanvasNode, CanvasNodeWithRecord, CanvasNote, CanvasStroke
 import type {
   CanvasJourney,
   CanvasJourneyPlacement,
+  JourneyArtifact,
   JourneyCard,
   JourneyDetail,
   JourneyEvidence,
@@ -341,8 +342,18 @@ export interface RendererApi {
     /**
      * R6-4.3.3：只读证据查询——快照、文件级变化摘要、完整性与失败原因。
      * Renderer 只有读取权限；写入全部发生在 Main 的触发点。
+     * P4 起**不含 Diff 正文**（只带 artifact 轻量元数据）。
      */
     evidence: (journeyId: string) => Promise<JourneyEvidence>
+    /**
+     * R6-4.3.4：按需取单文件 Diff Artifact——journeyId/snapshotId/fileId
+     * 三元组归属校验，只读本地 SQLite（不回工作区、不跑 git、无路径参数）。
+     */
+    evidenceArtifact: (
+      journeyId: string,
+      snapshotId: string,
+      fileId: string
+    ) => Promise<JourneyArtifact>
   }
   /**
    * AI 连接（MCP）。token 只在 createClient 的返回值里出现一次，

@@ -139,8 +139,10 @@ export const IPC = {
   agentJourneyLinkRemove: 'agent-journey:link:remove',
   /** R6-4.3.1：绑定 / 换绑 / 解绑 Journey 的工作区（null = 解绑）。 */
   agentJourneyWorkspaceBind: 'agent-journey:workspace:bind',
-  /** R6-4.3.3：只读证据查询（P3：快照 + 文件级变化摘要）。 */
+  /** R6-4.3.3：只读证据查询（P3：快照 + 文件级变化摘要，P4 起不含 Diff 正文）。 */
   agentJourneyEvidence: 'agent-journey:evidence',
+  /** R6-4.3.4：按需取单文件 Diff Artifact（三元组归属校验，正文唯一读取入口）。 */
+  agentJourneyEvidenceArtifact: 'agent-journey:evidence:artifact',
   canvasJourneys: 'canvas:journeys',
   canvasJourneyAdd: 'canvas:journey:add',
   canvasJourneyMove: 'canvas:journey:move',
@@ -416,6 +418,12 @@ export const ipcRequestSchemas = {
   }),
   // R6-4.3.3：只读证据查询——入参只有 journeyId（绝对路径无从谈起）。
   [IPC.agentJourneyEvidence]: z.object({ journeyId: z.string().uuid() }),
+  // R6-4.3.4：按需 Artifact——三个 UUID 全量校验归属链；不接受任何路径参数。
+  [IPC.agentJourneyEvidenceArtifact]: z.object({
+    journeyId: z.string().uuid(),
+    snapshotId: z.string().uuid(),
+    fileId: z.string().uuid()
+  }),
   [IPC.canvasJourneys]: z.object({ canvasId: z.string().uuid() }),
   [IPC.canvasJourneyAdd]: z.object({ canvasId: z.string().uuid(), journeyId: z.string().uuid() }),
   [IPC.canvasJourneyMove]: z.object({

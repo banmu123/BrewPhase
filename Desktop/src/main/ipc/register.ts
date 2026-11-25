@@ -409,6 +409,12 @@ export function registerIpc(params: {
   handle(IPC.agentJourneyEvidence, (input) =>
     evidence.listForJourney((input as { journeyId: string }).journeyId)
   )
+  // R6-4.3.4：按需读取单文件 Diff——三元组归属校验 + 只读本地 SQLite，
+  // 不回工作区、不跑 git、不接受路径；MCP / Remote 无此通道。
+  handle(IPC.agentJourneyEvidenceArtifact, (input) => {
+    const value = input as { journeyId: string; snapshotId: string; fileId: string }
+    return evidence.readArtifact(value.journeyId, value.snapshotId, value.fileId)
+  })
 
   handle(IPC.canvasJourneys, (input) =>
     services.canvas.journeysForCanvas((input as { canvasId: string }).canvasId)

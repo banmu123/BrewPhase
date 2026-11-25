@@ -545,8 +545,8 @@ describe('五个生命周期触发点（T1–T5）', () => {
       expect(files[0].repoRelativePath).toBe('a.ts')
       expect(files[0].changeKind).toBe('modified')
       expect(files[0].insertions).not.toBeNull()
-      // P4 字段必须为 NULL（不伪造 Diff Artifact / 归因）
-      expect(files[0].artifactRef).toBeNull()
+      // P4：真实 Diff Artifact 已持久化（版本化编码）；归因仍不落库（读取时算）
+      expect(files[0].artifactRef).toMatch(/^v1:diff:/)
       expect(files[0].attribution).toBeNull()
       expect(files[0].attributionConfidence).toBeNull()
       expect(files[0].lineRanges).toBeNull()

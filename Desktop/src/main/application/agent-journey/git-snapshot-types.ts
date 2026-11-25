@@ -280,7 +280,16 @@ export type GitDiffArtifact =
     }
   | {
       kind: 'over_budget'
-      reason: 'file_budget' | 'snapshot_budget' | 'source_too_large' | 'algorithm_budget'
+      /**
+       * `journey_budget`（R6-4.3.4）：由持久化层在**事务内**按 Journey 总量
+       * 预算追加——引擎本身不知道跨快照的累积用量。其余 reason 由引擎产生。
+       */
+      reason:
+        | 'file_budget'
+        | 'snapshot_budget'
+        | 'journey_budget'
+        | 'source_too_large'
+        | 'algorithm_budget'
       insertions: number | null
       deletions: number | null
     }
@@ -380,6 +389,15 @@ export type GitWorkspaceDiff = {
 export const GIT_DIFF_MAX_BYTES_PER_FILE = 64 * 1024
 /** 单次 Snapshot 的 Diff 总量上限（超出的文件依次省略，但保留统计）。 */
 export const GIT_DIFF_MAX_BYTES_PER_SNAPSHOT = 512 * 1024
+/**
+ * 单 Journey 的 Diff Artifact 总量上限（R6-4.3.4，设计文档 §9.3）。
+ *
+ * 与上面两层不同：它跨快照累积，只能由持久化层在**写入事务内**统计
+ * SQLite 已落库的 artifact 字节（UTF-8），先查后写的竞态由事务消除。
+ * 超出后新的 `diff` 正文降级为 `over_budget/journey_budget`——
+ * 统计与文件元数据保留，绝不删除或改写历史快照。
+ */
+export const GIT_DIFF_MAX_BYTES_PER_JOURNEY = 2 * 1024 * 1024
 /** 单文件参与渲染的行数上限。 */
 export const GIT_DIFF_MAX_LINES_PER_FILE = 2_000
 /** 单文件 hunk 数上限。 */

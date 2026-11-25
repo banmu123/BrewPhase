@@ -287,8 +287,11 @@ const api: RendererApi = {
     /** R6-4.3.1：绑定 / 换绑 / 解绑（null = 解绑），返回更新后的卡片。 */
     bindWorkspace: (journeyId, workspaceId) =>
       invoke(IPC.agentJourneyWorkspaceBind, { journeyId, workspaceId }),
-    /** R6-4.3.3：只读证据查询（快照 + 文件级变化摘要）。 */
-    evidence: (journeyId) => invoke(IPC.agentJourneyEvidence, { journeyId })
+    /** R6-4.3.3：只读证据查询（快照 + 文件级变化摘要；不含 Diff 正文）。 */
+    evidence: (journeyId) => invoke(IPC.agentJourneyEvidence, { journeyId }),
+    /** R6-4.3.4：按需取单文件 Diff Artifact（正文唯一读取入口）。 */
+    evidenceArtifact: (journeyId, snapshotId, fileId) =>
+      invoke(IPC.agentJourneyEvidenceArtifact, { journeyId, snapshotId, fileId })
   },
   mcp: {
     listClients: () => invoke(IPC.mcpClientsList),

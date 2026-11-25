@@ -587,16 +587,24 @@ export const canvasJourneySchema = z.object({
 export type CanvasJourney = z.infer<typeof canvasJourneySchema>
 
 // ================================================================
-// 工作区证据（R6-4.3.3，P3）—— `agent-journey:evidence` 只读契约
+// 工作区证据（R6-4.3.3 P3 → R6-4.3.4 P4）—— `agent-journey:evidence`
+// 只读契约
 //
 // 只读：Renderer 只有查询权限；写入全部发生在 Main 的触发点
 // （AgentJourneyService 事务提交之后的 fire-and-forget 采集）。
-// `artifact_ref` / `attribution*` 本阶段恒 null（P4 填），不伪造内容；
 // `insertions/deletions` 为 null 表示**不可计算**，绝不写 0 冒充「没有变化」。
+//
+// P4 起 **Diff 正文不随普通 evidence 返回**：文件条目只带轻量
+// `artifact_kind` / `artifact_status` / `artifact_omission` 元数据，
+// 完整 Artifact 只能经 `agent-journey:evidence:artifact` 按需读取。
+// `attribution*` 列仍恒 null——三类对照是**读取时**由纯函数计算的
+// 第二数据源禁止项，绝不落库制造两份事实。
 // local-first：不进 change_log / iOS 同步 / Cloud / Remote。
 // ================================================================
 
 export const journeyEvidenceFileSchema = z.object({
+  /** `journey_snapshot_files.id`：按需取 Artifact 的三元组之一（P4）。 */
+  id: z.string().uuid(),
   repo_relative_path: z.string(),
   change_kind: z.string(),
   status_origin: z.string(),
@@ -608,7 +616,12 @@ export const journeyEvidenceFileSchema = z.object({
   insertions: z.number().int().nullable(),
   deletions: z.number().int().nullable(),
   line_ranges: z.string().nullable(),
-  artifact_ref: z.string().nullable(),
+  /** Artifact 类型（diff/binary/sensitive/mode_only/symlink/over_budget/unavailable）；null = 未存。 */
+  artifact_kind: z.string().nullable(),
+  /** available = 正文或结构化事实可读；omitted = 按策略省略（见 omission）；absent = 未存。 */
+  artifact_status: z.enum(['available', 'omitted', 'absent']),
+  /** omitted 的具体原因（over_budget / unavailable 的 reason）；其余为 null。 */
+  artifact_omission: z.string().nullable(),
   attribution: z.string().nullable(),
   attribution_confidence: z.string().nullable()
 })
@@ -668,3 +681,81 @@ export const journeyEvidenceSchema = z.object({
   snapshots: z.array(journeyEvidenceSnapshotSchema)
 })
 export type JourneyEvidence = z.infer<typeof journeyEvidenceSchema>
+
+// ----------------------------------------------------------------
+// 按需 Artifact（R6-4.3.4，通道 `agent-journey:evidence:artifact`）
+//
+// **唯一**能读到 Diff 正文的入口：入参是 journeyId / snapshotId / fileId
+// 三元组，主进程校验三层归属后只从本地 SQLite 读——不回工作区、不跑 git、
+// 不接受任何路径参数。body 与引擎 `GitDiffArtifact` 一一对应（严格对象，
+// 多余字段拒绝），P5 靠这里的判别联合而非猜测字符串格式。
+// ----------------------------------------------------------------
+
+/** Diff 正文（已过 redactSecrets 与配额裁剪；byte_size 为 UTF-8 字节数）。 */
+export const journeyArtifactDiffSchema = z
+  .object({
+    kind: z.literal('diff'),
+    text: z.string(),
+    insertions: z.number().int(),
+    deletions: z.number().int(),
+    byte_size: z.number().int()
+  })
+  .strict()
+
+export const journeyArtifactSchema = z
+  .object({
+    journey_id: z.string().uuid(),
+    snapshot_id: z.string().uuid(),
+    file_id: z.string().uuid(),
+    repo_relative_path: z.string(),
+    artifact: z.discriminatedUnion('kind', [
+      journeyArtifactDiffSchema,
+      z.object({ kind: z.literal('binary') }).strict(),
+      z.object({ kind: z.literal('sensitive') }).strict(),
+      z
+        .object({ kind: z.literal('mode_only'), mode_before: z.string(), mode_after: z.string() })
+        .strict(),
+      z
+        .object({
+          kind: z.literal('symlink'),
+          target_before: z.string().nullable(),
+          target_after: z.string().nullable()
+        })
+        .strict(),
+      z
+        .object({
+          kind: z.literal('over_budget'),
+          reason: z.enum([
+            'file_budget',
+            'snapshot_budget',
+            'journey_budget',
+            'source_too_large',
+            'algorithm_budget'
+          ]),
+          insertions: z.number().int().nullable(),
+          deletions: z.number().int().nullable()
+        })
+        .strict(),
+      z
+        .object({
+          kind: z.literal('unavailable'),
+          reason: z.enum([
+            'baseline_not_stored',
+            'current_not_stored',
+            'blob_missing',
+            'decode_failed',
+            'not_observable',
+            'stale'
+          ]),
+          insertions: z.number().int().nullable(),
+          deletions: z.number().int().nullable()
+        })
+        .strict()
+    ])
+  })
+  .strict()
+export type JourneyArtifact = z.infer<typeof journeyArtifactSchema>
+
+/** Artifact body 的判别联合（codec 校验 / Renderer 类型共用）。 */
+export const journeyArtifactBodySchema = journeyArtifactSchema.shape.artifact
+export type JourneyArtifactBody = z.infer<typeof journeyArtifactBodySchema>
