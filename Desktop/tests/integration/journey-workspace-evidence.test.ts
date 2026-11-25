@@ -1,6 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { eq } from 'drizzle-orm'
@@ -21,6 +28,16 @@ import {
 } from '../../src/main/database/repositories/agent-journeys'
 import { digestParams } from '../../src/main/database/repositories/mcp-idempotency'
 import {
+  EvidenceConstraintError,
+  failSnapshot,
+  finalizeSnapshot,
+  insertSnapshot,
+  insertSnapshotWithFiles,
+  type EvidenceFileInsert,
+  type EvidenceSnapshotInsert,
+  type EvidenceSnapshotPatch
+} from '../../src/main/database/repositories/agent-journey-evidence'
+import {
   AgentJourneyService,
   type AgentJourneyCallContext
 } from '../../src/main/application/agent-journey/agent-journey-service'
@@ -32,7 +49,9 @@ import { ApplicationEvents } from '../../src/main/application/events/application
 import { journeyEvidenceSchema } from '../../src/shared/contracts/entities/agent-journey'
 
 /**
- * Workspace Evidence 持久化与生命周期采集（R6-4.3.3，P3）真实集成测试。
+ * Workspace Evidence 持久化与生命周期采集（R6-4.3.3，P3）真实集成测试；
+ * R6-4.3.3.1 收尾追加：原子复合写、SQLite 约束精确分类、Workspace 删除竞态、
+ * pending 预留 / 中断恢复、批量 end 异常隔离、退出接线。
  *
  * **真实 SQLite + 真实 Git 临时仓库 + 真实引擎**——不 mock git、不 mock
  * Repository。覆盖规格 §八 的 21 项：Migration 17、五个触发点（T1a/T1b/
@@ -122,6 +141,139 @@ async function snapshotRows(journeyId: string) {
 
 function rowsOfType(rows: Awaited<ReturnType<typeof snapshotRows>>, type: string) {
   return rows.filter((row) => row.snapshotType === type)
+}
+
+/** 同步行读快照（断言 pending 这类「必须在任何 await 之前看到」的状态时用）。 */
+function rowsSync(journeyId: string) {
+  return handle.db
+    .select()
+    .from(journeyWorkspaceSnapshots)
+    .where(eq(journeyWorkspaceSnapshots.journeyId, journeyId))
+    .all()
+}
+
+function pendingRows(journeyId: string) {
+  return rowsSync(journeyId).filter((row) => row.captureStatus === 'pending')
+}
+
+function fileRows(snapshotId: string) {
+  return handle.db
+    .select()
+    .from(journeySnapshotFiles)
+    .where(eq(journeySnapshotFiles.snapshotId, snapshotId))
+    .all()
+}
+
+/** 捕获 fn 抛出的异常（null = 没抛）——用于断言错误被「显式抛出」而非吞成 duplicate。 */
+function errorOf(fn: () => unknown): unknown {
+  try {
+    fn()
+    return null
+  } catch (error) {
+    return error
+  }
+}
+
+/** 仓储直插用的完整快照行（真实 journeyId 由调用方给，外键才成立）。 */
+function snapshotInput(journeyId: string, triggerKey: string): EvidenceSnapshotInsert {
+  return {
+    journeyId,
+    workspaceId: null,
+    executionEventId: null,
+    snapshotType: 'baseline',
+    triggerKey,
+    captureStatus: 'ok',
+    comparisonStatus: 'not_applicable',
+    errorCode: null,
+    capturedAt: Date.now(),
+    repositoryIdentity: '0123456789abcdef0123456789abcdef',
+    repositoryRootIdentifier: 'repo#012345',
+    branch: 'main',
+    headSha: 'a'.repeat(40),
+    treeSha: 'b'.repeat(40),
+    indexStateHash: 'c'.repeat(64),
+    worktreeStateHash: 'd'.repeat(64),
+    isGit: 1,
+    isWorktree: 0,
+    isSubmodule: 0,
+    hasUnbornHead: 0,
+    trackedCount: 2,
+    stagedCount: 0,
+    unstagedCount: 0,
+    untrackedCount: 0,
+    ignoredCount: 0,
+    changedFilesCount: 1,
+    insertions: 3,
+    deletions: 1
+  }
+}
+
+/** 终结补丁（pending → ok 的完整字段集）。 */
+const okPatch: EvidenceSnapshotPatch = {
+  captureStatus: 'ok',
+  comparisonStatus: 'complete',
+  errorCode: null,
+  capturedAt: Date.now(),
+  repositoryIdentity: '0123456789abcdef0123456789abcdef',
+  repositoryRootIdentifier: 'repo#012345',
+  branch: null,
+  headSha: null,
+  treeSha: null,
+  indexStateHash: null,
+  worktreeStateHash: null,
+  isGit: 1,
+  isWorktree: 0,
+  isSubmodule: 0,
+  hasUnbornHead: 0,
+  trackedCount: 0,
+  stagedCount: 0,
+  unstagedCount: 0,
+  untrackedCount: 0,
+  ignoredCount: 0,
+  changedFilesCount: 1,
+  insertions: 2,
+  deletions: 1
+}
+
+function fileInput(repoRelativePath: string): EvidenceFileInsert {
+  return {
+    repoRelativePath,
+    changeKind: 'modified',
+    statusOrigin: 'worktree',
+    contentHashBefore: 'hash-before',
+    contentHashAfter: 'hash-after',
+    preExistingDirty: 0,
+    headMoved: 0,
+    renameFromPath: null,
+    insertions: 1,
+    deletions: 0,
+    lineRanges: null,
+    artifactRef: null,
+    attribution: null,
+    attributionConfidence: null
+  }
+}
+
+/**
+ * 门控引擎：capture 真实执行完、然后卡在 gate 上——用来制造
+ * 「capture 完成但尚未持久化」与「采集中进程死亡」两个精确时间窗口。
+ */
+function gatedEngine(): { engine: GitSnapshotEngine; release: () => void } {
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const real = new GitSnapshotEngine()
+  const engine = {
+    capture: async (rootPath: string) => {
+      const snapshot = await real.capture(rootPath)
+      await gate
+      return snapshot
+    },
+    compare: (baseline: GitWorkspaceSnapshot, current: GitWorkspaceSnapshot) =>
+      real.compare(baseline, current)
+  } as unknown as GitSnapshotEngine
+  return { engine, release }
 }
 
 beforeEach(() => {
@@ -902,5 +1054,505 @@ describe('生命周期与重启边界（规格 §八 16–21）', () => {
     expect(after).toBe(before)
     // 且确实采到了完整证据（对照：不是没跑）
     expect(await snapshotRows(created.journey.id)).toHaveLength(4)
+  })
+})
+
+// MARK: - 3) 原子持久化与 SQLite 约束分类（R6-4.3.3.1 §二 / §三）
+
+describe('原子持久化与约束分类（§二、§三）', () => {
+  it('复合写：Snapshot 主记录 + 全部 File rows 在同一个事务提交', () => {
+    const created = createJourney(service)
+    const result = insertSnapshotWithFiles(
+      handle.db,
+      { ...snapshotInput(created.journey.id, 'atomic:ok'), changedFilesCount: 2 },
+      [fileInput('a.ts'), fileInput('b.ts')]
+    )
+    expect(result.status).toBe('inserted')
+    const rows = rowsSync(created.journey.id)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].changedFilesCount).toBe(2)
+    expect(fileRows(rows[0].id)).toHaveLength(2)
+  })
+
+  it('无文件变化：只写主记录，不产生空文件记录', () => {
+    const created = createJourney(service)
+    insertSnapshotWithFiles(handle.db, snapshotInput(created.journey.id, 'atomic:nofiles'), [])
+    const rows = rowsSync(created.journey.id)
+    expect(rows).toHaveLength(1)
+    expect(fileRows(rows[0].id)).toHaveLength(0)
+  })
+
+  it('文件明细中途失败 → 主记录与全部文件一起回滚（不留下半成品）', () => {
+    const created = createJourney(service)
+    const error = errorOf(() =>
+      insertSnapshotWithFiles(handle.db, snapshotInput(created.journey.id, 'atomic:rollback'), [
+        fileInput('dup.ts'),
+        fileInput('dup.ts')
+      ])
+    )
+    expect(error).toBeInstanceOf(EvidenceConstraintError)
+    expect((error as EvidenceConstraintError).kind).toBe('unique')
+    // 主记录与文件全部回滚：绝无「主记录在、文件缺」的半成品
+    expect(rowsSync(created.journey.id)).toHaveLength(0)
+    expect(
+      handle.db
+        .select()
+        .from(journeySnapshotFiles)
+        .all()
+        .filter((file) => file.repoRelativePath === 'dup.ts')
+    ).toHaveLength(0)
+  })
+
+  it('pending 终结：文件失败整体回滚（行保持 pending）；成功才转最终态；已终结行不再被覆盖', () => {
+    const created = createJourney(service)
+    const reserved = insertSnapshot(handle.db, {
+      ...snapshotInput(created.journey.id, 'finalize:1'),
+      captureStatus: 'pending',
+      comparisonStatus: 'not_applicable',
+      changedFilesCount: 0,
+      insertions: 0,
+      deletions: 0
+    })
+    expect(reserved.status).toBe('inserted')
+    const rowId = reserved.status === 'inserted' ? reserved.id : ''
+    expect(rowId).not.toBe('')
+
+    // 中途失败 → 事务整体回滚，行仍是 pending（结构上不可能「先 ok 再补文件」）
+    const error = errorOf(() =>
+      finalizeSnapshot(handle.db, rowId, okPatch, [fileInput('x.ts'), fileInput('x.ts')])
+    )
+    expect(error).toBeInstanceOf(EvidenceConstraintError)
+    expect((error as EvidenceConstraintError).kind).toBe('unique')
+    expect(rowsSync(created.journey.id)[0].captureStatus).toBe('pending')
+    expect(fileRows(rowId)).toHaveLength(0)
+
+    // 成功路径：状态与文件同一事务落定
+    expect(finalizeSnapshot(handle.db, rowId, okPatch, [fileInput('x.ts')])).toBe('updated')
+    const done = rowsSync(created.journey.id)[0]
+    expect(done.captureStatus).toBe('ok')
+    expect(done.changedFilesCount).toBe(1)
+    expect(fileRows(rowId)).toHaveLength(1)
+
+    // 单向闸门：已终结的行既不能再 finalize，也不能被标失败覆盖
+    expect(finalizeSnapshot(handle.db, rowId, okPatch, [])).toBe('stale')
+    expect(
+      failSnapshot(handle.db, rowId, {
+        captureStatus: 'failed',
+        comparisonStatus: 'comparison_failed',
+        errorCode: 'internal_error',
+        capturedAt: Date.now()
+      })
+    ).toBe('stale')
+    expect(rowsSync(created.journey.id)[0].captureStatus).toBe('ok')
+  })
+
+  it('相同 (journeyId, triggerKey) 重复写入 → duplicate；不同 journey 同 trigger 允许', () => {
+    const first = createJourney(service)
+    const second = createJourney(service)
+    const input = snapshotInput(first.journey.id, 'dup:1')
+    expect(insertSnapshot(handle.db, input)).toEqual({ status: 'inserted', id: expect.any(String) })
+    expect(insertSnapshot(handle.db, input)).toEqual({ status: 'duplicate' })
+    // 复合路径同样按 duplicate 返回，且不写任何文件
+    expect(
+      insertSnapshotWithFiles(handle.db, snapshotInput(first.journey.id, 'dup:1'), [
+        fileInput('a.ts')
+      ])
+    ).toEqual({ status: 'duplicate' })
+    expect(fileRows(rowsSync(first.journey.id)[0].id)).toHaveLength(0)
+    // 同 trigger 不同 journey → 允许
+    expect(insertSnapshot(handle.db, snapshotInput(second.journey.id, 'dup:1')).status).toBe(
+      'inserted'
+    )
+    expect(rowsSync(first.journey.id)).toHaveLength(1)
+  })
+
+  it('不存在的 journey_id → 外键异常显式暴露（绝不当 duplicate）', () => {
+    const created = createJourney(service)
+    const error = errorOf(() =>
+      insertSnapshot(handle.db, {
+        ...snapshotInput(created.journey.id, 'fk:journey'),
+        journeyId: randomUUID()
+      })
+    )
+    expect(error).toBeInstanceOf(EvidenceConstraintError)
+    expect((error as EvidenceConstraintError).kind).toBe('foreign_key')
+    expect(rowsSync(created.journey.id)).toHaveLength(0)
+  })
+
+  it('不存在的 workspace_id → 外键异常显式暴露', () => {
+    const created = createJourney(service)
+    const error = errorOf(() =>
+      insertSnapshot(handle.db, {
+        ...snapshotInput(created.journey.id, 'fk:workspace'),
+        workspaceId: randomUUID()
+      })
+    )
+    expect(error).toBeInstanceOf(EvidenceConstraintError)
+    expect((error as EvidenceConstraintError).kind).toBe('foreign_key')
+  })
+
+  it('缺失必填字段（trigger_key）→ NOT NULL 约束异常显式暴露', () => {
+    const created = createJourney(service)
+    const error = errorOf(() =>
+      insertSnapshot(handle.db, {
+        ...snapshotInput(created.journey.id, 'notnull:1'),
+        triggerKey: null as unknown as string
+      })
+    )
+    expect(error).toBeInstanceOf(EvidenceConstraintError)
+    expect((error as EvidenceConstraintError).kind).toBe('not_null')
+    expect((error as EvidenceConstraintError).sqliteCode).toBe('SQLITE_CONSTRAINT_NOTNULL')
+  })
+
+  it('其他约束失败不能伪装成 duplicate（文件唯一键 / 主键冲突）', () => {
+    const created = createJourney(service)
+    // 文件明细唯一键 → 抛 EvidenceConstraintError，而不是返回 duplicate
+    const fileConflict = errorOf(() =>
+      insertSnapshotWithFiles(handle.db, snapshotInput(created.journey.id, 'uniq:file'), [
+        fileInput('same.ts'),
+        fileInput('same.ts')
+      ])
+    )
+    expect(fileConflict).toBeInstanceOf(EvidenceConstraintError)
+    expect((fileConflict as EvidenceConstraintError).kind).toBe('unique')
+    expect(rowsSync(created.journey.id)).toHaveLength(0) // 也没留下半成品
+
+    // 主键冲突（id 撞车）→ 同样是约束错误，不是 trigger duplicate
+    expect(
+      insertSnapshot(handle.db, { ...snapshotInput(created.journey.id, 'uniq:pk:a'), id: 'fixed-row-id' })
+        .status
+    ).toBe('inserted')
+    const pkConflict = errorOf(() =>
+      insertSnapshot(handle.db, {
+        ...snapshotInput(created.journey.id, 'uniq:pk:b'),
+        id: 'fixed-row-id'
+      })
+    )
+    expect(pkConflict).toBeInstanceOf(EvidenceConstraintError)
+    expect((pkConflict as EvidenceConstraintError).kind).toBe('unique')
+    expect(rowsSync(created.journey.id)).toHaveLength(1) // 只有成功的那行
+  })
+})
+
+// MARK: - 4) pending 预留与中断恢复（§五）
+
+describe('pending 预留与中断恢复（§五）', () => {
+  it('触发即同步预留 pending 行；完成后同一条被更新为 ok（不是另起一行）', async () => {
+    const created = createJourney(service, { workspaceId })
+    const reserved = rowsSync(created.journey.id)
+    expect(reserved).toHaveLength(1)
+    expect(reserved[0].captureStatus).toBe('pending')
+    expect(reserved[0].comparisonStatus).toBe('not_applicable')
+    expect(reserved[0].triggerKey).toBe(`baseline:${created.journey.updatedAt}`)
+    expect(reserved[0].errorCode).toBeNull()
+    expect(reserved[0].repositoryIdentity).toBeNull()
+
+    await evidence.flushPending()
+    const done = rowsSync(created.journey.id)
+    expect(done).toHaveLength(1)
+    expect(done[0].id).toBe(reserved[0].id) // 更新同一行
+    expect(done[0].captureStatus).toBe('ok')
+    expect(done[0].repositoryIdentity).toMatch(/^[0-9a-f]{32}$/)
+  })
+
+  it('Git 采集失败 → 同一条 pending 更新为真实引擎 error（不另起一行、不伪装成功）', async () => {
+    const failing = new WorkspaceEvidenceService(
+      handle.db,
+      events,
+      workspaces,
+      new GitSnapshotEngine({ gitPath: '/definitely/not/a/git-binary' })
+    )
+    const failingService = new AgentJourneyService(handle.db, events, workspaces, failing)
+    const created = createJourney(failingService, { workspaceId })
+    const reservedId = rowsSync(created.journey.id)[0].id
+    expect(rowsSync(created.journey.id)[0].captureStatus).toBe('pending')
+
+    await failing.flushPending()
+    const rows = rowsSync(created.journey.id)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].id).toBe(reservedId)
+    expect(rows[0].captureStatus).toBe('error')
+    expect(rows[0].errorCode).toBe('git_not_found')
+  })
+
+  it('启动恢复：遗留 pending → failed + capture_interrupted；迟到采集不覆盖；内存 baseline 不恢复', async () => {
+    const { engine, release } = gatedEngine()
+    const oldEvidence = new WorkspaceEvidenceService(handle.db, events, workspaces, engine)
+    const oldService = new AgentJourneyService(handle.db, events, workspaces, oldEvidence)
+
+    const created = createJourney(oldService, { workspaceId })
+    expect(pendingRows(created.journey.id)).toHaveLength(1)
+    await new Promise((resolve) => setImmediate(resolve)) // 任务已进入 capture 并卡住
+
+    // 「重启」：全新实例扫到上个会话遗留的 pending
+    const newEvidence = new WorkspaceEvidenceService(handle.db, events, workspaces)
+    expect(newEvidence.recoverInterruptedCaptures()).toBe(1)
+    const marked = rowsSync(created.journey.id)[0]
+    expect(marked.captureStatus).toBe('failed')
+    expect(marked.errorCode).toBe('capture_interrupted')
+    expect(marked.comparisonStatus).toBe('not_applicable') // baseline 任务 → 不做比较
+    expect(marked.changedFilesCount).toBe(0)
+    expect(marked.repositoryIdentity).toBeNull() // 不伪造快照内容
+
+    // 迟到的旧采集收尾：行已终结 → 绝不被覆盖（不回退、也不伪装完成）
+    release()
+    await oldEvidence.flushPending()
+    expect(rowsSync(created.journey.id)[0].errorCode).toBe('capture_interrupted')
+    expect(rowsSync(created.journey.id)).toHaveLength(1)
+
+    // 内存 baseline 未恢复 → 后续 journey_final 明确 baseline_unavailable
+    const newService = new AgentJourneyService(handle.db, events, workspaces, newEvidence)
+    const journey = selectJourney(handle.db, created.journey.id)!
+    newService.updateJourneyStatus({
+      journeyId: created.journey.id,
+      status: 'running',
+      expectedUpdatedAt: journey.updatedAt
+    })
+    const running = selectJourney(handle.db, created.journey.id)!
+    newService.updateJourneyStatus({
+      journeyId: created.journey.id,
+      status: 'failed',
+      expectedUpdatedAt: running.updatedAt
+    })
+    await newEvidence.flushPending()
+    const final = rowsSync(created.journey.id).find((row) => row.snapshotType === 'journey_final')
+    expect(final).toBeDefined()
+    expect(final!.captureStatus).toBe('ok') // 当前状态照常采集
+    expect(final!.comparisonStatus).toBe('baseline_unavailable') // 但绝不伪造比较
+    expect(final!.errorCode).toBeNull()
+  })
+
+  it('正常退出语义：有界等待内 flush 排空 → 不留 pending（接线另有源码断言）', async () => {
+    const created = createJourney(service, { workspaceId })
+    expect(pendingRows(created.journey.id)).toHaveLength(1)
+
+    const outcome = await Promise.race([
+      evidence.flushPending().then(() => 'flushed' as const),
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2_000))
+    ])
+    expect(outcome).toBe('flushed')
+    expect(pendingRows(created.journey.id)).toHaveLength(0)
+    expect(rowsSync(created.journey.id)[0].captureStatus).toBe('ok')
+  })
+
+  it('超时退出语义：有界等待超时 → beginShutdown 后迟到采集不写；行留给下次启动标 capture_interrupted', async () => {
+    const { engine, release } = gatedEngine()
+    const quittingEvidence = new WorkspaceEvidenceService(handle.db, events, workspaces, engine)
+    const quittingService = new AgentJourneyService(
+      handle.db,
+      events,
+      workspaces,
+      quittingEvidence
+    )
+
+    const created = createJourney(quittingService, { workspaceId })
+    await new Promise((resolve) => setImmediate(resolve)) // 卡在 capture
+    const raced = await Promise.race([
+      quittingEvidence.flushPending().then(() => 'flushed' as const),
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 60))
+    ])
+    expect(raced).toBe('timeout') // 有界等待等不到 → 放弃等待（不无限阻塞退出）
+
+    // 关库前封写：迟到的采集不得再落任何有效写入
+    quittingEvidence.beginShutdown()
+    release()
+    await quittingEvidence.flushPending()
+    expect(rowsSync(created.journey.id)[0].captureStatus).toBe('pending') // 不伪装成完成
+    expect(fileRows(rowsSync(created.journey.id)[0].id)).toHaveLength(0)
+
+    // 下次启动统一标记；行数不变（没有多写任何东西）
+    const next = new WorkspaceEvidenceService(handle.db, events, workspaces)
+    expect(next.recoverInterruptedCaptures()).toBe(1)
+    const rows = rowsSync(created.journey.id)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].captureStatus).toBe('failed')
+    expect(rows[0].errorCode).toBe('capture_interrupted')
+  })
+})
+
+// MARK: - 5) Workspace 删除竞态与历史保留（§四）
+
+describe('Workspace 删除竞态与历史保留（§四）', () => {
+  it('入队后、执行前删除 Workspace → 失败快照 workspace_unavailable；workspace_id 置 NULL；历史保留', async () => {
+    const created = createJourney(service, { workspaceId })
+    expect(pendingRows(created.journey.id)).toHaveLength(1) // 预留时登记还在
+    workspaces.remove(workspaceId) // FK ON DELETE SET NULL 立即作用于 pending 行
+
+    await evidence.flushPending()
+    const rows = rowsSync(created.journey.id)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].captureStatus).toBe('failed')
+    expect(rows[0].errorCode).toBe('workspace_unavailable')
+    expect(rows[0].workspaceId).toBeNull() // 不再引用已删除的 workspace
+    expect(rows[0].changedFilesCount).toBe(0) // 不写零变化冒充成功
+    // 证据与 Journey 历史都不随删除消失
+    expect(selectJourney(handle.db, created.journey.id)).toBeTruthy()
+    expect(evidence.listForJourney(created.journey.id).snapshots).toHaveLength(1)
+  })
+
+  it('capture 完成后、持久化前删除 Workspace → 成功证据保留（ON DELETE SET NULL）', async () => {
+    const { engine, release } = gatedEngine()
+    const gatedEvidence = new WorkspaceEvidenceService(handle.db, events, workspaces, engine)
+    const gatedService = new AgentJourneyService(handle.db, events, workspaces, gatedEvidence)
+
+    const created = createJourney(gatedService, { workspaceId })
+    await new Promise((resolve) => setImmediate(resolve)) // 已越过 resolveRoot，停在 gate
+    workspaces.remove(workspaceId) // capture 完成、写入明细之前删除登记
+    release()
+    await gatedEvidence.flushPending()
+
+    const rows = rowsSync(created.journey.id)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].captureStatus).toBe('ok') // 成功采集的历史证据保留
+    expect(rows[0].workspaceId).toBeNull() // 只解除引用，绝不删行
+    expect(rows[0].repositoryIdentity).toMatch(/^[0-9a-f]{32}$/)
+    expect(evidence.listForJourney(created.journey.id).snapshots).toHaveLength(1)
+  })
+
+  it('预留时登记已不存在 → pending 以 workspace_id=NULL 落库（不撞外键），随后明确 failed', async () => {
+    const created = createJourney(service, { workspaceId })
+    await evidence.flushPending()
+    workspaces.remove(workspaceId)
+    // 竞态窗口：Journey 事务提交后、预留前登记被删（直接触发一个新绑定版本）
+    evidence.collectBaseline(created.journey.id, workspaceId, 999)
+
+    const reserved = rowsSync(created.journey.id).filter(
+      (row) => row.triggerKey === 'baseline:999'
+    )
+    expect(reserved).toHaveLength(1)
+    expect(reserved[0].captureStatus).toBe('pending')
+    expect(reserved[0].workspaceId).toBeNull() // 存在性核验 → NULL（FK 合法，竞态不吞行）
+
+    await evidence.flushPending()
+    const failed = rowsSync(created.journey.id).find(
+      (row) => row.triggerKey === 'baseline:999'
+    )!
+    expect(failed.captureStatus).toBe('failed')
+    expect(failed.errorCode).toBe('workspace_unavailable')
+    expect(failed.workspaceId).toBeNull()
+    expect(failed.changedFilesCount).toBe(0)
+  })
+})
+
+// MARK: - 6) 批量 Execution End 异常隔离（§六）
+
+describe('批量 Execution End 异常隔离（§六）', () => {
+  it('一次取消多个 running 执行：共用一次 capture；单条比较异常只影响它自己；内存 start 全释放', async () => {
+    const real = new GitSnapshotEngine()
+    let compareCalls = 0
+    const flaky = {
+      capture: (rootPath: string) => real.capture(rootPath),
+      compare: async (baseline: GitWorkspaceSnapshot, current: GitWorkspaceSnapshot) => {
+        compareCalls += 1
+        if (compareCalls === 2) throw new Error('compare exploded')
+        return real.compare(baseline, current)
+      }
+    } as unknown as GitSnapshotEngine
+    const flakyEvidence = new WorkspaceEvidenceService(handle.db, events, workspaces, flaky)
+    const flakyService = new AgentJourneyService(handle.db, events, workspaces, flakyEvidence)
+
+    const created = createJourney(flakyService, { workspaceId })
+    const first = append(flakyService, created.journey.id, {
+      eventType: 'execution',
+      status: 'running',
+      title: 'first'
+    })
+    const second = append(flakyService, created.journey.id, {
+      eventType: 'execution',
+      status: 'running',
+      title: 'second'
+    })
+    await flakyEvidence.flushPending()
+    expect(compareCalls).toBe(0) // start 不做比较
+
+    // 窗口内产生真实文件变化 → 成功的那条 end 应带文件级摘要
+    writeFileSync(join(repoRoot, 'a.ts'), 'A\nWINDOW\n')
+
+    // 批量取消：两个 running 执行共享一个批次（一次 current capture、两次 compare）
+    const journey = selectJourney(handle.db, created.journey.id)!
+    flakyService.updateJourneyStatus({
+      journeyId: created.journey.id,
+      status: 'cancelled',
+      expectedUpdatedAt: journey.updatedAt
+    })
+    await flakyEvidence.flushPending()
+
+    const ends = rowsSync(created.journey.id).filter(
+      (row) => row.snapshotType === 'execution_end'
+    )
+    expect(ends).toHaveLength(2)
+    const ok = ends.filter((row) => row.captureStatus === 'ok')
+    const failed = ends.filter((row) => row.captureStatus === 'failed')
+    expect(ok).toHaveLength(1)
+    expect(failed).toHaveLength(1)
+
+    // 成功的那条：真实比较、文件明细齐全、没被写上失败记录
+    expect(ok[0].comparisonStatus).toBe('complete')
+    expect(ok[0].changedFilesCount).toBe(1)
+    expect(ok[0].errorCode).toBeNull()
+    expect(fileRows(ok[0].id)).toHaveLength(1)
+    // 失败的那条：自己的 trigger、自己的失败原因（不是笼统地污染批次）
+    expect(failed[0].errorCode).toBe('internal_error')
+    expect(failed[0].comparisonStatus).toBe('comparison_failed')
+    expect(failed[0].changedFilesCount).toBe(0)
+    expect(failed[0].executionEventId).not.toBe(ok[0].executionEventId)
+    // 每个 eventId 恰好一条结果（不重复、不遗漏、不在成功行上补写失败）
+    expect(
+      ends.map((row) => row.executionEventId).sort()
+    ).toEqual([first.event.id, second.event.id].sort())
+    // 窗口真正结束：成功与异常路径都释放 start 快照（不泄漏内存）
+    const starts = (flakyEvidence as unknown as { executionStarts: Map<string, unknown> })
+      .executionStarts
+    expect(starts.size).toBe(0)
+    // Journey 业务状态完全不受证据失败影响
+    expect(selectJourney(handle.db, created.journey.id)!.status).toBe('cancelled')
+    expect(selectEvent(handle.db, first.event.id)!.status).toBe('cancelled')
+    expect(selectEvent(handle.db, second.event.id)!.status).toBe('cancelled')
+  })
+})
+
+// MARK: - 7) 退出 / 启动恢复接线（§五.4–5，main/index.ts 源码断言）
+
+describe('before-quit 与启动恢复接线（main/index.ts 源码断言）', () => {
+  it('退出：证据 flush 与 Bridge/Chrome/Remote 的 stop() 共用同一次有界等待', () => {
+    const source = readFileSync('src/main/index.ts', 'utf8')
+    const start = source.indexOf("app.on('before-quit'")
+    expect(start).toBeGreaterThan(-1)
+    const handler = source.slice(start, source.indexOf('function applyCsp', start))
+    // 真实调用（不是只在注释里提）+ 拦下这次 quit 等清理
+    expect(handler).toContain('evidence.flushPending()')
+    expect(handler).toContain('event.preventDefault()')
+    // 有界：Promise.race + 总超时兜底，绝不无限 await
+    expect(handler).toMatch(/Promise\.race/)
+    expect(handler).toContain('3_000')
+    // 与既有退出流程整合：stop() 全家与 flush 在同一个等待里
+    expect(handler).toContain('Promise.allSettled([')
+    expect(handler).toContain('server?.stop()')
+    expect(handler).toContain('chrome?.stop()')
+    expect(handler).toContain('remote?.stop()')
+    expect(handler).toContain('Promise.all([stopped, flushed])')
+  })
+
+  it('退出：关库前先 beginShutdown——DB 关闭后不再有有效写入', () => {
+    const source = readFileSync('src/main/index.ts', 'utf8')
+    const start = source.indexOf("app.on('before-quit'")
+    const handler = source.slice(start, source.indexOf('function applyCsp', start))
+    const shutdownAt = handler.indexOf('workspaceEvidenceRef?.beginShutdown()')
+    const closeAt = handler.indexOf('db?.close()')
+    expect(shutdownAt).toBeGreaterThan(-1)
+    expect(closeAt).toBeGreaterThan(shutdownAt) // 先封写、后关库
+    // 数据目录迁移路径（onBeforeMigrate）同样封写
+    expect(source.split('workspaceEvidenceRef?.beginShutdown()').length - 1).toBeGreaterThanOrEqual(2)
+  })
+
+  it('启动：构造证据服务后立刻 recoverInterruptedCaptures（在任何 T1–T5 触发之前）', () => {
+    const source = readFileSync('src/main/index.ts', 'utf8')
+    const constructAt = source.indexOf('const workspaceEvidenceService = new WorkspaceEvidenceService(')
+    const recoverAt = source.indexOf('workspaceEvidenceService.recoverInterruptedCaptures()')
+    expect(constructAt).toBeGreaterThan(-1)
+    expect(recoverAt).toBeGreaterThan(constructAt)
+    // 模块级引用：before-quit 拿到的是同一个实例
+    expect(source).toContain('workspaceEvidenceRef = workspaceEvidenceService')
+    expect(source).toMatch(/let workspaceEvidenceRef: WorkspaceEvidenceService \| null = null/)
   })
 })

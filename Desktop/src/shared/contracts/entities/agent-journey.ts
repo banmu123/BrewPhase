@@ -622,10 +622,20 @@ export const journeyEvidenceSnapshotSchema = z.object({
   /** baseline / execution_start / execution_end / journey_final */
   snapshot_type: z.string(),
   trigger_key: z.string(),
-  /** ok / not_a_repository / error / failed —— 快照自身采到没有。 */
+  /**
+   * 采集自身状态：`pending`（触发时已预留、采集尚未完成）/ ok /
+   * not_a_repository / error / failed（服务层失败）。
+   * 应用中途退出遗留的 `pending` 行在下次启动统一标 `failed` 且
+   * `error_code='capture_interrupted'`——如实记录「采集发生过但没完成」，
+   * 绝不把残缺结果伪装成完整成功。
+   */
   capture_status: z.string(),
-  /** not_applicable / complete / partial / baseline_unavailable / comparison_failed。 */
+  /**
+   * 比较状态：not_applicable（该任务类型不做比较，或尚在 pending）/ complete /
+   * partial / baseline_unavailable（内存基线已失，不伪造比较）/ comparison_failed。
+   */
   comparison_status: z.string(),
+  /** 具体失败原因（如 git_not_found / workspace_unavailable / capture_interrupted）；成功为 null。 */
   error_code: z.string().nullable(),
   captured_at: z.number().int(),
   repository_identity: z.string().nullable(),

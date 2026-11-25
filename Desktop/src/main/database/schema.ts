@@ -1089,7 +1089,11 @@ export const journeyWorkspaceSnapshots = sqliteTable(
     snapshotType: text('snapshot_type').notNull(),
     /** 幂等键：`baseline:<version>` / `start:<eventId>` / `end:<eventId>` / `final:<version>`。 */
     triggerKey: text('trigger_key').notNull(),
-    /** 采集自身状态：ok / not_a_repository / error / failed（服务层失败）。 */
+    /**
+     * 采集自身状态：pending（已预留、尚未完成）/ ok / not_a_repository /
+     * error / failed（服务层失败）。中断遗留的 pending 由下次启动的
+     * `recoverInterruptedCaptures()` 标 failed + `capture_interrupted`。
+     */
     captureStatus: text('capture_status').notNull(),
     /** 比较状态：not_applicable / complete / partial / baseline_unavailable / comparison_failed。 */
     comparisonStatus: text('comparison_status').notNull(),
