@@ -26,7 +26,8 @@ import {
   type JourneyChange,
   type JourneyDetail,
   type JourneyEvidenceFile,
-  type JourneyEvidenceSnapshot
+  type JourneyEvidenceSnapshot,
+  type JourneyObservationStatus
 } from '../contracts/entities/agent-journey'
 
 // MARK: - 文案（规格 §6 / 设计 §10.2，zh 为准；i18n 属 P5）
@@ -92,7 +93,7 @@ export type EvidenceComparisonEntry = {
     artifact_status: 'available' | 'omitted' | 'absent'
     artifact_omission: string | null
     /** 观察确定性（changed/unavailable；null = 历史行）——与 artifact 轴分开展示。 */
-    observation_status: string | null
+    observation_status: JourneyObservationStatus | null
   } | null
 }
 

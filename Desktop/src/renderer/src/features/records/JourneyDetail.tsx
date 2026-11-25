@@ -18,6 +18,14 @@ import {
   workspaceListSuccess,
   type JourneyWorkspaceListState
 } from './journey-workspace-view'
+import {
+  createJourneyEvidenceLoader,
+  journeyEvidenceViews,
+  INITIAL_EVIDENCE_LOAD_STATE,
+  type EvidenceFileRowView,
+  type EventEvidenceView,
+  type JourneyEvidenceLoadState
+} from './journey-evidence-view'
 
 /**
  * Agent Journey 的**完整详情**（R6-4.1 §3.2，R6-4.1.1 §7 精修）。
@@ -102,6 +110,35 @@ export function JourneyDetailView(props: {
       off()
     }
   }, [loadWorkspaces])
+
+  /**
+   * R6-P5.1：Evidence 读取（loading / loaded / failed 三态，绝不拿空数组顶替）
+   * 与竞态守卫都在 `journey-evidence-view.ts`（纯函数，可单测）：
+   * - 打开 / 切换 Journey → 立即取数（切换时旧数据先清空）；
+   * - `agentJourneys` 领域更新（MCP 写事件 / 笔记 / 证据落库）→ 后台刷新；
+   * - 卸载 / 切换 → 序号推进 + dispose，在途结果一律作废。
+   */
+  const [evidenceState, setEvidenceState] = useState<JourneyEvidenceLoadState>(
+    INITIAL_EVIDENCE_LOAD_STATE
+  )
+  const evidenceLoaderRef = useRef<ReturnType<typeof createJourneyEvidenceLoader> | null>(null)
+  useEffect(() => {
+    const loader = createJourneyEvidenceLoader({
+      fetchEvidence: (id) => api.agentJourneys.evidence(id),
+      onChange: setEvidenceState
+    })
+    evidenceLoaderRef.current = loader
+    loader.open(journey.id)
+    const off = api.app.onChanged((domain) => {
+      if (domain === 'agentJourneys') loader.refresh()
+    })
+    return () => {
+      off()
+      loader.dispose()
+      evidenceLoaderRef.current = null
+    }
+  }, [journey.id])
+  const retryEvidence = useCallback(() => evidenceLoaderRef.current?.retry(), [])
 
   // 换了一条 Journey（或父级已拉到最新数据）时清掉本地覆盖。
   useEffect(() => {
@@ -240,6 +277,16 @@ export function JourneyDetailView(props: {
       return { unavailable: false, text: info.title || t.records.untitled }
     },
     [recordInfo, t]
+  )
+
+  /**
+   * 每个事件的 Evidence 视图（P5.1 §五）：只在 `loaded` 时产出——
+   * loading / failed 由区域层分别呈现，事件不会被误标成「没有证据」。
+   * 分类 / 置信度 / 历史兼容全部来自 `buildEvidenceComparison()` 纯函数。
+   */
+  const evidenceViews = useMemo(
+    () => journeyEvidenceViews(evidenceState, detail),
+    [evidenceState, detail]
   )
 
   /** R6-4.3.1：关联状态 + 能否修改的纯函数判定（规则单测覆盖）。 */
@@ -418,6 +465,22 @@ export function JourneyDetailView(props: {
       {/* ── §7.2 执行时间线 ─────────────────────────────────── */}
       <section className="journey-section">
         <h3 className="journey-section__title">{t.records.journey.timeline}</h3>
+        {/* Evidence 读取状态独立呈现：查询失败 ≠ 没有证据（P5.1 §五.5） */}
+        {evidenceState.status === 'loading' && (
+          <p className="page-sub" role="status">
+            {t.records.journey.evidence.loading}
+          </p>
+        )}
+        {evidenceState.status === 'failed' && (
+          <div className="journey-inline">
+            <p className="page-sub journey-inline__feedback">
+              {t.records.journey.evidence.loadFailed}
+            </p>
+            <button type="button" className="button" onClick={retryEvidence}>
+              {t.records.journey.evidence.retry}
+            </button>
+          </div>
+        )}
         <ol className="journey-timeline">
           {events.map((event) => {
             const statusKey2 = event.status as keyof typeof t.records.journey.eventStatus
@@ -434,6 +497,10 @@ export function JourneyDetailView(props: {
               t.records.journey.eventType[
                 event.event_type as keyof typeof t.records.journey.eventType
               ] ?? event.event_type
+            const evidenceView = evidenceViews?.get(event.id) ?? null
+            const hasEvidenceFiles = Boolean(evidenceView && evidenceView.fileRows.length > 0)
+            // 有结构化详情**或**有证据文件对照才给展开开关（按需展开不回退）。
+            const canExpand = Boolean(structured) || hasEvidenceFiles
             return (
               <li key={event.id} className="journey-event" data-event-type={event.event_type}>
                 <div className="journey-event__head">
@@ -453,17 +520,27 @@ export function JourneyDetailView(props: {
                 <div className="journey-event__title">{event.title}</div>
                 {event.summary && <div className="journey-event__summary">{event.summary}</div>}
 
+                {/* P5.1 §五：有 Evidence 报告的执行事件 → 紧凑摘要（文件对照按需展开） */}
+                {evidenceView && <JourneyEvidenceSummary view={evidenceView} expanded={isExpanded} />}
+
                 {/*
                   * §9.3「按需展开」：有结构化详情才给开关（否则展开也无内容）；
                   * 旧事件给一句明确说明，而不是一个空的占位卡片。
                   */}
                 <div className="journey-event__detailbar">
-                  {structured ? (
+                  {canExpand ? (
                     <>
                       <span className="journey-event__counts">
-                        {fileCount > 0 && t.records.journey.changesCount(fileCount)}
-                        {fileCount > 0 && checkCount > 0 && ' · '}
-                        {checkCount > 0 && t.records.journey.verifyCount(checkCount)}
+                        {structured && fileCount > 0 && t.records.journey.changesCount(fileCount)}
+                        {structured && fileCount > 0 && checkCount > 0 && ' · '}
+                        {structured && checkCount > 0 && t.records.journey.verifyCount(checkCount)}
+                        {!structured && hasEvidenceFiles && (
+                          <>
+                            {t.records.journey.evidence.filesCount(
+                              evidenceView?.fileRows.length ?? 0
+                            )}
+                          </>
+                        )}
                       </span>
                       <button
                         type="button"
@@ -608,6 +685,132 @@ export function JourneyDetailView(props: {
 
       {error && <p className="error">{error}</p>}
     </div>
+  )
+}
+
+/**
+ * 单个执行事件的 Evidence 摘要（P5.1 §五.1/5.4）：
+ * 置信度与计数常驻（紧凑一行），文件级对照只在事件展开后出现。
+ * **不渲染任何 Diff 正文**（按需读取属 P5.2）。
+ */
+function JourneyEvidenceSummary(props: { view: EventEvidenceView; expanded: boolean }) {
+  const { t } = useI18n()
+  const { view } = props
+  const evidenceT = t.records.journey.evidence
+  const confKey = view.confidence as keyof typeof evidenceT.confidence
+  const counts = view.counts
+  return (
+    <div className="journey-event__evidence" data-confidence={view.confidence}>
+      <div className="journey-evidence__line">
+        <span className="journey-evidence__confidence">
+          {evidenceT.confidence[confKey] ?? view.confidence}
+        </span>
+        <span className="journey-evidence__counts">
+          {evidenceT.countsLine(
+            counts.reported,
+            counts.observed,
+            counts.matched,
+            counts.reportedOnly,
+            counts.observedOnly
+          )}
+        </span>
+      </div>
+      {/*
+        * §五.4：空态必须区分窗口完整性——完整窗口才允许说「未发现变化」；
+        * 窗口不完整绝不给确定性结论。
+        */}
+      {view.emptyKind !== 'none' && (
+        <p className="journey-evidence__empty">
+          {view.emptyKind === 'complete' ? evidenceT.emptyComplete : evidenceT.emptyIncomplete}
+        </p>
+      )}
+      {props.expanded && view.fileRows.length > 0 && (
+        <ul className="journey-evidence__files">
+          {view.fileRows.map((row) => (
+            <EvidenceFileRow key={row.key} row={row} />
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+/**
+ * 文件级对照行（P5.1 §五.2）：Agent Reported 与 Workspace Observed
+ * **分块、带来源标签**，绝不合并成无法判断来源的一段描述。
+ * reported_only 保留「不代表报告不真实」的既有解释（§五.3）。
+ */
+function EvidenceFileRow(props: { row: EvidenceFileRowView }) {
+  const { t } = useI18n()
+  const evidenceT = t.records.journey.evidence
+  const { row } = props
+  const attrKey = row.attribution as keyof typeof evidenceT.attribution
+  const reportedTypeKey = row.reported?.changeType as
+    | keyof typeof t.records.journey.detail.changeType
+    | undefined
+  const changeKindKey = row.observed?.changeKind as
+    | keyof typeof evidenceT.changeKind
+    | undefined
+  const artifactKindKey = row.observed?.artifactKind as
+    | keyof typeof evidenceT.artifactKind
+    | undefined
+  const artifactOmissionKey = row.observed?.artifactOmission as
+    | keyof typeof evidenceT.artifactOmission
+    | undefined
+  // 历史行（observation_status = null）如实标注「未保存观察状态」，不伪造。
+  const observationLabel =
+    row.observed?.observationStatus === null || row.observed?.observationStatus === undefined
+      ? evidenceT.observation.legacy
+      : evidenceT.observation[row.observed.observationStatus]
+  return (
+    <li className="journey-evidence-file" data-attribution={row.attribution}>
+      <div className="journey-evidence-file__head">
+        <code className="journey-evidence-file__path">{row.path}</code>
+        <span className="journey-evidence-file__attribution">
+          {evidenceT.attribution[attrKey] ?? row.attribution}
+        </span>
+      </div>
+      {row.reported && (
+        <div className="journey-evidence-file__side journey-evidence-file__side--agent">
+          <span className="journey-evidence-file__side-label">{evidenceT.agentReported}</span>
+          <span className="journey-evidence-file__side-body">
+            {reportedTypeKey
+              ? t.records.journey.detail.changeType[reportedTypeKey]
+              : row.reported.changeType}
+            {' · '}
+            {row.reported.changeSummary}
+            {row.reported.previousPath && ` · ${evidenceT.renameFrom(row.reported.previousPath)}`}
+          </span>
+        </div>
+      )}
+      {row.observed && (
+        <div className="journey-evidence-file__side journey-evidence-file__side--workspace">
+          <span className="journey-evidence-file__side-label">{evidenceT.workspaceObserved}</span>
+          <span className="journey-evidence-file__side-body">
+            {changeKindKey ? evidenceT.changeKind[changeKindKey] : row.observed.changeKind}
+            {row.observed.insertions !== null &&
+              row.observed.deletions !== null &&
+              ` · ${evidenceT.diffStat(row.observed.insertions, row.observed.deletions)}`}
+            {row.observed.renameFrom && ` · ${evidenceT.renameFrom(row.observed.renameFrom)}`}
+            {' · '}
+            {observationLabel}
+            {row.observed.artifactKind &&
+              ` · ${
+                artifactKindKey
+                  ? evidenceT.artifactKind[artifactKindKey]
+                  : row.observed.artifactKind
+              }${
+                row.observed.artifactOmission && artifactOmissionKey
+                  ? `（${evidenceT.artifactOmission[artifactOmissionKey]}）`
+                  : ''
+              }`}
+          </span>
+        </div>
+      )}
+      {row.attribution === 'reported_only' && (
+        <p className="journey-evidence-file__hint">{evidenceT.reportedOnlyHint}</p>
+      )}
+    </li>
   )
 }
 

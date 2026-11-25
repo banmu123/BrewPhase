@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { and, asc, eq, inArray, like, sql } from 'drizzle-orm'
 import type { Db } from '../client'
 import { journeySnapshotFiles, journeyWorkspaceSnapshots } from '../schema'
+import type { JourneyObservationStatus } from '../../../shared/contracts/entities/agent-journey'
 
 /**
  * 工作区证据仓储（R6-4.3.3 / 收尾 R6-4.3.3.1）。
@@ -79,7 +80,7 @@ export type EvidenceFileInsert = {
    * 观察确定性（Migration 18）：`changed` / `unavailable` / NULL（历史行）。
    * 必须是引擎 `GitFileDiff.observation` 的真实输出——**不从 artifact 类型反推**。
    */
-  observationStatus: string | null
+  observationStatus: JourneyObservationStatus | null
   attribution: string | null
   attributionConfidence: string | null
 }

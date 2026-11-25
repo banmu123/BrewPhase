@@ -20,7 +20,8 @@ import {
 } from '../../database/repositories/agent-journey-evidence'
 import type {
   JourneyArtifact,
-  JourneyEvidence
+  JourneyEvidence,
+  JourneyObservationStatus
 } from '../../../shared/contracts/entities/agent-journey'
 import { GitSnapshotEngine } from './git-snapshot-engine'
 import type {
@@ -359,8 +360,9 @@ export class WorkspaceEvidenceService {
             artifact_kind: described.kind,
             artifact_status: described.status,
             artifact_omission: described.omission,
-            // R6-4.3.4.2：观察确定性（changed/unavailable；null = 历史旧数据）
-            observation_status: file.observationStatus,
+            // P5.1 §三：运行时状态保护——未知库值 fail-closed 成 unavailable，
+            // 绝不让脏字符串进 Renderer 后被当成「已确定」。
+            observation_status: coerceObservationStatus(file.observationStatus),
             attribution: file.attribution,
             attribution_confidence: file.attributionConfidence
           }
@@ -953,6 +955,16 @@ export class WorkspaceEvidenceService {
   private emitEvidenceChanged(): void {
     this.events.emit('agentJourneys')
   }
+}
+
+/**
+ * 观察状态的**运行时保护**（P5.1 §三）：`changed` / `unavailable` 原样、
+ * `null`（历史行）原样；**任何其他值一律保守映射为 `unavailable`**——
+ * 未知状态绝不能被读成「净变化已确定」（fail-closed）。
+ */
+export function coerceObservationStatus(value: string | null): JourneyObservationStatus | null {
+  if (value === null) return null
+  return value === 'changed' || value === 'unavailable' ? value : 'unavailable'
 }
 
 /**

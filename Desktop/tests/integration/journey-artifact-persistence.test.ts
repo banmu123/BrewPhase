@@ -38,7 +38,8 @@ import { ApplicationEvents } from '../../src/main/application/events/application
 import {
   journeyEvidenceFileSchema,
   journeyEvidenceSchema,
-  type JourneyEventDTO
+  type JourneyEventDTO,
+  type JourneyEvidenceFile
 } from '../../src/shared/contracts/entities/agent-journey'
 import { buildEvidenceComparison } from '../../src/shared/agent-journey/evidence-comparison'
 import type { EvidenceFileInsert } from '../../src/main/database/repositories/agent-journey-evidence'
@@ -1000,5 +1001,76 @@ describe('比较完整性与置信度（stub 引擎，确定性场景）', () =>
     expect(report).toHaveLength(1)
     expect(report[0].confidence).toBe('confirmed')
     expect(report[0].confidence).not.toBe('unconfirmed')
+  })
+})
+
+// MARK: - 7) Observation 契约收紧（P5.1 §三）
+
+describe('Observation 契约收紧（P5.1 §三）', () => {
+  const baseFile: JourneyEvidenceFile = {
+    id: randomUUID(),
+    repo_relative_path: 'src/a.ts',
+    change_kind: 'modified',
+    status_origin: 'worktree',
+    content_hash_before: 'h1',
+    content_hash_after: 'h2',
+    pre_existing_dirty: false,
+    head_moved: false,
+    rename_from_path: null,
+    insertions: 1,
+    deletions: 0,
+    line_ranges: null,
+    artifact_kind: 'diff',
+    artifact_status: 'available',
+    artifact_omission: null,
+    observation_status: 'changed',
+    attribution: null,
+    attribution_confidence: null
+  }
+
+  it('Schema：changed / unavailable 合法，NULL（历史行）合法，非法字符串被拒', () => {
+    expect(journeyEvidenceFileSchema.safeParse(baseFile).success).toBe(true)
+    expect(
+      journeyEvidenceFileSchema.safeParse({ ...baseFile, observation_status: 'unavailable' })
+        .success
+    ).toBe(true)
+    // NULL = Migration 18 前的历史行，必须能过（不回填伪造）
+    expect(
+      journeyEvidenceFileSchema.safeParse({ ...baseFile, observation_status: null }).success
+    ).toBe(true)
+    // 非法值不能通过 Schema——未知字符串不得进入 Renderer
+    expect(
+      journeyEvidenceFileSchema.safeParse({ ...baseFile, observation_status: 'bogus' }).success
+    ).toBe(false)
+    expect(
+      journeyEvidenceFileSchema.safeParse({ ...baseFile, observation_status: 'CHANGED' }).success
+    ).toBe(false)
+  })
+
+  it('数据库出现未知状态 → DTO 必须 fail-closed 成 unavailable（绝不读成 changed）', async () => {
+    const created = createJourney(service, { workspaceId })
+    await evidence.flushPending()
+    await runWindow(service, evidence, created.journey.id, () => {
+      writeFileSync(join(repoRoot, 'a.ts'), 'A\nFAIL CLOSED\n')
+    })
+    const dto = evidence.listForJourney(created.journey.id)
+    const end = dto.snapshots.find((snapshot) => snapshot.snapshot_type === 'execution_end')!
+    const file = end.files.find((row) => row.repo_relative_path === 'a.ts')!
+    expect(file.observation_status).toBe('changed') // 正常路径
+
+    // 直接把库里该行改成未知值（模拟脏数据 / 未来非法写入）
+    handle.sqlite
+      .prepare('update journey_snapshot_files set observation_status = ? where id = ?')
+      .run('bogus-value', file.id)
+    const after = evidence.listForJourney(created.journey.id)
+    const poisoned = after
+      .snapshots.find((snapshot) => snapshot.snapshot_type === 'execution_end')!
+      .files.find((row) => row.repo_relative_path === 'a.ts')!
+    // fail-closed：未知 → unavailable；绝不返回未知串，更绝不返回 changed
+    expect(poisoned.observation_status).toBe('unavailable')
+    expect(poisoned.observation_status).not.toBe('changed')
+    expect(
+      journeyEvidenceFileSchema.safeParse({ ...poisoned }).success
+    ).toBe(true) // DTO 仍然过契约
   })
 })

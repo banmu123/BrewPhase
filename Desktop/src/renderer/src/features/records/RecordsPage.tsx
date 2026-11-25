@@ -23,6 +23,7 @@ import { detectPlatform } from './preview/platform'
 import { buildPreview, formatCount, recordDisplayTitle, type RecordPreview } from './preview/preview-model'
 import { JourneyTile } from './JourneyTile'
 import { JourneyDetailView } from './JourneyDetail'
+import { createJourneyDetailLoader } from './journey-evidence-view'
 import {
   createInspectorForm,
   editField,
@@ -230,21 +231,29 @@ export function RecordsPage() {
     [load]
   )
 
-  // Journey 详情单独取：列表数据里没有 events/edges/notes/links 全量。
+  /**
+   * Journey 详情单独取：列表数据里没有 events/edges/notes/links 全量。
+   *
+   * R6-P5.1 §四.3：打开中的详情也要随 `agentJourneys` 领域更新刷新——
+   * MCP 写事件 / 笔记 / 证据落库后，详情（events 全量）会跟着变新。
+   * 序号守卫与卸载保护在 `createJourneyDetailLoader`（纯函数，可单测）：
+   * **快速切换 Journey 时旧请求不覆盖新详情**。
+   */
+  const detailLoaderRef = useRef<ReturnType<typeof createJourneyDetailLoader> | null>(null)
   useEffect(() => {
-    if (!selectedJourneyId) {
-      setJourneyDetail(null)
-      return
-    }
-    let alive = true
-    api.agentJourneys
-      .get(selectedJourneyId)
-      .then((detail) => {
-        if (alive) setJourneyDetail(detail)
-      })
-      .catch(() => undefined)
+    const loader = createJourneyDetailLoader({
+      fetchDetail: (id) => api.agentJourneys.get(id),
+      onChange: setJourneyDetail
+    })
+    detailLoaderRef.current = loader
+    loader.open(selectedJourneyId)
+    const off = api.app.onChanged((domain) => {
+      if (domain === 'agentJourneys') loader.refresh()
+    })
     return () => {
-      alive = false
+      off()
+      loader.dispose()
+      detailLoaderRef.current = null
     }
   }, [selectedJourneyId])
 

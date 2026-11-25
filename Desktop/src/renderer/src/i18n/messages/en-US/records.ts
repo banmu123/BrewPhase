@@ -122,6 +122,75 @@ export const records = {
     detailAria: 'Agent Journey detail',
     goal: 'Goal',
     timeline: 'Execution',
+    // R6-P5.1: evidence summary and file-level comparison (no diff text)
+    evidence: {
+      loading: 'Loading workspace evidence…',
+      loadFailed: 'Failed to load workspace evidence.',
+      retry: 'Retry',
+      confidence: {
+        confirmed: 'Observation window complete; conclusions are reliable',
+        window_net_change: 'HEAD moved during the window; only net changes are confirmed',
+        unconfirmed: 'Baseline or end snapshot missing; cannot confirm'
+      },
+      countsLine: (
+        reported: number,
+        observed: number,
+        matched: number,
+        reportedOnly: number,
+        observedOnly: number
+      ) =>
+        `Agent reported ${reported} · workspace observed ${observed} · matched ${matched} · reported only ${reportedOnly} · observed only ${observedOnly}`,
+      filesCount: (count: number) => `${count} evidence files`,
+      emptyComplete: 'Observation window complete; no net file changes found.',
+      emptyIncomplete: 'Observation window incomplete; file changes cannot be confirmed yet.',
+      agentReported: 'Agent reported',
+      workspaceObserved: 'Workspace observed',
+      reportedOnlyHint:
+        'The file may have been reverted, the observation window may be incomplete, or the change happened outside the window — this does not mean the report is untrue.',
+      attribution: {
+        reported_and_observed: 'Reported and observed',
+        observed_only: 'Observed only by the system',
+        reported_only: 'Reported by the agent only, no net change observed'
+      },
+      changeKind: {
+        added: 'Added',
+        modified: 'Modified',
+        deleted: 'Deleted',
+        renamed: 'Renamed',
+        type_changed: 'Type changed',
+        conflicted: 'Conflict',
+        mode_changed: 'Mode changed'
+      },
+      observation: {
+        changed: 'Net change confirmed',
+        unavailable: 'Net change undetermined',
+        legacy: 'Observation status not stored in legacy records'
+      },
+      artifactKind: {
+        diff: 'Diff text',
+        binary: 'Binary file',
+        sensitive: 'Excluded by sensitive-file rules',
+        mode_only: 'Mode-only change',
+        symlink: 'Symbolic link',
+        over_budget: 'Over capacity limit',
+        unavailable: 'No diff text generated'
+      },
+      artifactOmission: {
+        file_budget: 'Per-file limit',
+        snapshot_budget: 'Per-snapshot limit',
+        journey_budget: 'Per-journey limit',
+        source_too_large: 'Source file too large',
+        algorithm_budget: 'Diff computation budget',
+        baseline_not_stored: 'Baseline content not retained',
+        current_not_stored: 'Current content not retained',
+        blob_missing: 'Git object missing',
+        decode_failed: 'Content is not textual',
+        not_observable: 'Not observable',
+        stale: 'Data is stale'
+      },
+      renameFrom: (path: string) => `From: ${path}`,
+      diffStat: (insertions: number, deletions: number) => `+${insertions} / −${deletions}`
+    },
     sequence: (value: number) => `#${value}`,
     eventType: {
       user_input: 'User request',

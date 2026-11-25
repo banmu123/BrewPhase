@@ -586,6 +586,13 @@ export const canvasJourneySchema = z.object({
 })
 export type CanvasJourney = z.infer<typeof canvasJourneySchema>
 
+/**
+ * 观察确定性（引擎 `GitFileDiff.observation` 的持久化值域，P5.1 起为共享
+ * 严格类型）：`changed` = 工作区净变化已确定；`unavailable` = 无法判定；
+ * `null` 仅表示 **Migration 18 之前的历史行**（没有该记录，绝不回填）。
+ */
+export type JourneyObservationStatus = 'changed' | 'unavailable'
+
 // ================================================================
 // 工作区证据（R6-4.3.3 P3 → R6-4.3.4 P4）—— `agent-journey:evidence`
 // 只读契约
@@ -623,11 +630,12 @@ export const journeyEvidenceFileSchema = z.object({
   /** omitted 的具体原因（over_budget / unavailable 的 reason）；其余为 null。 */
   artifact_omission: z.string().nullable(),
   /**
-   * 观察确定性（R6-4.3.4.2）：`changed` = 净变化已确定 /
-   * `unavailable` = 不可判定；`null` = 历史旧数据（Migration 18 之前，无记录）。
-   * 与 artifact 可用性**正交**：正文不可展示绝不等于不可判断。
+   * 观察确定性（R6-4.3.4.2 → P5.1 收紧为严格枚举）：`changed` = 净变化已
+   * 确定 / `unavailable` = 不可判定；`null` = 历史旧数据（Migration 18 之前，
+   * 无记录）。与 artifact 可用性**正交**：正文不可展示绝不等于不可判断。
+   * 主进程读取时对库里的未知值 fail-closed 成 `unavailable`（绝不读成已确定）。
    */
-  observation_status: z.string().nullable(),
+  observation_status: z.enum(['changed', 'unavailable']).nullable(),
   attribution: z.string().nullable(),
   attribution_confidence: z.string().nullable()
 })

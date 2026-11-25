@@ -125,6 +125,75 @@ export const records = {
     detailAria: 'Agent Journey 详情',
     goal: '任务目标',
     timeline: '执行过程',
+    // R6-P5.1：Execution 时间线的 Evidence 摘要与文件级对照（不含 Diff 正文）
+    evidence: {
+      loading: '正在加载工作区证据…',
+      loadFailed: '工作区证据查询失败。',
+      retry: '重试',
+      confidence: {
+        confirmed: '观察窗口完整，结论可靠',
+        window_net_change: '窗口内 HEAD 有变动，只能确认净变化',
+        unconfirmed: '基线或结束快照缺失，无法确认'
+      },
+      countsLine: (
+        reported: number,
+        observed: number,
+        matched: number,
+        reportedOnly: number,
+        observedOnly: number
+      ) =>
+        `Agent 报告 ${reported} · 工作区观察 ${observed} · 匹配 ${matched} · 仅报告 ${reportedOnly} · 仅观察 ${observedOnly}`,
+      filesCount: (count: number) => `${count} 个证据文件`,
+      emptyComplete: '观察窗口完整，本次未发现净文件变化。',
+      emptyIncomplete: '观察窗口未完整，暂时无法确认文件变化。',
+      agentReported: 'Agent 报告',
+      workspaceObserved: '工作区观察',
+      reportedOnlyHint:
+        '可能是改后还原、观察时间不完整，或变化发生在窗口之外，不代表报告不真实。',
+      attribution: {
+        reported_and_observed: '已报告并观察到',
+        observed_only: '仅系统观察到',
+        reported_only: '仅 Agent 报告，未观察到净变化'
+      },
+      changeKind: {
+        added: '新增',
+        modified: '修改',
+        deleted: '删除',
+        renamed: '重命名',
+        type_changed: '类型变化',
+        conflicted: '冲突',
+        mode_changed: '权限位变化'
+      },
+      observation: {
+        changed: '净变化已确定',
+        unavailable: '净变化不可判定',
+        legacy: '历史记录未保存观察状态'
+      },
+      artifactKind: {
+        diff: 'Diff 正文',
+        binary: '二进制文件',
+        sensitive: '已按敏感文件规则排除',
+        mode_only: '仅权限位变化',
+        symlink: '符号链接',
+        over_budget: '已超容量限制',
+        unavailable: '未生成 Diff 正文'
+      },
+      artifactOmission: {
+        file_budget: '单文件超限',
+        snapshot_budget: '单快照超限',
+        journey_budget: 'Journey 总量超限',
+        source_too_large: '源文件过大',
+        algorithm_budget: 'Diff 计算超预算',
+        baseline_not_stored: '基线内容未留存',
+        current_not_stored: '当前内容未留存',
+        blob_missing: 'Git 对象缺失',
+        decode_failed: '内容非文本',
+        not_observable: '不可观测',
+        stale: '数据已过期'
+      },
+      renameFrom: (path: string) => `原路径：${path}`,
+      diffStat: (insertions: number, deletions: number) => `+${insertions} / −${deletions}`
+    },
     sequence: (value: number) => `#${value}`,
     eventType: {
       user_input: '用户需求',
