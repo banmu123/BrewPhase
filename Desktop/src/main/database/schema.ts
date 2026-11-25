@@ -1054,3 +1054,107 @@ export const agentJourneyNotes = sqliteTable(
     index('agent_journey_notes_event_idx').on(table.eventId)
   ]
 )
+
+/**
+ * R6-4.3.3：Journey 工作区观察快照（P3 证据持久化，local-first）。
+ *
+ * 一次采集 = 一行：`snapshot_type` 标记触发时机（baseline / execution_start /
+ * execution_end / journey_final），`capture_status`（自身采到没有）与
+ * `comparison_status`（有没有可用基线并完成比较）**分开表达**——
+ * 「没有变化且比较完整」与「根本没有可比基线」绝不混成空数组或 0。
+ *
+ * 幂等靠 **非空 `trigger_key`**：SQLite 的 UNIQUE 对 NULL 不生效，而
+ * baseline / journey_final 的 `execution_event_id` 都是 NULL，
+ * `UNIQUE(journey_id, trigger_key)` 才是真正的防重键。
+ *
+ * 外键语义与 Journey 一致：删 Journey → 证据级联删除；删 Workspace /
+ * 删 Execution Event → 只解除引用（SET NULL），历史保留。
+ * **绝不存机器绝对路径**（`repository_identity` 是哈希，根目录不可得时为 NULL）。
+ * 不进 change_log / iOS 同步 / Cloud / Remote。
+ */
+export const journeyWorkspaceSnapshots = sqliteTable(
+  'journey_workspace_snapshots',
+  {
+    id: text('id').primaryKey(),
+    journeyId: text('journey_id')
+      .notNull()
+      .references(() => agentJourneys.id, { onDelete: 'cascade' }),
+    workspaceId: text('workspace_id').references(() => localWorkspaces.id, {
+      onDelete: 'set null'
+    }),
+    executionEventId: text('execution_event_id').references((): AnySQLiteColumn => agentJourneyEvents.id, {
+      onDelete: 'set null'
+    }),
+    /** baseline / execution_start / execution_end / journey_final */
+    snapshotType: text('snapshot_type').notNull(),
+    /** 幂等键：`baseline:<version>` / `start:<eventId>` / `end:<eventId>` / `final:<version>`。 */
+    triggerKey: text('trigger_key').notNull(),
+    /** 采集自身状态：ok / not_a_repository / error / failed（服务层失败）。 */
+    captureStatus: text('capture_status').notNull(),
+    /** 比较状态：not_applicable / complete / partial / baseline_unavailable / comparison_failed。 */
+    comparisonStatus: text('comparison_status').notNull(),
+    errorCode: text('error_code'),
+    capturedAt: integer('captured_at').notNull(),
+    /** sha256(realpath) 前 32 位；根目录不可得时 NULL。 */
+    repositoryIdentity: text('repository_identity'),
+    /** `basename#短哈希`；根目录不可得时 NULL。绝不存绝对路径。 */
+    repositoryRootIdentifier: text('repository_root_identifier'),
+    branch: text('branch'),
+    headSha: text('head_sha'),
+    treeSha: text('tree_sha'),
+    indexStateHash: text('index_state_hash'),
+    worktreeStateHash: text('worktree_state_hash'),
+    isGit: integer('is_git').notNull().default(0),
+    isWorktree: integer('is_worktree').notNull().default(0),
+    isSubmodule: integer('is_submodule').notNull().default(0),
+    hasUnbornHead: integer('has_unborn_head').notNull().default(0),
+    trackedCount: integer('tracked_count').notNull().default(0),
+    stagedCount: integer('staged_count').notNull().default(0),
+    unstagedCount: integer('unstaged_count').notNull().default(0),
+    untrackedCount: integer('untracked_count').notNull().default(0),
+    ignoredCount: integer('ignored_count').notNull().default(0),
+    /** 已确认的净变化文件数（不可判定的不混进来）。 */
+    changedFilesCount: integer('changed_files_count').notNull().default(0),
+    insertions: integer('insertions').notNull().default(0),
+    deletions: integer('deletions').notNull().default(0)
+  },
+  (table) => [
+    // 真正的防重键（NULL 参与的 UNIQUE 在 SQLite 里会放行重复行）
+    uniqueIndex('uq_journey_ws_snapshot_trigger').on(table.journeyId, table.triggerKey),
+    index('journey_ws_snapshots_journey_idx').on(table.journeyId, table.capturedAt)
+  ]
+)
+
+/**
+ * 快照比较得到的文件级变化摘要（P3 只落元数据与统计，Diff Viewer 属 P4）。
+ *
+ * `insertions/deletions` 可为 NULL——**不可计算时绝不写 0 冒充「没有变化」**；
+ * `artifact_ref`（P4 的 Diff 数据位置）、`attribution` / `attribution_confidence`
+ * （P4 统一计算）在本阶段恒为 NULL，不伪造内容。
+ */
+export const journeySnapshotFiles = sqliteTable(
+  'journey_snapshot_files',
+  {
+    id: text('id').primaryKey(),
+    snapshotId: text('snapshot_id')
+      .notNull()
+      .references(() => journeyWorkspaceSnapshots.id, { onDelete: 'cascade' }),
+    repoRelativePath: text('repo_relative_path').notNull(),
+    changeKind: text('change_kind').notNull(),
+    statusOrigin: text('status_origin').notNull(),
+    contentHashBefore: text('content_hash_before'),
+    contentHashAfter: text('content_hash_after'),
+    preExistingDirty: integer('pre_existing_dirty').notNull().default(0),
+    headMoved: integer('head_moved').notNull().default(0),
+    renameFromPath: text('rename_from_path'),
+    insertions: integer('insertions'),
+    deletions: integer('deletions'),
+    /** P4 展开的行范围 JSON；当前 NULL。 */
+    lineRanges: text('line_ranges'),
+    /** P4 的 Diff 数据位置；当前没有完整 Artifact → 必须 NULL，不得伪造。 */
+    artifactRef: text('artifact_ref'),
+    attribution: text('attribution'),
+    attributionConfidence: text('attribution_confidence')
+  },
+  (table) => [uniqueIndex('uq_journey_snapshot_file').on(table.snapshotId, table.repoRelativePath)]
+)

@@ -57,6 +57,7 @@ import {
   journeyDetailV1Schema,
   parseJourneyMetadataJson
 } from '../../../shared/contracts/entities/agent-journey'
+import type { JourneyEvidenceCollector } from './workspace-evidence-service'
 
 /**
  * AgentJourneyService：一次 Agent 任务执行历程的应用服务（R6-1）。
@@ -218,6 +219,14 @@ const JOURNEY_TRANSITIONS: Record<AgentJourneyStatus, readonly AgentJourneyStatu
   cancelled: []
 }
 
+/** Execution 离开 running 的目标状态（T3；与 EXECUTION_TRANSITIONS.running 一致）。 */
+const EXECUTION_END_STATUSES: readonly AgentJourneyEventStatus[] = [
+  'completed',
+  'failed',
+  'skipped',
+  'cancelled'
+]
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DIGEST_RE = /^[0-9a-f]{64}$/
 
@@ -276,7 +285,12 @@ export class AgentJourneyService {
     private readonly db: Db,
     private readonly events: ApplicationEvents,
     /** R6-4.3.1：工作区授权校验（窄接口注入，见 `JourneyWorkspaceAuthorizer`）。 */
-    private readonly workspaces?: JourneyWorkspaceAuthorizer
+    private readonly workspaces?: JourneyWorkspaceAuthorizer,
+    /**
+     * R6-4.3.3：证据采集出口（P3）。全部在事务提交之后 fire-and-forget 调用；
+     * 未注入时（多数测试夹具）完全不采集——Journey 行为与 P2 逐字节一致。
+     */
+    private readonly evidence?: JourneyEvidenceCollector
   ) {}
 
   /**
@@ -423,7 +437,16 @@ export class AgentJourneyService {
     })
 
     // 事务提交之后才广播；回滚（异常）时根本走不到这里。
-    if (outcome.created) this.events.emit('agentJourneys')
+    if (outcome.created) {
+      this.events.emit('agentJourneys')
+      // T1a（R6-4.3.3）：创建时直接带 workspace → 采集 baseline。
+      // 只在真正创建时触发——幂等重放（created=false）绝不重复采集；
+      // 未关联 Workspace 的 Journey 不产生任何证据行。
+      const workspaceId = outcome.journey.workspaceId
+      if (workspaceId && this.evidence) {
+        this.evidence.collectBaseline(outcome.journey.id, workspaceId, outcome.journey.updatedAt)
+      }
+    }
     return outcome
   }
 
@@ -492,6 +515,16 @@ export class AgentJourneyService {
       }
     )
     if (outcome.changed) this.events.emit('agentJourneys')
+    // T1b（R6-4.3.3）：绑定/换绑**真正发生变更**后采集新 baseline
+    //（trigger = 绑定版本 updated_at → 解绑后重绑会拿到新的 trigger_key）。
+    // 解绑（workspaceId=null）与幂等重复绑定（changed=false）都不采集。
+    if (outcome.changed && outcome.journey.workspaceId && this.evidence) {
+      this.evidence.collectBaseline(
+        outcome.journey.id,
+        outcome.journey.workspaceId,
+        outcome.journey.updatedAt
+      )
+    }
     return this.toRecordCard(outcome.journey)
   }
 
@@ -737,7 +770,26 @@ export class AgentJourneyService {
       return { event, edges, sequence, journey: current, created: true, replayed: false }
     })
 
-    if (outcome.created) this.events.emit('agentJourneys')
+    if (outcome.created) {
+      this.events.emit('agentJourneys')
+      // T2a/T4（R6-4.3.3）：创建即 running 的执行 → execution_start；
+      // outcome 在同一事务把 Journey 推到 completed → journey_final。
+      // MCP 重放（created=false）绝不触发第二次采集。
+      const workspaceId = outcome.journey.workspaceId
+      if (workspaceId && this.evidence) {
+        if (isExecutionEvent(outcome.event.eventType) && outcome.event.status === 'running') {
+          this.evidence.collectExecutionStart(outcome.journey.id, workspaceId, outcome.event.id)
+        }
+        if (outcome.journey.status === 'completed') {
+          this.evidence.collectJourneyFinal(
+            outcome.journey.id,
+            workspaceId,
+            outcome.journey.updatedAt,
+            'completed'
+          )
+        }
+      }
+    }
     return outcome
   }
 
@@ -771,6 +823,7 @@ export class AgentJourneyService {
       )
     }
 
+    const previousStatus = event.status // CAS 之前的读取 = 转换前状态
     const updated = updateEventStatusRow(this.db, {
       id: input.eventId,
       status: input.status,
@@ -781,6 +834,23 @@ export class AgentJourneyService {
       throw new AgentJourneyError('STALE_RECORD', 'the event changed since it was read')
     }
     this.events.emit('agentJourneys')
+    // T2b/T3（R6-4.3.3）：planned→running 采 start；running→终态 采 end。
+    // 单条 CAS 已「提交」；重复推进要么非法转换要么 STALE → 不会重复采集；
+    // planned→skipped/cancelled 没有 running 窗口 → 不采 end。
+    if (this.evidence && previousStatus !== input.status) {
+      const journeyRow = selectJourney(this.db, event.journeyId)
+      const workspaceId = journeyRow?.workspaceId
+      if (journeyRow && workspaceId) {
+        if (previousStatus === 'planned' && input.status === 'running') {
+          this.evidence.collectExecutionStart(journeyRow.id, workspaceId, event.id)
+        } else if (
+          previousStatus === 'running' &&
+          EXECUTION_END_STATUSES.includes(input.status)
+        ) {
+          this.evidence.collectExecutionEnd(journeyRow.id, workspaceId, [event.id])
+        }
+      }
+    }
     return updated
   }
 
@@ -816,12 +886,16 @@ export class AgentJourneyService {
 
     // 取消：把未收尾的执行事件标成 cancelled（**保留历史，绝不删除**）。
     // 与 Journey 状态更新放在同一个事务里。
+    // 记录原本处于 running 的执行：它们的窗口真实存在，提交后必须补采
+    // execution_end（该路径绕过 updateEventStatus，见 R6-4.3.3 T5）。
+    const cancelledRunningIds: string[] = []
     const updated = this.db.transaction((tx): AgentJourney => {
       const scoped = tx as unknown as Db
       if (input.status === 'cancelled') {
         for (const open of selectEvents(scoped, journey.id)) {
           if (!isExecutionEvent(open.eventType)) continue
           if (open.status !== 'planned' && open.status !== 'running') continue
+          if (open.status === 'running') cancelledRunningIds.push(open.id)
           updateEventStatusRow(scoped, {
             id: open.id,
             status: 'cancelled',
@@ -844,6 +918,24 @@ export class AgentJourneyService {
     })
 
     this.events.emit('agentJourneys')
+    // T5（R6-4.3.3）：cancelled/failed 提交之后采集 journey_final。
+    // - 取消路径先补采被批量取消的 running 执行窗口（入队顺序：end 在 final 前）；
+    // - failed **不是**不可逆终态（failed→running 允许恢复）：final trigger_key
+    //   绑定 updated_at，同一状态转换不重复、不同转换各成一条；
+    // - paused→running 不在触发点里（不重复 start、不关闭窗口）。
+    if (this.evidence && journey.workspaceId) {
+      if (input.status === 'cancelled' || input.status === 'failed') {
+        if (cancelledRunningIds.length > 0) {
+          this.evidence.collectExecutionEnd(journey.id, journey.workspaceId, cancelledRunningIds)
+        }
+        this.evidence.collectJourneyFinal(
+          journey.id,
+          journey.workspaceId,
+          updated.updatedAt,
+          input.status
+        )
+      }
+    }
     return updated
   }
 

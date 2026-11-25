@@ -21,6 +21,7 @@ import type { RecordService } from '../application/records/record-service'
 import type { WorkContextService } from '../application/work-context/work-context-service'
 import type { CanvasService } from '../application/canvas/canvas-service'
 import type { AgentJourneyService } from '../application/agent-journey/agent-journey-service'
+import type { WorkspaceEvidenceService } from '../application/agent-journey/workspace-evidence-service'
 import type { McpBridgeStatus } from '../../shared/contracts/mcp'
 import {
   addNode,
@@ -138,6 +139,8 @@ export function registerIpc(params: {
   updates: UpdateService
   /** 本地工作区登记 + 卡片绑定（AI Card Workspace Bridge Phase 1）。 */
   localWorkspaces: LocalWorkspaceService
+  /** R6-4.3.3：工作区证据采集与只读查询（P3；写入只在 Service 触发点）。 */
+  evidence: WorkspaceEvidenceService
   /** 本地工作区只读文件访问。 */
   workspaceFiles: WorkspaceFileService
   /** 本地文件 → AI 上下文打包。 */
@@ -165,6 +168,7 @@ export function registerIpc(params: {
     dataLocation,
     updates,
     localWorkspaces,
+    evidence,
     workspaceFiles,
     contextBuilder,
     replyIntelligence
@@ -400,6 +404,11 @@ export function registerIpc(params: {
     const value = input as { journeyId: string; workspaceId: string | null }
     return services.agentJourneys.bindWorkspace(value.journeyId, value.workspaceId)
   })
+  // R6-4.3.3：只读证据查询——Zod + Trusted Sender 照常；Renderer 无写权限，
+  // 证据写入只发生在 Main 的 T1–T5 触发点。
+  handle(IPC.agentJourneyEvidence, (input) =>
+    evidence.listForJourney((input as { journeyId: string }).journeyId)
+  )
 
   handle(IPC.canvasJourneys, (input) =>
     services.canvas.journeysForCanvas((input as { canvasId: string }).canvasId)

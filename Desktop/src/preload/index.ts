@@ -286,7 +286,9 @@ const api: RendererApi = {
     removeLink: (id) => invoke(IPC.agentJourneyLinkRemove, { id }),
     /** R6-4.3.1：绑定 / 换绑 / 解绑（null = 解绑），返回更新后的卡片。 */
     bindWorkspace: (journeyId, workspaceId) =>
-      invoke(IPC.agentJourneyWorkspaceBind, { journeyId, workspaceId })
+      invoke(IPC.agentJourneyWorkspaceBind, { journeyId, workspaceId }),
+    /** R6-4.3.3：只读证据查询（快照 + 文件级变化摘要）。 */
+    evidence: (journeyId) => invoke(IPC.agentJourneyEvidence, { journeyId })
   },
   mcp: {
     listClients: () => invoke(IPC.mcpClientsList),

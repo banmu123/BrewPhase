@@ -17,6 +17,7 @@ import { ApplicationEvents } from './application/events/application-events'
 import { RecordService } from './application/records/record-service'
 import { WorkContextService } from './application/work-context/work-context-service'
 import { LocalWorkspaceService } from './application/local-workspace/local-workspace-service'
+import { WorkspaceEvidenceService } from './application/agent-journey/workspace-evidence-service'
 import { WorkspaceFileService } from './application/local-workspace/workspace-file-service'
 import { ContextBuilder } from './application/local-workspace/context-builder'
 import { ReplyIntelligenceService } from './application/reply-intelligence/reply-intelligence-service'
@@ -256,9 +257,21 @@ function bootstrap(): void {
   // 必须建在 AgentJourneyService 之前——R6-4.3.1 把它的 `authorize` 注入
   // Journey（窄接口：只校验、只回显示名，不带绝对路径，也不产生循环依赖）。
   const localWorkspaceService = new LocalWorkspaceService(db.db, events)
+  // R6-4.3.3（P3）：工作区证据服务——只依赖 db / 同一个 events / 工作区授权，
+  // 必须在 AgentJourneyService 之前构造（作为 T1–T5 的触发出口注入）。
+  const workspaceEvidenceService = new WorkspaceEvidenceService(
+    db.db,
+    events,
+    localWorkspaceService
+  )
   // Agent Journey（R6-2）：复用**同一个** ApplicationEvents——第二份实例会让
   // Renderer 只收到一半的 `app:changed`。
-  const agentJourneys = new AgentJourneyService(db.db, events, localWorkspaceService)
+  const agentJourneys = new AgentJourneyService(
+    db.db,
+    events,
+    localWorkspaceService,
+    workspaceEvidenceService
+  )
   const workspaceFileService = new WorkspaceFileService(db.db)
   const contextBuilder = new ContextBuilder(db.db, workspaceFileService)
   // AI Reply Intelligence（Phase 2）：来源识别用 tab 的真实 URL；tab 已关闭
@@ -655,6 +668,7 @@ function bootstrap(): void {
     dataLocation,
     updates: updateService,
     localWorkspaces: localWorkspaceService,
+    evidence: workspaceEvidenceService,
     workspaceFiles: workspaceFileService,
     contextBuilder: contextBuilder,
     replyIntelligence: replyIntelligenceService

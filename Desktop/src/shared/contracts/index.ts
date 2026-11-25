@@ -43,6 +43,7 @@ import type {
   CanvasJourneyPlacement,
   JourneyCard,
   JourneyDetail,
+  JourneyEvidence,
   JourneyLinkType,
   JourneyNote,
   JourneyRecordLink
@@ -337,6 +338,11 @@ export interface RendererApi {
      * 返回更新后的卡片；执行已开始或 Journey 终态时主进程拒绝。
      */
     bindWorkspace: (journeyId: string, workspaceId: string | null) => Promise<JourneyCard>
+    /**
+     * R6-4.3.3：只读证据查询——快照、文件级变化摘要、完整性与失败原因。
+     * Renderer 只有读取权限；写入全部发生在 Main 的触发点。
+     */
+    evidence: (journeyId: string) => Promise<JourneyEvidence>
   }
   /**
    * AI 连接（MCP）。token 只在 createClient 的返回值里出现一次，

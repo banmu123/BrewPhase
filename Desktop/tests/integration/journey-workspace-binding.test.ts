@@ -143,10 +143,10 @@ function openAtVersion(file: string, version: number): { sqlite: Database.Databa
 // MARK: - 数据层：Migration 15 → 16
 
 describe('Migration 16：journey-workspace-binding', () => {
-  it('只追加一版，1–15 的序号与名字原样保留', () => {
-    expect(migrations.map((migration) => migration.version)).toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
-    ])
+  it('只追加不修改：序号从 1 连续递增，历史版本（1–16）原样保留', () => {
+    const versions = migrations.map((migration) => migration.version)
+    // migrations.ts 头注释的「只追加」规则：连续、无重复、从 1 开始
+    expect(versions).toEqual(versions.map((_, index) => index + 1))
     expect(migrations[14]).toMatchObject({ version: 15, name: 'canvas-journey-fusion' })
     expect(migrations[15]).toMatchObject({ version: 16, name: 'journey-workspace-binding' })
   })
@@ -449,11 +449,13 @@ describe('绑定 / 换绑 / 解绑的生命周期', () => {
 // MARK: - 装配层
 
 describe('生产装配层确实注入了授权实现', () => {
-  it('main/index.ts 把 LocalWorkspaceService 注入 AgentJourneyService', () => {
+  it('main/index.ts 把 LocalWorkspaceService 与证据服务注入 AgentJourneyService', () => {
     const source = readFileSync('src/main/index.ts', 'utf8')
     const calls = source.match(/new AgentJourneyService\([^)]*\)/g) ?? []
-    // 生产装配有且只有一处，且第三个参数是真实注入的 localWorkspaceService——
-    // 这是「失败关闭」不变成「生产环境永远拒绝」的唯一保证。
-    expect(calls).toEqual(['new AgentJourneyService(db.db, events, localWorkspaceService)'])
+    // 生产装配有且只有一处，且两个依赖都是真实注入——
+    // 「失败关闭」不变成「生产环境永远拒绝」，P3 触发点也不变成空操作。
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toContain('localWorkspaceService')
+    expect(calls[0]).toContain('workspaceEvidenceService')
   })
 })

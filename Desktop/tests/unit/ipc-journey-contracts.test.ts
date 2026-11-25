@@ -23,6 +23,8 @@ const FUSION_CHANNELS = [
   'agentJourneyLinkRemove',
   /** R6-4.3.1：工作区绑定（绑定 / 换绑 / 解绑）。 */
   'agentJourneyWorkspaceBind',
+  /** R6-4.3.3：只读证据查询（P3）。 */
+  'agentJourneyEvidence',
   'canvasJourneys',
   'canvasJourneyAdd',
   'canvasJourneyMove',
@@ -88,6 +90,19 @@ describe('入参校验（脏参数必须在边界上被拒）', () => {
     expect(parse(IPC.agentJourneyGet, { journeyId: crypto.randomUUID() }).success).toBe(true)
     expect(parse(IPC.agentJourneyNoteRemove, { id: '123' }).success).toBe(false)
     expect(parse(IPC.agentJourneyLinkRemove, { id: '123' }).success).toBe(false)
+  })
+
+  it('R6-4.3.3 证据查询：只收 journeyId，非 UUID 被拒', () => {
+    const parseEvidence = (payload: unknown) => parse(IPC.agentJourneyEvidence, payload)
+    expect(parseEvidence({ journeyId: crypto.randomUUID() }).success).toBe(true)
+    expect(parseEvidence({ journeyId: 'not-a-uuid' }).success).toBe(false)
+    expect(parseEvidence({}).success).toBe(false)
+    // 只读查询不接受任何路径参数：多余字段被 zod strip，不透传给主进程
+    const ok = parseEvidence({ journeyId: crypto.randomUUID(), rootPath: '/etc' })
+    expect(ok.success).toBe(true)
+    if (ok.success && typeof ok.data === 'object' && ok.data !== null) {
+      expect('rootPath' in ok.data).toBe(false)
+    }
   })
 
   it('R6-4.3.1 工作区绑定：uuid 绑定 / null 解绑合法，路径与缺省被拒', () => {

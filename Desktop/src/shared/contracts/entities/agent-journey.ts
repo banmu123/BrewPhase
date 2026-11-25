@@ -585,3 +585,76 @@ export const canvasJourneySchema = z.object({
   links: z.array(journeyRecordLinkSchema)
 })
 export type CanvasJourney = z.infer<typeof canvasJourneySchema>
+
+// ================================================================
+// 工作区证据（R6-4.3.3，P3）—— `agent-journey:evidence` 只读契约
+//
+// 只读：Renderer 只有查询权限；写入全部发生在 Main 的触发点
+// （AgentJourneyService 事务提交之后的 fire-and-forget 采集）。
+// `artifact_ref` / `attribution*` 本阶段恒 null（P4 填），不伪造内容；
+// `insertions/deletions` 为 null 表示**不可计算**，绝不写 0 冒充「没有变化」。
+// local-first：不进 change_log / iOS 同步 / Cloud / Remote。
+// ================================================================
+
+export const journeyEvidenceFileSchema = z.object({
+  repo_relative_path: z.string(),
+  change_kind: z.string(),
+  status_origin: z.string(),
+  content_hash_before: z.string().nullable(),
+  content_hash_after: z.string().nullable(),
+  pre_existing_dirty: z.boolean(),
+  head_moved: z.boolean(),
+  rename_from_path: z.string().nullable(),
+  insertions: z.number().int().nullable(),
+  deletions: z.number().int().nullable(),
+  line_ranges: z.string().nullable(),
+  artifact_ref: z.string().nullable(),
+  attribution: z.string().nullable(),
+  attribution_confidence: z.string().nullable()
+})
+export type JourneyEvidenceFile = z.infer<typeof journeyEvidenceFileSchema>
+
+export const journeyEvidenceSnapshotSchema = z.object({
+  id: z.string().uuid(),
+  journey_id: z.string().uuid(),
+  workspace_id: z.string().uuid().nullable(),
+  execution_event_id: z.string().uuid().nullable(),
+  /** baseline / execution_start / execution_end / journey_final */
+  snapshot_type: z.string(),
+  trigger_key: z.string(),
+  /** ok / not_a_repository / error / failed —— 快照自身采到没有。 */
+  capture_status: z.string(),
+  /** not_applicable / complete / partial / baseline_unavailable / comparison_failed。 */
+  comparison_status: z.string(),
+  error_code: z.string().nullable(),
+  captured_at: z.number().int(),
+  repository_identity: z.string().nullable(),
+  repository_root_identifier: z.string().nullable(),
+  branch: z.string().nullable(),
+  head_sha: z.string().nullable(),
+  tree_sha: z.string().nullable(),
+  index_state_hash: z.string().nullable(),
+  worktree_state_hash: z.string().nullable(),
+  is_git: z.boolean(),
+  is_worktree: z.boolean(),
+  is_submodule: z.boolean(),
+  has_unborn_head: z.boolean(),
+  counts: z.object({
+    tracked: z.number().int(),
+    staged: z.number().int(),
+    unstaged: z.number().int(),
+    untracked: z.number().int(),
+    ignored: z.number().int()
+  }),
+  changed_files_count: z.number().int(),
+  insertions: z.number().int(),
+  deletions: z.number().int(),
+  files: z.array(journeyEvidenceFileSchema)
+})
+export type JourneyEvidenceSnapshot = z.infer<typeof journeyEvidenceSnapshotSchema>
+
+export const journeyEvidenceSchema = z.object({
+  journey_id: z.string().uuid(),
+  snapshots: z.array(journeyEvidenceSnapshotSchema)
+})
+export type JourneyEvidence = z.infer<typeof journeyEvidenceSchema>

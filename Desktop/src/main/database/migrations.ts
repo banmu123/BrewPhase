@@ -771,6 +771,76 @@ ALTER TABLE agent_journeys ADD COLUMN workspace_id TEXT REFERENCES local_workspa
 CREATE INDEX agent_journeys_workspace_idx ON agent_journeys (workspace_id);
 `
 
+/**
+ * R6-4.3.3：Journey 工作区观察证据（P3）。只追加，不改 1–16。
+ *
+ * - `trigger_key` 非空 + `UNIQUE(journey_id, trigger_key)` 是真正的防重键：
+ *   SQLite 的 UNIQUE 对 NULL 不生效，而 baseline/journey_final 的
+ *   `execution_event_id` 都是 NULL，只靠三列联合键会放行重复快照。
+ * - `capture_status`（自身采到没有）与 `comparison_status`（有没有可用基线
+ *   并完成比较）分列——「无变化且比较完整」≠「没有可比基线」。
+ * - 外键：删 Journey 级联删证据；删 Workspace / Execution Event 只 SET NULL。
+ * - `artifact_ref` / `attribution*` 本阶段恒 NULL（P4 填），不伪造内容。
+ */
+const JOURNEY_EVIDENCE_SQL = `
+create table journey_workspace_snapshots (
+  id text primary key not null,
+  journey_id text not null references agent_journeys(id) on delete cascade,
+  workspace_id text references local_workspaces(id) on delete set null,
+  execution_event_id text references agent_journey_events(id) on delete set null,
+  snapshot_type text not null,
+  trigger_key text not null,
+  capture_status text not null,
+  comparison_status text not null,
+  error_code text,
+  captured_at integer not null,
+  repository_identity text,
+  repository_root_identifier text,
+  branch text,
+  head_sha text,
+  tree_sha text,
+  index_state_hash text,
+  worktree_state_hash text,
+  is_git integer not null default 0,
+  is_worktree integer not null default 0,
+  is_submodule integer not null default 0,
+  has_unborn_head integer not null default 0,
+  tracked_count integer not null default 0,
+  staged_count integer not null default 0,
+  unstaged_count integer not null default 0,
+  untracked_count integer not null default 0,
+  ignored_count integer not null default 0,
+  changed_files_count integer not null default 0,
+  insertions integer not null default 0,
+  deletions integer not null default 0
+);
+create unique index uq_journey_ws_snapshot_trigger
+  on journey_workspace_snapshots (journey_id, trigger_key);
+create index journey_ws_snapshots_journey_idx
+  on journey_workspace_snapshots (journey_id, captured_at);
+
+create table journey_snapshot_files (
+  id text primary key not null,
+  snapshot_id text not null references journey_workspace_snapshots(id) on delete cascade,
+  repo_relative_path text not null,
+  change_kind text not null,
+  status_origin text not null,
+  content_hash_before text,
+  content_hash_after text,
+  pre_existing_dirty integer not null default 0,
+  head_moved integer not null default 0,
+  rename_from_path text,
+  insertions integer,
+  deletions integer,
+  line_ranges text,
+  artifact_ref text,
+  attribution text,
+  attribution_confidence text
+);
+create unique index uq_journey_snapshot_file
+  on journey_snapshot_files (snapshot_id, repo_relative_path);
+`
+
 export const migrations: Migration[] = [
   { version: 1, name: 'init', sql: INIT_SQL },
   { version: 2, name: 'sync-align-ios', sql: SYNC_ALIGN_SQL },
@@ -787,7 +857,8 @@ export const migrations: Migration[] = [
   { version: 13, name: 'reply-intelligence', sql: REPLY_INTELLIGENCE_SQL },
   { version: 14, name: 'agent-journeys', sql: AGENT_JOURNEY_SQL },
   { version: 15, name: 'canvas-journey-fusion', sql: CANVAS_JOURNEY_SQL },
-  { version: 16, name: 'journey-workspace-binding', sql: JOURNEY_WORKSPACE_SQL }
+  { version: 16, name: 'journey-workspace-binding', sql: JOURNEY_WORKSPACE_SQL },
+  { version: 17, name: 'journey-workspace-evidence', sql: JOURNEY_EVIDENCE_SQL }
 ]
 
 /**

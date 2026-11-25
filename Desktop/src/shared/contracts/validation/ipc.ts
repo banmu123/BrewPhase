@@ -139,6 +139,8 @@ export const IPC = {
   agentJourneyLinkRemove: 'agent-journey:link:remove',
   /** R6-4.3.1：绑定 / 换绑 / 解绑 Journey 的工作区（null = 解绑）。 */
   agentJourneyWorkspaceBind: 'agent-journey:workspace:bind',
+  /** R6-4.3.3：只读证据查询（P3：快照 + 文件级变化摘要）。 */
+  agentJourneyEvidence: 'agent-journey:evidence',
   canvasJourneys: 'canvas:journeys',
   canvasJourneyAdd: 'canvas:journey:add',
   canvasJourneyMove: 'canvas:journey:move',
@@ -412,6 +414,8 @@ export const ipcRequestSchemas = {
     journeyId: z.string().uuid(),
     workspaceId: z.string().uuid().nullable()
   }),
+  // R6-4.3.3：只读证据查询——入参只有 journeyId（绝对路径无从谈起）。
+  [IPC.agentJourneyEvidence]: z.object({ journeyId: z.string().uuid() }),
   [IPC.canvasJourneys]: z.object({ canvasId: z.string().uuid() }),
   [IPC.canvasJourneyAdd]: z.object({ canvasId: z.string().uuid(), journeyId: z.string().uuid() }),
   [IPC.canvasJourneyMove]: z.object({
