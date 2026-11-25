@@ -10616,6 +10616,15 @@ textarea {
   border: 1px solid var(--hairline);
 }
 
+/* 无法判定计数（P5.1.1）：与已确认计数并列，视觉上弱化但不隐藏 */
+.journey-evidence__undetermined {
+  font-weight: 600;
+}
+
+.journey-evidence-file[data-attribution='undetermined'] {
+  border-left-color: var(--hairline);
+}
+
 /* 两侧来源分块：Agent Reported 与 Workspace Observed 绝不合并成一段 */
 .journey-evidence-file__side {
   display: flex;

@@ -624,7 +624,7 @@ describe('观察类型补齐：type_changed / conflicted（§四）', () => {
     expect(report.confidence_title).toBe(EVIDENCE_CONFIDENCE_TEXT.confirmed.title)
   })
 
-  it('conflicted 且 hash 双空不足以判断 → 不静默归入无变化；观察不推断作者', () => {
+  it('conflicted 且 hash 双空不足以判断 → 进独立无法判定集合（不静默、不进 observed_only）', () => {
     const event = makeEvent({ sequence: 1 })
     const snapshots = window(event.id, [
       makeFile('src/c.ts', {
@@ -638,14 +638,19 @@ describe('观察类型补齐：type_changed / conflicted（§四）', () => {
       })
     ])
     const report = only(buildEvidenceComparison(detailOf(event), snapshots))
-    expect(report.entries).toHaveLength(1)
-    const entry = report.entries[0]
-    expect(entry.attribution).toBe('observed_only')
-    expect(entry.agent_report).toBeNull()
-    expect(entry.title).toBe('仅系统观察到')
-    // 结构上不存在作者/归因字段：Workspace Observed 不指向任何 Agent
-    expect(Object.keys(entry)).not.toContain('author')
-    expect(Object.keys(entry.observation ?? {})).not.toContain('author')
+    // P5.1.1 §三：无法判定的观察**不进三类归因**——既不是 observed_only，
+    // 也不静默丢弃，而是进入独立集合
+    expect(report.entries).toHaveLength(0)
+    expect(report.entries.some((entry) => entry.attribution === 'observed_only')).toBe(false)
+    expect(report.undetermined_observations).toHaveLength(1)
+    const undetermined = report.undetermined_observations[0]
+    expect(undetermined.repo_relative_path).toBe('src/c.ts')
+    expect(undetermined.change_kind).toBe('conflicted')
+    expect(undetermined.observation_status).toBe('unavailable')
+    expect(undetermined.artifact_kind).toBe('unavailable')
+    expect(undetermined.artifact_omission).toBe('not_observable')
+    // 结构上不存在作者字段：无法判定的观察不指向任何 Agent
+    expect(Object.keys(undetermined)).not.toContain('author')
     // 不可判定文件在场 → 观察窗口不完整，绝不 confirmed
     expect(report.confidence).toBe('unconfirmed')
   })
@@ -850,5 +855,114 @@ describe('观察确定性 / artifact 可用性 / 窗口置信度三轴分离（A
         makeFile('src/a.ts', { ...base, change_kind: 'modified', content_hash_before: null, content_hash_after: 'h' })
       )
     ).toBe(false)
+  })
+})
+
+// MARK: - 无法判定的独立集合（P5.1.1 §三 / §六 1-4、6）
+
+describe('无法判定的观察独立集合（P5.1.1 §三）', () => {
+  it('§六.1：新记录 observation_status=unavailable → 进独立集合，绝不进 observed_only', () => {
+    const event = makeEvent({ sequence: 1 })
+    const snapshots = window(event.id, [
+      makeFile('src/mystery.ts', {
+        observation_status: 'unavailable',
+        artifact_kind: 'unavailable',
+        artifact_status: 'omitted',
+        artifact_omission: 'not_observable',
+        content_hash_before: null,
+        content_hash_after: null
+      })
+    ])
+    const report = only(buildEvidenceComparison(detailOf(event), snapshots))
+    expect(report.entries).toHaveLength(0) // 不升级成 observed_only
+    expect(report.undetermined_observations).toHaveLength(1)
+    expect(report.undetermined_observations[0].observation_status).toBe('unavailable')
+  })
+
+  it('§六.2/3：历史 NULL——无法证明的进独立集合；hash 能证明的不进（仍走观察池）', () => {
+    const unproven = makeEvent({ sequence: 1 })
+    const proven = makeEvent({ sequence: 2, changes: [makeChange('src/proven.ts')] })
+    const snapshots = [
+      ...window(unproven.id, [
+        makeFile('src/unproven.ts', {
+          observation_status: null,
+          artifact_kind: 'unavailable',
+          artifact_status: 'omitted',
+          artifact_omission: 'not_observable',
+          content_hash_before: null,
+          content_hash_after: null
+        })
+      ]),
+      ...window(proven.id, [
+        makeFile('src/proven.ts', {
+          observation_status: null,
+          artifact_kind: 'unavailable',
+          artifact_status: 'omitted',
+          artifact_omission: 'baseline_not_stored',
+          content_hash_before: 'legacy-1',
+          content_hash_after: 'legacy-2' // 明确 hash 变化 → 已确定，不进无法判定集合
+        })
+      ])
+    ]
+    const report = buildEvidenceComparison(detailOf(unproven, proven), snapshots)
+    const unprovenReport = report.find((entry) => entry.event_id === unproven.id)!
+    expect(unprovenReport.undetermined_observations).toHaveLength(1)
+    expect(unprovenReport.entries).toHaveLength(0)
+
+    const provenReport = report.find((entry) => entry.event_id === proven.id)!
+    expect(provenReport.undetermined_observations).toHaveLength(0)
+    // hash 证明了变化 → 仍是已确认观察（不因 artifact 不可用被降级）
+    expect(provenReport.entries.map((entry) => entry.attribution)).toEqual([
+      'reported_and_observed'
+    ])
+  })
+
+  it('§六.4：Agent 报告但 Workspace 无法判定 → 两侧事实分别保留，不错误匹配', () => {
+    const event = makeEvent({ sequence: 1, changes: [makeChange('src/both.ts')] })
+    const snapshots = window(event.id, [
+      makeFile('src/both.ts', {
+        observation_status: 'unavailable',
+        artifact_kind: 'unavailable',
+        artifact_status: 'omitted',
+        artifact_omission: 'not_observable',
+        content_hash_before: null,
+        content_hash_after: null
+      })
+    ])
+    const report = only(buildEvidenceComparison(detailOf(event), snapshots))
+    // 不配成 reported_and_observed；Agent 侧事实保留为 reported_only
+    expect(report.entries.map((entry) => entry.attribution)).toEqual(['reported_only'])
+    expect(report.entries[0].agent_report?.change_summary).toBeTruthy()
+    // Workspace 侧事实保留在独立集合
+    expect(report.undetermined_observations).toHaveLength(1)
+    expect(report.undetermined_observations[0].repo_relative_path).toBe('src/both.ts')
+    // 两侧集合路径可以相同，但绝不合并成一条
+    expect(report.entries[0].observation).toBeNull()
+  })
+
+  it('§六.5/6：计数独立（不混入 observed）；artifact 类型与 omission 不丢失', () => {
+    const event = makeEvent({ sequence: 1, changes: [makeChange('src/ok.ts')] })
+    const snapshots = window(event.id, [
+      makeFile('src/ok.ts'), // 已确认净变化（默认 hashes 不同）
+      makeFile('src/mystery.ts', {
+        observation_status: 'unavailable',
+        artifact_kind: 'over_budget',
+        artifact_status: 'omitted',
+        artifact_omission: 'journey_budget',
+        content_hash_before: null,
+        content_hash_after: null
+      })
+    ])
+    const report = only(buildEvidenceComparison(detailOf(event), snapshots))
+    // observed 池只含已确认变化（mystery 不在 entries 里）
+    expect(report.entries.map((entry) => entry.repo_relative_path)).toEqual(['src/ok.ts'])
+    expect(report.undetermined_observations).toHaveLength(1)
+    const undetermined = report.undetermined_observations[0]
+    // artifact 类型与省略原因原样带出（不许丢）
+    expect(undetermined.artifact_kind).toBe('over_budget')
+    expect(undetermined.artifact_status).toBe('omitted')
+    expect(undetermined.artifact_omission).toBe('journey_budget')
+    expect(undetermined.file_id).toBeTruthy()
+    expect(undetermined.change_kind).toBe('modified')
   })
 })

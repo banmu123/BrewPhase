@@ -499,8 +499,9 @@ export function JourneyDetailView(props: {
               ] ?? event.event_type
             const evidenceView = evidenceViews?.get(event.id) ?? null
             const hasEvidenceFiles = Boolean(evidenceView && evidenceView.fileRows.length > 0)
-            // 有结构化详情**或**有证据文件对照才给展开开关（按需展开不回退）。
-            const canExpand = Boolean(structured) || hasEvidenceFiles
+            const hasUndetermined = Boolean(evidenceView && evidenceView.undeterminedRows.length > 0)
+            // 有结构化详情**或**有证据文件对照（含无法判定行）才给展开开关。
+            const canExpand = Boolean(structured) || hasEvidenceFiles || hasUndetermined
             return (
               <li key={event.id} className="journey-event" data-event-type={event.event_type}>
                 <div className="journey-event__head">
@@ -714,14 +715,24 @@ function JourneyEvidenceSummary(props: { view: EventEvidenceView; expanded: bool
             counts.observedOnly
           )}
         </span>
+        {counts.undetermined > 0 && (
+          <span className="journey-evidence__counts journey-evidence__undetermined">
+            {evidenceT.undeterminedCount(counts.undetermined)}
+          </span>
+        )}
       </div>
       {/*
-        * §五.4：空态必须区分窗口完整性——完整窗口才允许说「未发现变化」；
-        * 窗口不完整绝不给确定性结论。
+        * §五.4 + P5.1.1 §五：空态按窗口置信度三分——完整才允许说「未发现
+        * 变化」；HEAD 移动只说「没识别出文件级净变化」；不完整绝不给确定性
+        * 结论。存在（已确认或无法判定）条目时不显示空态。
         */}
       {view.emptyKind !== 'none' && (
         <p className="journey-evidence__empty">
-          {view.emptyKind === 'complete' ? evidenceT.emptyComplete : evidenceT.emptyIncomplete}
+          {view.emptyKind === 'complete'
+            ? evidenceT.emptyComplete
+            : view.emptyKind === 'head_moved'
+              ? evidenceT.emptyHeadMoved
+              : evidenceT.emptyIncomplete}
         </p>
       )}
       {props.expanded && view.fileRows.length > 0 && (
@@ -731,7 +742,58 @@ function JourneyEvidenceSummary(props: { view: EventEvidenceView; expanded: bool
           ))}
         </ul>
       )}
+      {/*
+        * P5.1.1 §三：无法判定的观察独立成区——不是第四种归因，只是
+        * 「净变化无法确认」的证据状态；artifact 类型与省略原因原样带出。
+        */}
+      {props.expanded && view.undeterminedRows.length > 0 && (
+        <ul className="journey-evidence__files journey-evidence__files--undetermined">
+          {view.undeterminedRows.map((row) => (
+            <EvidenceUndeterminedRow key={row.key} row={row} />
+          ))}
+        </ul>
+      )}
     </div>
+  )
+}
+
+/**
+ * 「无法判定」行（P5.1.1 §三）：路径 + Workspace Observed 来源标签 +
+ * 「净变化不可判定」状态 + Artifact 类型与省略原因。
+ * 独立证据状态——不进三类归因、不带作者推断。
+ */
+function EvidenceUndeterminedRow(props: {
+  row: NonNullable<EventEvidenceView['undeterminedRows']>[number]
+}) {
+  const { t } = useI18n()
+  const evidenceT = t.records.journey.evidence
+  const { row } = props
+  const changeKindKey = row.changeKind as keyof typeof evidenceT.changeKind
+  const artifactKindKey = row.artifactKind as keyof typeof evidenceT.artifactKind | undefined
+  const omissionKey = row.artifactOmission as keyof typeof evidenceT.artifactOmission | undefined
+  return (
+    <li className="journey-evidence-file" data-attribution="undetermined">
+      <div className="journey-evidence-file__head">
+        <code className="journey-evidence-file__path">{row.path}</code>
+        <span className="journey-evidence-file__attribution">{evidenceT.observation.unavailable}</span>
+      </div>
+      <div className="journey-evidence-file__side journey-evidence-file__side--workspace">
+        <span className="journey-evidence-file__side-label">{evidenceT.workspaceObserved}</span>
+        <span className="journey-evidence-file__side-body">
+          {evidenceT.changeKind[changeKindKey] ?? row.changeKind}
+          {' · '}
+          {evidenceT.observation.unavailable}
+          {row.artifactKind &&
+            ` · ${
+              artifactKindKey ? evidenceT.artifactKind[artifactKindKey] : row.artifactKind
+            }${
+              row.artifactOmission && omissionKey
+                ? `（${evidenceT.artifactOmission[omissionKey]}）`
+                : ''
+            }`}
+        </span>
+      </div>
+    </li>
   )
 }
 

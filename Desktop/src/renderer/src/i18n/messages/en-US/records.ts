@@ -143,6 +143,9 @@ export const records = {
       filesCount: (count: number) => `${count} evidence files`,
       emptyComplete: 'Observation window complete; no net file changes found.',
       emptyIncomplete: 'Observation window incomplete; file changes cannot be confirmed yet.',
+      emptyHeadMoved:
+        'HEAD moved during the observation window, but no file-level net changes were identified.',
+      undeterminedCount: (count: number) => `Undetermined files: ${count}`,
       agentReported: 'Agent reported',
       workspaceObserved: 'Workspace observed',
       reportedOnlyHint:

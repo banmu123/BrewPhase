@@ -146,6 +146,8 @@ export const records = {
       filesCount: (count: number) => `${count} 个证据文件`,
       emptyComplete: '观察窗口完整，本次未发现净文件变化。',
       emptyIncomplete: '观察窗口未完整，暂时无法确认文件变化。',
+      emptyHeadMoved: '窗口内 HEAD 有变动，但当前没有识别出文件级净变化。',
+      undeterminedCount: (count: number) => `无法判定文件 ${count}`,
       agentReported: 'Agent 报告',
       workspaceObserved: '工作区观察',
       reportedOnlyHint:

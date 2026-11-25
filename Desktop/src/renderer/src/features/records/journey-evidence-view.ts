@@ -3,7 +3,8 @@ import type { JourneyObservationStatus } from '@shared/contracts'
 import {
   buildEvidenceComparison,
   type EvidenceAttribution,
-  type EvidenceConfidence
+  type EvidenceConfidence,
+  type EvidenceExecutionComparison
 } from '@shared/agent-journey/evidence-comparison'
 
 /**
@@ -191,6 +192,13 @@ export function createJourneyDetailLoader(deps: {
 
   return {
     open(id) {
+      // 切换 Journey（与当前不同）：**立即清空**上一条详情——绝不短暂残留
+      // 别人的 events；旧请求已被 seq 作废，晚到也不会覆盖新详情（§四）。
+      // 同一 Journey 的重复 open 不清空（无意义闪烁）。
+      if (id !== null && journeyId !== null && id !== journeyId) {
+        seq += 1
+        if (!disposed) deps.onChange(null)
+      }
       journeyId = id
       if (id === null) {
         seq += 1 // 旧在途结果作废
@@ -200,6 +208,7 @@ export function createJourneyDetailLoader(deps: {
       load()
     },
     refresh() {
+      // 后台刷新：**保留当前详情**，新值到达后整体替换（不闪空）。
       load()
     },
     dispose() {
@@ -236,6 +245,17 @@ export type EvidenceFileRowView = {
   } | null
 }
 
+/** 「无法判定」独立展示行（P5.1.1 §三：独立证据状态，不是第四种归因）。 */
+export type EvidenceUndeterminedRowView = {
+  key: string
+  path: string
+  changeKind: string
+  artifactKind: string | null
+  artifactStatus: 'available' | 'omitted' | 'absent'
+  artifactOmission: string | null
+  observationStatus: JourneyObservationStatus | null
+}
+
 export type EventEvidenceView = {
   eventId: string
   /** 窗口置信度（与文件条目各自独立展示，绝不合并）。 */
@@ -243,7 +263,7 @@ export type EventEvidenceView = {
   counts: {
     /** Agent Reported 文件数。 */
     reported: number
-    /** Workspace Observed 文件数。 */
+    /** Workspace Observed（**已确认净变化**）文件数。 */
     observed: number
     /** 两侧匹配。 */
     matched: number
@@ -251,22 +271,27 @@ export type EventEvidenceView = {
     reportedOnly: number
     /** 仅工作区观察。 */
     observedOnly: number
+    /**
+     * 无法判定的文件数（P5.1.1）——**独立计数**，绝不混入 `observed`。
+     */
+    undetermined: number
   }
   /**
-   * `entries` 为空时的空态（§五.4）：
-   * - `complete`：完整 start/end、窗口完整 → 可以断言「未发现净变化」；
-   * - `incomplete`：窗口不完整 → **不得**给确定性结论；
-   * - `none`：有条目，不需要空态文案。
+   * 零文件空态（§五.4 + P5.1.1 §五）——**同时考虑**已确认条目、无法判定
+   * 条目与窗口置信度：
+   * - `none`：有任一条目（含无法判定），不显示空态；
+   * - `complete`：confirmed 且零条目 → 完整观察且没有净文件变化；
+   * - `head_moved`：window_net_change 且零条目 → HEAD 有变动但没识别出
+   *   文件级净变化（**绝不显示成完全确认**）；
+   * - `incomplete`：unconfirmed 且零条目 → 观察不完整，无法确认。
    */
-  emptyKind: 'none' | 'complete' | 'incomplete'
+  emptyKind: 'none' | 'complete' | 'head_moved' | 'incomplete'
   fileRows: EvidenceFileRowView[]
+  /** 无法判定文件的独立展示行（与 fileRows 不相交）。 */
+  undeterminedRows: EvidenceUndeterminedRowView[]
 }
 
-function buildEventView(comparison: {
-  event_id: string
-  confidence: EvidenceConfidence
-  entries: ReturnType<typeof buildEvidenceComparison>[number]['entries']
-}): EventEvidenceView {
+function buildEventView(comparison: EvidenceExecutionComparison): EventEvidenceView {
   const matched = comparison.entries.filter(
     (entry) => entry.attribution === 'reported_and_observed'
   ).length
@@ -284,14 +309,18 @@ function buildEventView(comparison: {
       observed: matched + observedOnly,
       matched,
       reportedOnly,
-      observedOnly
+      observedOnly,
+      // 独立计数（P5.1.1 §三）：绝不并入 observed 的已确认变化
+      undetermined: comparison.undetermined_observations.length
     },
     emptyKind:
-      comparison.entries.length > 0
+      comparison.entries.length > 0 || comparison.undetermined_observations.length > 0
         ? 'none'
-        : comparison.confidence === 'unconfirmed'
-          ? 'incomplete'
-          : 'complete',
+        : comparison.confidence === 'confirmed'
+          ? 'complete'
+          : comparison.confidence === 'window_net_change'
+            ? 'head_moved'
+            : 'incomplete',
     fileRows: comparison.entries.map((entry): EvidenceFileRowView => ({
       key: `${entry.attribution}:${entry.repo_relative_path}`,
       path: entry.repo_relative_path,
@@ -315,6 +344,15 @@ function buildEventView(comparison: {
             observationStatus: entry.observation.observation_status
           }
         : null
+    })),
+    undeterminedRows: comparison.undetermined_observations.map((file) => ({
+      key: file.file_id,
+      path: file.repo_relative_path,
+      changeKind: file.change_kind,
+      artifactKind: file.artifact_kind,
+      artifactStatus: file.artifact_status,
+      artifactOmission: file.artifact_omission,
+      observationStatus: file.observation_status
     }))
   }
 }

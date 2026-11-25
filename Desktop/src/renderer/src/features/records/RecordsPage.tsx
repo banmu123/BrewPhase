@@ -423,7 +423,14 @@ export function RecordsPage() {
             * Journey 详情与 Record 详情**互斥**：两者是不同内容类型，
             * 共用同一个浮层位，但渲染完全不同的内容。
             */}
-          {panelOpen && selectedJourney && journeyDetail && (
+          {/*
+            * 归属检查（P5.1.1 §四）：展示中的详情必须**属于当前选中**的
+            * Journey——两个对象同时存在还不够，切换间隙的旧详情在这里被挡下。
+            */}
+          {panelOpen &&
+            selectedJourney &&
+            journeyDetail &&
+            journeyDetail.journey.id === selectedJourneyId && (
             <aside
               className="float-panel"
               role="dialog"

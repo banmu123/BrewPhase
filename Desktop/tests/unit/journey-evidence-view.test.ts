@@ -392,7 +392,8 @@ describe('时间线 Evidence 视图', () => {
       observed: 2, // both + system-only
       matched: 1,
       reportedOnly: 1,
-      observedOnly: 1
+      observedOnly: 1,
+      undetermined: 0
     })
     const attributions = view.fileRows.map((row) => row.attribution).sort()
     expect(attributions).toEqual(['observed_only', 'reported_and_observed', 'reported_only'])
@@ -522,5 +523,111 @@ describe('边界：时间线只读摘要元数据', () => {
     const viewModule = readFileSync('src/renderer/src/features/records/journey-evidence-view.ts', 'utf8')
     expect(viewModule).toContain('buildEvidenceComparison')
     expect(viewModule).not.toContain('fetch(')
+  })
+})
+
+// MARK: - P5.1.1 收尾场景（§六 5/7/13/14）
+
+describe('P5.1.1：无法判定计数、head_moved 空态与切换清空', () => {
+  it('§六.5：无法判定计数独立，绝不混入 observed；行携带 artifact 类型与 omission', () => {
+    const event = makeEvent({ sequence: 1, changes: [makeChange('src/ok.ts')] })
+    const snapshots = [
+      makeSnapshot('execution_start', event.id),
+      makeSnapshot('execution_end', event.id, {
+        files: [
+          makeFile('src/ok.ts'), // 已确认
+          makeFile('src/mystery.ts', {
+            observation_status: 'unavailable',
+            artifact_kind: 'over_budget',
+            artifact_status: 'omitted',
+            artifact_omission: 'journey_budget',
+            content_hash_before: null,
+            content_hash_after: null
+          })
+        ]
+      })
+    ]
+    const view = journeyEvidenceViews(loadedState(snapshots), detailOf(event))!.get(event.id)!
+    expect(view.counts.observed).toBe(1) // 只有已确认变化（mystery 不计入）
+    expect(view.counts.undetermined).toBe(1)
+    expect(view.counts.matched).toBe(1)
+    expect(view.fileRows).toHaveLength(1) // 归因行不含无法判定文件
+    expect(view.undeterminedRows).toHaveLength(1)
+    const row = view.undeterminedRows[0]
+    expect(row.path).toBe('src/mystery.ts')
+    expect(row.changeKind).toBe('modified')
+    expect(row.artifactKind).toBe('over_budget')
+    expect(row.artifactOmission).toBe('journey_budget')
+    expect(row.artifactStatus).toBe('omitted')
+    expect(row.observationStatus).toBe('unavailable')
+    // i18n 独立计数文案（zh/en 同构由 i18n 测试保证）
+    expect(evidenceT.undeterminedCount(1)).toBe('无法判定文件 1')
+  })
+
+  it('§六.13：window_net_change + 零条目 → head_moved 空态（绝不显示完全确认文案）', () => {
+    const event = makeEvent({ sequence: 1 })
+    const snapshots = [
+      makeSnapshot('execution_start', event.id, { head_sha: 'sha-1' }),
+      makeSnapshot('execution_end', event.id, { head_sha: 'sha-2' }) // HEAD 移动、零文件
+    ]
+    const view = journeyEvidenceViews(loadedState(snapshots), detailOf(event))!.get(event.id)!
+    expect(view.confidence).toBe('window_net_change')
+    expect(view.emptyKind).toBe('head_moved')
+    expect(view.emptyKind).not.toBe('complete')
+    expect(evidenceT.emptyHeadMoved).toBe('窗口内 HEAD 有变动，但当前没有识别出文件级净变化。')
+    expect(evidenceT.emptyHeadMoved).not.toBe(evidenceT.emptyComplete)
+  })
+
+  it('§六.14：存在无法判定文件时不显示零文件空态（空态三输入同时考虑）', () => {
+    const event = makeEvent({ sequence: 1 })
+    const snapshots = [
+      makeSnapshot('execution_start', event.id),
+      makeSnapshot('execution_end', event.id, {
+        // 窗口完整、没有任何已确认条目，但有一个无法判定文件
+        files: [
+          makeFile('src/mystery.ts', {
+            observation_status: 'unavailable',
+            artifact_kind: 'unavailable',
+            artifact_status: 'omitted',
+            artifact_omission: 'not_observable',
+            content_hash_before: null,
+            content_hash_after: null
+          })
+        ]
+      })
+    ]
+    const view = journeyEvidenceViews(loadedState(snapshots), detailOf(event))!.get(event.id)!
+    // 无法判定文件在场 → 窗口本就 unconfirmed（置信度语义不变）
+    expect(view.confidence).toBe('unconfirmed')
+    expect(view.fileRows).toHaveLength(0)
+    expect(view.undeterminedRows).toHaveLength(1)
+    // 关键：有无法判定条目 → 绝不显示零文件空态（既不是 complete 也不是 incomplete）
+    expect(view.emptyKind).toBe('none')
+  })
+
+  it('§六.7：从 Journey A 切换到 B 时旧详情立即清空', async () => {
+    const first = deferred<JourneyDetail>()
+    const second = deferred<JourneyDetail>()
+    const pending = [first.promise, second.promise]
+    let call = 0
+    const seen: Array<JourneyDetail | null> = []
+    const loader = createJourneyDetailLoader({
+      fetchDetail: () => pending[call++],
+      onChange: (detail) => seen.push(detail)
+    })
+    const detailA = { events: [makeEvent({ sequence: 1 })] } as unknown as JourneyDetail
+    const detailB = { events: [makeEvent({ sequence: 2 })] } as unknown as JourneyDetail
+
+    loader.open('journey-a')
+    first.resolve(detailA)
+    await flushMicrotasks()
+    expect(seen).toEqual([detailA])
+
+    loader.open('journey-b') // 切换：**立即**清空 A 的详情，不等 B 到达
+    expect(seen.at(-1)).toBeNull()
+    second.resolve(detailB)
+    await flushMicrotasks()
+    expect(seen.at(-1)).toBe(detailB)
+    loader.dispose()
   })
 })

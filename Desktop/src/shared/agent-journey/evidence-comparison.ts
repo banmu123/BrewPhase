@@ -97,6 +97,22 @@ export type EvidenceComparisonEntry = {
   } | null
 }
 
+/**
+ * **无法判定的 Workspace 观察**（P5.1.1 §三）：引擎/历史兼容都无法确认
+ * 净变化的文件——独立证据状态，**不是第四种归因**：绝不进 `observed_only`、
+ * 绝不与 Agent Reported 配成 `reported_and_observed`，artifact 类型与省略
+ * 原因必须原样带出，不推断作者。
+ */
+export type EvidenceUndeterminedObservation = {
+  file_id: string
+  repo_relative_path: string
+  change_kind: string
+  artifact_kind: string | null
+  artifact_status: 'available' | 'omitted' | 'absent'
+  artifact_omission: string | null
+  observation_status: JourneyObservationStatus | null
+}
+
 export type EvidenceExecutionComparison = {
   event_id: string
   event_type: string
@@ -107,6 +123,8 @@ export type EvidenceExecutionComparison = {
   baseline_snapshot_id: string | null
   end_snapshot_id: string | null
   entries: EvidenceComparisonEntry[]
+  /** 无法判定的观察（与 entries 完全不相交，计数独立）。 */
+  undetermined_observations: EvidenceUndeterminedObservation[]
 }
 
 // MARK: - 主入口
@@ -146,7 +164,15 @@ export function buildEvidenceComparison(
     // §六：只要有 Agent Reported 或观察窗口（start/end）就保留报告——
     // 零文件变化的完整执行同样要能回答「这次执行窗口完整、无净变化」；
     // 没有任何报告也没有窗口的普通事件仍在此被跳过，不给历史事件灌水。
-    const entries = compareEntries(reported, end?.files ?? [])
+    //
+    // P5.1.1 §三：先切出**无法判定**的观察（新记录看 observation_status、
+    // 历史行走 legacy 保守判定）——它们绝不进三类归因的观察池，
+    // 只进独立集合；已确定的文件才交给匹配与 observed_only。
+    const endFiles = end?.files ?? []
+    const undeterminedFiles = endFiles.filter(isUndeterminedObservation)
+    const determinedFiles = endFiles.filter((file) => !isUndeterminedObservation(file))
+    const entries = compareEntries(reported, determinedFiles)
+    const undetermined_observations = undeterminedFiles.map(toUndeterminedObservation)
 
     const confidence = computeConfidence(start, end)
     report.push({
@@ -156,7 +182,8 @@ export function buildEvidenceComparison(
       confidence_title: EVIDENCE_CONFIDENCE_TEXT[confidence].title,
       baseline_snapshot_id: start?.id ?? null,
       end_snapshot_id: end?.id ?? null,
-      entries
+      entries,
+      undetermined_observations
     })
   }
   return report
@@ -308,10 +335,8 @@ function computeConfidence(
  *   **绝不把无法证明的历史升级成 confirmed**（本函数只决定是否降级）。
  */
 function hasUnconfirmedObservation(files: readonly JourneyEvidenceFile[]): boolean {
-  return files.some((file) => {
-    if (file.observation_status !== null) return file.observation_status === 'unavailable'
-    return !legacyObservationIsDeterminate(file)
-  })
+  // 与 §三 的无法判定集合同一判据：窗口里有无法判定的文件 → 窗口不算完整
+  return files.some(isUndeterminedObservation)
 }
 
 /**
@@ -342,6 +367,32 @@ export function legacyObservationIsDeterminate(file: JourneyEvidenceFile): boole
     return file.content_hash_before !== null || file.content_hash_after !== null
   }
   return false
+}
+
+// MARK: - 无法判定的观察（P5.1.1 §三）
+
+/**
+ * 单个文件是否**无法判定**（P5.1.1 §三）：
+ * - 新记录：`observation_status === 'unavailable'` → 必进无法判定集合；
+ * - 历史行（NULL）：复用 `legacyObservationIsDeterminate()`——能用存量证据
+ *   证明净变化的不进（继续走观察池），证据不足的保守进；
+ * - `observation_status === 'changed'` → 已确定，永不进。
+ */
+function isUndeterminedObservation(file: JourneyEvidenceFile): boolean {
+  if (file.observation_status !== null) return file.observation_status === 'unavailable'
+  return !legacyObservationIsDeterminate(file)
+}
+
+function toUndeterminedObservation(file: JourneyEvidenceFile): EvidenceUndeterminedObservation {
+  return {
+    file_id: file.id,
+    repo_relative_path: file.repo_relative_path,
+    change_kind: file.change_kind,
+    artifact_kind: file.artifact_kind,
+    artifact_status: file.artifact_status,
+    artifact_omission: file.artifact_omission,
+    observation_status: file.observation_status
+  }
 }
 
 // MARK: - 条目构造
