@@ -91,6 +91,8 @@ export type EvidenceComparisonEntry = {
     artifact_kind: string | null
     artifact_status: 'available' | 'omitted' | 'absent'
     artifact_omission: string | null
+    /** 观察确定性（changed/unavailable；null = 历史行）——与 artifact 轴分开展示。 */
+    observation_status: string | null
   } | null
 }
 
@@ -271,17 +273,14 @@ function hasObservedNetChange(file: JourneyEvidenceFile): boolean {
 // MARK: - 置信度
 
 /**
- * 窗口级置信度（§5.4 + R6-4.3.4.1 §五）——**只看窗口完整性与 HEAD 是否移动**，
- * 绝不根据某一个文件的 hash 就宣称整个 Execution 观察完整：
- * - 缺 start/end、任一侧采集失败、比较未完成（含 partial 观察不完整）
- *   → `unconfirmed`；
- * - 结束快照里存在 `artifact_kind='unavailable'` 的文件（净变化无法判定 /
- *   正文不可观测的历史记录）→ **兜底降级** `unconfirmed`——即便旧数据把
- *   comparison_status 写成了 complete，也不得标 confirmed；
- *   **注意 `over_budget` 不在此列**：容量超限只是「正文不可展示」，
- *   文件净变化仍可判定，不降级；
+ * 窗口级置信度（§5.4 + R6-4.3.4.1 §五 + R6-4.3.4.2 三轴分离）——
+ * **观察确定性 / artifact 可用性 / 窗口置信度是三种状态，绝不混用**：
+ * - 缺 start/end、任一侧采集失败、比较未完成（`comparison_status !== 'complete'`，
+ *   含 partial 观察不完整）→ `unconfirmed`；
+ * - 文件级观察确定性（见 `hasUnconfirmedObservation`）：`observation_status`
+ *   权威判定，历史行走保守兼容纯函数——**正文不可展示 ≠ 净变化不可判断**；
  * - 窗口完整但 HEAD 移动（或任一文件 `head_moved`）→ `window_net_change`；
- * - 窗口完整且 HEAD 未动 → `confirmed`。
+ * - 窗口完整、无不可判定观察且 HEAD 未动 → `confirmed`。
  */
 function computeConfidence(
   start: JourneyEvidenceSnapshot | null,
@@ -290,10 +289,58 @@ function computeConfidence(
   if (!start || !end) return 'unconfirmed'
   if (start.capture_status !== 'ok' || end.capture_status !== 'ok') return 'unconfirmed'
   if (end.comparison_status !== 'complete') return 'unconfirmed'
-  if (end.files.some((file) => file.artifact_kind === 'unavailable')) return 'unconfirmed'
+  if (hasUnconfirmedObservation(end.files)) return 'unconfirmed'
   const headMoved =
     (start.head_sha ?? '') !== (end.head_sha ?? '') || end.files.some((file) => file.head_moved)
   return headMoved ? 'window_net_change' : 'confirmed'
+}
+
+/**
+ * 文件级**观察确定性**（R6-4.3.4.2 §三.2）：
+ * - 新记录：持久化的 `observation_status` 是唯一权威——`'unavailable'` → 观察
+ *   窗口不能确认完整；`'changed'` → 净变化已确定，**哪怕 artifact 是
+ *   unavailable 也不降级**（`baseline_not_stored`/`decode_failed` 只是正文
+ *   生成不了，不是「判断不了有没有变化」）；
+ * - `over_budget` 在任何一侧都不构成降级理由（容量超限 = 正文不可展示）；
+ * - 历史行（`observation_status === null`，Migration 18 之前）：交给独立的
+ *   保守兼容纯函数——能用存量证据证明净变化的不降级，证明不了的才降级，
+ *   **绝不把无法证明的历史升级成 confirmed**（本函数只决定是否降级）。
+ */
+function hasUnconfirmedObservation(files: readonly JourneyEvidenceFile[]): boolean {
+  return files.some((file) => {
+    if (file.observation_status !== null) return file.observation_status === 'unavailable'
+    return !legacyObservationIsDeterminate(file)
+  })
+}
+
+/**
+ * 历史行（`observation_status IS NULL`）的观察确定性证据——**独立纯函数**，
+ * 保守兼容，避免置信度判断继续膨胀：
+ * 1. git 明确报告的结构性事实（renamed / mode_changed / type_changed /
+ *    conflicted）→ 可确定（状态本身即工作区事实，不依赖内容 hash）；
+ * 2. 敏感文件（artifact=sensitive）→ 可确定（状态已证实，内容按策略不读）；
+ * 3. 两侧内容 hash 齐全 → 可确定（不同 = 净变化已证；相同 = 改后还原——
+ *    两种都是**确定的观察**，不是「不知道」）；
+ * 4. 明确的 added / deleted 且另一侧有 hash → 可确定；
+ * 5. 其余（双空、单侧空且类型不明）→ **无法证明** → 保守 false。
+ *
+ * 只用于历史兼容；新记录一律以持久化的 `observation_status` 为准。
+ */
+export function legacyObservationIsDeterminate(file: JourneyEvidenceFile): boolean {
+  if (
+    file.change_kind === 'renamed' ||
+    file.change_kind === 'mode_changed' ||
+    file.change_kind === 'type_changed' ||
+    file.change_kind === 'conflicted'
+  ) {
+    return true
+  }
+  if (file.artifact_kind === 'sensitive') return true
+  if (file.content_hash_before !== null && file.content_hash_after !== null) return true
+  if (file.change_kind === 'added' || file.change_kind === 'deleted') {
+    return file.content_hash_before !== null || file.content_hash_after !== null
+  }
+  return false
 }
 
 // MARK: - 条目构造
@@ -328,7 +375,8 @@ function buildEntry(
           rename_from_path: file.rename_from_path,
           artifact_kind: file.artifact_kind,
           artifact_status: file.artifact_status,
-          artifact_omission: file.artifact_omission
+          artifact_omission: file.artifact_omission,
+          observation_status: file.observation_status
         }
       : null
   }

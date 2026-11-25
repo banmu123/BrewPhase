@@ -36,6 +36,7 @@ import {
 import { LocalWorkspaceService } from '../../src/main/application/local-workspace/local-workspace-service'
 import { ApplicationEvents } from '../../src/main/application/events/application-events'
 import {
+  journeyEvidenceFileSchema,
   journeyEvidenceSchema,
   type JourneyEventDTO
 } from '../../src/shared/contracts/entities/agent-journey'
@@ -399,6 +400,7 @@ describe('Diff Artifact 持久化与按需读取（真实 SQLite + Git）', () =
           deletions: null,
           lineRanges: null,
           artifactRef: null, // 旧数据 / 未存正文
+          observationStatus: null, // Migration 18 前的历史行：无观察状态记录
           attribution: null,
           attributionConfidence: null
         }
@@ -408,6 +410,30 @@ describe('Diff Artifact 持久化与按需读取（真实 SQLite + Git）', () =
     const bareId = bare.status === 'inserted' ? bare.id : ''
     const bareFile = fileRows(bareId)[0]
     expect(bareFile.artifactRef).toBeNull()
+    expect(bareFile.observationStatus).toBeNull()
+    // 历史 NULL 行原样进 DTO（不伪造观察状态）
+    const bareDto = evidence
+      .listForJourney(created.journey.id)
+      .snapshots.flatMap((snapshot) => snapshot.files)
+      .find((file) => file.repo_relative_path === 'bare.ts')
+    expect(bareDto?.observation_status).toBeNull()
+    expect(bareDto?.artifact_status).toBe('absent')
+    // 共享契约：含 observation_status=NULL 的完整 DTO 可过 schema；
+    // 字段本身必填（缺 key 即失败），NULL 与新值均可解析
+    expect(journeyEvidenceSchema.safeParse(evidence.listForJourney(created.journey.id)).success).toBe(
+      true
+    )
+    const withoutObservation: Record<string, unknown> = { ...bareDto }
+    delete withoutObservation['observation_status']
+    expect(journeyEvidenceFileSchema.safeParse(withoutObservation).success).toBe(false)
+    expect(
+      journeyEvidenceFileSchema.safeParse({ ...withoutObservation, observation_status: null })
+        .success
+    ).toBe(true)
+    expect(
+      journeyEvidenceFileSchema.safeParse({ ...withoutObservation, observation_status: 'changed' })
+        .success
+    ).toBe(true)
     expect(() => evidence.readArtifact(created.journey.id, bareId, bareFile.id)).toThrow(
       /no diff artifact/
     )
@@ -853,11 +879,16 @@ describe('比较完整性与置信度（stub 引擎，确定性场景）', () =>
     )!
     const okRow = endDto.files.find((file) => file.repo_relative_path === 'ok.ts')!
     expect(okRow.artifact_kind).toBe('diff')
+    // Repository → DTO 映射：引擎 observation 原样入库、原样读出
+    expect(okRow.observation_status).toBe('changed')
     const okArtifact = evidence.readArtifact(created.journey.id, endDto.id, okRow.id).artifact
     expect(okArtifact.kind).toBe('diff')
     // 不可判定文件如实入库
     const mysteryRow = endDto.files.find((file) => file.repo_relative_path === 'mystery.ts')!
     expect(mysteryRow.artifact_kind).toBe('unavailable')
+    expect(mysteryRow.observation_status).toBe('unavailable')
+    // Observation 与 comparison_status 一致：partial 窗口里存在 unavailable 文件
+    expect(endDto.files.some((file) => file.observation_status === 'unavailable')).toBe(true)
 
     // 对照侧：同窗口 + 同 DTO → 绝不输出 confirmed
     const eventDto: JourneyEventDTO = {
@@ -885,5 +916,89 @@ describe('比较完整性与置信度（stub 引擎，确定性场景）', () =>
     expect(report[0].end_snapshot_id).toBe(endDto.id)
     // 观察条目仍如实呈现（observed_only），只是窗口不完整
     expect(report[0].entries.map((entry) => entry.repo_relative_path)).toEqual(['ok.ts'])
+  })
+
+  it('场景 A 端到端：净变化已判定但正文不可用 → 服务 complete、对照 confirmed（原 bug 场景）', async () => {
+    // 引擎真实组合：hash 不同 → observation='changed'；正文因 baseline_not_stored 生成不了
+    const brokenTextFile: GitFileDiff = {
+      repo_relative_path: 'detected.ts',
+      change_kind: 'modified',
+      status_origin: 'worktree',
+      observation: 'changed',
+      content_hash_before: 'known-before',
+      content_hash_after: 'known-after', // 前后不同：净变化已确定
+      pre_existing_dirty: false,
+      head_moved: false,
+      rename_from_path: null,
+      mode_before: null,
+      mode_after: null,
+      insertions: 4,
+      deletions: 2,
+      artifact: {
+        kind: 'unavailable',
+        reason: 'baseline_not_stored',
+        insertions: 4,
+        deletions: 2
+      }
+    }
+    const stub = makeStubEngine({ files: () => [brokenTextFile] }) // undetermined=0
+    const stubEvidence = new WorkspaceEvidenceService(handle.db, events, workspaces, stub)
+    const stubService = new AgentJourneyService(handle.db, events, workspaces, stubEvidence)
+
+    const created = createJourney(stubService, { workspaceId })
+    await stubEvidence.flushPending()
+    const planned = append(stubService, created.journey.id, {
+      eventType: 'execution',
+      status: 'planned',
+      title: 'changed but no text'
+    })
+    const before = selectEvent(handle.db, planned.event.id)!
+    stubService.updateEventStatus({
+      eventId: planned.event.id,
+      status: 'running',
+      expectedUpdatedAt: before.updatedAt
+    })
+    const running = selectEvent(handle.db, planned.event.id)!
+    stubService.updateEventStatus({
+      eventId: planned.event.id,
+      status: 'completed',
+      expectedUpdatedAt: running.updatedAt
+    })
+    await stubEvidence.flushPending()
+
+    const dto = evidence.listForJourney(created.journey.id)
+    const endDto = dto.snapshots.find(
+      (snapshot) => snapshot.snapshot_type === 'execution_end'
+    )!
+    // 服务侧：undetermined=0 → comparison complete（正文不可用不等于观察不完整）
+    expect(endDto.comparison_status).toBe('complete')
+    const file = endDto.files.find((row) => row.repo_relative_path === 'detected.ts')!
+    expect(file.observation_status).toBe('changed')
+    expect(file.artifact_kind).toBe('unavailable') // 两轴如实分列
+    expect(file.artifact_omission).toBe('baseline_not_stored')
+
+    // 对照侧：旧逻辑会因 artifact=unavailable 误降级 → 现在必须 confirmed
+    const eventDto: JourneyEventDTO = {
+      id: planned.event.id,
+      journey_id: created.journey.id,
+      sequence: 1,
+      event_type: 'execution',
+      role: 'agent',
+      status: 'completed',
+      title: 'changed but no text',
+      summary: '',
+      content: '',
+      reason: '',
+      source_agent: 'codex',
+      model: 'gpt',
+      evidence_level: 'agent_reported',
+      occurred_at: 1,
+      updated_at: 1,
+      metadata: null
+    }
+    const report = buildEvidenceComparison({ events: [eventDto] }, dto.snapshots)
+    expect(report).toHaveLength(1)
+    expect(report[0].confidence).toBe('confirmed')
+    expect(report[0].confidence).not.toBe('unconfirmed')
   })
 })

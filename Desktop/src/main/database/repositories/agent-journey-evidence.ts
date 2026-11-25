@@ -75,6 +75,11 @@ export type EvidenceFileInsert = {
   deletions: number | null
   lineRanges: string | null
   artifactRef: string | null
+  /**
+   * 观察确定性（Migration 18）：`changed` / `unavailable` / NULL（历史行）。
+   * 必须是引擎 `GitFileDiff.observation` 的真实输出——**不从 artifact 类型反推**。
+   */
+  observationStatus: string | null
   attribution: string | null
   attributionConfidence: string | null
 }
@@ -266,6 +271,7 @@ function insertFileRows(db: Db, snapshotId: string, files: readonly EvidenceFile
         deletions: file.deletions,
         lineRanges: file.lineRanges,
         artifactRef: file.artifactRef,
+        observationStatus: file.observationStatus,
         attribution: file.attribution,
         attributionConfidence: file.attributionConfidence
       })

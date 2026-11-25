@@ -359,6 +359,8 @@ export class WorkspaceEvidenceService {
             artifact_kind: described.kind,
             artifact_status: described.status,
             artifact_omission: described.omission,
+            // R6-4.3.4.2：观察确定性（changed/unavailable；null = 历史旧数据）
+            observation_status: file.observationStatus,
             attribution: file.attribution,
             attribution_confidence: file.attributionConfidence
           }
@@ -972,6 +974,10 @@ function toFileInsert(diff: GitFileDiff): EvidenceFileInsert {
     deletions: diff.deletions,
     lineRanges: null, // Diff Viewer 行定位属 P5
     artifactRef: encodeArtifactRef(diff.artifact), // P4：v1:<kind>:<json>
+    // R6-4.3.4.2：观察确定性直接落引擎真实输出——**不从 artifact 类型反推**
+    //（正文不可展示 ≠ 净变化不可判断；observation='changed' + artifact=unavailable
+    // 是合法组合，必须原样持久化）。
+    observationStatus: diff.observation,
     attribution: null, // 读取时由 buildEvidenceComparison 计算，绝不落库
     attributionConfidence: null
   }

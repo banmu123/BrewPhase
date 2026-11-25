@@ -4,6 +4,7 @@ import {
   buildEvidenceComparison,
   EVIDENCE_ATTRIBUTION_TEXT,
   EVIDENCE_CONFIDENCE_TEXT,
+  legacyObservationIsDeterminate,
   type EvidenceExecutionComparison
 } from '../../src/shared/agent-journey/evidence-comparison'
 import {
@@ -81,6 +82,7 @@ function makeFile(path: string, overrides: Partial<JourneyEvidenceFile> = {}): J
     artifact_kind: 'diff',
     artifact_status: 'available',
     artifact_omission: null,
+    observation_status: 'changed', // 新记录默认：引擎已输出并持久化观察状态
     attribution: null,
     attribution_confidence: null,
     ...overrides
@@ -631,7 +633,8 @@ describe('观察类型补齐：type_changed / conflicted（§四）', () => {
         content_hash_after: null,
         artifact_kind: 'unavailable',
         artifact_status: 'omitted',
-        artifact_omission: 'not_observable'
+        artifact_omission: 'not_observable',
+        observation_status: 'unavailable' // 引擎明确：净变化不可判定（三轴各自如实）
       })
     ])
     const report = only(buildEvidenceComparison(detailOf(event), snapshots))
@@ -693,13 +696,16 @@ describe('零文件变化的执行仍输出报告（§六）', () => {
 // MARK: - 置信度兜底：unavailable ≠ over_budget（R6-4.3.4.1 §五）
 
 describe('置信度兜底：unavailable 与 over_budget 严格区分（§五）', () => {
-  it('历史 complete 行但存在 unavailable 文件 → 兜底 unconfirmed（净变化无法判定）', () => {
+  it('历史行（observation_status=NULL）且无 hash 证据 → 保守 unconfirmed（不得升级为 confirmed）', () => {
     const event = makeEvent({ sequence: 1, changes: [makeChange('src/a.ts')] })
     const snapshots = window(event.id, [
       makeFile('src/a.ts', {
         artifact_kind: 'unavailable',
         artifact_status: 'omitted',
-        artifact_omission: 'baseline_not_stored'
+        artifact_omission: 'baseline_not_stored',
+        observation_status: null, // Migration 18 前的历史行
+        content_hash_before: null,
+        content_hash_after: null // 无前后 hash、非结构性变化 → 无法证明净变化
       })
     ])
     const report = only(buildEvidenceComparison(detailOf(event), snapshots))
@@ -719,5 +725,130 @@ describe('置信度兜底：unavailable 与 over_budget 严格区分（§五）'
     const report = only(buildEvidenceComparison(detailOf(event), snapshots))
     expect(report.confidence).toBe('confirmed')
     expect(report.entries[0].attribution).toBe('reported_and_observed')
+  })
+})
+
+// MARK: - 三轴分离场景（R6-4.3.4.2 §三.3）
+
+describe('观察确定性 / artifact 可用性 / 窗口置信度三轴分离（A–D）', () => {
+  it('场景 A：净变化已确认（observation=changed、hash 不同）但正文不可用 → confirmed', () => {
+    const event = makeEvent({ sequence: 1, changes: [makeChange('src/a.ts')] })
+    const snapshots = window(event.id, [
+      makeFile('src/a.ts', {
+        observation_status: 'changed',
+        artifact_kind: 'unavailable',
+        artifact_status: 'omitted',
+        artifact_omission: 'baseline_not_stored',
+        content_hash_before: 'hash-before-1',
+        content_hash_after: 'hash-before-2' // 前后不同：净变化已确定
+      })
+    ])
+    const report = only(buildEvidenceComparison(detailOf(event), snapshots))
+    expect(report.confidence).toBe('confirmed')
+    // 正文生成不了不影响条目：观察侧仍成立
+    expect(report.entries[0].attribution).toBe('reported_and_observed')
+    expect(report.entries[0].observation?.artifact_kind).toBe('unavailable')
+    expect(report.entries[0].observation?.observation_status).toBe('changed')
+  })
+
+  it('场景 B：净变化不可判定（observation=unavailable）→ unconfirmed', () => {
+    const event = makeEvent({ sequence: 1, changes: [makeChange('src/a.ts')] })
+    const snapshots = window(event.id, [
+      makeFile('src/a.ts', {
+        observation_status: 'unavailable',
+        artifact_kind: 'unavailable',
+        artifact_status: 'omitted',
+        artifact_omission: 'not_observable',
+        content_hash_before: null,
+        content_hash_after: null
+      })
+    ])
+    const report = only(buildEvidenceComparison(detailOf(event), snapshots))
+    expect(report.confidence).toBe('unconfirmed')
+    expect(report.confidence).not.toBe('confirmed')
+  })
+
+  it('场景 C：Diff 超预算（observation=changed + over_budget）→ 仍允许 confirmed', () => {
+    const event = makeEvent({ sequence: 1, changes: [makeChange('src/a.ts')] })
+    const snapshots = window(event.id, [
+      makeFile('src/a.ts', {
+        observation_status: 'changed',
+        artifact_kind: 'over_budget',
+        artifact_status: 'omitted',
+        artifact_omission: 'snapshot_budget'
+      })
+    ])
+    const report = only(buildEvidenceComparison(detailOf(event), snapshots))
+    expect(report.confidence).toBe('confirmed')
+    expect(report.entries[0].observation?.artifact_status).toBe('omitted')
+  })
+
+  it('场景 D：历史行（NULL）——hash 证明变化不降级；无法证明保守 unconfirmed', () => {
+    const proven = makeEvent({ sequence: 1, changes: [makeChange('src/proven.ts')] })
+    const unproven = makeEvent({ sequence: 2, changes: [makeChange('src/unproven.ts')] })
+    const snapshots = [
+      ...window(proven.id, [
+        makeFile('src/proven.ts', {
+          observation_status: null, // 历史行
+          artifact_kind: 'unavailable',
+          artifact_status: 'omitted',
+          artifact_omission: 'baseline_not_stored',
+          content_hash_before: 'legacy-1',
+          content_hash_after: 'legacy-2' // 明确前后 hash 变化 → 不应被错误降级
+        })
+      ]),
+      ...window(unproven.id, [
+        makeFile('src/unproven.ts', {
+          observation_status: null,
+          artifact_kind: 'unavailable',
+          artifact_status: 'omitted',
+          artifact_omission: 'not_observable',
+          content_hash_before: null,
+          content_hash_after: null // 证据不足 → 保守
+        })
+      ])
+    ]
+    const report = buildEvidenceComparison(detailOf(proven, unproven), snapshots)
+    expect(report).toHaveLength(2)
+    expect(report.find((entry) => entry.event_id === proven.id)!.confidence).toBe('confirmed')
+    expect(report.find((entry) => entry.event_id === unproven.id)!.confidence).toBe('unconfirmed')
+  })
+
+  it('历史兼容纯函数 legacyObservationIsDeterminate 的证据规则（独立可测）', () => {
+    const base = { artifact_kind: 'unavailable' as const }
+    // 结构性 git 事实 → 可确定
+    expect(legacyObservationIsDeterminate(makeFile('src/a.ts', { ...base, change_kind: 'renamed' }))).toBe(true)
+    expect(legacyObservationIsDeterminate(makeFile('src/a.ts', { ...base, change_kind: 'type_changed' }))).toBe(true)
+    expect(legacyObservationIsDeterminate(makeFile('src/a.ts', { ...base, change_kind: 'conflicted' }))).toBe(true)
+    // 敏感：状态已证实 → 可确定
+    expect(
+      legacyObservationIsDeterminate(
+        makeFile('.env', { artifact_kind: 'sensitive', content_hash_before: null, content_hash_after: null })
+      )
+    ).toBe(true)
+    // 两侧 hash 齐全 → 可确定（相同 = 改后还原也是确定的观察）
+    expect(
+      legacyObservationIsDeterminate(
+        makeFile('src/a.ts', { ...base, content_hash_before: 'x', content_hash_after: 'x' })
+      )
+    ).toBe(true)
+    // added/deleted 单侧有 hash → 可确定
+    expect(
+      legacyObservationIsDeterminate(
+        makeFile('src/a.ts', { ...base, change_kind: 'added', content_hash_before: null, content_hash_after: 'h' })
+      )
+    ).toBe(true)
+    // 双空 + 非结构性 → 无法证明（保守 false）
+    expect(
+      legacyObservationIsDeterminate(
+        makeFile('src/a.ts', { ...base, content_hash_before: null, content_hash_after: null })
+      )
+    ).toBe(false)
+    // 单侧空且类型不明 → 无法证明
+    expect(
+      legacyObservationIsDeterminate(
+        makeFile('src/a.ts', { ...base, change_kind: 'modified', content_hash_before: null, content_hash_after: 'h' })
+      )
+    ).toBe(false)
   })
 })

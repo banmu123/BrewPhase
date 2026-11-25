@@ -47,6 +47,7 @@ function fileWith(artifact: GitDiffArtifact, overrides: Partial<EvidenceFileInse
     deletions: artifact.kind === 'diff' ? artifact.deletions : null,
     lineRanges: null,
     artifactRef: encodeArtifactRef(artifact),
+    observationStatus: 'changed',
     attribution: null,
     attributionConfidence: null,
     ...overrides

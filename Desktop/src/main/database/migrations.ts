@@ -841,6 +841,18 @@ create unique index uq_journey_snapshot_file
   on journey_snapshot_files (snapshot_id, repo_relative_path);
 `
 
+/**
+ * Migration 18（R6-4.3.4.2）：把**观察确定性**与 artifact 可用性分开存。
+ *
+ * `observation_status` 来自引擎 `GitFileDiff.observation` 的真实输出：
+ * `changed` = 净变化已确定 / `unavailable` = 不可判定。
+ * 可空、无默认值 → 历史行升级后一律 NULL（**不伪造旧数据的观察状态**），
+ * 由对照层的保守兼容纯函数兜底。
+ */
+const JOURNEY_FILE_OBSERVATION_SQL = `
+alter table journey_snapshot_files add column observation_status text;
+`
+
 export const migrations: Migration[] = [
   { version: 1, name: 'init', sql: INIT_SQL },
   { version: 2, name: 'sync-align-ios', sql: SYNC_ALIGN_SQL },
@@ -858,7 +870,8 @@ export const migrations: Migration[] = [
   { version: 14, name: 'agent-journeys', sql: AGENT_JOURNEY_SQL },
   { version: 15, name: 'canvas-journey-fusion', sql: CANVAS_JOURNEY_SQL },
   { version: 16, name: 'journey-workspace-binding', sql: JOURNEY_WORKSPACE_SQL },
-  { version: 17, name: 'journey-workspace-evidence', sql: JOURNEY_EVIDENCE_SQL }
+  { version: 17, name: 'journey-workspace-evidence', sql: JOURNEY_EVIDENCE_SQL },
+  { version: 18, name: 'journey-file-observation', sql: JOURNEY_FILE_OBSERVATION_SQL }
 ]
 
 /**

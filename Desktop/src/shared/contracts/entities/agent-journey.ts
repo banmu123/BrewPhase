@@ -622,6 +622,12 @@ export const journeyEvidenceFileSchema = z.object({
   artifact_status: z.enum(['available', 'omitted', 'absent']),
   /** omitted 的具体原因（over_budget / unavailable 的 reason）；其余为 null。 */
   artifact_omission: z.string().nullable(),
+  /**
+   * 观察确定性（R6-4.3.4.2）：`changed` = 净变化已确定 /
+   * `unavailable` = 不可判定；`null` = 历史旧数据（Migration 18 之前，无记录）。
+   * 与 artifact 可用性**正交**：正文不可展示绝不等于不可判断。
+   */
+  observation_status: z.string().nullable(),
   attribution: z.string().nullable(),
   attribution_confidence: z.string().nullable()
 })

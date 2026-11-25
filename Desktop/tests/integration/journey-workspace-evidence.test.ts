@@ -249,6 +249,7 @@ function fileInput(repoRelativePath: string): EvidenceFileInsert {
     deletions: 0,
     lineRanges: null,
     artifactRef: null,
+    observationStatus: 'changed',
     attribution: null,
     attributionConfidence: null
   }
@@ -319,7 +320,7 @@ function tableExists(sqlite: Database.Database, name: string): boolean {
 }
 
 describe('Migration 17：journey-workspace-evidence', () => {
-  it('16 → 17 升级：旧 Journey 不丢、两张表建立、重复 migrate 幂等', () => {
+  it('16 → 最新（17 证据表 + 18 observation 列）：旧 Journey 不丢、表建立、重复 migrate 幂等', () => {
     const file = join(dir, 'migrate17.db')
     const { sqlite } = openAtVersion(file, 16)
     expect(sqlite.pragma('user_version', { simple: true })).toBe(16)
@@ -334,7 +335,8 @@ describe('Migration 17：journey-workspace-evidence', () => {
 
     migrate(sqlite)
 
-    expect(sqlite.pragma('user_version', { simple: true })).toBe(17)
+    // 升到最新（含 R6-4.3.4.2 的 18）
+    expect(sqlite.pragma('user_version', { simple: true })).toBe(18)
     expect(tableExists(sqlite, 'journey_workspace_snapshots')).toBe(true)
     expect(tableExists(sqlite, 'journey_snapshot_files')).toBe(true)
     const kept = sqlite.prepare('select id from agent_journeys where id = ?').get(legacyId)
@@ -342,7 +344,7 @@ describe('Migration 17：journey-workspace-evidence', () => {
 
     // 重复执行 migrate 幂等（已到最新 → 直接返回）
     migrate(sqlite)
-    expect(sqlite.pragma('user_version', { simple: true })).toBe(17)
+    expect(sqlite.pragma('user_version', { simple: true })).toBe(18)
     sqlite.close()
   })
 
@@ -374,6 +376,105 @@ describe('Migration 17：journey-workspace-evidence', () => {
     // 同 trigger 不同 journey → 允许
     expect(() => insert(randomUUID(), j2, 'baseline:1')).not.toThrow()
     sqlite.close()
+  })
+})
+
+describe('Migration 18：journey-file-observation', () => {
+  it('17 → 18 升级：既有 Journey/Snapshot/File 不丢、旧 File observation_status 为 NULL、新 File 可存可读', () => {
+    const file = join(dir, 'migrate18.db')
+    const { sqlite } = openAtVersion(file, 17)
+    expect(sqlite.pragma('user_version', { simple: true })).toBe(17)
+    const colsBefore = (
+      sqlite.pragma('table_info(journey_snapshot_files)') as { name: string }[]
+    ).map((column) => column.name)
+    expect(colsBefore).not.toContain('observation_status') // 列尚未存在
+
+    // Migration 17 形态的既有数据：Journey + Snapshot + File
+    const now = Date.now()
+    const journeyId = 'aaaaaaaa-0000-4000-8000-000000000018'
+    const snapshotId = 'bbbbbbbb-0000-4000-8000-000000000018'
+    const legacyFileId = 'cccccccc-0000-4000-8000-000000000018'
+    sqlite
+      .prepare(
+        `insert into agent_journeys (id, title, source_client_id, created_at, updated_at) values (?,?,?,?,?)`
+      )
+      .run(journeyId, 'legacy journey', CLIENT, now, now)
+    sqlite
+      .prepare(
+        `insert into journey_workspace_snapshots
+           (id, journey_id, snapshot_type, trigger_key, capture_status, comparison_status, captured_at)
+         values (?,?,?,?,?,?,?)`
+      )
+      .run(snapshotId, journeyId, 'execution_end', 'end:legacy', 'ok', 'complete', now)
+    sqlite
+      .prepare(
+        `insert into journey_snapshot_files
+           (id, snapshot_id, repo_relative_path, change_kind, status_origin, content_hash_before, content_hash_after)
+         values (?,?,?,?,?,?,?)`
+      )
+      .run(legacyFileId, snapshotId, 'a.ts', 'modified', 'worktree', 'h1', 'h2')
+
+    migrate(sqlite)
+
+    expect(sqlite.pragma('user_version', { simple: true })).toBe(18)
+    // 数据不丢（Journey / Snapshot / File 都在）
+    expect(sqlite.prepare('select id from agent_journeys where id = ?').get(journeyId)).toBeTruthy()
+    expect(
+      sqlite.prepare('select id from journey_workspace_snapshots where id = ?').get(snapshotId)
+    ).toBeTruthy()
+    expect(
+      sqlite.prepare('select id from journey_snapshot_files where id = ?').get(legacyFileId)
+    ).toBeTruthy()
+    // 旧 File 的 observation_status 为 NULL——绝不回填伪造历史观察状态
+    const legacy = sqlite
+      .prepare('select observation_status from journey_snapshot_files where id = ?')
+      .get(legacyFileId) as { observation_status: string | null }
+    expect(legacy.observation_status).toBeNull()
+
+    // 新 File 可以正确保存和读取 Observation 状态
+    const freshFileId = 'dddddddd-0000-4000-8000-000000000018'
+    sqlite
+      .prepare(
+        `insert into journey_snapshot_files
+           (id, snapshot_id, repo_relative_path, change_kind, status_origin, observation_status)
+         values (?,?,?,?,?,?)`
+      )
+      .run(freshFileId, snapshotId, 'b.ts', 'modified', 'worktree', 'changed')
+    expect(
+      (
+        sqlite
+          .prepare('select observation_status from journey_snapshot_files where id = ?')
+          .get(freshFileId) as { observation_status: string }
+      ).observation_status
+    ).toBe('changed')
+    const unavailableFileId = 'eeeeeeee-0000-4000-8000-000000000018'
+    sqlite
+      .prepare(
+        `insert into journey_snapshot_files
+           (id, snapshot_id, repo_relative_path, change_kind, status_origin, observation_status)
+         values (?,?,?,?,?,?)`
+      )
+      .run(unavailableFileId, snapshotId, 'c.ts', 'modified', 'worktree', 'unavailable')
+    expect(
+      (
+        sqlite
+          .prepare('select observation_status from journey_snapshot_files where id = ?')
+          .get(unavailableFileId) as { observation_status: string }
+      ).observation_status
+    ).toBe('unavailable')
+
+    // 重复 migrate 幂等（已到最新 → 直接返回）
+    migrate(sqlite)
+    expect(sqlite.pragma('user_version', { simple: true })).toBe(18)
+    sqlite.close()
+  })
+
+  it('只追加不修改：18 只增一版，17 的序号与名字原样保留', () => {
+    expect(migrations[16]).toMatchObject({ version: 17, name: 'journey-workspace-evidence' })
+    expect(migrations[17]).toMatchObject({ version: 18, name: 'journey-file-observation' })
+    // 只追加的连续性（1..n 无重复无缺口）
+    const versions = migrations.map((migration) => migration.version)
+    expect(versions).toEqual(versions.map((_, index) => index + 1))
   })
 })
 
@@ -545,6 +646,8 @@ describe('五个生命周期触发点（T1–T5）', () => {
       expect(files[0].repoRelativePath).toBe('a.ts')
       expect(files[0].changeKind).toBe('modified')
       expect(files[0].insertions).not.toBeNull()
+      // R6-4.3.4.2：引擎真实 observation 已持久化（不从 artifact 反推）
+      expect(files[0].observationStatus).toBe('changed')
       // P4：真实 Diff Artifact 已持久化（版本化编码）；归因仍不落库（读取时算）
       expect(files[0].artifactRef).toMatch(/^v1:diff:/)
       expect(files[0].attribution).toBeNull()

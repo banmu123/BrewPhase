@@ -1130,11 +1130,18 @@ export const journeyWorkspaceSnapshots = sqliteTable(
 )
 
 /**
- * 快照比较得到的文件级变化摘要（P3 只落元数据与统计，Diff Viewer 属 P4）。
+ * 快照比较得到的文件级变化摘要（P3 落元数据与统计，P4 落 Diff Artifact，
+ * R6-4.3.4.2 补观察确定性）。
  *
  * `insertions/deletions` 可为 NULL——**不可计算时绝不写 0 冒充「没有变化」**；
- * `artifact_ref`（P4 的 Diff 数据位置）、`attribution` / `attribution_confidence`
- * （P4 统一计算）在本阶段恒为 NULL，不伪造内容。
+ * `artifact_ref` 存版本化的 Artifact（正文/省略原因，按需经
+ * `agent-journey:evidence:artifact` 读取）；`attribution` /
+ * `attribution_confidence` 恒为 NULL——三类对照是读取时的纯函数计算，
+ * 不落库制造第二份事实。
+ *
+ * `observation_status`（Migration 18）：引擎 `observation` 的持久化——
+ * 与 artifact 可用性**正交**的第二轴（「正文不可展示」≠「净变化不可判断」）。
+ * NULL = 历史旧数据没有该记录（绝不回填伪造）。
  */
 export const journeySnapshotFiles = sqliteTable(
   'journey_snapshot_files',
@@ -1155,8 +1162,13 @@ export const journeySnapshotFiles = sqliteTable(
     deletions: integer('deletions'),
     /** P4 展开的行范围 JSON；当前 NULL。 */
     lineRanges: text('line_ranges'),
-    /** P4 的 Diff 数据位置；当前没有完整 Artifact → 必须 NULL，不得伪造。 */
+    /** P4：版本化 Artifact（`v1:<kind>:<json>`）；正文按需读取。 */
     artifactRef: text('artifact_ref'),
+    /**
+     * 观察确定性（R6-4.3.4.2）：`changed` / `unavailable` / NULL（历史行）。
+     * 直接存引擎 `GitFileDiff.observation`，**不从 artifact 类型反推**。
+     */
+    observationStatus: text('observation_status'),
     attribution: text('attribution'),
     attributionConfidence: text('attribution_confidence')
   },
