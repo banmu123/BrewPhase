@@ -39,7 +39,7 @@ export function RoundtableWorkspace(props: { host: 'docked' | 'detached' }) {
   const hydrated = useRoundtableLayoutStore((state) => state.hydrated)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const contentRefs = useRef(new Map<string, HTMLElement>())
-  const reportRef = useRef<number | null>(null)
+  const reportRef = useRef<{ raf: number; timer: number } | null>(null)
 
   // 工作区尺寸上报：变化时主进程适配布局并广播。
   useEffect(() => {
@@ -55,18 +55,36 @@ export function RoundtableWorkspace(props: { host: 'docked' | 'detached' }) {
     return () => observer.disconnect()
   }, [])
 
-  /** 面板内容区 rects 上报（rAF 节流）：原生视图跟随布局的唯一路径。 */
+  /**
+   * 面板内容区 rects 上报（rAF 合帧）：原生视图跟随布局的唯一路径。
+   *
+   * **必须带 setTimeout 兜底**：rAF 服从「页面可见性」节流——无 GPU、窗口
+   * 被其他窗口遮挡时，帧回调可能长期不执行。而这里的 pending 哨兵（避免
+   * 同帧重复上报）一旦挂起，后续所有 reportRects 都会被拦截，原生视图
+   * **永久**失去同步——e2e 里「收起工具栏后 view 宽度差 304px（恰好是
+   * 侧栏宽）」就是这个链条：收起触发了上报，但那一帧永远没跑。
+   *
+   * 兜底帧与 rAF 幂等：先到先执行（二次进入时哨兵已清空直接返回），
+   * 另一个通道用不到的句柄在 run 里取消。
+   */
   const reportRects = useCallback(() => {
     if (reportRef.current !== null) return
-    reportRef.current = window.requestAnimationFrame(() => {
+    const run = (): void => {
+      const pending = reportRef.current
+      if (!pending) return
       reportRef.current = null
+      window.cancelAnimationFrame(pending.raf)
+      window.clearTimeout(pending.timer)
       const rects: Array<{ tabId: string; x: number; y: number; width: number; height: number }> = []
       for (const [tabId, element] of contentRefs.current.entries()) {
         const rect = element.getBoundingClientRect()
         rects.push({ tabId, x: rect.x, y: rect.y, width: rect.width, height: rect.height })
       }
       if (rects.length > 0) useRoundtableLayoutStore.getState().reportBounds(rects)
-    })
+    }
+    const raf = window.requestAnimationFrame(run)
+    const timer = window.setTimeout(run, 80)
+    reportRef.current = { raf, timer }
   }, [])
 
   // 布局变化 / 容器尺寸变化后重报 rects。
