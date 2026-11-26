@@ -193,6 +193,19 @@ export const records = {
         not_observable: '不可观测',
         stale: '数据已过期'
       },
+      // P5.2：按需 Diff Viewer（点开才读取正文）
+      viewArtifact: '查看证据',
+      artifactAbsent: '该记录没有可读取的 Artifact',
+      viewerLoading: '正在读取 Diff…',
+      viewerLoadFailed: '读取 Diff 失败。',
+      bodyOmittedNote: '正文按策略省略，变化统计仍然有效。',
+      bodyUnavailableNote: '无法生成 Diff 正文——这不等于没有发生变化。',
+      binaryNote: '二进制文件，不展示内容（变化已确认）。',
+      sensitiveNote: '已按敏感文件规则排除，内容永不读取。',
+      symlinkNote: '仅展示链接目标字符串，不读取目标内容。',
+      symlinkTargets: (before: string | null, after: string | null) =>
+        `${before ?? '—'} → ${after ?? '—'}`,
+      unknownArtifact: '未知的 Artifact 类型',
       renameFrom: (path: string) => `原路径：${path}`,
       diffStat: (insertions: number, deletions: number) => `+${insertions} / −${deletions}`
     },

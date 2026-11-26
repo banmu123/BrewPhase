@@ -506,21 +506,32 @@ describe('时间线 Evidence 视图', () => {
 
 // MARK: - 边界：不读取 Diff 正文（§六 / §八.10）
 
-describe('边界：时间线只读摘要元数据', () => {
-  it('Records 列表 / JourneyDetail / 视图模块都不出现按需正文接口 evidenceArtifact', () => {
-    // 时间线在 P5.1 只消费 evidence 快照（buildEvidenceComparison 输入），
-    // 完整 Diff 正文按需读取属 P5.2——这三处绝不允许出现该调用。
-    const files = [
+describe('边界：时间线只读摘要元数据（P5.1 规则 + P5.2 按需授权）', () => {
+  it('列表 / 证据列表模块 / Diff 渲染组件零正文取数；详情只有唯一授权调用点', () => {
+    // P5.1 铁律不变：列表与 evidence 快照模块绝不读正文——打开列表、
+    // 打开详情、展开事件、刷新页面都不会触发正文请求（E2E 另有行为断言）。
+    const zeroCallFiles = [
       'src/renderer/src/features/records/RecordsPage.tsx',
-      'src/renderer/src/features/records/JourneyDetail.tsx',
-      'src/renderer/src/features/records/journey-evidence-view.ts'
+      'src/renderer/src/features/records/journey-evidence-view.ts',
+      'src/renderer/src/features/records/journey-artifact-view.ts',
+      'src/renderer/src/features/records/DiffViewer.tsx'
     ]
-    for (const file of files) {
+    for (const file of zeroCallFiles) {
       const source = readFileSync(file, 'utf8')
       expect(source, file).not.toContain('evidenceArtifact')
     }
+
+    // P5.2 §四：详情里允许的**唯一**取数入口是按需 controller 的依赖注入
+    // （点击「查看证据」才走到）；不允许第二处调用、不允许绕过 controller。
+    const detail = readFileSync('src/renderer/src/features/records/JourneyDetail.tsx', 'utf8')
+    expect(detail.split('evidenceArtifact(').length - 1).toBe(1)
+    expect(detail).toContain('createArtifactController')
+
     // 视图模块只依赖 buildEvidenceComparison（复用，不写第二套匹配算法）
-    const viewModule = readFileSync('src/renderer/src/features/records/journey-evidence-view.ts', 'utf8')
+    const viewModule = readFileSync(
+      'src/renderer/src/features/records/journey-evidence-view.ts',
+      'utf8'
+    )
     expect(viewModule).toContain('buildEvidenceComparison')
     expect(viewModule).not.toContain('fetch(')
   })

@@ -240,6 +240,7 @@ export type EvidenceFileRowView = {
     deletions: number | null
     renameFrom: string | null
     artifactKind: string | null
+    artifactStatus: 'available' | 'omitted' | 'absent'
     artifactOmission: string | null
     observationStatus: JourneyObservationStatus | null
   } | null
@@ -258,6 +259,11 @@ export type EvidenceUndeterminedRowView = {
 
 export type EventEvidenceView = {
   eventId: string
+  /**
+   * 观察窗口的结束快照（P5.2：按需读取三元组的 snapshotId 腿；
+   * null = 窗口缺失 → 结构上没有可读取的 Artifact）。
+   */
+  endSnapshotId: string | null
   /** 窗口置信度（与文件条目各自独立展示，绝不合并）。 */
   confidence: EvidenceConfidence
   counts: {
@@ -303,6 +309,7 @@ function buildEventView(comparison: EvidenceExecutionComparison): EventEvidenceV
   ).length
   return {
     eventId: comparison.event_id,
+    endSnapshotId: comparison.end_snapshot_id,
     confidence: comparison.confidence,
     counts: {
       reported: matched + reportedOnly,
@@ -340,6 +347,7 @@ function buildEventView(comparison: EvidenceExecutionComparison): EventEvidenceV
             deletions: entry.observation.deletions,
             renameFrom: entry.observation.rename_from_path,
             artifactKind: entry.observation.artifact_kind,
+            artifactStatus: entry.observation.artifact_status,
             artifactOmission: entry.observation.artifact_omission,
             observationStatus: entry.observation.observation_status
           }

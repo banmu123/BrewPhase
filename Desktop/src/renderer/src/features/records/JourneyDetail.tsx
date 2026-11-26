@@ -26,6 +26,14 @@ import {
   type EventEvidenceView,
   type JourneyEvidenceLoadState
 } from './journey-evidence-view'
+import {
+  artifactFetchTarget,
+  createArtifactController,
+  type ArtifactController,
+  type ArtifactLoadState,
+  type ArtifactTarget
+} from './journey-artifact-view'
+import { DiffViewer } from './DiffViewer'
 
 /**
  * Agent Journey 的**完整详情**（R6-4.1 §3.2，R6-4.1.1 §7 精修）。
@@ -139,6 +147,42 @@ export function JourneyDetailView(props: {
     }
   }, [journey.id])
   const retryEvidence = useCallback(() => evidenceLoaderRef.current?.retry(), [])
+
+  /**
+   * P5.2：按需 Diff Viewer 的读取状态（fileId → loading/loaded/failed）。
+   * - **点开才取**：只有点「查看证据」才经 controller 发请求；
+   * - **切换 Journey / 详情卸载**：effect 以 `journey.id` 为依赖重建 controller
+   *   （dispose 旧的 + 清空缓存 + 关闭可能开着的弹层）→ 上一条 Journey 的
+   *   Diff 绝不残留（§六.8），关闭详情后旧请求也不再写回（§六.7）。
+   */
+  const [artifactStates, setArtifactStates] = useState<ReadonlyMap<string, ArtifactLoadState>>(
+    new Map()
+  )
+  const [artifactTarget, setArtifactTarget] = useState<ArtifactTarget | null>(null)
+  const artifactControllerRef = useRef<ArtifactController | null>(null)
+  useEffect(() => {
+    const controller = createArtifactController({
+      fetchArtifact: (journeyId, snapshotId, fileId) =>
+        api.agentJourneys.evidenceArtifact(journeyId, snapshotId, fileId),
+      onChange: (next) => setArtifactStates(next)
+    })
+    artifactControllerRef.current = controller
+    setArtifactStates(new Map())
+    setArtifactTarget(null) // 切换 Journey：旧弹层立即关闭
+    return () => {
+      controller.dispose()
+      artifactControllerRef.current = null
+    }
+  }, [journey.id])
+
+  const openArtifact = useCallback((target: ArtifactTarget) => {
+    setArtifactTarget(target)
+    artifactControllerRef.current?.load(target) // 点击才发起请求（已读过则走缓存）
+  }, [])
+  const retryArtifact = useCallback(() => {
+    if (artifactTarget) artifactControllerRef.current?.load(artifactTarget)
+  }, [artifactTarget])
+  const closeArtifact = useCallback(() => setArtifactTarget(null), [])
 
   // 换了一条 Journey（或父级已拉到最新数据）时清掉本地覆盖。
   useEffect(() => {
@@ -522,7 +566,15 @@ export function JourneyDetailView(props: {
                 {event.summary && <div className="journey-event__summary">{event.summary}</div>}
 
                 {/* P5.1 §五：有 Evidence 报告的执行事件 → 紧凑摘要（文件对照按需展开） */}
-                {evidenceView && <JourneyEvidenceSummary view={evidenceView} expanded={isExpanded} />}
+                {evidenceView && (
+                  <JourneyEvidenceSummary
+                    view={evidenceView}
+                    expanded={isExpanded}
+                    journeyId={journey.id}
+                    endSnapshotId={evidenceView.endSnapshotId}
+                    onView={openArtifact}
+                  />
+                )}
 
                 {/*
                   * §9.3「按需展开」：有结构化详情才给开关（否则展开也无内容）；
@@ -685,6 +737,16 @@ export function JourneyDetailView(props: {
       </section>
 
       {error && <p className="error">{error}</p>}
+
+      {/* P5.2：单文件 Diff Viewer（正文按需读取，仅点击后存在） */}
+      {artifactTarget && (
+        <DiffViewer
+          target={artifactTarget}
+          state={artifactStates.get(artifactTarget.fileId)}
+          onClose={closeArtifact}
+          onRetry={retryArtifact}
+        />
+      )}
     </div>
   )
 }
@@ -694,7 +756,13 @@ export function JourneyDetailView(props: {
  * 置信度与计数常驻（紧凑一行），文件级对照只在事件展开后出现。
  * **不渲染任何 Diff 正文**（按需读取属 P5.2）。
  */
-function JourneyEvidenceSummary(props: { view: EventEvidenceView; expanded: boolean }) {
+function JourneyEvidenceSummary(props: {
+  view: EventEvidenceView
+  expanded: boolean
+  journeyId: string
+  endSnapshotId: string | null
+  onView: (target: ArtifactTarget) => void
+}) {
   const { t } = useI18n()
   const { view } = props
   const evidenceT = t.records.journey.evidence
@@ -738,7 +806,13 @@ function JourneyEvidenceSummary(props: { view: EventEvidenceView; expanded: bool
       {props.expanded && view.fileRows.length > 0 && (
         <ul className="journey-evidence__files">
           {view.fileRows.map((row) => (
-            <EvidenceFileRow key={row.key} row={row} />
+            <EvidenceFileRow
+              key={row.key}
+              row={row}
+              journeyId={props.journeyId}
+              endSnapshotId={props.endSnapshotId}
+              onView={props.onView}
+            />
           ))}
         </ul>
       )}
@@ -802,7 +876,12 @@ function EvidenceUndeterminedRow(props: {
  * **分块、带来源标签**，绝不合并成无法判断来源的一段描述。
  * reported_only 保留「不代表报告不真实」的既有解释（§五.3）。
  */
-function EvidenceFileRow(props: { row: EvidenceFileRowView }) {
+function EvidenceFileRow(props: {
+  row: EvidenceFileRowView
+  journeyId: string
+  endSnapshotId: string | null
+  onView: (target: ArtifactTarget) => void
+}) {
   const { t } = useI18n()
   const evidenceT = t.records.journey.evidence
   const { row } = props
@@ -872,6 +951,34 @@ function EvidenceFileRow(props: { row: EvidenceFileRowView }) {
       {row.attribution === 'reported_only' && (
         <p className="journey-evidence-file__hint">{evidenceT.reportedOnlyHint}</p>
       )}
+      {/*
+        * P5.2 §四：读取入口只在**有 Workspace Observation** 时出现——
+        * reported_only 没有观察行 → 结构上没有按钮；absent 记录没有存
+        * Artifact → 明确说明而非一个必然失败的按钮。
+        */}
+      {row.observed &&
+        (row.observed.artifactStatus === 'absent' ? (
+          <p className="journey-evidence-file__absent">{evidenceT.artifactAbsent}</p>
+        ) : (
+          artifactFetchTarget(props.journeyId, props.endSnapshotId, row) && (
+            <div className="journey-evidence-file__actions">
+              <button
+                type="button"
+                className="button button--ghost journey-evidence-file__view"
+                onClick={() => {
+                  const target = artifactFetchTarget(
+                    props.journeyId,
+                    props.endSnapshotId,
+                    row
+                  )
+                  if (target) props.onView(target)
+                }}
+              >
+                {evidenceT.viewArtifact}
+              </button>
+            </div>
+          )
+        ))}
     </li>
   )
 }

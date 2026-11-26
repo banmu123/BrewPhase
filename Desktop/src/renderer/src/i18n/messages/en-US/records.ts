@@ -191,6 +191,19 @@ export const records = {
         not_observable: 'Not observable',
         stale: 'Data is stale'
       },
+      // P5.2: on-demand Diff Viewer (content fetched only when opened)
+      viewArtifact: 'View evidence',
+      artifactAbsent: 'No readable artifact is stored for this record',
+      viewerLoading: 'Loading diff…',
+      viewerLoadFailed: 'Failed to load the diff.',
+      bodyOmittedNote: 'Content omitted by policy; change statistics still apply.',
+      bodyUnavailableNote: 'Diff text could not be generated — that does not mean nothing changed.',
+      binaryNote: 'Binary file; content is not displayed (the change is confirmed).',
+      sensitiveNote: 'Excluded by sensitive-file rules; content is never read.',
+      symlinkNote: 'Shows link target strings only; target content is never read.',
+      symlinkTargets: (before: string | null, after: string | null) =>
+        `${before ?? '—'} → ${after ?? '—'}`,
+      unknownArtifact: 'Unknown artifact type',
       renameFrom: (path: string) => `From: ${path}`,
       diffStat: (insertions: number, deletions: number) => `+${insertions} / −${deletions}`
     },

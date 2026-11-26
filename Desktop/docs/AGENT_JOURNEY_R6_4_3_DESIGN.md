@@ -840,6 +840,16 @@ i18n 新增 `settings.general.journeyEvidence*`（zh + en 双份），与既有 
 **范围**：`JourneyDetail.tsx` 证据条 + 按需展开 · `EvidenceSections.tsx`（新）+ `DiffViewer.tsx`（新）· `JourneyGroupShape.tsx` 加观察计数一行 · `JourneyInspectorBody.tsx` 插入「工作区观察」小节 + 跳转入口 · i18n zh/en · `VISUAL_CHECK=1` 截图验收。
 **不做**：不重构 `EventDetailSections`、不改 Konva 几何、不加一级导航。
 
+**实施记录（R6-P5 系列）**：
+- **P5.1 [已实现]**：`JourneyDetail.tsx` 证据摘要（置信度 + 五项计数 + 三类归因按需展开）· `journey-evidence-view.ts`（加载状态机 / 序号竞态守卫 / 视图纯函数）· i18n zh/en 同构。
+  与本设计的偏差：`EvidenceSections.tsx` 未单开——证据区并入 `JourneyDetail.tsx`，复用 `journey-section` 层级。
+- **P5.1.1 [已实现]**：无法判定观察的独立集合与独立计数 · 切换 Journey 即清详情 + 渲染层归属检查 · `head_moved` 第三种零文件空态。
+- **P5.1.2 [已实现]**：新记录 `observation_status` 是文件级观察确定性权威（hash 缺失 / 正文不可用不再让引擎已确认的变化从时间线消失）。
+- **P5.2 [已实现]**：`journey-artifact-view.ts`（按需读取状态机 + Artifact 呈现映射 + unified diff 行分类）· `DiffViewer.tsx`（点击「查看证据」才经 `agent-journey:evidence:artifact` 三元组读取；React 文本节点渲染，无危险 HTML）· 文件行入口（`reported_only` 与 `absent` 无入口）· E2E `journey-artifact.e2e.spec.ts`。
+  类名注记：预览块用 `journey-diff-viewer`（§11.3 命名）——`journey-diff` 已被 `EventDetailSections` 的修改前后块占用，两者互不覆盖。
+- **相对 §11.3 的偏差**：hunk 折叠、`old → new` 行号双列、side-by-side、按 change_kind 分组暂未做（P5.2 范围是按需读取与克制展示；视觉增强属后续打磨）。
+- **[待实现]** Canvas Inspector：`JourneyGroupShape.tsx` 观察计数一行 · `JourneyInspectorBody.tsx`「工作区观察」小节与跳转入口 · `VISUAL_CHECK=1` 截图验收。
+
 **关键顺序理由**：P2 在 P3 之前，是因为采集能力必须**先能被单测独立验证**（git 调用、形态识别、diff 生成都与 Journey 无关），再接到状态机上——否则触发点的失败无法区分是「采集 bug」还是「挂载 bug」。
 
 ---
