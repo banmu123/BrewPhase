@@ -24,14 +24,41 @@ GET  /health                    进程存活
 GET  /ready                     数据库可用性（503 = 不可用）
 
 GET  /oauth/authorize           授权入口（provider/state/code_challenge/redirect_uri）
-GET  /oauth/callback/google     Google OIDC 回调
-GET  /oauth/callback/github     GitHub OAuth 回调
+GET  /oauth/callback/google     Google OIDC 回调（Desktop 登录）
+GET  /oauth/callback/github     GitHub OAuth 回调（Desktop 登录）
 POST /oauth/token               一次性授权码 + PKCE → access/refresh token
 
 POST /auth/refresh              Refresh Token Rotation
 POST /auth/logout               撤销整个 token family
 GET  /auth/me                   当前用户资料（Bearer JWT）
 GET  /auth/identities           当前用户的第三方身份列表（Bearer JWT）
+```
+
+### Remote MCP（需 `MCP_BROWSER_SESSION_KEY`，见「生产部署 → 构建与预检」）
+
+下列路由与上面的 Desktop 登录**共用 Provider 适配器，但不共享事务表与浏览器状态**；
+未配置 `MCP_BROWSER_SESSION_KEY` 时**整组不注册**（404，而 `/health` 仍 200）。
+
+```text
+GET  /.well-known/oauth-protected-resource        PRM（根形式）
+GET  /.well-known/oauth-protected-resource/mcp    PRM（path-inserted 变体）
+GET  /.well-known/oauth-authorization-server      AS Metadata
+
+GET  /mcp/oauth/authorize     授权入口（含 resource / PKCE S256）
+GET  /mcp/oauth/login         本次授权专属的登录选择页（非公开登录入口）
+GET  /mcp/oauth/callback/google   Remote MCP 的 Google 回调
+GET  /mcp/oauth/callback/github   Remote MCP 的 GitHub 回调
+GET+POST /mcp/oauth/consent   同意页（逐项勾选 scope）
+POST /mcp/oauth/token         授权码 + PKCE → MCP access token
+POST /mcp/oauth/revoke        撤销（单位是**单个 Session**，不是整个 Grant）
+
+POST /mcp                     Streamable HTTP MCP 数据端点（8 个只读工具）
+OPTIONS /mcp                  预检（独立路由，不消耗 mcp-http 限流额度）
+
+GET  /device-link             WSS 接入（与 HTTP 同端口，Upgrade 校验 Host/Origin/子协议）
+POST /mcp-devices/register    设备注册
+POST /mcp-devices/{id}/confirm     确认配对（pending → active）
+POST /mcp-devices/{id}/credentials 领取 device_token（一次性）
 ```
 
 ## 本地开发
@@ -81,18 +108,50 @@ NO_PROXY=localhost,127.0.0.1        # 可选
 
 Provider 凭据配置：
 
-- **Google**：Google Cloud Console → OAuth Client（Web application），
-  Authorized redirect URI 填 `{BASE_URL}/oauth/callback/google`，
-  scope 只需 `openid email profile`。
-- **GitHub**：Settings → Developer settings → OAuth Apps，
-  Authorization callback URL 填 `{BASE_URL}/oauth/callback/github`，
-  不申请任何 scope（只读公开资料，邮箱可空）。
+- **Google**：Google Cloud Console → OAuth Client（Web application）；
+- **GitHub**：Settings → Developer settings → OAuth Apps，不申请任何 scope
+  （只读公开资料，邮箱可空）。
 
-本地 `BASE_URL=http://127.0.0.1:3000` 时，两处回调分别是
-`http://127.0.0.1:3000/oauth/callback/google` 与
-`http://127.0.0.1:3000/oauth/callback/github`。**Provider 侧登记的值必须与
-`BASE_URL` 拼出来的字符串逐字符一致**：`localhost` 与 `127.0.0.1` 在 Provider
-看来是两个不同的 redirect_uri，混用会直接 `redirect_uri_mismatch`。
+### 必须登记四个回调地址（两套路由，容易漏）
+
+Cloud 有**两套** Provider 回调路径，它们只共享 Provider 适配器，事务表、
+浏览器状态、`redirect_uri` 校验全部独立：
+
+| 用途 | 路径 |
+|---|---|
+| Desktop 登录 | `{BASE_URL}/oauth/callback/google`、`{BASE_URL}/oauth/callback/github` |
+| **Remote MCP 授权** | `{BASE_URL}/mcp/oauth/callback/google`、`{BASE_URL}/mcp/oauth/callback/github` |
+
+以 `BASE_URL=https://api.phase.commitbrew.com` 为例，Google 与 GitHub 的
+控制台里各要填两条（共四条）：
+
+```text
+https://api.phase.commitbrew.com/oauth/callback/google
+https://api.phase.commitbrew.com/oauth/callback/github
+https://api.phase.commitbrew.com/mcp/oauth/callback/google
+https://api.phase.commitbrew.com/mcp/oauth/callback/github
+```
+
+本地 `BASE_URL=http://127.0.0.1:3000` 时：
+
+```text
+http://127.0.0.1:3000/oauth/callback/google
+http://127.0.0.1:3000/oauth/callback/github
+http://127.0.0.1:3000/mcp/oauth/callback/google
+http://127.0.0.1:3000/mcp/oauth/callback/github
+```
+
+**漏登记第二条的典型症状**：Desktop 登录一切正常，MCP 授权在 Provider 回调后
+立刻 `redirect_uri_mismatch`——因为两套路由各自逐字符校验自己的 `redirect_uri`。
+
+**Provider 侧登记的值必须与 `BASE_URL` 拼出来的字符串逐字符一致**：`localhost`
+与 `127.0.0.1` 在 Provider 看来是两个不同的 redirect_uri，混用会直接
+`redirect_uri_mismatch`。**不使用通配 redirect URI**，代码侧也是逐字符相等
+校验（`mcp-oauth/authorize-flow.ts`、`oauth/authorization.ts`）。
+
+> ChatGPT 自己的 OAuth callback（`https://chatgpt.com/connector/oauth/{callback_id}`）
+> 属于 **MCP 客户端**的 `redirect_uri`，走 `mcp_oauth_clients` 注册数据，
+> **不要**混进 Google/GitHub Provider 的配置里。
 
 两个 Client Secret 只存在云端环境变量中；Desktop 端零密钥、零 Provider Token。
 
@@ -124,44 +183,125 @@ pnpm db:migrate:prod      # 生产（跑 dist 编译产物，迁移文件随构�
 
 ## 生产部署
 
-### 构建
+### 完整部署手册
+
+**可复现的生产部署流程见 [`deploy/README.md`](deploy/README.md)**：架构、DNS、
+四条 Provider 回调、密钥生成、环境变量、**Remote MCP 专用预检**、Docker 构建、
+数据库迁移、启动、HTTPS / Discovery / WSS 验收、日志脱敏、备份恢复、更新回滚。
+
+配套文件：
+
+```text
+cloud/deploy/
+  compose.yaml                 Caddy + Cloud + PostgreSQL 16（单副本、db 不对外）
+  Caddyfile                    HTTPS 终结与反向代理（不开访问日志）
+  .env.production.example      环境变量模板（只含变量名，无真实值）
+  smoke-test.mjs               部署后冒烟测试（HTTP / Discovery / 未授权 MCP）
+  README.md                    上述完整流程
+```
+
+### 构建与预检
 
 ```bash
-pnpm build        # tsc 编译 + 迁移文件复制到 dist/
-docker build -t brewphase-cloud .
+pnpm build                      # tsc 编译 + 迁移文件复制到 dist/
+pnpm preflight:remote-mcp       # 源码预检（读当前 Shell 环境，本地演练用）
+```
+
+**生产构建只走 Compose**（`compose.yaml` 固定了镜像名与 build 参数）：
+
+```bash
+cd deploy && docker compose --env-file .env.production build cloud
+```
+
+在 `cloud/` 下直接 `docker build -t brewphase-cloud .` 仅供**本地开发 / 诊断**，
+不要用于生产：它绕过了 compose 的 `image:` 命名，后续 `up` 可能去拉远端镜像。
+
+> `pnpm preflight:remote-mcp` 读的是**当前 Shell** 的变量，不是
+> `.env.production`；生产权威预检见下方「镜像内等价预检」（`compose run`）。
+
+多阶段 Dockerfile：全量依赖（编译用）→ TS 编译 → **仅生产依赖** → 运行镜像
+（非 root、只带 `dist/` 与生产 `node_modules/`）。运行镜像内不含
+typescript / eslint / vitest / drizzle-kit / tsx。
+
+镜像内等价预检（容器里没有 `pnpm` 与源码）——**用 `compose run` 而不是
+`docker run --env-file`**，这样拿到的是 Compose 最终注入容器的
+`DATABASE_URL`（由 `POSTGRES_*` 拼成），与 `up` 用的是同一份配置：
+
+```bash
+cd deploy
+docker compose --env-file .env.production run --rm --no-deps cloud \
+  node dist/scripts/preflight-remote-mcp.js
 ```
 
 ### 环境变量
 
-见 `.env.example`。生产环境强制要求：
+- 模板：[`deploy/.env.production.example`](deploy/.env.production.example)
+  （只列变量名与生成方式，**无真实值**）；
+- 本地开发：`.env.example` → `.env`。
+
+生产环境强制要求（`loadEnv` / `enforceProductionSecrets`）：
 
 - `JWT_SIGNING_KEY`（≥32 字符）、`SESSION_TOKEN_PEPPER`（≥16 字符）——
   缺失或弱密钥时服务拒绝启动；
-- `BASE_URL` 必须是 https（JWT iss 同时来自它）；
+- `BASE_URL` 必须是 https 纯 Origin、**默认 443 端口**（compose 只发布 80/443），
+  且其 hostname 必须与 `BREWPHASE_DOMAIN`（Caddy 的站点名）**逐字一致**——
+  两者不一致时 `/health` 与证书检查都能通过，只有 OAuth 回调会 404；
 - Google / GitHub 两组凭据必须齐全；
+- `GATEWAY_EXPECTED_REPLICAS=1`（>1 拒绝启动）；
 - 数据库不可达时启动即失败（exit 1），不假装健康。
+
+**Remote MCP 额外要求**（`loadEnv` 不强制，但预检强制）：
+
+- `MCP_BROWSER_SESSION_KEY` ≥32 UTF-8 字节，且 **≠ `JWT_SIGNING_KEY`**；
+- `DATABASE_URL` 必须**逐段**与 Compose 的拼接结果一致：`postgres://` 或
+  `postgresql://`、非空用户名与密码、host=`db`、port=`5432`、库名=`POSTGRES_DB`、
+  用户名=`POSTGRES_USER`，且不带 query / fragment。完整的失败码表见
+  [`deploy/README.md`](deploy/README.md#6-remote-mcp-专用预检首次部署的第-步)。
+  留空时服务照常启动、`/health` 照常 200，但 `/mcp`、`/.well-known/*`、
+  `/mcp/oauth/*` **全部 404**（`app.ts` 打一条 `mcp_oauth_disabled` warn 就过去）。
 
 生成 Secret：
 
 ```bash
 openssl rand -base64 48   # JWT_SIGNING_KEY
+openssl rand -base64 48   # MCP_BROWSER_SESSION_KEY（必须与上者不同）
 openssl rand -base64 32   # SESSION_TOKEN_PEPPER
+openssl rand -hex 32      # POSTGRES_PASSWORD（必须 URL 安全，见 deploy/README.md §4）
 ```
 
-### 部署步骤（单容器 + 托管 Postgres）
+### 部署步骤（Compose：Caddy + Cloud + PostgreSQL 16）
+
+> **所有 compose 命令都必须带 `--env-file .env.production`**——Compose 只自动
+> 读项目目录里名为 `.env` 的文件。漏掉会因缺变量直接失败（刻意 fail-closed）。
+> 完整运维命令见 [`deploy/README.md`](deploy/README.md)。
 
 ```bash
-# 1. 应用迁移（先于服务启动）
-docker run --rm --env-file .env brewphase-cloud node dist/scripts/migrate.js
+cd deploy
+cp .env.production.example .env.production && chmod 600 .env.production
+$EDITOR .env.production          # 填入四个回调、密钥、数据库口令（openssl rand -hex 32）
 
-# 2. 启动服务
-docker run -d --name brewphase-cloud --env-file .env -p 3000:3000 brewphase-cloud
+docker compose --env-file .env.production config --quiet   # ① 校验配置可解析
+docker compose --env-file .env.production build cloud      # ② 构建
+docker compose --env-file .env.production run --rm --no-deps cloud \
+  node dist/scripts/preflight-remote-mcp.js                # ③ 预检（失败则到此为止）
+docker compose --env-file .env.production run --rm cloud \
+  node dist/scripts/migrate.js                             # ④ 迁移（只应用未执行的）
+docker compose --env-file .env.production up -d            # ⑤ 启动（cloud 等 db healthy）
+docker compose --env-file .env.production ps               # ⑥ 三个容器 healthy、cloud 只有 1 个
 
-# 3. 健康检查
-curl https://your-domain/health   # {"status":"ok",...}
-curl https://your-domain/ready    # {"status":"ready"}
+curl -fsS https://your-domain/health && curl -fsS https://your-domain/ready   # ⑦ 分别请求
+node smoke-test.mjs https://your-domain   # ⑧ 冒烟：HTTP + Discovery + 未授权 MCP
+# ⑨ WSS 真机验收见 deploy/README.md §12
 ```
 
+> ③ 必须在 ④ 之前：预检没过就不要迁移、不要启动。
+> ⑦ 的 `/health`（进程存活）与 `/ready`（数据库可用）**不能互相替代**——
+> 容器 `healthy` 只代表 `/health` 200。
+
+- 只有 Caddy 发布 80/443；Cloud 与 PostgreSQL **不发布端口**
+  （PostgreSQL 在 `internal: true` 网络内，宿主与公网均不可达）。
+- **迁移不随启动自动执行**：显式跑、失败即失败，不会出现
+  「服务起来了但 schema 是旧的」。
 - 反向代理（Nginx/Caddy）终结 TLS。**TRUST_PROXY 的信任边界**：
   - `TRUST_PROXY=false`（默认）：完全忽略 `X-Forwarded-For`，客户端伪造头不影响限流与审计 IP。
   - `TRUST_PROXY=true`：只信任**右端**（离服务最近）代理写入的条目，从 XFF 右端跳过

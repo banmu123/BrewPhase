@@ -1,3 +1,120 @@
+
+/**
+ * 远程访问（Remote MCP）。措辞刻意保守：不承诺「绝不会被攻破」，
+ * 只说明「本地最终否决」与「审计是 best-effort」这两件确实成立的事。
+ */
+export const remote = {
+  title: '远程访问',
+  lead: '让云端 AI（如 ChatGPT）通过 BrewPhase Cloud 读这台电脑上的记录、豆子与画布。默认关闭；关闭时不建立任何连接。',
+  toggle: '允许远程访问',
+  toggleOnHint: '已开启。云端 AI 只能调用 8 个只读工具。',
+  toggleOffHint: '关闭中。不建立任何出站连接。',
+  enable: '开启…',
+  disable: '关闭',
+  confirmTitle: '开启前确认授权范围',
+  confirmBody: '开启后，你在 Cloud 上授权过的 AI 客户端可以读取以下范围的数据：',
+  confirmReadonly: '只能读。远程不提供任何写入、删除、执行命令或读取文件的能力，也不会把数据复制到云端。',
+  confirm: '确认开启',
+  cancel: '取消',
+  state: '连接状态',
+  states: {
+    idle: '未连接',
+    connecting: '连接中',
+    handshaking: '握手中',
+    online: '已连接',
+    draining: '正在排空',
+    backoff: '等待重连',
+    blocked: '已阻断（需处理）'
+  },
+  device: '设备',
+  notPaired: '尚未配对',
+  boundUser: '绑定用户',
+  noUser: '未绑定',
+  serviceable: '可服务',
+  yes: '是',
+  no: '否',
+  reasons: {
+    remote_disabled: '开关已关闭',
+    user_mismatch: '当前账户与绑定用户不一致',
+    db_unavailable: '本地数据库未就绪',
+    services_unavailable: '本地服务未就绪',
+    shutting_down: '正在退出',
+    blocked: '设备处于阻断状态（需重新配对或切换账户）'
+  },
+  lastActive: '最后活跃',
+  never: '—',
+  blockedTitle: '远程访问已被阻断',
+  unbind: '解除绑定并重新配对',
+  grants: '已授权的客户端',
+  noGrants: '当前没有 AI 客户端获得授权。',
+  noScopes: '无可用范围',
+  auditWarning: '最近 {count} 次远程访问未能写入审计记录',
+  auditWarningBody: '业务调用本身仍然正常返回。',
+  auditLastFailure: '最近一次失败：',
+  auditHonesty: '计数只在本次运行内有效，重启会归零；此前未写成的记录不会被补写。',
+  register: '配对新设备',
+  diagnose: '诊断信息',
+  forget: '忘记此设备',
+  pendingTitle: '待确认设备',
+  pendingLead: '这是这台电脑第一次连接 BrewPhase Cloud。确认之后，它才会绑定到下面的账号。',
+  pendingDevice: '设备',
+  pendingPlatform: '平台',
+  pendingCode: '确认码',
+  pendingExpires: '有效至',
+  pendingAccount: '将绑定到',
+  pendingAccountUnknown: '当前登录账户',
+  pendingCodeHint:
+    '确认码只用于这一步人工确认：不写入磁盘、不上传，也不会出现在日志里。',
+  pendingTrustHint: '如果不是你本人发起的配对，点「取消本次配对」。',
+  confirmDevice: '确认信任这台设备',
+  cancelPairing: '取消本次配对',
+  confirmingDevice: '正在确认…',
+  claimingCredentials: '已确认，正在领取凭据…',
+  savingCredential: '凭据保存中…',
+  retryClaim: '重试领取凭据',
+  cancellingPairing: '正在取消…',
+  pairingDone: '配对完成，设备凭据已加密保存。',
+  pairingRevoked: '已取消本次配对，云端设备已撤销。',
+  pairingRevokePending: '本地已取消；云端设备未能撤销，它会在有效期结束后自动过期。',
+  /** 已有配对在跑 / 已有设备时，「配对新设备」必须先被禁用（不能静默顶替）。 */
+  pairingInProgress: '已有一台设备正在配对，请先确认或取消它。',
+  alreadyPaired: '这台电脑已经配对过设备。要重新配对，请先「忘记此设备」。',
+  confirmFailures: {
+    unauthorized: '登录状态已失效，请重新登录 Cloud 账户后再试。',
+    invalid_code: '确认码不正确。请核对后重试（连续错误会使设备作废）。',
+    expired: '本次配对已过期，请重新「配对新设备」。',
+    not_found: '这台设备不存在或不属于当前账户。请确认登录的是同一个账号。',
+    device_state: '设备状态不允许确认（可能已被撤销），请重新配对。',
+    rate_limited: '操作太频繁，请稍后再试。',
+    account_changed: '确认过程中账户发生了变化，本次配对已作废。',
+    network: '网络不可用，请检查连接后重试。设备仍在等待确认。',
+    invalid_response: '服务端返回了无法识别的响应，请稍后重试。',
+    claim_pending: '设备已确认，但凭据尚未领取完成。请稍后重试——配对仍然有效。',
+    claim_network: '设备已确认，但领取凭据时网络异常。请检查连接后重试——配对仍然有效。',
+    credentials_already_issued:
+      '凭据已在云端签发，但本机没有拿到（领取只能进行一次）。为避免留下无法使用的设备，已尝试撤销它——请重新「配对新设备」。',
+    credential_save_failed:
+      '系统安全存储写入失败，凭据无法保存。为避免留下无法使用的设备，已尝试撤销它——请检查系统钥匙串/密钥环后重新配对。',
+    credential_cleanup_failed:
+      '这台设备的凭据没能安全保存，且云端设备也未能撤销。请到 Cloud 设备列表手动删除这台设备后重新配对。',
+    superseded: '这次配对已被取消、顶替或因账户变化作废。'
+  },
+  socket: 'Socket',
+  inflight: '在途请求',
+  cache: '结果缓存',
+  lastClose: '最近关闭',
+  lastError: '最近错误',
+  noError: '无',
+  reconnectAttempt: '重连次数',
+  lastErrorHint: '最近一次连接尝试的失败原因；成功握手后会清空。',
+  scopeLabels: {
+    records: '记录与笔记',
+    tags: '标签',
+    coffee: '豆子、冲煮与品鉴',
+    canvas: '画布与便签'
+  }
+}
+
 /** 设置 / Settings：页面骨架、二级导航、常规页。 */
 export const settings = {
   title: '设置',
@@ -252,5 +369,6 @@ export const settings = {
       'browser-open-failed': '无法打开系统浏览器，请检查默认浏览器设置。',
       unknown: '登录未能完成，请重试。'
     }
-  }
+  },
+  remote
 }

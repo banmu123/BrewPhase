@@ -18,19 +18,24 @@
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/scripts/migrate.ts",
-    "db:migrate:prod": "node dist/scripts/migrate.js"
+    "db:migrate:prod": "node dist/scripts/migrate.js",
+    "preflight:remote-mcp": "tsx src/scripts/preflight-remote-mcp.ts",
+    "preflight:remote-mcp:prod": "node dist/scripts/preflight-remote-mcp.js"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.4",
+    "@modelcontextprotocol/server": "^2.4.0",
     "drizzle-orm": "^0.45.4",
     "hono": "^4.10.3",
     "jose": "^6.1.0",
     "postgres": "^3.4.7",
+    "ws": "^8",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
     "@types/node": "^22.19.0",
+    "@types/ws": "^8.18.2",
     "drizzle-kit": "^0.31.11",
     "eslint": "^9.39.1",
     "globals": "^16.5.0",

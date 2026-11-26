@@ -5,16 +5,20 @@ import type { KonvaEventObject } from 'konva/lib/Node'
 import type { Context } from 'konva/lib/Context'
 import type {
   Canvas,
+  CanvasJourney,
+  CanvasJourneyPlacement,
   CanvasNote,
   CanvasNodeWithRecord,
   CanvasStroke,
   CanvasTool,
   CanvasViewport,
+  JourneyCard,
   RecordItem
 } from '@shared/contracts'
 import { screenToWorld, zoomAt, CANVAS_LIMITS } from '@shared/contracts'
 import { embedURL } from '@shared/link-embed'
 import { nextNodeOrigin, fitViewport } from '@shared/domain/placement'
+import { JOURNEY_GROUP_INSET } from '@shared/domain/journey-layout'
 import { previewFileFor } from './canvas-thumbnail-model'
 import { api } from '../../shared/api'
 import { useI18n } from '../../i18n'
@@ -25,6 +29,8 @@ import { titleBarPlatform } from '../../shared/platform'
 import { Modal } from '../../shared/Modal'
 import { ConfirmDialog } from '../../shared/ConfirmDialog'
 import { CanvasThumbnail } from './CanvasThumbnail'
+import { JourneyGroupShape } from './JourneyGroupShape'
+import { JourneyInspectorBody } from './JourneyInspectorBody'
 import {
   EraserIcon,
   FitIcon,
@@ -73,10 +79,27 @@ function playbackOf(node: CanvasNodeWithRecord): 'local' | 'embed' | null {
 }
 
 /** 全部内容的世界坐标矩形（节点 + 便签 + 笔迹逐点）：装窗计算的唯一输入。 */
+/**
+ * 一条 Journey 的事件摆位 → `event_id` 索引的 Map。
+ *
+ * 服务端返回的是数组（分组行 + 事件行混在一起），渲染时按事件逐个查坐标，
+ * 转一次 Map 免得每帧 O(n²)。分组行（`event_id === null`）不进这张表——
+ * 它是外框的位置，由 `journey.placement` 单独给。
+ */
+function journeyPlacements(journey: CanvasJourney): Map<string, CanvasJourneyPlacement> {
+  const map = new Map<string, CanvasJourneyPlacement>()
+  for (const node of journey.nodes) {
+    if (!node.event_id) continue
+    map.set(node.event_id, node)
+  }
+  return map
+}
+
 function contentRects(
   nodes: CanvasNodeWithRecord[],
   notes: CanvasNote[],
-  strokes: CanvasStroke[]
+  strokes: CanvasStroke[],
+  journeys: CanvasJourney[] = []
 ): Array<{ x: number; y: number; width: number; height: number }> {
   const rects: Array<{ x: number; y: number; width: number; height: number }> = []
   for (const node of nodes) {
@@ -84,6 +107,21 @@ function contentRects(
   }
   for (const note of notes) {
     rects.push({ x: note.positionX, y: note.positionY, width: note.width, height: note.height })
+  }
+  /*
+   * Journey 分组也要进包围盒，否则「适配全部内容」会把整组推出视口。
+   *
+   * 摆位存的是**内容原点**，而盒子从它左上方延伸 JOURNEY_GROUP_INSET
+   * （左 18 / 上 70，标题条在里面）。直接用 position 当盒子左上角会把
+   * 标题条切出视口——inset 从 journey-layout 读，与渲染层同一份定义。
+   */
+  for (const journey of journeys) {
+    rects.push({
+      x: journey.placement.position_x - JOURNEY_GROUP_INSET.x - 6,
+      y: journey.placement.position_y - JOURNEY_GROUP_INSET.y - 6,
+      width: journey.placement.width + 12,
+      height: journey.placement.height + 12
+    })
   }
   for (const stroke of strokes) {
     for (let i = 0; i < stroke.points.length; i += 2) {
@@ -122,6 +160,14 @@ export function CanvasPage() {
   const [nodes, setNodes] = useState<CanvasNodeWithRecord[]>([])
   const [notes, setNotes] = useState<CanvasNote[]>([])
   const [strokes, setStrokes] = useState<CanvasStroke[]>([])
+  /**
+   * 画布上的 Journey（R6-4.1）：与 `nodes` 并列的另一类内容。
+   * **不是** CanvasNode——Journey 有自己的领域表，这里只是同屏展示。
+   */
+  const [journeys, setJourneys] = useState<CanvasJourney[]>([])
+  /** 选中的 Journey 分组 / 组内事件（Inspector 用）。 */
+  const [selectedJourneyId, setSelectedJourneyId] = useState<string | null>(null)
+  const [selectedJourneyEventId, setSelectedJourneyEventId] = useState<string | null>(null)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null)
   const [viewport, setViewport] = useState<CanvasViewport>({ scale: 1, offsetX: 0, offsetY: 0 })
@@ -156,6 +202,9 @@ export function CanvasPage() {
   const [pickerLoading, setPickerLoading] = useState(false)
   const [pickerLoadingMore, setPickerLoadingMore] = useState(false)
   const [pickerSearch, setPickerSearch] = useState('')
+  /** 可加入画布的 Journey 清单（R6-4.1 §4.2 的画布内选择面板）。 */
+  const [pickerJourneys, setPickerJourneys] = useState<JourneyCard[]>([])
+  const [pickerJourneyBusy, setPickerJourneyBusy] = useState<string | null>(null)
   const [pickerCarrier, setPickerCarrier] = useState<'all' | 'image' | 'video' | 'link' | 'text'>('all')
   /** 多选跨筛选保留：iOS 同款（picked: [Record]，换载体不清）。 */
   const [pickedItems, setPickedItems] = useState<Map<string, RecordItem>>(new Map())
@@ -183,6 +232,9 @@ export function CanvasPage() {
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? null
   const selectedNote = notes.find((note) => note.id === selectedNoteId) ?? null
+  /** 选中的 Journey 分组（Inspector 与高亮共用同一份派生值）。 */
+  const selectedJourney =
+    journeys.find((item) => item.placement.journey_id === selectedJourneyId) ?? null
   const addedRecordIds = useMemo(() => new Set(nodes.map((node) => node.recordID)), [nodes])
 
   const openRecord = useAppStore((state) => state.openRecord)
@@ -238,15 +290,20 @@ export function CanvasPage() {
     const seq = ++loadSeq.current
     if (!silent) setLoadState('loading')
     try {
-      const [nextNodes, nextNotes, nextStrokes] = await Promise.all([
+      const [nextNodes, nextNotes, nextStrokes, nextJourneys] = await Promise.all([
         api.canvas.nodes(canvasId),
         api.canvas.notes(canvasId),
-        api.canvas.strokes(canvasId)
+        api.canvas.strokes(canvasId),
+        api.canvas.journeys(canvasId)
       ])
       if (seq !== loadSeq.current) return // 过期响应：丢弃
       setNodes(nextNodes)
       setNotes(nextNotes)
       setStrokes(nextStrokes)
+      setJourneys(nextJourneys)
+      // 注意：这里**不清** Journey 选中——loadContent 在每次写入后也会
+      // silent 重取（保存笔记、建连、挪分组都会走到），清了会把刚打开的
+      // Inspector 关掉。换画布时的清态由 [activeId] 的 effect 负责。
       setLoadState('ready')
     } catch (cause) {
       if (seq !== loadSeq.current) return // 过期响应的错误：同样丢弃
@@ -260,12 +317,29 @@ export function CanvasPage() {
     refreshThemeColors()
   }, [loadCanvases])
 
+  // 打开添加面板时拉一次 Journey 清单：与 records 分页列表并列展示。
+  useEffect(() => {
+    if (sidePanel !== 'picker') return
+    let alive = true
+    api.agentJourneys
+      .list({ limit: 100, offset: 0 })
+      .then((result) => {
+        if (alive) setPickerJourneys(result.journeys)
+      })
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [sidePanel])
+
   // 进入工作区 / 切换画布：清一切上一块画布的痕迹（内容、选中、播放、视角、
   // Picker 会话），再读新内容。旧内容哪怕多显示一帧，都会被当成「放错位置的数据」。
   useEffect(() => {
     setPlayingNodeId(null)
     setSelectedNodeId(null)
     setSelectedNoteId(null)
+    setSelectedJourneyId(null)
+    setSelectedJourneyEventId(null)
     setSidePanel(null)
     setContextMenu(null)
     setPickedItems(new Map())
@@ -276,12 +350,14 @@ export function CanvasPage() {
       setNodes([])
       setNotes([])
       setStrokes([])
+      setJourneys([])
       setLoadState('loading')
       return
     }
     setNodes([])
     setNotes([])
     setStrokes([])
+    setJourneys([])
     setLoadState('loading')
     void loadContent(activeId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -386,14 +462,14 @@ export function CanvasPage() {
   }, [])
 
   const fitAll = useCallback(() => {
-    setViewport(fitViewport(contentRects(nodes, notes, strokes), size, 80, CANVAS_LIMITS))
+    setViewport(fitViewport(contentRects(nodes, notes, strokes, journeys), size, 80, CANVAS_LIMITS))
     fitMeta.current = {
       didFit: true,
       width: size.width,
       height: size.height,
       userAdjusted: true
     }
-  }, [nodes, notes, strokes, size])
+  }, [nodes, notes, strokes, journeys, size])
 
   // 首次拿到非空内容、或（用户没动过时）尺寸变化：自动装窗。
   // 第一次布局时 ResizeObserver 可能还没报出真实尺寸，按占位值装窗会把
@@ -401,7 +477,7 @@ export function CanvasPage() {
   useEffect(() => {
     if (view !== 'workspace' || !activeId || size.width <= 0) return
     const meta = fitMeta.current
-    const empty = nodes.length === 0 && notes.length === 0 && strokes.length === 0
+    const empty = nodes.length === 0 && notes.length === 0 && strokes.length === 0 && journeys.length === 0
     if (empty) {
       if (meta.didFit) {
         fitMeta.current = { didFit: false, width: 0, height: 0, userAdjusted: false }
@@ -411,10 +487,10 @@ export function CanvasPage() {
     }
     const sizeChanged = meta.width !== size.width || meta.height !== size.height
     if (!meta.didFit || (!meta.userAdjusted && sizeChanged)) {
-      setViewport(fitViewport(contentRects(nodes, notes, strokes), size, 80, CANVAS_LIMITS))
+      setViewport(fitViewport(contentRects(nodes, notes, strokes, journeys), size, 80, CANVAS_LIMITS))
       fitMeta.current = { didFit: true, width: size.width, height: size.height, userAdjusted: meta.userAdjusted }
     }
-  }, [view, activeId, size, nodes, notes, strokes])
+  }, [view, activeId, size, nodes, notes, strokes, journeys])
 
   // MARK: - 快捷键（输入框聚焦时让路）
 
@@ -1105,6 +1181,149 @@ export function CanvasPage() {
                     }}
                   />
                 ))}
+                {/*
+                  * Journey 分组（R6-4.1）：与普通 Record Node 同一坐标系、
+                  * 同一 Layer，因此能共存、对齐、互相连接。
+                  * 拖动只写 `canvas_journey_placements`——sequence 与业务 Edge 不动。
+                  */}
+                {journeys.map((journey) => (
+                  <JourneyGroupShape
+                    key={journey.placement.id}
+                    journey={journey}
+                    placements={journeyPlacements(journey)}
+                    recordNodes={nodes}
+                    links={journey.links.map((link) => ({
+                      id: link.id,
+                      eventId: link.event_id,
+                      recordId: link.record_id,
+                      relationshipType: link.relationship_type
+                    }))}
+                    collapsed={journey.placement.collapsed}
+                    selected={journey.placement.journey_id === selectedJourneyId}
+                    selectedEventId={
+                      journey.placement.journey_id === selectedJourneyId
+                        ? selectedJourneyEventId
+                        : null
+                    }
+                    draggable={tool === 'select'}
+                    onSelect={() => {
+                      setSelectedJourneyId(journey.placement.journey_id)
+                      setSelectedJourneyEventId(null)
+                      setSelectedNodeId(null)
+                      setSelectedNoteId(null)
+                      setSidePanel('inspector')
+                    }}
+                    onSelectEvent={(eventId) => {
+                      setSelectedJourneyId(journey.placement.journey_id)
+                      setSelectedJourneyEventId(eventId)
+                      setSelectedNodeId(null)
+                      setSelectedNoteId(null)
+                      setSidePanel('inspector')
+                    }}
+                    onToggleCollapsed={() => {
+                      void withSave(() =>
+                        api.canvas.collapseJourney(
+                          activeId!,
+                          journey.placement.journey_id,
+                          !journey.placement.collapsed
+                        )
+                      ).then(() => loadContent(activeId!, true))
+                    }}
+                    onGroupMoved={async (positionX, positionY) => {
+                      const previous = {
+                        x: journey.placement.position_x,
+                        y: journey.placement.position_y
+                      }
+                      // 乐观更新：整组（分组行 + 事件行）一起平移
+                      setJourneys((current) =>
+                        current.map((item) =>
+                          item.placement.id === journey.placement.id
+                            ? {
+                                ...item,
+                                placement: { ...item.placement, position_x: positionX, position_y: positionY },
+                                nodes: item.nodes.map((node) => ({
+                                  ...node,
+                                  position_x: node.position_x + (positionX - previous.x),
+                                  position_y: node.position_y + (positionY - previous.y)
+                                }))
+                              }
+                            : item
+                        )
+                      )
+                      try {
+                        await withSave(() =>
+                          api.canvas.moveJourney(
+                            activeId!,
+                            journey.placement.journey_id,
+                            positionX,
+                            positionY
+                          )
+                        )
+                      } catch {
+                        // 失败回滚到拖动前的位置
+                        setJourneys((current) =>
+                          current.map((item) =>
+                            item.placement.id === journey.placement.id
+                              ? {
+                                  ...item,
+                                  placement: {
+                                    ...item.placement,
+                                    position_x: previous.x,
+                                    position_y: previous.y
+                                  },
+                                  nodes: item.nodes.map((node) => ({
+                                    ...node,
+                                    position_x: node.position_x - (positionX - previous.x),
+                                    position_y: node.position_y - (positionY - previous.y)
+                                  }))
+                                }
+                              : item
+                          )
+                        )
+                      }
+                    }}
+                    onEventMoved={async (eventId, positionX, positionY) => {
+                      const target = journey.nodes.find((node) => node.event_id === eventId)
+                      const previous = target
+                        ? { x: target.position_x, y: target.position_y }
+                        : { x: positionX, y: positionY }
+                      setJourneys((current) =>
+                        current.map((item) =>
+                          item.placement.journey_id === journey.placement.journey_id
+                            ? {
+                                ...item,
+                                nodes: item.nodes.map((node) =>
+                                  node.event_id === eventId
+                                    ? { ...node, position_x: positionX, position_y: positionY }
+                                    : node
+                                )
+                              }
+                            : item
+                        )
+                      )
+                      try {
+                        await withSave(() =>
+                          api.canvas.moveJourneyEvent(activeId!, eventId, positionX, positionY)
+                        )
+                      } catch {
+                        setJourneys((current) =>
+                          current.map((item) =>
+                            item.placement.journey_id === journey.placement.journey_id
+                              ? {
+                                  ...item,
+                                  nodes: item.nodes.map((node) =>
+                                    node.event_id === eventId
+                                      ? { ...node, position_x: previous.x, position_y: previous.y }
+                                      : node
+                                  )
+                                }
+                              : item
+                          )
+                        )
+                      }
+                    }}
+                  />
+                ))}
               </Layer>
             </Stage>
           ) : (
@@ -1305,11 +1524,118 @@ export function CanvasPage() {
                 {pickerError && <div className="error">{pickerError}</div>}
               </div>
 
+              {/* ── Agent Journey 选择区（§4.2）──────────────────
+                  与上面的 Record 列表并列：同一面板、同一搜索语义，
+                  但 Journey 走的是**独立领域**，加入画布调 addJourney
+                  （写 canvas_journey_placements，不创建任何 Record）。 */}
+              <div className="picker-journeys">
+                <div className="overline" style={{ margin: '14px 0 6px' }}>
+                  {t.canvas.journey.section}
+                </div>
+                <p className="page-sub" style={{ margin: '0 0 8px' }}>
+                  {t.canvas.journey.sectionHint}
+                </p>
+
+                {pickerJourneys.length === 0 ? (
+                  <div className="empty">
+                    {t.canvas.journey.empty}
+                    <div className="page-sub">{t.canvas.journey.emptyHint}</div>
+                  </div>
+                ) : (
+                  <div className="picker-list picker-list--journeys">
+                    {pickerJourneys
+                      .filter((journey) =>
+                        pickerSearch.trim()
+                          ? `${journey.title} ${journey.goal}`
+                              .toLowerCase()
+                              .includes(pickerSearch.trim().toLowerCase())
+                          : true
+                      )
+                      .map((journey) => {
+                        const onCanvas = journeys.some(
+                          (item) => item.placement.journey_id === journey.id
+                        )
+                        const busy = pickerJourneyBusy === journey.id
+                        return (
+                          <button
+                            key={journey.id}
+                            className="add-card add-card--journey"
+                            disabled={onCanvas || busy}
+                            style={{ opacity: onCanvas ? 0.55 : 1 }}
+                            onClick={() => {
+                              if (onCanvas || !activeId) return
+                              setPickerJourneyBusy(journey.id)
+                              void api.canvas
+                                .addJourney(activeId, journey.id)
+                                .then(() => loadContent(activeId, true))
+                                .catch((cause: Error) => setError(cause.message))
+                                .finally(() => setPickerJourneyBusy(null))
+                            }}
+                          >
+                            <span className="add-card__thumb add-card__thumb--text">⟲</span>
+                            <span className="add-card__body">
+                              <span className="add-card__title">
+                                {journey.title || t.canvas.untitledCanvas}
+                              </span>
+                              <span className="add-card__meta">
+                                {t.canvas.journey.eventCount(journey.event_count)}
+                                {onCanvas && ` · ${t.canvas.journey.added}`}
+                              </span>
+                            </span>
+                          </button>
+                        )
+                      })}
+                  </div>
+                )}
+              </div>
+
               {pickedItems.size > 0 && (
                 <button className="button button--primary picker-join" onClick={() => void addPicked()}>
                   {t.canvas.picker.addCount(pickedItems.size)}
                 </button>
               )}
+            </aside>
+          )}
+
+          {/* ── Journey Inspector（R6-4.1 §4.4 / §5 / §6）────────
+              选中分组 → Journey 级信息与笔记；选中事件节点 → 事件详情、
+              该节点的笔记、以及到普通 Record 的跨记录连接。
+              笔记与连接都写**独立的表**，Agent 原始事件在这里只读。 */}
+          {sidePanel === 'inspector' && active && selectedJourney && (
+            <aside
+              className="node-panel"
+              role="dialog"
+              aria-label={t.canvas.journey.detailTitle}
+            >
+              <div className="row row--between" style={{ marginBottom: 12 }}>
+                <span className="overline" style={{ margin: 0 }}>
+                  {t.canvas.journey.detailTitle}
+                </span>
+                <button
+                  className="button button--ghost"
+                  aria-label={t.canvas.workspace.closePanel}
+                  onClick={() => setSidePanel(null)}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <JourneyInspectorBody
+                journey={selectedJourney}
+                eventId={selectedJourneyEventId}
+                canvasId={activeId!}
+                recordNodes={nodes}
+                onChanged={() => void loadContent(activeId!, true)}
+                onRemove={() => {
+                  void withSave(() =>
+                    api.canvas.removeJourney(activeId!, selectedJourney.placement.journey_id)
+                  ).then(() => {
+                    setSelectedJourneyId(null)
+                    setSelectedJourneyEventId(null)
+                    setSidePanel(null)
+                  })
+                }}
+              />
             </aside>
           )}
 

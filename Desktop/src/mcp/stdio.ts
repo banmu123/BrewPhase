@@ -8,6 +8,7 @@ import { registerCoffeeTools } from './tools/coffee'
 import { registerCanvasTools } from './tools/canvas'
 import { registerWorkContextTools } from './tools/work-context'
 import { registerPersonalDirectionTools } from './tools/personal-direction'
+import { registerAgentJourneyTools } from './tools/agent-journey'
 
 /**
  * brewphase-mcp —— BrewPhase AI Action Gateway 的 MCP STDIO 入口。
@@ -93,6 +94,7 @@ async function main(): Promise<void> {
   registerCanvasTools(server, bridge)
   registerWorkContextTools(server, bridge)
   registerPersonalDirectionTools(server, bridge)
+  registerAgentJourneyTools(server, bridge)
 
   const transport = new StdioServerTransport()
   await server.connect(transport)

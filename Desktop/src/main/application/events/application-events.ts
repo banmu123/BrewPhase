@@ -13,6 +13,7 @@ export type AppDomain =
   | 'personalDirection'
   | 'localWorkspaces'
   | 'replyIntelligence'
+  | 'agentJourneys'
 
 export class ApplicationEvents {
   private readonly listeners = new Set<(domain: AppDomain) => void>()

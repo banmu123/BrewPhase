@@ -28,6 +28,7 @@ import { useTheme } from '../../shared/useTheme'
 import { useAppStore, type SettingsCategory } from '../../app/store'
 import { confirmAction } from '../../shared/ConfirmDialog'
 import { codexConfig, configTargetFrom, workbuddyConfig } from './mcp-config'
+import { RemoteAccessPanel } from './RemoteAccessPanel'
 
 /**
  * 更多 / Settings。
@@ -1575,6 +1576,9 @@ function McpSection() {
           </button>
         )}
       </details>
+
+      {/* 远程访问：默认关闭，开启需经过范围确认。没有 `remote:call` 之类的手动入口。 */}
+      <RemoteAccessPanel />
     </div>
   )
 }

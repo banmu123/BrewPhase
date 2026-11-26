@@ -1,0 +1,141 @@
+{
+  "$comment": "Remote Link Protocol v1 的 request_hash 黄金向量。Cloud 与 Desktop 的测试都必须读这一个文件——两端各写一份 canonicalJson 时，「各自自洽」不是证据，对同一份向量得出同一串哈希才是。",
+  "protocol": "brewphase.remote.req.v1",
+  "definition": "request_hash = \"sha256:\" + SHA-256(UTF8(canonicalJson({ v, tool, arguments })))",
+  "canonical_rules": [
+    "对象键按 UTF-16 代码单元升序排列（JS 默认字符串比较）",
+    "值为 undefined 的属性键被剔除（不是写成 null）",
+    "数组保留原顺序，不排序",
+    "不做 Unicode 归一化（NFC 与 NFD 是不同的字节）",
+    "字符串用 JSON.stringify 的标准转义"
+  ],
+  "cases": [
+    {
+      "name": "simple",
+      "input": {
+        "v": 1,
+        "tool": "search_records",
+        "arguments": {
+          "search": "埃塞",
+          "limit": 20
+        }
+      },
+      "canonical": "{\"arguments\":{\"limit\":20,\"search\":\"埃塞\"},\"tool\":\"search_records\",\"v\":1}",
+      "request_hash": "sha256:1f17abb7184d18c01385eba75b054cd46f593c93c8d1baad792efa601fc27146"
+    },
+    {
+      "name": "key_order",
+      "input": {
+        "v": 1,
+        "tool": "search_records",
+        "arguments": {
+          "zeta": 1,
+          "alpha": 2,
+          "Mike": 3,
+          "_under": 4,
+          "0digit": 5
+        }
+      },
+      "canonical": "{\"arguments\":{\"0digit\":5,\"Mike\":3,\"_under\":4,\"alpha\":2,\"zeta\":1},\"tool\":\"search_records\",\"v\":1}",
+      "request_hash": "sha256:30f9d93c4f6a5c60ace91b316e8ab5c94be0240aa2409745a5a0a936d0ae3064"
+    },
+    {
+      "name": "nested",
+      "input": {
+        "v": 1,
+        "tool": "search_records",
+        "arguments": {
+          "filter": {
+            "tags": [
+              "a"
+            ],
+            "date": {
+              "from": 1,
+              "to": 2
+            }
+          },
+          "limit": 5
+        }
+      },
+      "canonical": "{\"arguments\":{\"filter\":{\"date\":{\"from\":1,\"to\":2},\"tags\":[\"a\"]},\"limit\":5},\"tool\":\"search_records\",\"v\":1}",
+      "request_hash": "sha256:3cd1e39819bc14a03fda3066c5d2854112d1d9b2bdc2659c3e493e8ba787cccf"
+    },
+    {
+      "name": "array_order",
+      "input": {
+        "v": 1,
+        "tool": "search_records",
+        "arguments": {
+          "ids": [
+            3,
+            1,
+            2
+          ],
+          "ids2": [
+            "c",
+            "a",
+            "b"
+          ]
+        }
+      },
+      "canonical": "{\"arguments\":{\"ids\":[3,1,2],\"ids2\":[\"c\",\"a\",\"b\"]},\"tool\":\"search_records\",\"v\":1}",
+      "request_hash": "sha256:63aa870cb10a7bc6371285aff01075936e0b60d7fa861ca48071e10e86a8de45"
+    },
+    {
+      "name": "unicode_no_normalization",
+      "input": {
+        "v": 1,
+        "tool": "search_records",
+        "arguments": {
+          "nfc": "é",
+          "nfd": "é",
+          "emoji": "☕️",
+          "cjk": "云南保山"
+        }
+      },
+      "canonical": "{\"arguments\":{\"cjk\":\"云南保山\",\"emoji\":\"☕️\",\"nfc\":\"é\",\"nfd\":\"é\"},\"tool\":\"search_records\",\"v\":1}",
+      "request_hash": "sha256:293839d442e5cabe7cf913bd652870b8fe14cfd6670072b076dddee199f9c224"
+    },
+    {
+      "name": "empty_arguments",
+      "input": {
+        "v": 1,
+        "tool": "search_records",
+        "arguments": {}
+      },
+      "canonical": "{\"arguments\":{},\"tool\":\"search_records\",\"v\":1}",
+      "request_hash": "sha256:35bdcb614823a191444c18f5438a5d6c199026bc964e9aced6f8dd4d59806504"
+    },
+    {
+      "name": "null_value",
+      "input": {
+        "v": 1,
+        "tool": "search_records",
+        "arguments": {
+          "a": null,
+          "b": 0,
+          "c": false,
+          "d": ""
+        }
+      },
+      "canonical": "{\"arguments\":{\"a\":null,\"b\":0,\"c\":false,\"d\":\"\"},\"tool\":\"search_records\",\"v\":1}",
+      "request_hash": "sha256:ff8cad9a8dc2cb7b289438c91636bb647e324ede38a749f2f97169e478c13770"
+    },
+    {
+      "name": "numbers",
+      "input": {
+        "v": 1,
+        "tool": "search_records",
+        "arguments": {
+          "i": 42,
+          "neg": -7,
+          "float": 1.5,
+          "exp": 1e+21,
+          "zero": 0
+        }
+      },
+      "canonical": "{\"arguments\":{\"exp\":1e+21,\"float\":1.5,\"i\":42,\"neg\":-7,\"zero\":0},\"tool\":\"search_records\",\"v\":1}",
+      "request_hash": "sha256:dfd433a48194ad735690202254d5bebde0ae50437f604e3eb827f0dfdcee75c2"
+    }
+  ]
+}

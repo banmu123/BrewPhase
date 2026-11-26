@@ -1,4 +1,14 @@
-import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
+import { sql } from 'drizzle-orm'
+import {
+  index,
+  integer,
+  primaryKey,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+  type AnySQLiteColumn
+} from 'drizzle-orm/sqlite-core'
 
 /**
  * 本地 SQLite 的 Drizzle 定义。**只镜像 iOS 的语义，不复制它的物理格式**：
@@ -759,4 +769,408 @@ export const actionDrafts = sqliteTable(
     updatedAt: integer('updated_at').notNull()
   },
   (table) => [index('action_drafts_reply_idx').on(table.replyId)]
+)
+
+// MARK: - Agent Journey（migration 014）
+//
+// 一次 Agent 任务的执行历程。**Desktop 本地数据**：不进 change_log、不进 iOS
+// 同步（与 Work Context / Personal Direction 同一惯例）。
+//
+// 四条与既有表不同的设计：
+// 1. `source_client_id` **不设外键**——撤销/删除 MCP Client 绝不能连带删除
+//    用户的历史资产（与 `mcp_operation_log.client_id` 同一取舍）。
+// 2. `work_context_id` 用 `ON DELETE SET NULL`——删项目保留个人历史。
+// 3. 事件顺序的唯一真相是 `sequence`；`occurred_at` 只是 Agent 声称的时间。
+// 4. `workspace_id` 同样 `ON DELETE SET NULL`（R6-4.3.1）——删授权不删历史。
+
+/**
+ * 一次具体的 Agent 任务历程。一个 Work Context 可以关联多次 Journey，
+ * Journey 也可以独立存在（`work_context_id` 可空）。
+ *
+ * `workspace_id`（R6-4.3.1）：一个 Journey 同一时刻至多关联一个**已登记**
+ * 的 Local Workspace，用于后续在授权范围内观察工作区变化。MCP 侧只收
+ * UUID、绝不收路径；删工作区登记时列自动置空，Journey 与它的历史证据保留。
+ */
+export const agentJourneys = sqliteTable(
+  'agent_journeys',
+  {
+    id: text('id').primaryKey(),
+    title: text('title').notNull(),
+    goal: text('goal').notNull().default(''),
+    /** created / running / paused / failed / completed / cancelled / abandoned */
+    status: text('status').notNull().default('created'),
+    /** `mcp_clients.id`，**无外键**：撤销客户端不删除个人历史。 */
+    sourceClientId: text('source_client_id').notNull(),
+    /** Agent 自报元数据，不参与任何身份判定。 */
+    sourceAgent: text('source_agent').notNull().default(''),
+    model: text('model').notNull().default(''),
+    workContextId: text('work_context_id').references(() => workContexts.id, {
+      onDelete: 'set null'
+    }),
+    /** `local_workspaces.id`，`ON DELETE SET NULL`——删授权不删个人历史（R6-4.3.1）。 */
+    workspaceId: text('workspace_id').references(() => localWorkspaces.id, {
+      onDelete: 'set null'
+    }),
+    createdAt: integer('created_at').notNull(),
+    /** 首次进入 running 时写入；此前为 null。 */
+    startedAt: integer('started_at'),
+    updatedAt: integer('updated_at').notNull(),
+    /** 只有显式完成时写入；completed_at 为 null 即未完成。 */
+    completedAt: integer('completed_at'),
+    /** workflow_summary（默认）/ conversation_capture / detailed_capture */
+    captureMode: text('capture_mode').notNull().default('workflow_summary'),
+    schemaVersion: integer('schema_version').notNull().default(1)
+  },
+  (table) => [
+    index('agent_journeys_status_idx').on(table.status, table.updatedAt),
+    index('agent_journeys_work_context_idx').on(table.workContextId),
+    index('agent_journeys_workspace_idx').on(table.workspaceId),
+    index('agent_journeys_source_client_idx').on(table.sourceClientId)
+  ]
+)
+
+/**
+ * 一次重要的过程记录。事实字段创建后不可覆盖（更新接口只接受 `status`）。
+ *
+ * `UNIQUE(journey_id, sequence)` 是顺序兜底；`UNIQUE(journey_id,
+ * source_client_id, idempotency_key)` 是事件级重复提交兜底——两者都不承担
+ * MCP 请求级重放职责（那是 `mcp_idempotency` 的事）。
+ */
+export const agentJourneyEvents = sqliteTable(
+  'agent_journey_events',
+  {
+    id: text('id').primaryKey(),
+    journeyId: text('journey_id')
+      .notNull()
+      .references(() => agentJourneys.id, { onDelete: 'cascade' }),
+    sequence: integer('sequence').notNull(),
+    eventType: text('event_type').notNull(),
+    role: text('role').notNull().default('agent'),
+    status: text('status').notNull().default('completed'),
+    /** v1 只接受 agent_reported。 */
+    evidenceLevel: text('evidence_level').notNull().default('agent_reported'),
+    title: text('title').notNull(),
+    summary: text('summary').notNull().default(''),
+    content: text('content').notNull().default(''),
+    reason: text('reason').notNull().default(''),
+    sourceClientId: text('source_client_id').notNull(),
+    sourceAgent: text('source_agent').notNull().default(''),
+    model: text('model').notNull().default(''),
+    attemptId: text('attempt_id'),
+    /** 结构性父子归属；关联事件被删时置空（内容优先，链接可断）。 */
+    parentEventId: text('parent_event_id').references(
+      (): AnySQLiteColumn => agentJourneyEvents.id,
+      { onDelete: 'set null' }
+    ),
+    idempotencyKey: text('idempotency_key').notNull(),
+    occurredAt: integer('occurred_at').notNull(),
+    receivedAt: integer('received_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    /** 可选扩展，Zod `.strict()` + schema_version；不参与查询。 */
+    metadata: text('metadata')
+  },
+  (table) => [
+    uniqueIndex('agent_journey_events_seq_uidx').on(table.journeyId, table.sequence),
+    uniqueIndex('agent_journey_events_idem_uidx').on(
+      table.journeyId,
+      table.sourceClientId,
+      table.idempotencyKey
+    ),
+    index('agent_journey_events_type_idx').on(table.journeyId, table.eventType),
+    index('agent_journey_events_attempt_idx').on(table.journeyId, table.attemptId)
+  ]
+)
+
+/**
+ * 事件间的**业务关系**（与 `parent_event_id` 的结构性归属不同，不互相镜像）。
+ * 两端都属于同一 Journey 由 Service 校验，`journey_id` 参与唯一索引兜底。
+ */
+export const agentJourneyEdges = sqliteTable(
+  'agent_journey_edges',
+  {
+    id: text('id').primaryKey(),
+    journeyId: text('journey_id')
+      .notNull()
+      .references(() => agentJourneys.id, { onDelete: 'cascade' }),
+    fromEventId: text('from_event_id')
+      .notNull()
+      .references(() => agentJourneyEvents.id, { onDelete: 'cascade' }),
+    toEventId: text('to_event_id')
+      .notNull()
+      .references(() => agentJourneyEvents.id, { onDelete: 'cascade' }),
+    /** depends_on / branch_from / revises / retries */
+    relationshipType: text('relationship_type').notNull(),
+    createdAt: integer('created_at').notNull()
+  },
+  (table) => [
+    uniqueIndex('agent_journey_edges_uidx').on(
+      table.journeyId,
+      table.fromEventId,
+      table.toEventId,
+      table.relationshipType
+    ),
+    index('agent_journey_edges_from_idx').on(table.fromEventId),
+    index('agent_journey_edges_to_idx').on(table.toEventId)
+  ]
+)
+
+/**
+ * 节点摆位（**纯展示层**）：拖动只写这张表，永不改变 `sequence` 与业务 Edge。
+ * 只存用户手动覆盖项，算法默认值不落库。
+ */
+export const agentJourneyLayouts = sqliteTable(
+  'agent_journey_layouts',
+  {
+    id: text('id').primaryKey(),
+    journeyId: text('journey_id')
+      .notNull()
+      .references(() => agentJourneys.id, { onDelete: 'cascade' }),
+    eventId: text('event_id')
+      .notNull()
+      .references(() => agentJourneyEvents.id, { onDelete: 'cascade' }),
+    positionX: real('position_x').notNull().default(0),
+    positionY: real('position_y').notNull().default(0),
+    width: real('width').notNull().default(240),
+    height: real('height').notNull().default(140),
+    zIndex: integer('z_index').notNull().default(0),
+    collapsed: integer('collapsed', { mode: 'boolean' }).notNull().default(false),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (table) => [uniqueIndex('agent_journey_layouts_uidx').on(table.journeyId, table.eventId)]
+)
+
+/**
+ * Journey 在**某块画布**上的摆位（R6-4.1，migration 015）。
+ *
+ * 与 `agent_journey_layouts`（迁移 14）的区别：这张表带 `canvas_id`，
+ * 同一条 Journey 放进两块画布时各自保存位置——不能共用全局绝对坐标。
+ *
+ * 一张表两种行：
+ * - `eventId === null` → Journey Group 分组行（整组位置/尺寸/折叠）
+ * - `eventId !== null` → 组内事件节点行
+ * 两个部分唯一索引分别约束分组与事件，避免 SQLite 里 NULL 不参与唯一性。
+ *
+ * 纯展示层：拖动只写这张表，**永不**改 `sequence`、`agent_journey_edges`
+ * 或 `journey_record_links`。不进 change_log / iOS 同步。
+ */
+export const canvasJourneyPlacements = sqliteTable(
+  'canvas_journey_placements',
+  {
+    id: text('id').primaryKey(),
+    canvasId: text('canvas_id')
+      .notNull()
+      .references(() => canvases.id, { onDelete: 'cascade' }),
+    journeyId: text('journey_id')
+      .notNull()
+      .references(() => agentJourneys.id, { onDelete: 'cascade' }),
+    /** null = 分组行；非空 = 组内事件节点行。 */
+    eventId: text('event_id').references((): AnySQLiteColumn => agentJourneyEvents.id, {
+      onDelete: 'cascade'
+    }),
+    positionX: real('position_x').notNull().default(0),
+    positionY: real('position_y').notNull().default(0),
+    width: real('width').notNull().default(240),
+    height: real('height').notNull().default(140),
+    zIndex: integer('z_index').notNull().default(0),
+    collapsed: integer('collapsed', { mode: 'boolean' }).notNull().default(false),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (table) => [
+    uniqueIndex('canvas_journey_group_uidx')
+      .on(table.canvasId, table.journeyId)
+      .where(sql`${table.eventId} is null`),
+    uniqueIndex('canvas_journey_event_uidx')
+      .on(table.canvasId, table.eventId)
+      .where(sql`${table.eventId} is not null`),
+    index('canvas_journey_placements_canvas_idx').on(table.canvasId),
+    index('canvas_journey_placements_journey_idx').on(table.journeyId)
+  ]
+)
+
+/**
+ * Journey Event ↔ 普通 Record 的**跨记录关系**（R6-4.1，migration 015）。
+ *
+ * 归属 **Agent Journey 领域**而非 Canvas 展示层：两端与画布无关，画布只是
+ * 发现入口；未来 MCP 复用要在读 Journey 时一并读到；删画布不得销毁知识关系。
+ *
+ * `relationship_type` ∈ references / supports / produces / validates / related_to。
+ * 外键全 CASCADE：删事件、删记录、删 Journey 都连带删关系，但**删关系本身
+ * 绝不删**事件或记录。
+ */
+export const journeyRecordLinks = sqliteTable(
+  'journey_record_links',
+  {
+    id: text('id').primaryKey(),
+    journeyId: text('journey_id')
+      .notNull()
+      .references(() => agentJourneys.id, { onDelete: 'cascade' }),
+    eventId: text('event_id')
+      .notNull()
+      .references(() => agentJourneyEvents.id, { onDelete: 'cascade' }),
+    recordId: text('record_id')
+      .notNull()
+      .references(() => records.id, { onDelete: 'cascade' }),
+    relationshipType: text('relationship_type').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (table) => [
+    uniqueIndex('journey_record_links_uidx').on(
+      table.eventId,
+      table.recordId,
+      table.relationshipType
+    ),
+    index('journey_record_links_journey_idx').on(table.journeyId),
+    index('journey_record_links_record_idx').on(table.recordId)
+  ]
+)
+
+/**
+ * 用户在 Journey 上沉淀的**个人笔记**（R6-4.1，migration 015）。
+ *
+ * `eventId === null` → Journey 级笔记；非空 → Event 级笔记。
+ * **不复用 `canvas_notes`**：那张表 `canvas_id NOT NULL` 且带位置/颜色，
+ * 生命周期绑画布，删画布会连带销毁用户经验。这里只存内容，与画布解耦，
+ * local-first，不进 change_log / iOS 同步。
+ *
+ * 与 Agent 原始事件**完全分离**：改笔记绝不写 `agent_journey_events`。
+ */
+export const agentJourneyNotes = sqliteTable(
+  'agent_journey_notes',
+  {
+    id: text('id').primaryKey(),
+    journeyId: text('journey_id')
+      .notNull()
+      .references(() => agentJourneys.id, { onDelete: 'cascade' }),
+    eventId: text('event_id').references((): AnySQLiteColumn => agentJourneyEvents.id, {
+      onDelete: 'cascade'
+    }),
+    body: text('body').notNull().default(''),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (table) => [
+    index('agent_journey_notes_journey_idx').on(table.journeyId),
+    index('agent_journey_notes_event_idx').on(table.eventId)
+  ]
+)
+
+/**
+ * R6-4.3.3：Journey 工作区观察快照（P3 证据持久化，local-first）。
+ *
+ * 一次采集 = 一行：`snapshot_type` 标记触发时机（baseline / execution_start /
+ * execution_end / journey_final），`capture_status`（自身采到没有）与
+ * `comparison_status`（有没有可用基线并完成比较）**分开表达**——
+ * 「没有变化且比较完整」与「根本没有可比基线」绝不混成空数组或 0。
+ *
+ * 幂等靠 **非空 `trigger_key`**：SQLite 的 UNIQUE 对 NULL 不生效，而
+ * baseline / journey_final 的 `execution_event_id` 都是 NULL，
+ * `UNIQUE(journey_id, trigger_key)` 才是真正的防重键。
+ *
+ * 外键语义与 Journey 一致：删 Journey → 证据级联删除；删 Workspace /
+ * 删 Execution Event → 只解除引用（SET NULL），历史保留。
+ * **绝不存机器绝对路径**（`repository_identity` 是哈希，根目录不可得时为 NULL）。
+ * 不进 change_log / iOS 同步 / Cloud / Remote。
+ */
+export const journeyWorkspaceSnapshots = sqliteTable(
+  'journey_workspace_snapshots',
+  {
+    id: text('id').primaryKey(),
+    journeyId: text('journey_id')
+      .notNull()
+      .references(() => agentJourneys.id, { onDelete: 'cascade' }),
+    workspaceId: text('workspace_id').references(() => localWorkspaces.id, {
+      onDelete: 'set null'
+    }),
+    executionEventId: text('execution_event_id').references((): AnySQLiteColumn => agentJourneyEvents.id, {
+      onDelete: 'set null'
+    }),
+    /** baseline / execution_start / execution_end / journey_final */
+    snapshotType: text('snapshot_type').notNull(),
+    /** 幂等键：`baseline:<version>` / `start:<eventId>` / `end:<eventId>` / `final:<version>`。 */
+    triggerKey: text('trigger_key').notNull(),
+    /**
+     * 采集自身状态：pending（已预留、尚未完成）/ ok / not_a_repository /
+     * error / failed（服务层失败）。中断遗留的 pending 由下次启动的
+     * `recoverInterruptedCaptures()` 标 failed + `capture_interrupted`。
+     */
+    captureStatus: text('capture_status').notNull(),
+    /** 比较状态：not_applicable / complete / partial / baseline_unavailable / comparison_failed。 */
+    comparisonStatus: text('comparison_status').notNull(),
+    errorCode: text('error_code'),
+    capturedAt: integer('captured_at').notNull(),
+    /** sha256(realpath) 前 32 位；根目录不可得时 NULL。 */
+    repositoryIdentity: text('repository_identity'),
+    /** `basename#短哈希`；根目录不可得时 NULL。绝不存绝对路径。 */
+    repositoryRootIdentifier: text('repository_root_identifier'),
+    branch: text('branch'),
+    headSha: text('head_sha'),
+    treeSha: text('tree_sha'),
+    indexStateHash: text('index_state_hash'),
+    worktreeStateHash: text('worktree_state_hash'),
+    isGit: integer('is_git').notNull().default(0),
+    isWorktree: integer('is_worktree').notNull().default(0),
+    isSubmodule: integer('is_submodule').notNull().default(0),
+    hasUnbornHead: integer('has_unborn_head').notNull().default(0),
+    trackedCount: integer('tracked_count').notNull().default(0),
+    stagedCount: integer('staged_count').notNull().default(0),
+    unstagedCount: integer('unstaged_count').notNull().default(0),
+    untrackedCount: integer('untracked_count').notNull().default(0),
+    ignoredCount: integer('ignored_count').notNull().default(0),
+    /** 已确认的净变化文件数（不可判定的不混进来）。 */
+    changedFilesCount: integer('changed_files_count').notNull().default(0),
+    insertions: integer('insertions').notNull().default(0),
+    deletions: integer('deletions').notNull().default(0)
+  },
+  (table) => [
+    // 真正的防重键（NULL 参与的 UNIQUE 在 SQLite 里会放行重复行）
+    uniqueIndex('uq_journey_ws_snapshot_trigger').on(table.journeyId, table.triggerKey),
+    index('journey_ws_snapshots_journey_idx').on(table.journeyId, table.capturedAt)
+  ]
+)
+
+/**
+ * 快照比较得到的文件级变化摘要（P3 落元数据与统计，P4 落 Diff Artifact，
+ * R6-4.3.4.2 补观察确定性）。
+ *
+ * `insertions/deletions` 可为 NULL——**不可计算时绝不写 0 冒充「没有变化」**；
+ * `artifact_ref` 存版本化的 Artifact（正文/省略原因，按需经
+ * `agent-journey:evidence:artifact` 读取）；`attribution` /
+ * `attribution_confidence` 恒为 NULL——三类对照是读取时的纯函数计算，
+ * 不落库制造第二份事实。
+ *
+ * `observation_status`（Migration 18）：引擎 `observation` 的持久化——
+ * 与 artifact 可用性**正交**的第二轴（「正文不可展示」≠「净变化不可判断」）。
+ * NULL = 历史旧数据没有该记录（绝不回填伪造）。
+ */
+export const journeySnapshotFiles = sqliteTable(
+  'journey_snapshot_files',
+  {
+    id: text('id').primaryKey(),
+    snapshotId: text('snapshot_id')
+      .notNull()
+      .references(() => journeyWorkspaceSnapshots.id, { onDelete: 'cascade' }),
+    repoRelativePath: text('repo_relative_path').notNull(),
+    changeKind: text('change_kind').notNull(),
+    statusOrigin: text('status_origin').notNull(),
+    contentHashBefore: text('content_hash_before'),
+    contentHashAfter: text('content_hash_after'),
+    preExistingDirty: integer('pre_existing_dirty').notNull().default(0),
+    headMoved: integer('head_moved').notNull().default(0),
+    renameFromPath: text('rename_from_path'),
+    insertions: integer('insertions'),
+    deletions: integer('deletions'),
+    /** P4 展开的行范围 JSON；当前 NULL。 */
+    lineRanges: text('line_ranges'),
+    /** P4：版本化 Artifact（`v1:<kind>:<json>`）；正文按需读取。 */
+    artifactRef: text('artifact_ref'),
+    /**
+     * 观察确定性（R6-4.3.4.2）：`changed` / `unavailable` / NULL（历史行）。
+     * 直接存引擎 `GitFileDiff.observation`，**不从 artifact 类型反推**。
+     */
+    observationStatus: text('observation_status'),
+    attribution: text('attribution'),
+    attributionConfidence: text('attribution_confidence')
+  },
+  (table) => [uniqueIndex('uq_journey_snapshot_file').on(table.snapshotId, table.repoRelativePath)]
 )

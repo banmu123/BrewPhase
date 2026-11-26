@@ -590,6 +590,269 @@ create table action_drafts (
 create index action_drafts_reply_idx on action_drafts (reply_id);
 `
 
+// MARK: - Agent Journey（migration 014）
+//
+// 一次 Agent 任务的执行历程。Desktop 本地数据：**不进 change_log、不进 iOS
+// 同步**（与 Work Context 同一惯例），因此本版不写任何 recordChange / 同步表。
+//
+// 外键取舍（与 Drizzle 定义必须一致）：
+// - `source_client_id` **不设外键**：撤销 MCP Client 不得删除个人历史资产；
+// - `work_context_id` ON DELETE SET NULL：删项目保留 Journey；
+// - `parent_event_id` ON DELETE SET NULL：链接可断、内容不丢；
+// - events / edges / layouts 随 Journey 级联删除；edge 两端事件删除时级联删边。
+const AGENT_JOURNEY_SQL = `
+CREATE TABLE IF NOT EXISTS agent_journeys (
+  id TEXT PRIMARY KEY NOT NULL,
+  title TEXT NOT NULL,
+  goal TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'created',
+  source_client_id TEXT NOT NULL,
+  source_agent TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  work_context_id TEXT REFERENCES work_contexts(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL,
+  started_at INTEGER,
+  updated_at INTEGER NOT NULL,
+  completed_at INTEGER,
+  capture_mode TEXT NOT NULL DEFAULT 'workflow_summary',
+  schema_version INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS agent_journeys_status_idx ON agent_journeys (status, updated_at);
+CREATE INDEX IF NOT EXISTS agent_journeys_work_context_idx ON agent_journeys (work_context_id);
+CREATE INDEX IF NOT EXISTS agent_journeys_source_client_idx ON agent_journeys (source_client_id);
+
+CREATE TABLE IF NOT EXISTS agent_journey_events (
+  id TEXT PRIMARY KEY NOT NULL,
+  journey_id TEXT NOT NULL REFERENCES agent_journeys(id) ON DELETE CASCADE,
+  sequence INTEGER NOT NULL,
+  event_type TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'agent',
+  status TEXT NOT NULL DEFAULT 'completed',
+  evidence_level TEXT NOT NULL DEFAULT 'agent_reported',
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL DEFAULT '',
+  source_client_id TEXT NOT NULL,
+  source_agent TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  attempt_id TEXT,
+  parent_event_id TEXT REFERENCES agent_journey_events(id) ON DELETE SET NULL,
+  idempotency_key TEXT NOT NULL,
+  occurred_at INTEGER NOT NULL,
+  received_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  metadata TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS agent_journey_events_seq_uidx ON agent_journey_events (journey_id, sequence);
+CREATE UNIQUE INDEX IF NOT EXISTS agent_journey_events_idem_uidx ON agent_journey_events (journey_id, source_client_id, idempotency_key);
+CREATE INDEX IF NOT EXISTS agent_journey_events_type_idx ON agent_journey_events (journey_id, event_type);
+CREATE INDEX IF NOT EXISTS agent_journey_events_attempt_idx ON agent_journey_events (journey_id, attempt_id);
+
+CREATE TABLE IF NOT EXISTS agent_journey_edges (
+  id TEXT PRIMARY KEY NOT NULL,
+  journey_id TEXT NOT NULL REFERENCES agent_journeys(id) ON DELETE CASCADE,
+  from_event_id TEXT NOT NULL REFERENCES agent_journey_events(id) ON DELETE CASCADE,
+  to_event_id TEXT NOT NULL REFERENCES agent_journey_events(id) ON DELETE CASCADE,
+  relationship_type TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS agent_journey_edges_uidx ON agent_journey_edges (journey_id, from_event_id, to_event_id, relationship_type);
+CREATE INDEX IF NOT EXISTS agent_journey_edges_from_idx ON agent_journey_edges (from_event_id);
+CREATE INDEX IF NOT EXISTS agent_journey_edges_to_idx ON agent_journey_edges (to_event_id);
+
+CREATE TABLE IF NOT EXISTS agent_journey_layouts (
+  id TEXT PRIMARY KEY NOT NULL,
+  journey_id TEXT NOT NULL REFERENCES agent_journeys(id) ON DELETE CASCADE,
+  event_id TEXT NOT NULL REFERENCES agent_journey_events(id) ON DELETE CASCADE,
+  position_x REAL NOT NULL DEFAULT 0,
+  position_y REAL NOT NULL DEFAULT 0,
+  width REAL NOT NULL DEFAULT 240,
+  height REAL NOT NULL DEFAULT 140,
+  z_index INTEGER NOT NULL DEFAULT 0,
+  collapsed INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS agent_journey_layouts_uidx ON agent_journey_layouts (journey_id, event_id);
+`
+
+// MARK: - Agent Journey × Canvas 融合（migration 015）
+//
+// R6-4.1：把 Journey 放进现有 Canvas，同时保持 Journey 领域独立。
+//
+// 为什么不能复用 `agent_journey_layouts`（迁移 14）：
+//   它的唯一键是 `(journey_id, event_id)`，**没有 canvas_id**——
+//   同一条 Journey 放进两块画布时无法各自保存摆位，会退化成
+//   「多个 Canvas 共用一份全局绝对坐标」（§7.2 明确禁止）。
+//   迁移 14 的表保持原样，定位改为「画布无关的默认摆位」（当前无写入者，
+//   预留给时间线/详情页等非画布视图）；Canvas 用下面这张按画布独立的表。
+//
+// 一张表两种行（`event_id` 可空）：
+//   - `event_id IS NULL`  → Journey Group 分组行（整组位置/尺寸/折叠）
+//   - `event_id NOT NULL` → 组内事件节点行（节点摆位）
+//   两个**部分唯一索引**分别约束，避免 NULL 不参与唯一性的坑。
+//
+// 跨记录关系与用户笔记**不放这里**：它们与画布无关（换块画布关系仍在），
+// 归 Agent Journey 领域，见 `journey_record_links` / `agent_journey_notes`。
+//
+// 本地优先：本版**不写任何 recordChange / 同步表**——不进 change_log、
+// 不进 iOS 快照、不进 Cloud。
+const CANVAS_JOURNEY_SQL = `
+CREATE TABLE IF NOT EXISTS canvas_journey_placements (
+  id TEXT PRIMARY KEY NOT NULL,
+  canvas_id TEXT NOT NULL REFERENCES canvases(id) ON DELETE CASCADE,
+  journey_id TEXT NOT NULL REFERENCES agent_journeys(id) ON DELETE CASCADE,
+  event_id TEXT REFERENCES agent_journey_events(id) ON DELETE CASCADE,
+  position_x REAL NOT NULL DEFAULT 0,
+  position_y REAL NOT NULL DEFAULT 0,
+  width REAL NOT NULL DEFAULT 240,
+  height REAL NOT NULL DEFAULT 140,
+  z_index INTEGER NOT NULL DEFAULT 0,
+  collapsed INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS canvas_journey_group_uidx
+  ON canvas_journey_placements (canvas_id, journey_id) WHERE event_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS canvas_journey_event_uidx
+  ON canvas_journey_placements (canvas_id, event_id) WHERE event_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS canvas_journey_placements_canvas_idx
+  ON canvas_journey_placements (canvas_id);
+CREATE INDEX IF NOT EXISTS canvas_journey_placements_journey_idx
+  ON canvas_journey_placements (journey_id);
+
+-- 跨记录关系：Journey Event ↔ 普通 Record。归属 Agent Journey 领域
+-- （不是 Canvas 展示层）：两端与画布无关，画布只是发现入口；未来 MCP 复用
+-- 要在读 Journey 时一并读到，且删画布不得销毁知识关系。
+-- relationship_type: references / supports / produces / validates / related_to
+CREATE TABLE IF NOT EXISTS journey_record_links (
+  id TEXT PRIMARY KEY NOT NULL,
+  journey_id TEXT NOT NULL REFERENCES agent_journeys(id) ON DELETE CASCADE,
+  event_id TEXT NOT NULL REFERENCES agent_journey_events(id) ON DELETE CASCADE,
+  record_id TEXT NOT NULL REFERENCES records(id) ON DELETE CASCADE,
+  relationship_type TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS journey_record_links_uidx
+  ON journey_record_links (event_id, record_id, relationship_type);
+CREATE INDEX IF NOT EXISTS journey_record_links_journey_idx
+  ON journey_record_links (journey_id);
+CREATE INDEX IF NOT EXISTS journey_record_links_record_idx
+  ON journey_record_links (record_id);
+
+-- 用户笔记：Journey 级（event_id 为 NULL）与 Event 级（event_id 非空）。
+-- 不复用 canvas_notes：那张表 canvas_id NOT NULL 且带位置/颜色，生命周期绑画布，
+-- 删画布会连带销毁用户经验。这里只存内容，与画布解耦。
+CREATE TABLE IF NOT EXISTS agent_journey_notes (
+  id TEXT PRIMARY KEY NOT NULL,
+  journey_id TEXT NOT NULL REFERENCES agent_journeys(id) ON DELETE CASCADE,
+  event_id TEXT REFERENCES agent_journey_events(id) ON DELETE CASCADE,
+  body TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS agent_journey_notes_journey_idx
+  ON agent_journey_notes (journey_id);
+CREATE INDEX IF NOT EXISTS agent_journey_notes_event_idx
+  ON agent_journey_notes (event_id);
+`
+
+/**
+ * R6-4.3.1：Journey ↔ Local Workspace 绑定。
+ *
+ * - 只追加列，不动 Migration 1–15；旧 Journey 升级后 `workspace_id` 恒为 NULL
+ *   （`ADD COLUMN` 无 DEFAULT 即 NULL，无需回填）。
+ * - `ON DELETE SET NULL` 与 `work_context_id` 同一语义：删掉的是「这台机器
+ *   授权过哪个文件夹」，个人历史与后续证据都不能连带销毁。
+ * - SQLite 要求带 REFERENCES 的新增列默认值必须为 NULL——正好是我们要的。
+ */
+const JOURNEY_WORKSPACE_SQL = `
+ALTER TABLE agent_journeys ADD COLUMN workspace_id TEXT REFERENCES local_workspaces(id) ON DELETE SET NULL;
+CREATE INDEX agent_journeys_workspace_idx ON agent_journeys (workspace_id);
+`
+
+/**
+ * R6-4.3.3：Journey 工作区观察证据（P3）。只追加，不改 1–16。
+ *
+ * - `trigger_key` 非空 + `UNIQUE(journey_id, trigger_key)` 是真正的防重键：
+ *   SQLite 的 UNIQUE 对 NULL 不生效，而 baseline/journey_final 的
+ *   `execution_event_id` 都是 NULL，只靠三列联合键会放行重复快照。
+ * - `capture_status`（自身采到没有）与 `comparison_status`（有没有可用基线
+ *   并完成比较）分列——「无变化且比较完整」≠「没有可比基线」。
+ * - 外键：删 Journey 级联删证据；删 Workspace / Execution Event 只 SET NULL。
+ * - `artifact_ref` / `attribution*` 本阶段恒 NULL（P4 填），不伪造内容。
+ */
+const JOURNEY_EVIDENCE_SQL = `
+create table journey_workspace_snapshots (
+  id text primary key not null,
+  journey_id text not null references agent_journeys(id) on delete cascade,
+  workspace_id text references local_workspaces(id) on delete set null,
+  execution_event_id text references agent_journey_events(id) on delete set null,
+  snapshot_type text not null,
+  trigger_key text not null,
+  capture_status text not null,
+  comparison_status text not null,
+  error_code text,
+  captured_at integer not null,
+  repository_identity text,
+  repository_root_identifier text,
+  branch text,
+  head_sha text,
+  tree_sha text,
+  index_state_hash text,
+  worktree_state_hash text,
+  is_git integer not null default 0,
+  is_worktree integer not null default 0,
+  is_submodule integer not null default 0,
+  has_unborn_head integer not null default 0,
+  tracked_count integer not null default 0,
+  staged_count integer not null default 0,
+  unstaged_count integer not null default 0,
+  untracked_count integer not null default 0,
+  ignored_count integer not null default 0,
+  changed_files_count integer not null default 0,
+  insertions integer not null default 0,
+  deletions integer not null default 0
+);
+create unique index uq_journey_ws_snapshot_trigger
+  on journey_workspace_snapshots (journey_id, trigger_key);
+create index journey_ws_snapshots_journey_idx
+  on journey_workspace_snapshots (journey_id, captured_at);
+
+create table journey_snapshot_files (
+  id text primary key not null,
+  snapshot_id text not null references journey_workspace_snapshots(id) on delete cascade,
+  repo_relative_path text not null,
+  change_kind text not null,
+  status_origin text not null,
+  content_hash_before text,
+  content_hash_after text,
+  pre_existing_dirty integer not null default 0,
+  head_moved integer not null default 0,
+  rename_from_path text,
+  insertions integer,
+  deletions integer,
+  line_ranges text,
+  artifact_ref text,
+  attribution text,
+  attribution_confidence text
+);
+create unique index uq_journey_snapshot_file
+  on journey_snapshot_files (snapshot_id, repo_relative_path);
+`
+
+/**
+ * Migration 18（R6-4.3.4.2）：把**观察确定性**与 artifact 可用性分开存。
+ *
+ * `observation_status` 来自引擎 `GitFileDiff.observation` 的真实输出：
+ * `changed` = 净变化已确定 / `unavailable` = 不可判定。
+ * 可空、无默认值 → 历史行升级后一律 NULL（**不伪造旧数据的观察状态**），
+ * 由对照层的保守兼容纯函数兜底。
+ */
+const JOURNEY_FILE_OBSERVATION_SQL = `
+alter table journey_snapshot_files add column observation_status text;
+`
+
 export const migrations: Migration[] = [
   { version: 1, name: 'init', sql: INIT_SQL },
   { version: 2, name: 'sync-align-ios', sql: SYNC_ALIGN_SQL },
@@ -603,7 +866,12 @@ export const migrations: Migration[] = [
   { version: 10, name: 'ai-conversations', sql: AI_CONVERSATIONS_SQL },
   { version: 11, name: 'roundtable-panels', sql: ROUNDTABLE_PANELS_SQL },
   { version: 12, name: 'local-workspaces', sql: LOCAL_WORKSPACES_SQL },
-  { version: 13, name: 'reply-intelligence', sql: REPLY_INTELLIGENCE_SQL }
+  { version: 13, name: 'reply-intelligence', sql: REPLY_INTELLIGENCE_SQL },
+  { version: 14, name: 'agent-journeys', sql: AGENT_JOURNEY_SQL },
+  { version: 15, name: 'canvas-journey-fusion', sql: CANVAS_JOURNEY_SQL },
+  { version: 16, name: 'journey-workspace-binding', sql: JOURNEY_WORKSPACE_SQL },
+  { version: 17, name: 'journey-workspace-evidence', sql: JOURNEY_EVIDENCE_SQL },
+  { version: 18, name: 'journey-file-observation', sql: JOURNEY_FILE_OBSERVATION_SQL }
 ]
 
 /**

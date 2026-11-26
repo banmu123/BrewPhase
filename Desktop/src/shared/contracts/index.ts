@@ -19,6 +19,13 @@ import type {
 } from './roundtable-ai'
 import type { RoundtableLayoutSnapshot } from '../roundtable'
 import type {
+  RemoteCancelResult,
+  RemoteConfirmResult,
+  RemoteDiagnosis,
+  RemoteRegistrationTicket,
+  RemoteStatus
+} from './remote'
+import type {
   CurrentState,
   CurrentStateDraft,
   Direction,
@@ -31,6 +38,17 @@ import type {
   StageGoalPatch
 } from './personal-direction'
 import type { Canvas, CanvasNode, CanvasNodeWithRecord, CanvasNote, CanvasStroke } from './entities/canvas'
+import type {
+  CanvasJourney,
+  CanvasJourneyPlacement,
+  JourneyArtifact,
+  JourneyCard,
+  JourneyDetail,
+  JourneyEvidence,
+  JourneyLinkType,
+  JourneyNote,
+  JourneyRecordLink
+} from './entities/agent-journey'
 import type { ImportImageResult, RecordDraft, RecordItem, RecordQuery, RecordTag } from './entities/records'
 import type { SyncStatus, SyncConflictItem, WipeResult } from './sync'
 import type {
@@ -86,6 +104,7 @@ export * from './version'
 export * from './entities/coffee'
 export * from './entities/records'
 export * from './entities/canvas'
+export * from './entities/agent-journey'
 export * from './sync'
 export * from './mcp'
 export * from './browser'
@@ -114,7 +133,10 @@ export const APP_DOMAINS = [
   'workContexts',
   'personalDirection',
   'localWorkspaces',
-  'replyIntelligence'
+  'replyIntelligence',
+  // R6-4.1：补齐——main 侧 ApplicationEvents.AppDomain 早就有它（MCP 写入会广播），
+  // shared 这份漏了，Renderer 收到 'agentJourneys' 却过不了类型检查。
+  'agentJourneys'
 ] as const
 export type AppDomain = (typeof APP_DOMAINS)[number]
 
@@ -283,6 +305,55 @@ export interface RendererApi {
     strokes: (canvasId: string) => Promise<CanvasStroke[]>
     saveStroke: (stroke: CanvasStroke) => Promise<CanvasStroke>
     removeStroke: (id: string) => Promise<void>
+    /** 画布上已放置的 Journey（分组 + 组内事件摆位 + 内容）。 */
+    journeys: (canvasId: string) => Promise<CanvasJourney[]>
+    /** 把一条 Journey 放进画布；已存在则幂等地返回现状。 */
+    addJourney: (canvasId: string, journeyId: string) => Promise<CanvasJourney>
+    /** 挪动分组（组内事件同步平移）。 */
+    moveJourney: (canvasId: string, journeyId: string, positionX: number, positionY: number) => Promise<void>
+    /** 挪动单个事件节点；只写摆位，不碰 sequence 与业务 Edge。 */
+    moveJourneyEvent: (canvasId: string, eventId: string, positionX: number, positionY: number) => Promise<void>
+    collapseJourney: (canvasId: string, journeyId: string, collapsed: boolean) => Promise<void>
+    /** 从画布移除：只删摆位，Journey 与事件、笔记、关系全部保留。 */
+    removeJourney: (canvasId: string, journeyId: string) => Promise<void>
+  }
+  /**
+   * Agent Journey（R6-4.1）：Records 页的完整执行记录 + 用户笔记 + 跨记录关系。
+   * Local-only——不进 iOS 同步 / change_log / Cloud。
+   */
+  agentJourneys: {
+    list: (query?: { search?: string; limit?: number; offset?: number }) => Promise<{ journeys: JourneyCard[]; total: number }>
+    get: (journeyId: string) => Promise<JourneyDetail>
+    createNote: (journeyId: string, body: string, eventId?: string | null) => Promise<JourneyNote>
+    updateNote: (id: string, body: string) => Promise<JourneyNote>
+    removeNote: (id: string) => Promise<void>
+    createLink: (input: {
+      journeyId: string
+      eventId: string
+      recordId: string
+      relationshipType: JourneyLinkType
+    }) => Promise<JourneyRecordLink>
+    removeLink: (id: string) => Promise<void>
+    /**
+     * R6-4.3.1：绑定 / 换绑 / 解绑 Journey 的工作区（null = 解绑）。
+     * 返回更新后的卡片；执行已开始或 Journey 终态时主进程拒绝。
+     */
+    bindWorkspace: (journeyId: string, workspaceId: string | null) => Promise<JourneyCard>
+    /**
+     * R6-4.3.3：只读证据查询——快照、文件级变化摘要、完整性与失败原因。
+     * Renderer 只有读取权限；写入全部发生在 Main 的触发点。
+     * P4 起**不含 Diff 正文**（只带 artifact 轻量元数据）。
+     */
+    evidence: (journeyId: string) => Promise<JourneyEvidence>
+    /**
+     * R6-4.3.4：按需取单文件 Diff Artifact——journeyId/snapshotId/fileId
+     * 三元组归属校验，只读本地 SQLite（不回工作区、不跑 git、无路径参数）。
+     */
+    evidenceArtifact: (
+      journeyId: string,
+      snapshotId: string,
+      fileId: string
+    ) => Promise<JourneyArtifact>
   }
   /**
    * AI 连接（MCP）。token 只在 createClient 的返回值里出现一次，
@@ -445,6 +516,29 @@ export interface RendererApi {
     createClient: (input: McpClientCreateInput) => Promise<McpClientCreated>
     revokeClient: (id: string) => Promise<McpClientInfo>
     bridgeStatus: () => Promise<McpBridgeStatus>
+  }
+  /**
+   * 远程访问（Remote MCP，Phase 1.1B）。
+   *
+   * 只有「状态 / 启停 / 配对 / 忘记 / 解绑 / 诊断」这些能力，**没有 `call`**：
+   * 远程调用只能由 Cloud 发起，本地不开手动触发入口。返回类型里没有
+   * device_token、私钥、claim_secret，也没有请求参数与结果。
+   */
+  remote: {
+    status: () => Promise<RemoteStatus>
+    /** 开启前应由界面完成「授权范围确认」；主进程不接受 scope 入参。 */
+    enable: () => Promise<RemoteStatus>
+    disable: () => Promise<RemoteStatus>
+    /** 只返回待确认信息（含 `confirmCode`），不含 claim_secret。 */
+    register: () => Promise<RemoteRegistrationTicket>
+    /** 用户确认待确认设备；成功后主进程已完成凭据领取与落盘。 */
+    confirmRegistration: () => Promise<RemoteConfirmResult>
+    /** 取消本次配对：本地清理 + 尽力撤销云端 pending 设备。 */
+    cancelRegistration: () => Promise<RemoteCancelResult>
+    forget: () => Promise<RemoteStatus>
+    unbind: () => Promise<RemoteStatus>
+    diagnose: () => Promise<RemoteDiagnosis>
+    onChanged: (listener: (status: RemoteStatus) => void) => () => void
   }
   /**
    * 内置浏览器（Phase 1）。

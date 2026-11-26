@@ -40,7 +40,9 @@ export const IGNORED_DIRECTORY_NAMES = new Set([
   'vendor'
 ])
 
-/** 敏感文件：列表阶段就不显示，读取阶段也拒绝（双保险）。 */
+/** 敏感文件：列表阶段就不显示，读取阶段也拒绝（双保险）。
+ *  R6-4.3.2 §十：追加证书容器三类；Git Snapshot Engine 与上下文构建
+ *  共用这一份清单（唯一权威，不允许第二份漂移的名单）。 */
 export const SENSITIVE_FILE_PATTERNS: RegExp[] = [
   /^\.env(\..*)?$/i,
   /\.pem$/i,
@@ -48,7 +50,10 @@ export const SENSITIVE_FILE_PATTERNS: RegExp[] = [
   /^id_rsa(\..*)?$/i,
   /^id_ed25519(\..*)?$/i,
   /^credentials(\..*)?$/i,
-  /^secrets?(\..*)$/i
+  /^secrets?(\..*)$/i,
+  /\.p12$/i,
+  /\.pfx$/i,
+  /\.keystore$/i
 ]
 
 /** 文本扩展名白名单（进入上下文 / 读取的候选）。 */

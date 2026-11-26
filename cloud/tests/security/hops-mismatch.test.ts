@@ -160,12 +160,12 @@ describe("限流身份：HOPS 配置错误的三段后果 (F-1)", () => {
     hops1 = await createHarness({
       trustProxy: true,
       trustProxyHops: 1,
-      rateLimit: { windowMs: 60_000, maxAuthorize: 30, maxToken: 20, maxAuth: 1 },
+      rateLimit: { windowMs: 60_000, maxAuthorize: 30, maxToken: 20, maxMcp: 120, maxAuth: 1 },
     });
     hops2 = await createHarness({
       trustProxy: true,
       trustProxyHops: 2,
-      rateLimit: { windowMs: 60_000, maxAuthorize: 30, maxToken: 20, maxAuth: 1 },
+      rateLimit: { windowMs: 60_000, maxAuthorize: 30, maxToken: 20, maxMcp: 120, maxAuth: 1 },
     });
   });
 

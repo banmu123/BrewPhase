@@ -55,7 +55,7 @@ export const onboarding = {
       recordsOnly: 'Records only'
     },
     presetHints: {
-      fullAccess: 'Everything by default: read state, directions, stages, work context, records, coffee and canvas, and also organize records, arrange the canvas and write drafts. Confirming a direction stays yours alone, in the app.',
+      fullAccess: 'Everything by default: read state, directions, stages, work context, records, coffee and canvas, and also organize records, arrange the canvas, write drafts and record agent task journeys. Confirming a direction stays yours alone, in the app.',
       personalGrowthCollab: 'Can read, and can write drafts you confirm. Does not modify your existing records or canvas.',
       personalGrowth: 'Read your current state, directions, stages, work context and records. No write access at all.',
       recordsOnly: 'Read your records only.'
@@ -74,7 +74,9 @@ export const onboarding = {
       'work_context:update': 'Update work contexts',
       'work_context:link': 'Link records, canvas nodes and URLs to a work context',
       'direction:read': 'Read your confirmed current state, directions and stages',
-      'direction:propose': 'Create direction drafts for you to confirm (cannot confirm)'
+      'direction:propose': 'Create direction drafts for you to confirm (cannot confirm)',
+      'agent_journey:read': 'Read past Agent task journeys',
+      'agent_journey:write': 'Record a new Agent task journey (plans, decisions, execution, verification)'
     },
     custom: 'Custom permissions',
     scopeCount: (picked: number, total: number) => `${picked} of ${total} selected`,

@@ -46,6 +46,14 @@ export interface AccountServiceDeps {
   log?: (message: string) => void
   /** 与服务端 OAuth transaction TTL（默认 300s）对齐。 */
   loginTimeoutMs?: number
+  /**
+   * 账户凭据被清除**之前**的清理钩子。
+   *
+   * Remote MCP 需要在 device_token 还有效时停止连接、尽力通知 Cloud 并断开；
+   * 账户层不认识 Remote，所以只留这一个时机，不引入依赖方向。
+   * 抛错也不会阻止登出（本地登出必须永远成功）。
+   */
+  beforeSignOut?: () => Promise<void> | void
 }
 
 export class AccountServiceError extends Error {
@@ -250,6 +258,17 @@ export class AccountService {
   async signOut(): Promise<AccountSnapshot> {
     this.cancelPendingQuietly()
     const refreshToken = this.credentials?.refreshToken ?? null
+
+    // **顺序不可反**：Remote 必须在账户凭据清除之前拿到「还可以用」的时机，
+    // 否则它会带着一份已经失效的凭据去尝试断开，结果是本地一直挂着旧用户的连接。
+    // 钩子失败不阻止登出——本地登出的可用性优先。
+    if (this.deps.beforeSignOut) {
+      try {
+        await this.deps.beforeSignOut()
+      } catch (error) {
+        this.log(`pre-signout cleanup failed: ${describe(error)}`)
+      }
+    }
 
     this.credentials = null
     this.access = null

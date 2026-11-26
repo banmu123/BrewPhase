@@ -16,6 +16,7 @@ import {
 import { ROUNDTABLE_AI_TASK_CHANGED_CHANNEL } from '../shared/contracts/roundtable-ai'
 import { ACCOUNT_CHANGED_CHANNEL } from '../shared/contracts/account'
 import { UPDATE_CHANGED_CHANNEL, type UpdateCheckResult } from '../shared/contracts/update'
+import { REMOTE_CHANNELS, type RemoteStatus } from '../shared/contracts/remote'
 import type { RendererApi } from '../shared/contracts'
 
 /**
@@ -258,13 +259,71 @@ const api: RendererApi = {
     removeNote: (id) => invoke(IPC.canvasNoteRemove, { id }),
     strokes: (canvasId) => invoke(IPC.canvasStrokes, { canvasId }),
     saveStroke: (stroke) => invoke(IPC.canvasStrokeSave, stroke),
-    removeStroke: (id) => invoke(IPC.canvasStrokeRemove, { id })
+    removeStroke: (id) => invoke(IPC.canvasStrokeRemove, { id }),
+    journeys: (canvasId) => invoke(IPC.canvasJourneys, { canvasId }),
+    addJourney: (canvasId, journeyId) => invoke(IPC.canvasJourneyAdd, { canvasId, journeyId }),
+    moveJourney: (canvasId, journeyId, positionX, positionY) =>
+      invoke(IPC.canvasJourneyMove, { canvasId, journeyId, positionX, positionY }),
+    moveJourneyEvent: (canvasId, eventId, positionX, positionY) =>
+      invoke(IPC.canvasJourneyEventMove, { canvasId, eventId, positionX, positionY }),
+    collapseJourney: (canvasId, journeyId, collapsed) =>
+      invoke(IPC.canvasJourneyCollapse, { canvasId, journeyId, collapsed }),
+    removeJourney: (canvasId, journeyId) =>
+      invoke(IPC.canvasJourneyRemove, { canvasId, journeyId })
+  },
+  /**
+   * Agent Journey（R6-4.1）。全部走 `agent-journeys:*` / `agent-journey:*`
+   * 通道——**没有**任何通道能改 Agent 原始事件内容，笔记与关系是独立表。
+   */
+  agentJourneys: {
+    list: (query = {}) => invoke(IPC.agentJourneysList, query),
+    get: (journeyId) => invoke(IPC.agentJourneyGet, { journeyId }),
+    createNote: (journeyId, body, eventId = null) =>
+      invoke(IPC.agentJourneyNoteCreate, { journeyId, body, eventId }),
+    updateNote: (id, body) => invoke(IPC.agentJourneyNoteUpdate, { id, body }),
+    removeNote: (id) => invoke(IPC.agentJourneyNoteRemove, { id }),
+    createLink: (input) => invoke(IPC.agentJourneyLinkCreate, input),
+    removeLink: (id) => invoke(IPC.agentJourneyLinkRemove, { id }),
+    /** R6-4.3.1：绑定 / 换绑 / 解绑（null = 解绑），返回更新后的卡片。 */
+    bindWorkspace: (journeyId, workspaceId) =>
+      invoke(IPC.agentJourneyWorkspaceBind, { journeyId, workspaceId }),
+    /** R6-4.3.3：只读证据查询（快照 + 文件级变化摘要；不含 Diff 正文）。 */
+    evidence: (journeyId) => invoke(IPC.agentJourneyEvidence, { journeyId }),
+    /** R6-4.3.4：按需取单文件 Diff Artifact（正文唯一读取入口）。 */
+    evidenceArtifact: (journeyId, snapshotId, fileId) =>
+      invoke(IPC.agentJourneyEvidenceArtifact, { journeyId, snapshotId, fileId })
   },
   mcp: {
     listClients: () => invoke(IPC.mcpClientsList),
     createClient: (input) => invoke(IPC.mcpClientCreate, input),
     revokeClient: (id) => invoke(IPC.mcpClientRevoke, { id }),
     bridgeStatus: () => invoke(IPC.mcpBridgeStatus)
+  },
+  /**
+   * 远程访问（Remote MCP）。
+   *
+   * 七个通道，**全部无入参**，返回 `RemoteStatus` / `RemoteDiagnosis`。
+   * 这里刻意没有 `call`：远程调用只能由 Cloud 发起，本地不开手动触发入口。
+   * 返回值里没有 device_token、私钥、claim_secret，也没有参数与结果——
+   * 这些连 Renderer 的类型都不该知道。
+   */
+  remote: {
+    status: () => invoke(IPC.remoteStatus),
+    enable: () => invoke(IPC.remoteEnable),
+    disable: () => invoke(IPC.remoteDisable),
+    register: () => invoke(IPC.remoteRegister),
+    confirmRegistration: () => invoke(IPC.remoteConfirmRegistration),
+    cancelRegistration: () => invoke(IPC.remoteCancelRegistration),
+    forget: () => invoke(IPC.remoteForget),
+    unbind: () => invoke(IPC.remoteUnbind),
+    diagnose: () => invoke(IPC.remoteDiagnose),
+    onChanged: (handler: (status: RemoteStatus) => void) => {
+      const listener = (_event: unknown, status: RemoteStatus): void => handler(status)
+      ipcRenderer.on(REMOTE_CHANNELS.changed, listener)
+      return () => {
+        ipcRenderer.removeListener(REMOTE_CHANNELS.changed, listener)
+      }
+    }
   },
   /**
    * 内置浏览器。网页由主进程的 WebContentsView 绘制，这里只有「壳」的操作：

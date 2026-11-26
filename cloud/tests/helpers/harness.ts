@@ -59,7 +59,9 @@ export async function createHarness(overrides: TestEnvOverrides = {}): Promise<H
     env,
     db,
     providers,
-    logger: createLogger("error"),
+    // 跟随 env.logLevel（默认 "error"）：需要断言「日志里没有哨兵」的用例
+    // 必须能把 info 级输出打开，否则那条断言会因为「根本没输出」而平凡成立。
+    logger: createLogger(env.logLevel),
     keyRing: createKeyRing(env.jwtSigningKey, env.jwtSigningKeyPrevious),
   };
   const app = createApp(ctx);
