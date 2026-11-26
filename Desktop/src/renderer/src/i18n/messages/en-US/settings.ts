@@ -1,9 +1,132 @@
+/**
+ * Remote access (Remote MCP). Deliberately conservative wording: we do not
+ * promise "cannot be compromised"; we only state what is actually true —
+ * local final veto, and best-effort auditing.
+ */
+export const remote = {
+  title: 'Remote access',
+  lead: 'Let a cloud AI (such as ChatGPT) read records, beans and canvases on this computer through BrewPhase Cloud. Off by default; when off, no connection is ever opened.',
+  toggle: 'Allow remote access',
+  toggleOnHint: 'On. The cloud AI can call 8 read-only tools.',
+  toggleOffHint: 'Off. No outbound connection is made.',
+  enable: 'Enable…',
+  disable: 'Turn off',
+  confirmTitle: 'Confirm the scope before enabling',
+  confirmBody: 'Once enabled, the AI clients you authorised on the cloud can read:',
+  confirmReadonly: 'Read only. Remote access provides no writing, deletion, command execution or file reading, and never copies your data to the cloud.',
+  confirm: 'Enable',
+  cancel: 'Cancel',
+  state: 'Connection',
+  states: {
+    idle: 'Not connected',
+    connecting: 'Connecting',
+    handshaking: 'Handshaking',
+    online: 'Connected',
+    draining: 'Draining',
+    backoff: 'Waiting to reconnect',
+    blocked: 'Blocked (needs attention)'
+  },
+  device: 'Device',
+  notPaired: 'Not paired',
+  boundUser: 'Bound user',
+  noUser: 'Not bound',
+  serviceable: 'Serviceable',
+  yes: 'Yes',
+  no: 'No',
+  reasons: {
+    remote_disabled: 'switch is off',
+    user_mismatch: 'signed-in account differs from the bound user',
+    db_unavailable: 'local database is not ready',
+    services_unavailable: 'local services are not ready',
+    shutting_down: 'shutting down',
+    blocked: 'needs attention (blocked)'
+  },
+  lastActive: 'Last active',
+  never: '—',
+  blockedTitle: 'Remote access is blocked',
+  unbind: 'Unbind and pair again',
+  grants: 'Authorised clients',
+  noGrants: 'No AI client is authorised right now.',
+  noScopes: 'no scopes',
+  auditWarning: 'The last {count} remote calls could not be written to the audit log',
+  auditWarningBody: 'The calls themselves still returned normally.',
+  auditLastFailure: 'Last failure:',
+  auditHonesty: 'The counter only covers this run and resets on restart; records that failed to write are not backfilled.',
+  register: 'Pair a new device',
+  diagnose: 'Diagnostics',
+  forget: 'Forget this device',
+  pendingTitle: 'Pending device',
+  pendingLead:
+    'This computer has not connected to BrewPhase Cloud before. It will be bound to the account below once you confirm.',
+  pendingDevice: 'Device',
+  pendingPlatform: 'Platform',
+  pendingCode: 'Confirmation code',
+  pendingExpires: 'Valid until',
+  pendingAccount: 'Will be bound to',
+  pendingAccountUnknown: 'the signed-in account',
+  pendingCodeHint:
+    'The code is only used for this one manual confirmation: it is never written to disk, uploaded, or logged.',
+  pendingTrustHint: 'If you did not start this pairing, choose "Cancel this pairing".',
+  confirmDevice: 'Trust this device',
+  cancelPairing: 'Cancel this pairing',
+  confirmingDevice: 'Confirming…',
+  claimingCredentials: 'Confirmed. Claiming the device credential…',
+  savingCredential: 'Saving the credential…',
+  retryClaim: 'Retry claiming the credential',
+  cancellingPairing: 'Cancelling…',
+  pairingDone: 'Paired. The device credential is encrypted and stored.',
+  pairingRevoked: 'Pairing cancelled; the pending device was revoked on the cloud.',
+  pairingRevokePending:
+    'Cancelled locally; the pending device could not be revoked and will expire on its own.',
+  /** "Pair a new device" must be disabled while a pairing or a device exists. */
+  pairingInProgress: 'A device pairing is already in progress. Confirm or cancel it first.',
+  alreadyPaired:
+    'This computer is already paired. To pair again, choose "Forget this device" first.',
+  confirmFailures: {
+    unauthorized: 'Your session has expired. Sign in to the Cloud account again.',
+    invalid_code: 'That code is not correct. Check it and retry (too many failures invalidates the device).',
+    expired: 'This pairing has expired. Start "Pair a new device" again.',
+    not_found: 'This device does not exist or belongs to another account. Check that you signed in with the same account.',
+    device_state: 'The device cannot be confirmed in its current state (it may be revoked). Pair it again.',
+    rate_limited: 'Too many attempts. Try again in a moment.',
+    account_changed: 'The account changed during confirmation, so this pairing was discarded.',
+    network: 'Network unavailable. Check your connection and retry; the device is still waiting for confirmation.',
+    invalid_response: 'The server returned an unexpected response. Try again later.',
+    claim_pending:
+      'The device is confirmed but its credential has not been claimed yet. Retry in a moment — the pairing is still valid.',
+    claim_network:
+      'The device is confirmed, but claiming the credential hit a network error. Check your connection and retry — the pairing is still valid.',
+    credentials_already_issued:
+      'The credential was issued in the cloud but never reached this computer (a credential can only be claimed once). To avoid leaving an unusable device behind, an attempt was made to revoke it — start "Pair a new device" again.',
+    credential_save_failed:
+      'The system secure storage could not write the credential. To avoid leaving an unusable device behind, an attempt was made to revoke it — check your keychain and pair again.',
+    credential_cleanup_failed:
+      'The credential could not be stored, and the device could not be revoked in the cloud either. Delete this device from the Cloud device list manually, then pair again.',
+    superseded: 'This pairing was cancelled, replaced, or discarded because the account changed.'
+  },
+  socket: 'Socket',
+  inflight: 'In flight',
+  cache: 'Result cache',
+  lastClose: 'Last close',
+  lastError: 'Last error',
+  noError: 'None',
+  reconnectAttempt: 'Reconnect attempts',
+  lastErrorHint: 'Why the most recent connection attempt failed; cleared after a successful handshake.',
+  scopeLabels: {
+    records: 'records and notes',
+    tags: 'tags',
+    coffee: 'beans, brews and tastings',
+    canvas: 'canvases and notes'
+  }
+}
+
 /** Settings shell: secondary navigation and the General page. */
 export const settings = {
   title: 'Settings',
   subtitle: 'Manage the app, data and connections',
   nav: {
     general: 'General',
+    account: 'Cloud account',
     sync: 'Device sync',
     browser: 'Browser',
     chrome: 'Chrome extension',
@@ -205,5 +328,57 @@ export const settings = {
     removeConfirmBody: (name: string) => `Only the registration is removed — the folder “${name}” and its files are not touched.`,
     boundCards: (n: number) => `${n} card${n === 1 ? '' : 's'} bound`,
     addFailed: 'Could not add this folder'
-  }
+  },
+
+  account: {
+    title: 'Cloud account',
+    subtitle: 'Sign in to BrewPhase Cloud for a cross-device identity',
+    lead: 'Signing in only establishes a cloud identity. Beans, brews, tastings, records and canvases still live on this computer and are never uploaded automatically.',
+    signedOut: 'Not signed in',
+    signedOutHint: 'Every local feature works without an account, and the app starts normally when the cloud is unreachable.',
+    loginWith: (provider: string) => `Continue with ${provider}`,
+    pending: 'Waiting for the browser…',
+    pendingHint: 'This page updates by itself once you finish. You can close the browser tab then.',
+    pendingExpires: (text: string) => `This attempt is valid until ${text}`,
+    cancel: 'Cancel sign-in',
+    cancelling: 'Cancelling…',
+    signedIn: 'Signed in',
+    displayName: 'Name',
+    provider: 'Sign-in method',
+    providerName: {
+      google: 'Google',
+      github: 'GitHub'
+    },
+    accountId: 'Account ID',
+    memberSince: 'Member since',
+    displayNameFallback: '(no display name)',
+    signOut: 'Sign out',
+    signOutTitle: 'Sign out of the cloud account?',
+    signOutBody: 'Only the credentials on this computer are removed. Beans, records, canvases and media are kept, and device sync is unaffected.',
+    checking: 'Confirming the session with the server…',
+    verifiedAt: (text: string) => `Last confirmed: ${text}`,
+    notVerified: 'Not confirmed with the server since launch (still signed in while offline)',
+    storageEncrypted: 'The session is encrypted at rest with the system secret store (safeStorage); no plaintext ever touches disk.',
+    storageUnavailable: 'The system secret store is unavailable, so this session stays in memory and will not survive a restart.',
+    cloudBase: 'Service address',
+    localDataNote: 'Cloud account and device sync are separate credentials: signing in here never changes LAN pairing or sync tokens.',
+    refresh: 'Refresh status',
+    noticeTitle: 'The last attempt did not finish',
+    notice: {
+      cancelled: 'Sign-in was cancelled.',
+      timeout: 'Timed out waiting for authorization. Please try again.',
+      'provider-denied': 'Access was denied on the authorization page.',
+      'invalid-state': 'The callback failed validation (state mismatch), so this attempt was discarded.',
+      'exchange-failed': 'The authorization code could not be exchanged. Please try again.',
+      'cloud-unreachable': 'The cloud service is unreachable. Check your network or the service address.',
+      'cloud-timeout': 'The cloud service timed out.',
+      'session-expired': 'The session expired. Please sign in again; local data is untouched.',
+      'storage-unavailable': 'The system secret store is unavailable, so the session cannot be saved here.',
+      'storage-failed': 'Stored credentials could not be read, so you are signed out.',
+      'login-in-progress': 'Another sign-in is already waiting for authorization. Finish or cancel it first.',
+      'browser-open-failed': 'The system browser could not be opened. Check your default browser.',
+      unknown: 'Sign-in did not complete. Please try again.'
+    }
+  },
+  remote
 }

@@ -1,5 +1,7 @@
 import { Fragment, useCallback, useEffect, useState } from 'react'
 import type {
+  AccountProvider,
+  AccountSnapshot,
   AppInfo,
   BookmarkImportResult,
   BookmarkPreview,
@@ -26,6 +28,8 @@ import { useTheme } from '../../shared/useTheme'
 import { useAppStore, type SettingsCategory } from '../../app/store'
 import { confirmAction } from '../../shared/ConfirmDialog'
 import { codexConfig, configTargetFrom, workbuddyConfig } from './mcp-config'
+import { RemoteAccessPanel } from './RemoteAccessPanel'
+import { CLOUD_ACCOUNT_VISIBLE, REMOTE_ACCESS_VISIBLE } from '../../shared/feature-visibility'
 
 /**
  * 更多 / Settings。
@@ -62,6 +66,8 @@ export function SettingsPage({
 
   const categories: Array<{ key: SettingsCategory; label: string }> = [
     { key: 'general', label: t.settings.nav.general },
+    // 云账户暂不对外开放：入口从导航里收掉（见 feature-visibility.ts 的说明）。
+    ...(CLOUD_ACCOUNT_VISIBLE ? [{ key: 'account' as const, label: t.settings.nav.account }] : []),
     { key: 'sync', label: t.settings.nav.sync },
     { key: 'browser', label: t.settings.nav.browser },
     { key: 'chrome', label: t.settings.nav.chrome },
@@ -102,6 +108,9 @@ export function SettingsPage({
 
           <div className="settings-pane">
             {category === 'general' && <GeneralSection info={info} update={update} />}
+            // 防御：分类导航里已没有「账户」，但跨页直达（openSettings('account')）
+            // 仍可能把 category 设成它——那时渲染空面板而不是旧内容。
+            {CLOUD_ACCOUNT_VISIBLE && category === 'account' && <AccountSection />}
             {category === 'sync' && <SyncSection />}
             {category === 'browser' && <BrowserSection />}
             {category === 'chrome' && <ChromeSection />}
@@ -358,6 +367,212 @@ function GeneralSection({
           ))}
         </ul>
       </section>
+    </div>
+  )
+}
+
+/**
+ * Cloud Account：未登录 → 登录中 → 已登录 → 退出。
+ *
+ * 这一块只与云端身份有关：
+ * - 不登录时这里只有两个登录按钮，别的设置项与本地功能一概不变；
+ * - Renderer 拿到的永远是无凭据快照（没有 access / refresh token）；
+ * - 状态的真身在主进程，这里通过 `onChanged` 订阅同一份，切走再回来不会丢；
+ * - 退出登录只清凭据，界面会明确告诉用户本地数据不受影响。
+ */
+function AccountSection() {
+  const { t, formatDateTime } = useI18n()
+  const [snapshot, setSnapshot] = useState<AccountSnapshot | null>(null)
+  const [busy, setBusy] = useState<'login' | 'cancel' | 'signOut' | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    void api.account
+      .status()
+      .then((next) => {
+        if (alive) setSnapshot(next)
+      })
+      .catch((cause) => {
+        console.error('[account] status failed', cause)
+        if (alive) setError(errorMessage(cause))
+      })
+    const off = api.account.onChanged((next) => setSnapshot(next))
+    return () => {
+      alive = false
+      off()
+    }
+  }, [])
+
+  const login = async (provider: AccountProvider): Promise<void> => {
+    setBusy('login')
+    setError(null)
+    try {
+      setSnapshot(await api.account.login(provider))
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const cancel = async (): Promise<void> => {
+    setBusy('cancel')
+    try {
+      setSnapshot(await api.account.cancelLogin())
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const signOut = async (): Promise<void> => {
+    const confirmed = await confirmAction({
+      title: t.settings.account.signOutTitle,
+      description: t.settings.account.signOutBody,
+      confirmLabel: t.settings.account.signOut,
+      cancelLabel: t.common.cancel,
+      tone: 'danger'
+    })
+    if (!confirmed) return
+    setBusy('signOut')
+    try {
+      setSnapshot(await api.account.signOut())
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const state = snapshot?.state ?? null
+  const providerName = snapshot?.provider ? t.settings.account.providerName[snapshot.provider] : null
+
+  return (
+    <div className="settings-section">
+      <h2 className="settings-section__title">{t.settings.account.title}</h2>
+      <p className="settings-lead">{t.settings.account.lead}</p>
+
+      {error && <p className="error">{error}</p>}
+
+      {snapshot === null ? (
+        <p className="note">{t.common.loading}</p>
+      ) : (
+        <section className="settings-subsection">
+          <div className="row row--between">
+            <h2 className="settings-subsection__title">
+              {state === 'signed-in'
+                ? t.settings.account.signedIn
+                : state === 'pending'
+                  ? t.settings.account.pending
+                  : t.settings.account.signedOut}
+            </h2>
+            <button
+              className="button button--ghost"
+              disabled={busy !== null || state === 'pending'}
+              onClick={() => {
+                void api.account
+                  .refresh()
+                  .then(setSnapshot)
+                  .catch((cause) => setError(errorMessage(cause)))
+              }}
+            >
+              {snapshot.checking ? t.settings.account.checking : t.settings.account.refresh}
+            </button>
+          </div>
+
+          {state === 'signed-out' && (
+            <>
+              <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+                {(['google', 'github'] as const).map((provider) => (
+                  <button
+                    key={provider}
+                    className="button button--primary"
+                    disabled={busy !== null}
+                    onClick={() => void login(provider)}
+                  >
+                    {t.settings.account.loginWith(t.settings.account.providerName[provider])}
+                  </button>
+                ))}
+              </div>
+              <p className="note" style={{ marginTop: 10 }}>
+                {t.settings.account.signedOutHint}
+              </p>
+            </>
+          )}
+
+          {state === 'pending' && snapshot.pending && (
+            <div className="panel">
+              <p className="note" style={{ marginTop: 0 }}>
+                {t.settings.account.pendingHint}
+              </p>
+              <p className="note mono" style={{ fontSize: 11 }}>
+                {t.settings.account.pendingExpires(formatDateTime(snapshot.pending.expiresAt))}
+              </p>
+              <button
+                className="button button--ghost"
+                style={{ marginTop: 10 }}
+                disabled={busy !== null}
+                onClick={() => void cancel()}
+              >
+                {busy === 'cancel' ? t.settings.account.cancelling : t.settings.account.cancel}
+              </button>
+            </div>
+          )}
+
+          {state === 'signed-in' && (
+            <>
+              <dl className="info-list">
+                <dt>{t.settings.account.displayName}</dt>
+                <dd>{snapshot.user?.displayName ?? t.settings.account.displayNameFallback}</dd>
+                <dt>{t.settings.account.provider}</dt>
+                <dd>{providerName ?? '—'}</dd>
+                <dt>{t.settings.account.accountId}</dt>
+                <dd className="mono" style={{ fontSize: 11 }}>
+                  {snapshot.user?.id ?? '—'}
+                </dd>
+                <dt>{t.settings.account.memberSince}</dt>
+                <dd>{snapshot.user?.createdAt ? formatDateTime(Date.parse(snapshot.user.createdAt)) : '—'}</dd>
+              </dl>
+              <p className="note">
+                {snapshot.checking
+                  ? t.settings.account.checking
+                  : snapshot.verifiedAt
+                    ? t.settings.account.verifiedAt(formatDateTime(snapshot.verifiedAt))
+                    : t.settings.account.notVerified}
+              </p>
+              <p className="note">
+                {snapshot.storage === 'encrypted'
+                  ? t.settings.account.storageEncrypted
+                  : t.settings.account.storageUnavailable}
+              </p>
+              <button
+                className="button button--danger"
+                style={{ marginTop: 10 }}
+                disabled={busy !== null}
+                onClick={() => void signOut()}
+              >
+                {t.settings.account.signOut}
+              </button>
+            </>
+          )}
+
+          {snapshot.notice && state !== 'pending' && (
+            <div className="note" style={{ marginTop: 14, color: 'var(--priority)' }} role="status">
+              <strong>{t.settings.account.noticeTitle}</strong> {t.settings.account.notice[snapshot.notice.code]}
+            </div>
+          )}
+        </section>
+      )}
+
+      <div className="hairline" />
+      <p className="note">{t.settings.account.localDataNote}</p>
+      {snapshot && (
+        <p className="note mono" style={{ fontSize: 10 }}>
+          {t.settings.account.cloudBase}: {snapshot.cloudBaseUrl}
+        </p>
+      )}
     </div>
   )
 }
@@ -1365,6 +1580,11 @@ function McpSection() {
           </button>
         )}
       </details>
+
+      {/* 远程访问：默认关闭，开启需经过范围确认。没有 `remote:call` 之类的手动入口。 */}
+      {/* 暂不对外：功能与测试都已完成（R5-R3.4 / test 分支集成），等产品节奏放开。
+          放开时把这一行改回 true 即可，主进程侧与测试不受影响。 */}
+      {REMOTE_ACCESS_VISIBLE && <RemoteAccessPanel />}
     </div>
   )
 }

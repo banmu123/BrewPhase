@@ -156,6 +156,31 @@ export class LocalWorkspaceService {
     return resolveWorkspaceRoot(row.absolutePath, row.name)
   }
 
+  /**
+   * Journey 授权校验（R6-4.3.1）：存在 + 当前 `available` + 根目录可解析。
+   *
+   * **只返回显示名**——调用方（`AgentJourneyService`）拿不到绝对路径，
+   * 因此 MCP 侧永远无法借这条链路读到机器上的目录位置。错误信息同样
+   * 只含 id 或显示名（`resolveWorkspaceRoot` 的文案也不带路径）。
+   *
+   * 这是唯一被注入给 Journey 的能力：卡片绑定 / 对话框 / 文件读取都不在内。
+   */
+  authorize(workspaceId: string): { name: string } {
+    const workspace = this.get(workspaceId)
+    if (!workspace) {
+      throw new LocalWorkspaceError('NOT_FOUND', `workspace ${workspaceId} does not exist`)
+    }
+    if (workspace.availability !== 'available') {
+      throw new LocalWorkspaceError(
+        'VALIDATION_ERROR',
+        `workspace "${workspace.name}" is unavailable (folder missing)`
+      )
+    }
+    // 可用性检查之后仍要能解析根目录：symlink 断裂 / 权限变化在这里兜住。
+    this.resolveRoot(workspaceId)
+    return { name: workspace.name }
+  }
+
   // MARK: - 卡片绑定（tabId → workspaceId）
 
   binding(tabId: string): CardWorkspaceBinding {

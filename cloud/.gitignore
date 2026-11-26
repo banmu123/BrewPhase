@@ -3,5 +3,8 @@ dist/
 .env
 .env.*
 !.env.example
+# 部署模板必须进仓库（它只含变量名与生成方式，不含任何真实值）；
+# 真正的 .env.production 仍被上面的 `.env.*` 忽略。
+!.env.production.example
 *.log
 coverage/

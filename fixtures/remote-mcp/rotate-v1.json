@@ -1,0 +1,27 @@
+{
+  "$comment": "Remote Link Protocol v1 的 rotate 签名黄金向量。Cloud 与 Desktop 的测试都必须读这一个文件——两端各写一份规范串时，「各自自洽」不是证据，对同一份向量得出同一串才是。旧私钥是全 0x01..0x20 的测试种子，新私钥是 0x21..0x40，均绝不用于生产。",
+  "protocol": "brewphase.remote.rotate.v1",
+  "old_private_key": {
+    "format": "pkcs8-der-seed-base64url",
+    "seed_base64url": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"
+  },
+  "old_public_key": {
+    "format": "raw-32-bytes-base64url",
+    "base64url": "ebVWLo_mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ"
+  },
+  "new_private_key": {
+    "format": "pkcs8-der-seed-base64url",
+    "seed_base64url": "ISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-P0A"
+  },
+  "new_public_key": {
+    "format": "raw-32-bytes-base64url",
+    "base64url": "5_FioQvsVZr-oZXk3OhLaVaNXSywlj60RsBoXisX8vA"
+  },
+  "request": {
+    "device_id": "0b7c9e2a-3d41-4f6b-9c8d-2e1a5b7f0c93",
+    "new_public_key": "5_FioQvsVZr-oZXk3OhLaVaNXSywlj60RsBoXisX8vA",
+    "ts": 1763400000456
+  },
+  "canonical_payload": "brewphase.remote.rotate.v1\n0b7c9e2a-3d41-4f6b-9c8d-2e1a5b7f0c93\n5_FioQvsVZr-oZXk3OhLaVaNXSywlj60RsBoXisX8vA\n1763400000456",
+  "signature_base64url": "BVH5BuPuQvh5X8jAgWj1j3Lf9LvwnhspWqbyYZK0jb5OQaP-kv2VWreMe6yXloyJwH7bDTzXz8w7DcPdM2igCA"
+}

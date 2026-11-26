@@ -1,0 +1,2 @@
+ALTER TABLE "mcp_oauth_clients" ADD COLUMN "metadata_version" bigint DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE "mcp_oauth_clients" ADD CONSTRAINT "mcp_oauth_clients_metadata_version_check" CHECK ("mcp_oauth_clients"."metadata_version" >= 1);

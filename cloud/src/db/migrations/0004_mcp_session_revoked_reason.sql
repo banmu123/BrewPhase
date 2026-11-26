@@ -1,0 +1,2 @@
+ALTER TABLE "mcp_sessions" DROP CONSTRAINT "mcp_sessions_revoked_reason_check";--> statement-breakpoint
+ALTER TABLE "mcp_sessions" ADD CONSTRAINT "mcp_sessions_revoked_reason_check" CHECK ("mcp_sessions"."revoked_reason" is null or "mcp_sessions"."revoked_reason" in ('user_revoke', 'grant_revoked', 'refresh_reuse', 'client_revoke', 'client_id_mismatch'));

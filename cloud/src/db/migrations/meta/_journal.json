@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1794838063927,
+      "tag": "0000_nasty_solo",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1794979492116,
+      "tag": "0001_remote_mcp_devices",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794981893295,
+      "tag": "0002_mcp_grant_epoch",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795010188649,
+      "tag": "0003_mcp_oauth",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795159653146,
+      "tag": "0004_mcp_session_revoked_reason",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795159758845,
+      "tag": "0005_mcp_metadata_version",
+      "breakpoints": true
+    }
+  ]
+}

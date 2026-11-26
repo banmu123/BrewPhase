@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { app, BrowserWindow, net, protocol, screen, session } from 'electron'
+import { app, BrowserWindow, net, powerMonitor, protocol, safeStorage, screen, session, shell } from 'electron'
 import { installApplicationMenu } from './app-menu'
 import { openDatabase, type DatabaseHandle } from './database/client'
 import { registerIpc } from './ipc/register'
@@ -17,10 +17,12 @@ import { ApplicationEvents } from './application/events/application-events'
 import { RecordService } from './application/records/record-service'
 import { WorkContextService } from './application/work-context/work-context-service'
 import { LocalWorkspaceService } from './application/local-workspace/local-workspace-service'
+import { WorkspaceEvidenceService } from './application/agent-journey/workspace-evidence-service'
 import { WorkspaceFileService } from './application/local-workspace/workspace-file-service'
 import { ContextBuilder } from './application/local-workspace/context-builder'
 import { ReplyIntelligenceService } from './application/reply-intelligence/reply-intelligence-service'
 import { PersonalDirectionService } from './application/personal-direction/personal-direction-service'
+import { AgentJourneyService } from './application/agent-journey/agent-journey-service'
 import { CoffeeService } from './application/coffee/coffee-service'
 import { CanvasService } from './application/canvas/canvas-service'
 import { McpClientService } from './application/authorization/permission-service'
@@ -45,12 +47,20 @@ import { ChromeService } from './integrations/chrome/chrome-service'
 import { resolveDataLocation, setActiveDataDir } from './data-location'
 import { DataLocationService } from './data-location-service'
 import { BridgeServer } from './mcp-bridge/bridge-server'
+import { createRemoteService, type RemoteService } from './remote/remote-service'
+import { createHttpDeviceRegistrar } from './remote/registration'
+import { REMOTE_CHANNELS } from '../shared/contracts/remote'
 import { BRIDGE_PROTOCOL_VERSION, bridgePaths, platformSupportsBridge } from './mcp-bridge/bridge-contract'
 import type { McpBridgeStatus } from '../shared/contracts/mcp'
 import { UPDATE_CHANGED_CHANNEL } from '../shared/contracts/update'
 import { APP_VERSION } from '../shared/contracts/version'
 import { EMBED_FRAME_ORIGINS } from '../shared/link-embed'
 import { UpdateService } from './update/update-service'
+import { AccountService } from './account/account-service'
+import { CloudClient, resolveCloudBaseUrl } from './account/cloud-client'
+import { CredentialStore } from './account/credentials'
+import { startOAuthCallbackServer } from './account/oauth-callback-server'
+import { ACCOUNT_CHANGED_CHANNEL } from '../shared/contracts/account'
 
 /**
  * MCP STDIO 入口的绝对路径。
@@ -96,6 +106,15 @@ let roundtableViewManagerRef: RoundtableViewManager | null = null
 /** 主窗口的显式引用：getAllWindows 的顺序不可靠（浮窗加入后尤其如此）。 */
 let mainWindowRef: BrowserWindow | null = null
 let aiChatService: AIChatService | null = null
+/** Cloud Account：退出时要关掉可能还开着的本机回调端口。 */
+let accountService: AccountService | null = null
+/** Remote MCP：退出前要停连接、关定时器（不阻塞 quit）。 */
+let remoteService: RemoteService | null = null
+/**
+ * R6-4.3.3.1：工作区证据服务——退出前有界 flush、关库前封写入、
+ * 数据目录迁移前同样封写（与 db 的生命周期绑在一起）。
+ */
+let workspaceEvidenceRef: WorkspaceEvidenceService | null = null
 let quitting = false
 const devServerUrl = process.env.ELECTRON_RENDERER_URL ?? null
 
@@ -240,7 +259,29 @@ function bootstrap(): void {
   const workContexts = new WorkContextService(db.db, events)
   const personalDirection = new PersonalDirectionService(db.db, events)
   // AI Card Workspace Bridge（Phase 1）：登记 / 绑定 / 只读文件 / 上下文。
+  // 必须建在 AgentJourneyService 之前——R6-4.3.1 把它的 `authorize` 注入
+  // Journey（窄接口：只校验、只回显示名，不带绝对路径，也不产生循环依赖）。
   const localWorkspaceService = new LocalWorkspaceService(db.db, events)
+  // R6-4.3.3（P3）：工作区证据服务——只依赖 db / 同一个 events / 工作区授权，
+  // 必须在 AgentJourneyService 之前构造（作为 T1–T5 的触发出口注入）。
+  const workspaceEvidenceService = new WorkspaceEvidenceService(
+    db.db,
+    events,
+    localWorkspaceService
+  )
+  workspaceEvidenceRef = workspaceEvidenceService
+  // R6-4.3.3.1（启动恢复）：上个会话（崩溃 / 超时退出）遗留的 pending 快照
+  // 统一标 failed + capture_interrupted——没完成的采集绝不伪装成完整成功，
+  // 也绝不静默丢失「曾经尝试过」这条事实。必须在任何 T1–T5 触发之前跑。
+  workspaceEvidenceService.recoverInterruptedCaptures()
+  // Agent Journey（R6-2）：复用**同一个** ApplicationEvents——第二份实例会让
+  // Renderer 只收到一半的 `app:changed`。
+  const agentJourneys = new AgentJourneyService(
+    db.db,
+    events,
+    localWorkspaceService,
+    workspaceEvidenceService
+  )
   const workspaceFileService = new WorkspaceFileService(db.db)
   const contextBuilder = new ContextBuilder(db.db, workspaceFileService)
   // AI Reply Intelligence（Phase 2）：来源识别用 tab 的真实 URL；tab 已关闭
@@ -269,7 +310,7 @@ function bootstrap(): void {
   if (platformSupportsBridge()) {
     const server = new BridgeServer(
       bridgePaths(app.getPath('userData')),
-      { db: db.db, clients, records, coffee, canvas, workContexts, personalDirection },
+      { db: db.db, clients, records, coffee, canvas, workContexts, personalDirection, agentJourneys },
       APP_VERSION
     )
     bridgeServer = server
@@ -500,6 +541,10 @@ function bootstrap(): void {
       roundtableService = null
       aiChatService?.dispose()
       aiChatService = null
+      // R6-4.3.3.1：迁移前同样封证据写入——db 关闭后不允许残留任务再落
+      // 有效数据；未完成的 pending 由重启后的启动恢复标 capture_interrupted。
+      workspaceEvidenceRef?.beginShutdown()
+      workspaceEvidenceRef = null
       db?.close()
       db = null
     },
@@ -518,11 +563,112 @@ function bootstrap(): void {
     }
   })
 
+  // Cloud Account（Phase 1.2）：登录 / 恢复 / 退出。
+  //
+  // - 凭据单独一个文件，放在 **userData** 而不是业务数据目录：它跟记录、媒体
+  //   无关，换数据目录时不该被复制过去，退出登录也只删这一个文件；
+  // - safeStorage 只在 app ready 之后可用，所以构造放在 bootstrap 里；
+  // - restore() 只读本地密文，网络校验在后台跑：Cloud 挂了也不影响启动；
+  // - 广播给所有窗口，与 browser/roundtable/update 同一模式（主进程是唯一事实来源）。
+  const cloudBaseUrl = resolveCloudBaseUrl()
+  const account = new AccountService({
+    cloud: new CloudClient({
+      baseUrl: cloudBaseUrl,
+      fetchImpl: (url, init) => net.fetch(url, init)
+    }),
+    store: new CredentialStore({
+      filePath: join(app.getPath('userData'), 'account', 'credentials.json'),
+      secretBox: {
+        available: () => safeStorage.isEncryptionAvailable(),
+        encrypt: (plain) => safeStorage.encryptString(plain),
+        decrypt: (payload) => safeStorage.decryptString(payload)
+      },
+      log: (message) => console.warn(message)
+    }),
+    // 只打开主进程用 CloudClient 拼出来的地址（protocol 由 resolveCloudBaseUrl 限制）。
+    openExternal: async (url) => {
+      await shell.openExternal(url)
+    },
+    startCallback: (params) => startOAuthCallbackServer(params),
+    // Remote 必须在账户凭据被清除**之前**收尾。这里读的是模块作用域变量：
+    // RemoteService 在 `account.restore()` 之后才创建，闭包按调用时取值，
+    // 所以不必打乱启动顺序，也不必让账户层认识 Remote。
+    beforeSignOut: async () => {
+      await remoteService?.prepareForSignOut()
+    },
+    broadcast: (snapshot) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (window.isDestroyed()) continue
+        window.webContents.send(ACCOUNT_CHANGED_CHANNEL, snapshot)
+      }
+      // 账户变了就要重新判定远程可用性：否则连线会带着旧绑定继续存在。
+      // 不 await：广播是同步路径，远程的收尾走自己的异步流程。
+      void remoteService?.reconcile()
+    }
+  })
+  accountService = account
+  account.restore()
+
+  // Remote MCP（Phase 1.1B）：**在主进程内**，与数据库同属一个进程。
+  //
+  // 顺序是契约的一部分：账户状态已经恢复（上一行），RemoteService 才能判断
+  // 「本机绑定的用户 == 当前登录用户」。启动检查在 `start()` 内部完成，
+  // 不依赖 Renderer，也不依赖用户打开设置页——默认关闭时零出站连接。
+  remoteService = createRemoteService({
+    db: db.db,
+    services: { records, coffee, canvas, workContexts, personalDirection, agentJourneys },
+    currentUserId: () => account.snapshot().user?.id ?? null,
+    /**
+     * 确认页要回答「这台设备会绑到哪个账号」——用账号的展示名（通常就是邮箱
+     * 或 GitHub 昵称）。它只用于显示，**不参与任何身份判定**。
+     */
+    currentUserLabel: () => account.snapshot().user?.displayName ?? null,
+    clientVersion: app.getVersion(),
+    /**
+     * 设备注册客户端（Phase 1.2A 接入真实 Cloud）。
+     *
+     * 用**工厂**形式是为了让 origin 只有一个来源：RemoteService 从
+     * `deps.cloudOrigin ?? state.json` 解析出实际要连的 Cloud，再把同一个
+     * origin 交给这里。若让本文件各传一份，迟早出现「注册到 A、连接 B」。
+     *
+     * `accessToken` 每次请求前向 AccountService 要一个**当前有效**的 token：
+     * - 过期由 AccountService 自己刷（它已经有这套逻辑），本层不缓存；
+     * - refresh token 从不流经 Remote；
+     * - 未登录时 `accessToken()` 抛错 → registrar 归成 `unauthorized`
+     *   （不可重试），轮询立刻停，而不是拿着旧身份继续敲。
+     *
+     * 依赖方向保持单向：AccountService → DeviceRegistrar → RemoteService。
+     * 账户层完全不知道 Remote MCP 的存在。
+     */
+    registrar: (origin) =>
+      createHttpDeviceRegistrar({
+        origin,
+        accessToken: () => account.accessToken()
+      }),
+    onChanged: (status) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (window.isDestroyed()) continue
+        window.webContents.send(REMOTE_CHANNELS.changed, status)
+      }
+    },
+    log: (line) => console.warn(line)
+  })
+  // 不 await：Cloud 不可达不应拖慢启动；start() 内部的失败只影响远程状态。
+  void remoteService.start()
+
+  // 睡眠/唤醒：不信任旧 socket，唤醒后重新握手（回调用的是模块作用域变量）。
+  powerMonitor.on('suspend', () => remoteService?.suspend())
+  powerMonitor.on('resume', () => void remoteService?.resume())
+
   registerIpc({
     db,
     devServerUrl,
     sync: syncService,
-    services: { records, clients, workContexts, personalDirection },
+    account,
+    remote: remoteService,
+    // R6-4.1：canvas 与 agentJourneys 必须是**同一个实例**——它们同时被
+    // MCP Bridge（下方 BridgeServer）与 Remote 拿走，共享同一个 ApplicationEvents。
+    services: { records, clients, workContexts, personalDirection, canvas, agentJourneys },
     aiChat: aiChatService,
     roundtableAI: participantService,
     roundtableLayout: roundtableLayoutManager,
@@ -536,6 +682,7 @@ function bootstrap(): void {
     dataLocation,
     updates: updateService,
     localWorkspaces: localWorkspaceService,
+    evidence: workspaceEvidenceService,
     workspaceFiles: workspaceFileService,
     contextBuilder: contextBuilder,
     replyIntelligence: replyIntelligenceService
@@ -607,6 +754,9 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', (event) => {
+  // 登录进行中退出：先关本机回调端口，不留悬挂监听。
+  accountService?.dispose()
+  accountService = null
   // 浏览器浮窗持有原生 WebContentsView：不主动释放会留下孤儿 webContents，
   // 退出过程中可能报「对象已销毁」。
   browserManager?.dispose()
@@ -620,18 +770,47 @@ app.on('before-quit', (event) => {
     console.error('[roundtable-layout] flush on quit failed', error)
   }
   roundtableLayoutManagerRef?.dispose()
-  // Bridge 与 Chrome 本地 IPC 的关闭都是异步的（关 socket、删 info / pipe 文件）：
-  // 先拦住这一次 quit，清理完再真正退出；第二次进入时 `quitting` 已置位，只关库。
-  if ((bridgeServer || chromeService) && !quitting) {
+  // Bridge / Chrome / Remote 的关闭、以及证据队列的收尾都是异步的（关 socket、
+  // 删 info / pipe 文件、等审计落库、等 fire-and-forget 采集排空）：
+  // 先拦住这一次 quit，清理完再真正退出；第二次进入时 `quitting` 已置位，
+  // 只封写 + 关库。
+  //
+  // **RemoteService 必须在 db.close() 之前停**：它的审计写要用连接，
+  // 连接没了再写只会得到一串「audit write failed」。
+  //
+  // R6-4.3.3.1：证据 flush 与既有 stop() **共用同一次有界等待**（总超时兜底），
+  // 不额外拖长退出、也不无限阻塞；超时后遗留的 pending 行不写半截——
+  // 关库前 beginShutdown() 已封住写入，由下次启动统一标 capture_interrupted。
+  if ((bridgeServer || chromeService || remoteService || workspaceEvidenceRef) && !quitting) {
     quitting = true
     const server = bridgeServer
     const chrome = chromeService
+    const remote = remoteService
+    const evidence = workspaceEvidenceRef
     bridgeServer = null
     chromeService = null
+    remoteService = null
     event.preventDefault()
-    void Promise.all([server?.stop(), chrome?.stop()]).finally(() => app.quit())
+    // 总超时兜底：任何一个 stop() / flush 卡住都不能让应用永远退不出去。
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 3_000))
+    const stopped = Promise.allSettled([
+      server?.stop(),
+      chrome?.stop(),
+      remote?.stop()
+    ]).then(() => undefined)
+    // R6-4.3.3.1：等证据队列排空（触发路径 fire-and-forget，退出给它收尾窗口）。
+    const flushed: Promise<void> = evidence
+      ? evidence.flushPending().catch(() => undefined)
+      : Promise.resolve()
+    void Promise.race([Promise.all([stopped, flushed]).then(() => undefined), timeout]).finally(
+      () => app.quit()
+    )
     return
   }
+  // 关库前先封写：队列里没跑完的任务不再产生任何有效写入（行保持 pending，
+  // 下次启动标 capture_interrupted）——绝不允许异步任务在 DB 关闭后继续写。
+  workspaceEvidenceRef?.beginShutdown()
+  workspaceEvidenceRef = null
   db?.close()
   db = null
 })

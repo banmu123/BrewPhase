@@ -303,10 +303,21 @@ test('拆出与归位：同一批原生视图迁移宿主，布局不丢', async
     await page.mouse.down()
     await page.mouse.move(box.x + box.width / 2 + 160, box.y + box.height / 2 + 90, { steps: 6 })
     await page.mouse.up()
-    await page.waitForTimeout(400) // 防抖落库
-    const leftBeforeDetach = await page
-      .locator(`.rt-panel[data-tab-id="${firstTab}"]`)
-      .evaluate((el) => Number.parseInt(el.style.left, 10))
+    // 防抖落库：固定 400ms 在无 GPU 慢环境下不可靠（读到拖动前的旧位置，
+    // 归位后却恢复了已落库的新位置，「一字不差」断言必炸）。改成等位置
+    // 稳定——连续两次采样一致才算落库完成。
+    const readLeft = (): Promise<number> =>
+      page
+        .locator(`.rt-panel[data-tab-id="${firstTab}"]`)
+        .evaluate((el) => Number.parseInt(el.style.left, 10))
+    await expect
+      .poll(async () => {
+        const a = await readLeft()
+        await page.waitForTimeout(150)
+        return a === (await readLeft()) ? a : Number.NaN
+      }, { timeout: 10_000 })
+      .toBeGreaterThanOrEqual(0)
+    const leftBeforeDetach = await readLeft()
     assertNoOverlap(await screenRectOf(page, firstTab), await screenRectOf(page, secondTab))
 
     // —— 拆出：视图宿主迁移到独立圆桌窗口（不创建、不销毁）——

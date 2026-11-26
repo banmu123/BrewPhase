@@ -38,6 +38,7 @@ import {
   stageGoalInputSchema,
   stageGoalPatchSchema
 } from '../personal-direction'
+import { accountProviderSchema } from '../account'
 
 /**
  * IPC 的**唯一**契约清单：通道名 + 请求体校验 + 响应形状。
@@ -95,6 +96,19 @@ export const IPC = {
   mcpClientRevoke: 'mcp:client:revoke',
   mcpBridgeStatus: 'mcp:bridge:status',
 
+  // ---- Remote MCP（Phase 1.1B）----
+  // 刻意**没有** `remote:call`：远程调用只能由 Cloud 发起，本地不开
+  // 「手动触发一次远程工具」的入口——那会绕过所有 UI 确认。
+  remoteStatus: 'remote:status',
+  remoteEnable: 'remote:enable',
+  remoteDisable: 'remote:disable',
+  remoteRegister: 'remote:register',
+  remoteConfirmRegistration: 'remote:confirm-registration',
+  remoteCancelRegistration: 'remote:cancel-registration',
+  remoteForget: 'remote:forget',
+  remoteUnbind: 'remote:unbind',
+  remoteDiagnose: 'remote:diagnose',
+
   canvasesList: 'canvas:list',
   canvasCreate: 'canvas:create',
   canvasDelete: 'canvas:delete',
@@ -112,6 +126,29 @@ export const IPC = {
   canvasStrokes: 'canvas:strokes',
   canvasStrokeSave: 'canvas:stroke:save',
   canvasStrokeRemove: 'canvas:stroke:remove',
+
+  // ---- Agent Journey × Records × Canvas 融合（R6-4.1）----
+  // 全部 Local-only：Journey 不进 iOS 同步 / change_log / Cloud，
+  // 这些通道也只在本机 Renderer ↔ 主进程之间存在。
+  agentJourneysList: 'agent-journeys:list',
+  agentJourneyGet: 'agent-journeys:get',
+  agentJourneyNoteCreate: 'agent-journey:note:create',
+  agentJourneyNoteUpdate: 'agent-journey:note:update',
+  agentJourneyNoteRemove: 'agent-journey:note:remove',
+  agentJourneyLinkCreate: 'agent-journey:link:create',
+  agentJourneyLinkRemove: 'agent-journey:link:remove',
+  /** R6-4.3.1：绑定 / 换绑 / 解绑 Journey 的工作区（null = 解绑）。 */
+  agentJourneyWorkspaceBind: 'agent-journey:workspace:bind',
+  /** R6-4.3.3：只读证据查询（P3：快照 + 文件级变化摘要，P4 起不含 Diff 正文）。 */
+  agentJourneyEvidence: 'agent-journey:evidence',
+  /** R6-4.3.4：按需取单文件 Diff Artifact（三元组归属校验，正文唯一读取入口）。 */
+  agentJourneyEvidenceArtifact: 'agent-journey:evidence:artifact',
+  canvasJourneys: 'canvas:journeys',
+  canvasJourneyAdd: 'canvas:journey:add',
+  canvasJourneyMove: 'canvas:journey:move',
+  canvasJourneyEventMove: 'canvas:journey:event:move',
+  canvasJourneyCollapse: 'canvas:journey:collapse',
+  canvasJourneyRemove: 'canvas:journey:remove',
 
   // 内置浏览器（Phase 2）：Chrome 书签导入。入参只有 Profile 目录名，
   // 从不接受文件路径——路径解析全部留在主进程。
@@ -263,7 +300,16 @@ export const IPC = {
   replyDraftCreate: 'reply:draft:create',
   replyDraftUpdate: 'reply:draft:update',
   replyDraftRemove: 'reply:draft:remove',
-  replyDraftList: 'reply:draft:list'
+  replyDraftList: 'reply:draft:list',
+
+  // Cloud Account（Phase 1.2）：只有四个意图。**登录不接收任何凭据**——
+  // 入参只有一个 provider 名字；授权码、state、PKCE 全在主进程内产生与消费。
+  accountStatus: 'account:status',
+  accountLogin: 'account:login',
+  accountCancelLogin: 'account:cancel-login',
+  // 手动重新校验会话（设置页「刷新状态」）：只做一次，不带任何参数。
+  accountRefresh: 'account:refresh',
+  accountSignOut: 'account:sign-out'
 } as const
 
 export const ipcRequestSchemas = {
@@ -334,6 +380,70 @@ export const ipcRequestSchemas = {
   [IPC.canvasStrokes]: z.object({ canvasId: z.string().uuid() }),
   [IPC.canvasStrokeSave]: canvasStrokeSchema,
   [IPC.canvasStrokeRemove]: z.object({ id: z.string().uuid() }),
+
+  // Agent Journey × Records × Canvas 融合（R6-4.1）
+  [IPC.agentJourneysList]: z
+    .object({
+      search: z.string().max(200).default(''),
+      limit: z.number().int().min(1).max(200).default(100),
+      offset: z.number().int().min(0).default(0)
+    })
+    .default({ search: '', limit: 100, offset: 0 }),
+  [IPC.agentJourneyGet]: z.object({ journeyId: z.string().uuid() }),
+  // 笔记：journeyId 恒定；eventId 为 undefined/空串表示 Journey 级笔记。
+  [IPC.agentJourneyNoteCreate]: z.object({
+    journeyId: z.string().uuid(),
+    eventId: z.string().uuid().nullish(),
+    body: z.string().min(1).max(20_000)
+  }),
+  [IPC.agentJourneyNoteUpdate]: z.object({
+    id: z.string().uuid(),
+    body: z.string().min(1).max(20_000)
+  }),
+  [IPC.agentJourneyNoteRemove]: z.object({ id: z.string().uuid() }),
+  // 跨记录关系：五种类型白名单，来源端必须是 Journey 内的真实事件。
+  [IPC.agentJourneyLinkCreate]: z.object({
+    journeyId: z.string().uuid(),
+    eventId: z.string().uuid(),
+    recordId: z.string().uuid(),
+    relationshipType: z.enum(['references', 'supports', 'produces', 'validates', 'related_to'])
+  }),
+  [IPC.agentJourneyLinkRemove]: z.object({ id: z.string().uuid() }),
+  // R6-4.3.1 工作区绑定：`workspaceId` 必须显式给出——uuid = 绑定/换绑，
+  // null = 解绑。存在性、可用性与**生命周期**（执行是否已开始）由主进程
+  // Service 校验，下拉框选项不是权限。
+  [IPC.agentJourneyWorkspaceBind]: z.object({
+    journeyId: z.string().uuid(),
+    workspaceId: z.string().uuid().nullable()
+  }),
+  // R6-4.3.3：只读证据查询——入参只有 journeyId（绝对路径无从谈起）。
+  [IPC.agentJourneyEvidence]: z.object({ journeyId: z.string().uuid() }),
+  // R6-4.3.4：按需 Artifact——三个 UUID 全量校验归属链；不接受任何路径参数。
+  [IPC.agentJourneyEvidenceArtifact]: z.object({
+    journeyId: z.string().uuid(),
+    snapshotId: z.string().uuid(),
+    fileId: z.string().uuid()
+  }),
+  [IPC.canvasJourneys]: z.object({ canvasId: z.string().uuid() }),
+  [IPC.canvasJourneyAdd]: z.object({ canvasId: z.string().uuid(), journeyId: z.string().uuid() }),
+  [IPC.canvasJourneyMove]: z.object({
+    canvasId: z.string().uuid(),
+    journeyId: z.string().uuid(),
+    positionX: z.number().finite(),
+    positionY: z.number().finite()
+  }),
+  [IPC.canvasJourneyEventMove]: z.object({
+    canvasId: z.string().uuid(),
+    eventId: z.string().uuid(),
+    positionX: z.number().finite(),
+    positionY: z.number().finite()
+  }),
+  [IPC.canvasJourneyCollapse]: z.object({
+    canvasId: z.string().uuid(),
+    journeyId: z.string().uuid(),
+    collapsed: z.boolean()
+  }),
+  [IPC.canvasJourneyRemove]: z.object({ canvasId: z.string().uuid(), journeyId: z.string().uuid() }),
 
   // 内置浏览器 · Chrome 书签导入
   [IPC.browserChromeDetect]: z.void(),
@@ -570,7 +680,32 @@ export const ipcRequestSchemas = {
   [IPC.replyDraftList]: z.object({
     replyId: z.string().uuid().nullable().optional(),
     limit: z.number().int().min(1).max(200).optional()
-  }).optional()
+  }).optional(),
+
+  // ---- Cloud Account（Phase 1.2）----
+  // 登录入参刻意只有 provider：没有 code / state / token 的入口，
+  // Renderer 也就无法「代用户完成登录」或把外部拿到的 token 塞进主进程。
+  [IPC.accountStatus]: z.void(),
+  [IPC.accountLogin]: z.object({ provider: accountProviderSchema }),
+  [IPC.accountCancelLogin]: z.void(),
+  [IPC.accountRefresh]: z.void(),
+  [IPC.accountSignOut]: z.void(),
+
+  // ---- Remote MCP（Phase 1.1B）----
+  // 全部无入参：开启时的「授权范围确认」在 Renderer 完成，
+  // 主进程不做「接受一组 scope」的设计——远程 scope 是常量，
+  // 允许 Renderer 传 scope 等于让它自己扩大授权面。
+  [IPC.remoteStatus]: z.void(),
+  [IPC.remoteEnable]: z.void(),
+  [IPC.remoteDisable]: z.void(),
+  [IPC.remoteRegister]: z.void(),
+  // 确认码由主进程保存的那一份决定，Renderer **不能**传码进来：
+  // 允许传参等于让渲染进程决定「确认哪台设备」，而它本来就不该知道 deviceId。
+  [IPC.remoteConfirmRegistration]: z.void(),
+  [IPC.remoteCancelRegistration]: z.void(),
+  [IPC.remoteForget]: z.void(),
+  [IPC.remoteUnbind]: z.void(),
+  [IPC.remoteDiagnose]: z.void()
 } as const
 
 export type IpcChannel = keyof typeof ipcRequestSchemas

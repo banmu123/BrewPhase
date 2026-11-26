@@ -19,6 +19,9 @@ import {
 import type { McpClientService } from '../application/authorization/permission-service'
 import type { RecordService } from '../application/records/record-service'
 import type { WorkContextService } from '../application/work-context/work-context-service'
+import type { CanvasService } from '../application/canvas/canvas-service'
+import type { AgentJourneyService } from '../application/agent-journey/agent-journey-service'
+import type { WorkspaceEvidenceService } from '../application/agent-journey/workspace-evidence-service'
 import type { McpBridgeStatus } from '../../shared/contracts/mcp'
 import {
   addNode,
@@ -42,6 +45,8 @@ import {
 import { importImageFromDialog } from '../media/store'
 import { resolveRecordMetadata } from '../metadata'
 import type { SyncService } from '../sync/sync-service'
+import type { AccountService } from '../account/account-service'
+import type { RemoteService } from '../remote/remote-service'
 import type { BrowserManager } from '../browser/browser-manager'
 import type { BookmarkService } from '../browser/bookmark-service'
 import type { RoundtableService } from '../roundtable/roundtable-service'
@@ -91,12 +96,23 @@ export function registerIpc(params: {
   db: DatabaseHandle
   devServerUrl: string | null
   sync: SyncService
+  /** Cloud Account：登录 / 恢复 / 退出的唯一入口（无凭据快照）。 */
+  account: AccountService
+  /** Remote MCP：远程访问状态与启停（**不含任何凭据**）。 */
+  remote: RemoteService
   /** Application Service：Renderer 与 MCP 共用（记录写路径）。 */
   services: {
     records: RecordService
     clients: McpClientService
     workContexts: WorkContextService
     personalDirection: PersonalDirectionService
+    /**
+     * R6-4.1：**必须是 MCP Bridge 拿到的同一个实例**（main/index.ts 构造一次）。
+     * 第二个 AgentJourneyService / CanvasService 会各自持有自己的
+     * ApplicationEvents，Renderer 就只能收到一半的 `app:changed`。
+     */
+    canvas: CanvasService
+    agentJourneys: AgentJourneyService
   }
   bridgeStatus: () => McpBridgeStatus
   /** Multi-AI：后台页面与并行调度。 */
@@ -123,6 +139,8 @@ export function registerIpc(params: {
   updates: UpdateService
   /** 本地工作区登记 + 卡片绑定（AI Card Workspace Bridge Phase 1）。 */
   localWorkspaces: LocalWorkspaceService
+  /** R6-4.3.3：工作区证据采集与只读查询（P3；写入只在 Service 触发点）。 */
+  evidence: WorkspaceEvidenceService
   /** 本地工作区只读文件访问。 */
   workspaceFiles: WorkspaceFileService
   /** 本地文件 → AI 上下文打包。 */
@@ -134,6 +152,8 @@ export function registerIpc(params: {
     db,
     devServerUrl,
     sync,
+    account,
+    remote,
     services,
     bridgeStatus,
     aiChat,
@@ -148,6 +168,7 @@ export function registerIpc(params: {
     dataLocation,
     updates,
     localWorkspaces,
+    evidence,
     workspaceFiles,
     contextBuilder,
     replyIntelligence
@@ -328,6 +349,106 @@ export function registerIpc(params: {
     return null
   })
 
+  // MARK: - Agent Journey × Records × Canvas 融合（R6-4.1）
+  //
+  // 全部走 `services.agentJourneys` / `services.canvas`——与 MCP Bridge
+  // **同一个实例**，共享同一个 ApplicationEvents，Renderer 才收得到
+  // `app:changed('agentJourneys')`。
+  //
+  // 这些通道**没有任何一条**能改 Agent 原始事件内容：
+  // 笔记写 `agent_journey_notes`，关系写 `journey_record_links`，
+  // 摆位写 `canvas_journey_placements`——三张独立表，事件与业务 Edge 不可达。
+
+  handle(IPC.agentJourneysList, (input) =>
+    services.agentJourneys.listForRecords(input as { search?: string; limit?: number; offset?: number })
+  )
+  handle(IPC.agentJourneyGet, (input) =>
+    services.agentJourneys.getDetailForRenderer((input as { journeyId: string }).journeyId)
+  )
+  handle(IPC.agentJourneyNoteCreate, (input) => {
+    const value = input as { journeyId: string; eventId?: string | null; body: string }
+    // eventId 缺省/空串 → Journey 级笔记；否则 Event 级。
+    return value.eventId
+      ? services.agentJourneys.addEventNote({
+          journeyId: value.journeyId,
+          eventId: value.eventId,
+          body: value.body
+        })
+      : services.agentJourneys.addJourneyNote({ journeyId: value.journeyId, body: value.body })
+  })
+  handle(IPC.agentJourneyNoteUpdate, (input) => {
+    const value = input as { id: string; body: string }
+    return services.agentJourneys.updateJourneyNote(value)
+  })
+  handle(IPC.agentJourneyNoteRemove, (input) => {
+    services.agentJourneys.removeJourneyNote((input as { id: string }).id)
+    return null
+  })
+  handle(IPC.agentJourneyLinkCreate, (input) =>
+    services.agentJourneys.addRecordLink(
+      input as {
+        journeyId: string
+        eventId: string
+        recordId: string
+        relationshipType: string
+      }
+    )
+  )
+  handle(IPC.agentJourneyLinkRemove, (input) => {
+    services.agentJourneys.removeRecordLink((input as { id: string }).id)
+    return null
+  })
+  // R6-4.3.1：绑定 / 换绑 / 解绑工作区。Zod 已保证形状，生命周期与
+  // 可用性由 Service 在事务内校验（下拉框不是权限），返回更新后的卡片。
+  handle(IPC.agentJourneyWorkspaceBind, (input) => {
+    const value = input as { journeyId: string; workspaceId: string | null }
+    return services.agentJourneys.bindWorkspace(value.journeyId, value.workspaceId)
+  })
+  // R6-4.3.3：只读证据查询——Zod + Trusted Sender 照常；Renderer 无写权限，
+  // 证据写入只发生在 Main 的 T1–T5 触发点。
+  handle(IPC.agentJourneyEvidence, (input) =>
+    evidence.listForJourney((input as { journeyId: string }).journeyId)
+  )
+  // R6-4.3.4：按需读取单文件 Diff——三元组归属校验 + 只读本地 SQLite，
+  // 不回工作区、不跑 git、不接受路径；MCP / Remote 无此通道。
+  handle(IPC.agentJourneyEvidenceArtifact, (input) => {
+    const value = input as { journeyId: string; snapshotId: string; fileId: string }
+    return evidence.readArtifact(value.journeyId, value.snapshotId, value.fileId)
+  })
+
+  handle(IPC.canvasJourneys, (input) =>
+    services.canvas.journeysForCanvas((input as { canvasId: string }).canvasId)
+  )
+  handle(IPC.canvasJourneyAdd, (input) => {
+    const value = input as { canvasId: string; journeyId: string }
+    return services.canvas.placeJourneyOnCanvas(value)
+  })
+  handle(IPC.canvasJourneyMove, (input) => {
+    const value = input as {
+      canvasId: string
+      journeyId: string
+      positionX: number
+      positionY: number
+    }
+    services.canvas.moveJourneyGroupOnCanvas(value)
+    return null
+  })
+  handle(IPC.canvasJourneyEventMove, (input) => {
+    const value = input as { canvasId: string; eventId: string; positionX: number; positionY: number }
+    services.canvas.moveJourneyEventOnCanvas(value)
+    return null
+  })
+  handle(IPC.canvasJourneyCollapse, (input) => {
+    const value = input as { canvasId: string; journeyId: string; collapsed: boolean }
+    services.canvas.setJourneyCollapsedOnCanvas(value)
+    return null
+  })
+  handle(IPC.canvasJourneyRemove, (input) => {
+    const value = input as { canvasId: string; journeyId: string }
+    services.canvas.removeJourneyFromCanvas(value)
+    return null
+  })
+
   // MARK: - 设备同步
 
   handle(IPC.syncStatus, () => sync.status())
@@ -341,12 +462,41 @@ export function registerIpc(params: {
     return sync.resolveConflict(value.id, value.resolution)
   })
 
+  // MARK: - Cloud Account
+  //
+  // 四个意图，没有第五个。入参只有 provider 名字：授权码、state、PKCE
+  // verifier 与 Token 全部在主进程内产生与消费，这条通道拿回的永远是无凭据
+  // 快照（见 `shared/contracts/account.ts`）。账户层与本地库完全解耦——
+  // 未登录时下面所有 channels 照常可用。
+  handle(IPC.accountStatus, () => account.snapshot())
+  handle(IPC.accountLogin, (input) =>
+    account.login((input as { provider: Parameters<AccountService['login']>[0] }).provider)
+  )
+  handle(IPC.accountCancelLogin, () => account.cancelLogin())
+  handle(IPC.accountRefresh, () => account.refresh())
+  handle(IPC.accountSignOut, () => account.signOut())
+
   // MARK: - AI 连接（MCP 客户端授权）
 
   handle(IPC.mcpClientsList, () => services.clients.list())
   handle(IPC.mcpClientCreate, (input) => services.clients.create(input as never))
   handle(IPC.mcpClientRevoke, (input) => services.clients.revoke((input as { id: string }).id))
   handle(IPC.mcpBridgeStatus, () => bridgeStatus())
+
+  // MARK: - Remote MCP（Phase 1.1B）
+  //
+  // 七个意图，没有 `remote:call`。返回值全部是 `RemoteStatus` / `RemoteDiagnosis`，
+  // 里面没有 device_token、私钥、claim_secret，也没有参数与结果——
+  // 那些东西连 Renderer 的类型都不该知道。
+  handle(IPC.remoteStatus, () => remote.status())
+  handle(IPC.remoteEnable, () => remote.enable())
+  handle(IPC.remoteDisable, () => remote.disable())
+  handle(IPC.remoteRegister, () => remote.register())
+  handle(IPC.remoteConfirmRegistration, () => remote.confirmRegistration())
+  handle(IPC.remoteCancelRegistration, () => remote.cancelRegistrationNow())
+  handle(IPC.remoteForget, () => remote.forget())
+  handle(IPC.remoteUnbind, () => remote.unbind())
+  handle(IPC.remoteDiagnose, () => remote.diagnose())
 
   // MARK: - AI Agent 自动配置
   //
