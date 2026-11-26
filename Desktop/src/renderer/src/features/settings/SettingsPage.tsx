@@ -29,16 +29,7 @@ import { useAppStore, type SettingsCategory } from '../../app/store'
 import { confirmAction } from '../../shared/ConfirmDialog'
 import { codexConfig, configTargetFrom, workbuddyConfig } from './mcp-config'
 import { RemoteAccessPanel } from './RemoteAccessPanel'
-
-/**
- * 远程访问入口的显示开关。
- *
- * 当前**暂不对外开放**：功能与集成测试已完成（R5-R3.4、test 分支合并），
- * 只是把设置页这一块先收起来，等产品节奏放开。主进程侧不受影响——
- * 已配对设备若开着开关仍会照常连接，这只隐藏设置入口，避免新用户
- * 在功能开放前进入配对流程。
- */
-const REMOTE_ACCESS_VISIBLE = false
+import { CLOUD_ACCOUNT_VISIBLE, REMOTE_ACCESS_VISIBLE } from '../../shared/feature-visibility'
 
 /**
  * 更多 / Settings。
@@ -75,7 +66,8 @@ export function SettingsPage({
 
   const categories: Array<{ key: SettingsCategory; label: string }> = [
     { key: 'general', label: t.settings.nav.general },
-    { key: 'account', label: t.settings.nav.account },
+    // 云账户暂不对外开放：入口从导航里收掉（见 feature-visibility.ts 的说明）。
+    ...(CLOUD_ACCOUNT_VISIBLE ? [{ key: 'account' as const, label: t.settings.nav.account }] : []),
     { key: 'sync', label: t.settings.nav.sync },
     { key: 'browser', label: t.settings.nav.browser },
     { key: 'chrome', label: t.settings.nav.chrome },
@@ -116,7 +108,9 @@ export function SettingsPage({
 
           <div className="settings-pane">
             {category === 'general' && <GeneralSection info={info} update={update} />}
-            {category === 'account' && <AccountSection />}
+            // 防御：分类导航里已没有「账户」，但跨页直达（openSettings('account')）
+            // 仍可能把 category 设成它——那时渲染空面板而不是旧内容。
+            {CLOUD_ACCOUNT_VISIBLE && category === 'account' && <AccountSection />}
             {category === 'sync' && <SyncSection />}
             {category === 'browser' && <BrowserSection />}
             {category === 'chrome' && <ChromeSection />}

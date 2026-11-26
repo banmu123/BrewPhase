@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AccountSnapshot } from '@shared/contracts'
 import { api } from '../../shared/api'
+import { CLOUD_ACCOUNT_VISIBLE } from '../../shared/feature-visibility'
 import { useI18n } from '../../i18n'
 import { useAppStore } from '../../app/store'
 
@@ -20,6 +21,8 @@ export function StudioAccountBadge() {
   const [avatarFailed, setAvatarFailed] = useState(false)
 
   useEffect(() => {
+    // 云账户暂不对外开放：徽章连同「点击进设置」的入口一起收掉。
+    if (!CLOUD_ACCOUNT_VISIBLE) return
     let alive = true
     void api.account
       .status()
