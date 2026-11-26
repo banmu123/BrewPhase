@@ -222,12 +222,14 @@ test('圆桌面板：工作区按钮替换复制 URL、右侧竖栏、view bound
     .toBeLessThan(boundsBefore.width)
 
   // 收起 → view bounds 恢复（±3px 容差）。
+  // 注意 contentBefore 读于侧栏展开**之后**（是窄值），对它做 poll 是恒真
+  // 条件，等不到任何东西——必须对着收起后的 DOM 宽度等 view 跟上。
   await toolbar.getByRole('button', { name: '收起' }).click()
   await expect(panel.locator('.cwt')).toHaveCount(0)
   const contentAfter = await panel.locator('.rt-panel__content').evaluate((el) => el.getBoundingClientRect().width)
   await expect
     .poll(async () => (await readViewBounds())?.width ?? 0)
-    .toBeGreaterThan(contentBefore - 3)
+    .toBeGreaterThan(contentAfter - 3)
   expect(Math.abs((await readViewBounds())!.width - contentAfter)).toBeLessThanOrEqual(3)
 
   // 移除圆桌成员不删绑定（tab 回卡片架，绑定仍在）。
