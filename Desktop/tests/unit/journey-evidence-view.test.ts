@@ -631,3 +631,69 @@ describe('P5.1.1：无法判定计数、head_moved 空态与切换清空', () =>
     loader.dispose()
   })
 })
+
+// MARK: - P5.1.2：视图层计数与展示
+
+describe('P5.1.2 视图：引擎确认的 hash 缺失文件不再消失', () => {
+  /** 引擎真实组合：hash 双 null（size 证据确认 changed）+ 正文不可生成。 */
+  function engineConfirmedNullHashFile(path: string, overrides: Record<string, unknown> = {}) {
+    return makeFile(path, {
+      change_kind: 'modified',
+      content_hash_before: null,
+      content_hash_after: null,
+      artifact_kind: 'unavailable',
+      artifact_status: 'omitted',
+      artifact_omission: 'baseline_not_stored',
+      observation_status: 'changed',
+      insertions: 5,
+      deletions: 2,
+      ...overrides
+    })
+  }
+
+  it('§三.6（视图）：observed 计数包含已确认的 hash 缺失文件，不包含 unavailable', () => {
+    const event = makeEvent({ sequence: 1, changes: [makeChange('src/grown.ts')] })
+    const snapshots = [
+      makeSnapshot('execution_start', event.id),
+      makeSnapshot('execution_end', event.id, {
+        files: [
+          engineConfirmedNullHashFile('src/grown.ts'), // 已确认（hash 缺失）
+          makeFile('src/mystery.ts', {
+            change_kind: 'modified',
+            content_hash_before: null,
+            content_hash_after: null,
+            observation_status: 'unavailable',
+            artifact_kind: 'unavailable',
+            artifact_status: 'omitted',
+            artifact_omission: 'not_observable'
+          })
+        ]
+      })
+    ]
+    const view = journeyEvidenceViews(loadedState(snapshots), detailOf(event))!.get(event.id)!
+    expect(view.counts.observed).toBe(1) // 只算已确认变化（grown 计入、mystery 不计入）
+    expect(view.counts.matched).toBe(1) // grown 与 Agent 报告配对
+    expect(view.counts.undetermined).toBe(1)
+    expect(view.counts.reported).toBe(1)
+    expect(view.fileRows.map((row) => row.path)).toEqual(['src/grown.ts'])
+    expect(view.undeterminedRows.map((row) => row.path)).toEqual(['src/mystery.ts'])
+  })
+
+  it('展示行保留观察状态与 artifact 三元（changed + unavailable + omitted）', () => {
+    const event = makeEvent({ sequence: 1, changes: [makeChange('src/grown.ts')] })
+    const snapshots = [
+      makeSnapshot('execution_start', event.id),
+      makeSnapshot('execution_end', event.id, { files: [engineConfirmedNullHashFile('src/grown.ts')] })
+    ]
+    const view = journeyEvidenceViews(loadedState(snapshots), detailOf(event))!.get(event.id)!
+    const row = view.fileRows[0]
+    expect(row.attribution).toBe('reported_and_observed')
+    expect(row.observed?.observationStatus).toBe('changed')
+    expect(row.observed?.artifactKind).toBe('unavailable')
+    expect(row.observed?.artifactOmission).toBe('baseline_not_stored')
+    expect(row.observed?.insertions).toBe(5)
+    expect(row.observed?.deletions).toBe(2)
+    // artifact 不可用不改变归因：变化已确认
+    expect(row.reported?.changeSummary).toBeTruthy()
+  })
+})

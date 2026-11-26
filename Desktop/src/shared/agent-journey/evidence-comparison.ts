@@ -268,21 +268,34 @@ function matches(change: JourneyChange, file: JourneyEvidenceFile): boolean {
 }
 
 /**
- * 观察侧「已确认净变化」的重建规则（只读存量列，纯函数）：
- * 1. 重命名 / mode / **类型变化（type_changed）** / **冲突（conflicted）** → 是——
- *    git 明确报告的工作区事实，**不依赖内容 hash**（类型换了但内容 hash 恰好
- *    相同、冲突态两侧 hash 不足以判断时，都不能算「没有变化」）；
+ * 观察侧「已确认净变化」的判定（纯函数）。**P5.1.2：新记录以持久化的
+ * `observation_status` 为权威**；历史行（NULL）才走存量证据的保守重建。
+ *
+ * **新记录**（`observation_status` 非 null）：
+ * - `'changed'` → 是——引擎的 `changed` 来自**确定性证据**（hash 不同、
+ *   两侧大小不同等），绝不能因为内容 hash 恰好为 null、或 artifact 正文
+ *   不可用（如 `baseline_not_stored` / `decode_failed` 生成不了 Diff）就
+ *   推翻它、让文件从时间线里消失；
+ * - `'unavailable'` → 否（防御性：这类文件在 `compareEntries` 之前已被切进
+ *   `undetermined_observations`，正常不会走到这里）。
+ *
+ * **历史行**（`observation_status === null`，Migration 18 之前）——保守重建，
+ * 绝不升级成新记录语义：
+ * 1. 重命名 / mode / 类型变化 / 冲突 → 是（git 报告的事实，不依赖内容 hash）；
  * 2. 两侧内容 hash 严格不等（含 null↔value 的新增/删除）→ 是；
- * 3. 敏感文件（两侧 hash 按策略为空、artifact=sensitive）→ 是——
- *    `git status` 已证实状态变化，内容按隐私策略永不读取；
- * 4. 其余（两侧同值 = 改后还原 / 双空不可判定 / 单侧不可观测）→ **否**，
- *    宁可不宣称观察到，也不伪造。
+ * 3. 敏感文件（两侧 hash 按策略为空、artifact=sensitive）→ 是；
+ * 4. 其余（双空、单侧不明）→ **否**，宁可不宣称观察到，也不伪造。
  *
  * 这里只陈述 **Workspace Observed**：条目结构不含作者字段，不把观察结果
  * 归因给任何 Agent；置信度也由窗口级 `computeConfidence` 单独计算——
  * 文件级变化事实绝不等同于「窗口完整」。
  */
 function hasObservedNetChange(file: JourneyEvidenceFile): boolean {
+  // P5.1.2：新记录 → 持久化的 observation_status 是文件级观察确定性的
+  // 权威来源（引擎判定与本层展示永不打架）。
+  if (file.observation_status !== null) return file.observation_status === 'changed'
+
+  // 以下仅历史行（NULL）：存量证据的保守重建
   if (
     file.change_kind === 'renamed' ||
     file.change_kind === 'mode_changed' ||

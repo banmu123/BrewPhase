@@ -514,18 +514,25 @@ describe('窗口隔离（§5.1）', () => {
     expect(report.entries[0].observation).toBeNull()
   })
 
-  it('不可判定的观察条目（双 hash 为空、非敏感）不宣称「观察到」', () => {
+  it('不可判定的观察条目（双 hash 为空、observation=unavailable）不宣称「观察到」', () => {
     const event = makeEvent({ sequence: 1, changes: [makeChange('src/a.ts')] })
     const undetermined = makeFile('src/a.ts', {
       content_hash_before: null,
       content_hash_after: null,
       artifact_kind: 'unavailable',
       artifact_status: 'omitted',
-      artifact_omission: 'baseline_not_stored'
+      artifact_omission: 'baseline_not_stored',
+      // P5.1.2：「不可判定」的权威表达是 observation_status=unavailable——
+      // 新记录里 changed 才是权威，夹具必须与语义一致
+      observation_status: 'unavailable'
     })
     const snapshots = window(event.id, [undetermined])
     const report = only(buildEvidenceComparison(detailOf(event), snapshots))
-    expect(report.entries[0].attribution).toBe('reported_only') // 未确认净变化
+    expect(report.entries[0].attribution).toBe('reported_only') // 未确认净变化（断言未放宽）
+    // 且该文件在独立的无法判定集合里（不静默消失）
+    expect(report.undetermined_observations.map((file) => file.repo_relative_path)).toEqual([
+      'src/a.ts'
+    ])
   })
 
   it('敏感文件（artifact=sensitive、hash 按策略为空）仍算观察到状态变化', () => {
@@ -964,5 +971,135 @@ describe('无法判定的观察独立集合（P5.1.1 §三）', () => {
     expect(undetermined.artifact_omission).toBe('journey_budget')
     expect(undetermined.file_id).toBeTruthy()
     expect(undetermined.change_kind).toBe('modified')
+  })
+})
+
+// MARK: - 引擎权威 observation_status（P5.1.2 §三）
+
+describe('引擎权威 observation_status（P5.1.2 §三）', () => {
+  /**
+   * 贴近 GitSnapshotEngine 真实输出的夹具（§三「文件大小不同、hash 不可用、
+   * 仍能确认变化」）：worktree 内容没驻留 → 前后 content hash 双 null；
+   * 但两侧**大小不同**是确定性证据 → `decide()` 判 changed 并持久化；
+   * 正文因基线/当前内容不可重建 → artifact=unavailable + omitted。
+   */
+  function engineConfirmedNullHashFile(path: string, overrides: Record<string, unknown> = {}) {
+    return makeFile(path, {
+      change_kind: 'modified',
+      content_hash_before: null,
+      content_hash_after: null,
+      artifact_kind: 'unavailable',
+      artifact_status: 'omitted',
+      artifact_omission: 'baseline_not_stored',
+      observation_status: 'changed',
+      insertions: 5,
+      deletions: 2,
+      ...overrides
+    })
+  }
+
+  it('§三.1/3：modified、前后 hash 双 null、observation=changed → 进入 Workspace Observed', () => {
+    const event = makeEvent({ sequence: 1 }) // 没有 Agent Reported
+    const snapshots = window(event.id, [engineConfirmedNullHashFile('src/grown.ts')])
+    const report = only(buildEvidenceComparison(detailOf(event), snapshots))
+    // 必须进入观察侧展示流程：observed_only（绝不再因 hash 缺失从时间线消失）
+    expect(report.entries.map((entry) => entry.attribution)).toEqual(['observed_only'])
+    expect(report.entries[0].repo_relative_path).toBe('src/grown.ts')
+    // 且绝不落入无法判定集合（changed 是权威）
+    expect(report.undetermined_observations).toHaveLength(0)
+  })
+
+  it('§三.2：同一路径有 Agent Reported → 正确配成 reported_and_observed', () => {
+    const event = makeEvent({ sequence: 1, changes: [makeChange('src/grown.ts')] })
+    const snapshots = window(event.id, [engineConfirmedNullHashFile('src/grown.ts')])
+    const report = only(buildEvidenceComparison(detailOf(event), snapshots))
+    expect(report.entries).toHaveLength(1)
+    expect(report.entries[0].attribution).toBe('reported_and_observed')
+    expect(report.entries[0].agent_report?.change_summary).toBeTruthy()
+    expect(report.entries[0].observation?.observation_status).toBe('changed')
+    expect(report.undetermined_observations).toHaveLength(0)
+  })
+
+  it('§三.7：changed + artifact 不可用的合法组合——artifact 类型/状态/omission 全保留', () => {
+    const event = makeEvent({ sequence: 1, changes: [makeChange('src/grown.ts')] })
+    const snapshots = window(event.id, [engineConfirmedNullHashFile('src/grown.ts')])
+    const observation = only(buildEvidenceComparison(detailOf(event), snapshots)).entries[0]
+      .observation!
+    // 观察确定性与 artifact 可用性正交：变化已确认，正文仍可省略
+    expect(observation.observation_status).toBe('changed')
+    expect(observation.artifact_kind).toBe('unavailable')
+    expect(observation.artifact_status).toBe('omitted')
+    expect(observation.artifact_omission).toBe('baseline_not_stored')
+    expect(observation.insertions).toBe(5)
+    expect(observation.deletions).toBe(2)
+  })
+
+  it('§三.4：observation=unavailable（即使 modified、双 null）仍只进独立集合', () => {
+    const event = makeEvent({ sequence: 1, changes: [makeChange('src/mystery.ts')] })
+    const snapshots = window(event.id, [
+      makeFile('src/mystery.ts', {
+        change_kind: 'modified',
+        content_hash_before: null,
+        content_hash_after: null,
+        observation_status: 'unavailable',
+        artifact_kind: 'unavailable',
+        artifact_status: 'omitted',
+        artifact_omission: 'not_observable'
+      })
+    ])
+    const report = only(buildEvidenceComparison(detailOf(event), snapshots))
+    expect(report.entries.map((entry) => entry.attribution)).toEqual(['reported_only'])
+    expect(report.entries[0].observation).toBeNull() // 绝不配成 reported_and_observed
+    expect(report.undetermined_observations).toHaveLength(1)
+    expect(report.undetermined_observations[0].observation_status).toBe('unavailable')
+  })
+
+  it('§三.5：历史记录（observation=null）缺 hash 证据 → 仍保守判为无法确定', () => {
+    const event = makeEvent({ sequence: 1, changes: [makeChange('src/legacy.ts')] })
+    const snapshots = window(event.id, [
+      makeFile('src/legacy.ts', {
+        change_kind: 'modified',
+        content_hash_before: null,
+        content_hash_after: null,
+        observation_status: null, // 历史行：绝不升级成新记录语义
+        artifact_kind: 'unavailable',
+        artifact_status: 'omitted',
+        artifact_omission: 'not_observable'
+      })
+    ])
+    const report = only(buildEvidenceComparison(detailOf(event), snapshots))
+    // 不能证明 → 不进观察侧、进独立集合（保守）
+    expect(report.entries.map((entry) => entry.attribution)).toEqual(['reported_only'])
+    expect(report.entries[0].observation).toBeNull()
+    expect(report.undetermined_observations).toHaveLength(1)
+    expect(report.undetermined_observations[0].observation_status).toBeNull()
+  })
+
+  it('§三.6（对照层）：已确认的 hash 缺失文件在观察池、unavailable 不在——两侧互斥', () => {
+    const event = makeEvent({ sequence: 1, changes: [makeChange('src/grown.ts')] })
+    const snapshots = window(event.id, [
+      engineConfirmedNullHashFile('src/grown.ts'), // 已确认（hash 缺失但 changed）
+      makeFile('src/mystery.ts', {
+        change_kind: 'modified',
+        content_hash_before: null,
+        content_hash_after: null,
+        observation_status: 'unavailable',
+        artifact_kind: 'unavailable',
+        artifact_status: 'omitted',
+        artifact_omission: 'not_observable'
+      })
+    ])
+    const report = only(buildEvidenceComparison(detailOf(event), snapshots))
+    const observedPaths = report.entries.map((entry) => entry.repo_relative_path)
+    expect(observedPaths).toContain('src/grown.ts')
+    expect(observedPaths).not.toContain('src/mystery.ts')
+    expect(report.undetermined_observations.map((file) => file.repo_relative_path)).toEqual([
+      'src/mystery.ts'
+    ])
+    // 两集合零交集
+    const undeterminedPaths = report.undetermined_observations.map(
+      (file) => file.repo_relative_path
+    )
+    expect(observedPaths.filter((path) => undeterminedPaths.includes(path))).toEqual([])
   })
 })
