@@ -31,6 +31,16 @@ import { codexConfig, configTargetFrom, workbuddyConfig } from './mcp-config'
 import { RemoteAccessPanel } from './RemoteAccessPanel'
 
 /**
+ * 远程访问入口的显示开关。
+ *
+ * 当前**暂不对外开放**：功能与集成测试已完成（R5-R3.4、test 分支合并），
+ * 只是把设置页这一块先收起来，等产品节奏放开。主进程侧不受影响——
+ * 已配对设备若开着开关仍会照常连接，这只隐藏设置入口，避免新用户
+ * 在功能开放前进入配对流程。
+ */
+const REMOTE_ACCESS_VISIBLE = false
+
+/**
  * 更多 / Settings。
  *
  * 二级导航 + 内容页（常规 / 设备同步 / 浏览器 / Chrome 扩展 / AI 连接）：导航只切分类，每个分类
@@ -1578,7 +1588,9 @@ function McpSection() {
       </details>
 
       {/* 远程访问：默认关闭，开启需经过范围确认。没有 `remote:call` 之类的手动入口。 */}
-      <RemoteAccessPanel />
+      {/* 暂不对外：功能与测试都已完成（R5-R3.4 / test 分支集成），等产品节奏放开。
+          放开时把这一行改回 true 即可，主进程侧与测试不受影响。 */}
+      {REMOTE_ACCESS_VISIBLE && <RemoteAccessPanel />}
     </div>
   )
 }
