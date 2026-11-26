@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { _electron as electron, expect, test, type Page } from '@playwright/test'
 import { pinLocale } from './locale'
+import { CLOUD_ACCOUNT_VISIBLE } from '../../src/renderer/src/shared/feature-visibility'
 
 /**
  * Cloud Account E2E（Phase 1.2）。
@@ -19,6 +20,11 @@ import { pinLocale } from './locale'
  *
  * 前置：`pnpm build && pnpm mcp:build`。
  */
+
+// 云账户入口当前在界面层隐藏（feature-visibility.ts）：本文件操作的「账户」
+// 分类导航、账户面板与首页徽章都不渲染，继续跑只会假失败。不是删用例——
+// 放开开关后这一行自动放行，覆盖原样恢复。
+test.skip(!CLOUD_ACCOUNT_VISIBLE, '云账户入口暂时隐藏（CLOUD_ACCOUNT_VISIBLE=false）')
 
 function launchEnv(userData: string, cloudBaseUrl = ''): NodeJS.ProcessEnv {
   const env = {
