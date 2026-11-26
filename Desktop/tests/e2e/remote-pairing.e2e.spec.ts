@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { _electron as electron, expect, test } from '@playwright/test'
 import { pinLocale } from './locale'
+import { REMOTE_ACCESS_VISIBLE } from '../../src/renderer/src/shared/feature-visibility'
 
 /**
  * 远程访问面板的配对状态 E2E（R5-R3.4.1 §10 / §11 UI 组）。
@@ -22,6 +23,11 @@ import { pinLocale } from './locale'
  *
  * 前置：`pnpm build && pnpm mcp:build`。
  */
+
+// 远程访问入口当前在界面层隐藏（feature-visibility.ts）：面板不渲染，
+// 打开设置也到不了这块。不是删用例——放开开关后自动恢复执行。
+test.skip(!REMOTE_ACCESS_VISIBLE, '远程访问入口暂时隐藏（REMOTE_ACCESS_VISIBLE=false）')
+
 test('远程访问：没有凭据就不显示配对完成，也不会伪造成功', async () => {
   test.setTimeout(90_000)
   const userData = mkdtempSync(join(tmpdir(), 'brewphase-remote-pairing-e2e-'))
