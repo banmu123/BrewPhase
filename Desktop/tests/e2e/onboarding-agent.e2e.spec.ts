@@ -81,9 +81,9 @@ test('新用户：统一入口 → 选 Codex → 生成 TOML 配置', async () =
     await shoot(page, '2-agent-pick')
 
     // 权限默认折叠成一行摘要：默认就是全给，不需要每个人先读五个选项
-    await expect(page.locator('.scope-summary')).toContainText('全部 14 项')
+    await expect(page.locator('.scope-summary')).toContainText('全部 16 项')
 
-    // 展开逐项看一遍：14 项必须全部预勾上，而不是只勾了读权限
+    // 展开逐项看一遍：16 项必须全部预勾上，而不是只勾了读权限
     await page.getByRole('button', { name: '调整', exact: true }).click()
     await shoot(page, '1b-presets')
     const selectedPreset = page.locator('.preset-list__item[data-selected="true"]')
@@ -91,7 +91,7 @@ test('新用户：统一入口 → 选 Codex → 生成 TOML 配置', async () =
 
     await page.getByRole('button', { name: /自定义权限/ }).click()
     const checkboxes = page.locator('.scope-checklist input[type="checkbox"]')
-    await expect(checkboxes).toHaveCount(14)
+    await expect(checkboxes).toHaveCount(16)
     expect(
       await checkboxes.evaluateAll((nodes) =>
         nodes.every((node) => (node as HTMLInputElement).checked)
@@ -100,10 +100,10 @@ test('新用户：统一入口 → 选 Codex → 生成 TOML 配置', async () =
 
     // 收紧到「只看记录」：摘要必须跟着变，不能还写着「全部」
     await page.getByRole('button', { name: /只看记录/ }).click()
-    await expect(page.locator('.scope-summary')).toContainText('已选 1 / 14 项')
+    await expect(page.locator('.scope-summary')).toContainText('已选 1 / 16 项')
 
     await page.getByRole('button', { name: /全部权限/ }).click()
-    await expect(page.locator('.scope-summary')).toContainText('全部 14 项')
+    await expect(page.locator('.scope-summary')).toContainText('全部 16 项')
 
     await page.getByRole('button', { name: '创建客户端' }).click()
 
