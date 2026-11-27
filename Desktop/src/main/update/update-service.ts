@@ -7,6 +7,7 @@ import {
   UPDATE_RELEASES_PAGE,
   UPDATE_REQUEST_TIMEOUT_MS,
   isAllowedReleaseUrl,
+  normalizeVersion,
   selectUpdate,
   type UpdateCheckResult
 } from '../../shared/contracts/update'
@@ -72,8 +73,9 @@ export class UpdateService {
 
   private async perform(now: number): Promise<UpdateCheckResult> {
     // 注入优先（测试）；生产用 `app.getVersion()`——事实来源是
-    // package.json 的 version，不是任何硬编码副本。
-    const currentVersion = this.params.currentVersion ?? app.getVersion()
+    // package.json 的 version，不是任何硬编码副本。空串按「没注入」处理，
+    // 免得一个配置错误把自己当成 0.0.0 而永远提示更新。
+    const currentVersion = normalizeVersion(this.params.currentVersion?.trim() || app.getVersion())
     const base = {
       currentVersion,
       releaseUrl: UPDATE_RELEASES_PAGE,

@@ -111,6 +111,8 @@ describe('ChromeHostInstaller.status', () => {
     expect(state.manifestExists).toBe(true)
     expect(state.manifestValid).toBe(true)
     expect(state.installationValid).toBe(true)
+    // 宿主版本跟随注入的应用版本（生产是 app.getVersion()），不保留常量副本。
+    expect(state.hostVersion).toBe('0.1.1-test')
   })
 
   it('extensions id 不匹配时 manifest 无效', async () => {

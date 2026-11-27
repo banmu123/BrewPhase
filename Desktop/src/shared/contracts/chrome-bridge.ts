@@ -25,7 +25,12 @@ export const CHROME_MAX_SELECTED_TEXT = 20_000
 export const CHROME_MAX_REQUEST_ID = 100
 
 export const CHROME_HOST_NAME = 'com.brewphase.chrome'
-export const CHROME_HOST_VERSION = '0.2.0'
+/**
+ * 这里**没有** Host 的应用版本号：Host 二进制从应用包里复制出来，它报的版本
+ * 就是应用版本，运行时由主进程把 `app.getVersion()` 传进 Installer。
+ * 曾经在这里留过一份 `CHROME_HOST_VERSION = '0.2.0'`，发版时必然与
+ * package.json 漂移——版本号只允许有一个来源。
+ */
 
 /** 与 ChromeExtension/src/shared/protocol.ts 保持一致（有测试守护）。 */
 export const CHROME_COMPANION_ERROR_CODES = [

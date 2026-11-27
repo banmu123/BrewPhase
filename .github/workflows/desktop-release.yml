@@ -3,8 +3,17 @@
 # - 手动触发（填 release_tag）：把安装包上传为**已有 Release** 的资产，
 #   用于给只发了 macOS 的 Release 补发 Windows 包；同名资产 --clobber 覆盖。
 #   默认只上传 Windows 资产——CI 无签名 secrets，不能让它覆盖 Release 里
-#   人工签名 + 公证过的 macOS 正式包。
-# - 推送 desktop-v* tag：构建后创建「草稿」GitHub Release（需人工核对再公开）
+#   人工签名 + 公证过的 macOS 正式包。这条路径**不改**目标 Release 的
+#   正文与草稿 / Prerelease 状态。
+# - 推送 desktop-v* tag：构建后创建「草稿」GitHub Release（需人工核对再公开）。
+#   草稿**不再默认打 Prerelease 标记**：审核通过后直接 Publish 即为 Stable。
+#   客户端只认非 draft、非 prerelease 的 Release（见
+#   Desktop/src/shared/contracts/update.ts 的 isPublishedStable）。
+# - tag 名必须与 Desktop/package.json 的 version 一致（下方有校验）：安装包
+#   文件名里的版本来自 package.json，而客户端按 tag 版本去找这个文件名，
+#   不一致就会「Release 发出去了，但没人匹配得到安装包」。
+# - 下一次正式版预计 desktop-v0.2.1；已发布的 desktop-v0.1.x 与 v0.2.0
+#   不重命名、不删除、不重建。
 # 签名/公证凭据全部走 Repository Secrets；未配置时明确产出未签名内测包。
 
 name: Desktop Release
@@ -51,6 +60,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # tag 与 package.json 的版本必须一致：安装包名是
+      # `BrewPhase-${version}-${os}-${arch}.${ext}`（version 来自 package.json），
+      # 客户端却按 tag 版本去找这个文件名。不一致时 Release 能发出去，
+      # 但所有人都会看到「已是最新」——这类错配只能在这里拦住。
+      - name: Verify tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#desktop-v}"
+          pkg_version="$(node -p "require('./package.json').version")"
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match package.json version ${pkg_version}"
+            exit 1
+          fi
+          echo "tag ${GITHUB_REF_NAME} matches package.json ${pkg_version}"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -171,9 +197,12 @@ jobs:
           ls -lh
 
       # 只建草稿：签名/公证状态、下载页可用性需人工核对后再点 Publish。
+      # **不要**加 --prerelease：草稿只是「还没公开」，不是预发布；审核通过
+      # 直接 Publish 就该是 Stable。标成 Prerelease 会让客户端（Stable 渠道）
+      # 永远看不到这个版本。
       # tag 也可能由 GitHub Release 页/API 先行创建（那样发布 Release 本身
       # 就触发了本工作流），此时 `gh release create` 会因已存在而失败——
-      # 回退为把安装包上传到现有 Release（--clobber 覆盖同名资产）。
+      # 回退为把安装包上传到现有 Release（--clobber 覆盖同名资产），不碰其状态。
       - name: Create draft release (tag push)
         if: startsWith(github.ref, 'refs/tags/desktop-v')
         env:
@@ -181,7 +210,7 @@ jobs:
         run: |
           gh release create "$RELEASE_TAG" dist/* \
             --repo "$GITHUB_REPOSITORY" \
-            --draft --prerelease --generate-notes \
+            --draft --generate-notes \
           || gh release upload "$RELEASE_TAG" dist/* \
             --repo "$GITHUB_REPOSITORY" --clobber
 

@@ -7,7 +7,6 @@ import { promisify } from 'node:util'
 import {
   CHROME_BRIDGE_PROTOCOL_VERSION,
   CHROME_HOST_NAME,
-  CHROME_HOST_VERSION,
   type ChromeHostConfig
 } from '../../../shared/contracts/chrome-bridge'
 
@@ -177,7 +176,10 @@ export class ChromeHostInstaller {
       installationValid,
       hostPath: binaryExists ? hostPath : null,
       manifestPath: manifestExists ? manifestPath : null,
-      hostVersion: binaryExists ? CHROME_HOST_VERSION : null,
+      // Host 二进制是安装时从应用包里复制出来的，它的版本就是**安装时的应用
+      // 版本**。这里报当前运行版本（`app.getVersion()` 经 ChromeService 传入），
+      // 不再维护一份会漂移的常量。
+      hostVersion: binaryExists ? this.options.appVersion : null,
       extensionId,
       extensionDir: this.extensionDir(),
       lastError: this.lastError

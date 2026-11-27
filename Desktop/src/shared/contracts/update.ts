@@ -1,7 +1,7 @@
 /**
  * 版本感知（update awareness）契约。
  *
- * 这一版只做「有没有新版本」的判断与提示：**不下载、不安装、不替换 App**。
+ * 这一版只做「有没有可安装的新版本」的判断与提示：**不下载、不安装、不替换 App**。
  * macOS 上自动替换安装要求代码签名与公证链路稳定，而当前发布链还没做到，
  * 所以把决定权留给用户：告诉他有新版本，给出 GitHub Releases 下载页。
  * 所有 URL 都来自 GitHub API，且必须过白名单；Renderer 不能传任意地址进来。
@@ -41,13 +41,60 @@ export type ReleaseEntry = {
   assets?: ReleaseAsset[]
 }
 
-/** `desktop-v0.1.2` → `0.1.2`；其它 tag（iOS 的、草稿的）一律忽略。 */
-export function parseDesktopVersion(tagName: string): string | null {
-  const match = /^desktop-v(\d+(?:\.\d+)*)$/.exec(tagName.trim())
-  return match ? match[1] : null
+/**
+ * Release tag 的两代写法：
+ * - `desktop-v0.1.4`：0.2.0 之前的全部 Desktop Release；
+ * - `v0.2.0`：0.2.0 那一次正式发布用的写法（历史事实，不能重命名）。
+ *
+ * 从下一个版本起统一 `desktop-vX.Y.Z`，但两种都必须能读。
+ */
+export type ReleaseTagKind = 'desktop' | 'generic'
+export type ReleaseTag = { version: string; kind: ReleaseTagKind }
+
+const DESKTOP_TAG_PATTERN = /^desktop-v(\d+(?:\.\d+)*)$/
+const GENERIC_TAG_PATTERN = /^v(\d+(?:\.\d+)*)$/
+
+/** tag → 版本号 + 写法。带预发布后缀（`-beta`）或无关前缀的一律 null。 */
+export function parseReleaseTag(tagName: string): ReleaseTag | null {
+  const tag = typeof tagName === 'string' ? tagName.trim() : ''
+  const desktop = DESKTOP_TAG_PATTERN.exec(tag)
+  if (desktop) return { version: desktop[1], kind: 'desktop' }
+  const generic = GENERIC_TAG_PATTERN.exec(tag)
+  if (generic) return { version: generic[1], kind: 'generic' }
+  return null
 }
 
-/** 纯数字段比较：0.1.10 > 0.1.9，缺位按 0 处理。 */
+/**
+ * tag → 版本号（两种写法都认），保留旧名字给既有调用与阅读习惯。
+ *
+ * `vX.Y.Z` 到底是不是 Desktop 版本，光看 tag 分不出来（iOS 也用 v*）。
+ * 那一步由 `selectUpdate` 用「这个 Release 里有没有本平台的安装包」判定，
+ * 所以这里只负责语法，不负责归属。
+ */
+export function parseDesktopVersion(tagName: string): string | null {
+  return parseReleaseTag(tagName)?.version ?? null
+}
+
+/**
+ * Stable 渠道的准入：Draft（含 tag 触发后待人工审核的草稿）与 Prerelease
+ * 都不参与比较，只比已经正式发布的版本。
+ *
+ * 目前项目只有一个渠道；将来要开 Beta 时，在这里按渠道分派，而不是放宽
+ * 这个判断——放宽会让 0.1.x 那些 Prerelease 重新变成「新版本」。
+ */
+export function isPublishedStable(entry: ReleaseEntry): boolean {
+  return entry.draft !== true && entry.prerelease !== true
+}
+
+/** 比较用的规范化：去空白、去前导 v、去预发布后缀（`0.2.0-beta.1` → `0.2.0`）。 */
+export function normalizeVersion(value: string): string {
+  return String(value ?? '')
+    .trim()
+    .replace(/^v/i, '')
+    .split(/[-+]/)[0]
+}
+
+/** 纯数字段比较：0.2.10 > 0.2.9，缺位按 0 处理。 */
 export function compareVersions(a: string, b: string): number {
   const left = a.split('.').map((part) => Number.parseInt(part, 10) || 0)
   const right = b.split('.').map((part) => Number.parseInt(part, 10) || 0)
@@ -73,39 +120,71 @@ export function isAllowedReleaseUrl(raw: string): boolean {
   }
 }
 
-/** 当前平台该下哪个安装包；找不到就返回 null（仍可打开 Release 页）。 */
+/**
+ * 某版本在本平台的安装包文件名，按优先级排列。
+ *
+ * 必须与 electron-builder 的 `artifactName`
+ * （`BrewPhase-${version}-${os}-${arch}.${ext}`）逐字一致——版本号取自 tag，
+ * 文件名取自 package.json，两者不同就会「发布成功但没人能匹配到」，
+ * 所以发布工作流里另有 tag/package.json 的一致性校验。
+ *
+ * macOS 主选 dmg（正式安装包），zip 只在某些 Release 里存在，作次选；
+ * 本阶段不消费 zip 做自动更新，只是让「有这个包」的 Release 也能被识别。
+ */
+export function assetCandidates(version: string, platform: string, arch: string): string[] {
+  if (platform === 'darwin') {
+    if (arch !== 'arm64' && arch !== 'x64') return []
+    const stem = `BrewPhase-${version}-mac-${arch}`
+    return [`${stem}.dmg`, `${stem}.zip`]
+  }
+  if (platform === 'win32') {
+    // 目前只发布 x64 安装包：ARM 机器跑 x64 属模拟执行，不冒充「本平台更新」。
+    if (arch !== 'x64') return []
+    return [`BrewPhase-${version}-win-x64.exe`]
+  }
+  return []
+}
+
+/**
+ * 当前平台该下哪个安装包；找不到就返回 null。
+ *
+ * 命中第一个存在的候选文件后不再回退：如果它的地址不在白名单里，宁可返回
+ * null（不可直接更新），也不悄悄换成另一个文件。
+ */
 export function pickAssetUrl(
   release: ReleaseEntry,
   platform: string,
   arch: string
 ): string | null {
   const version = parseDesktopVersion(release.tag_name)
-  if (!version) return null
-  const suffix =
-    platform === 'darwin'
-      ? arch === 'arm64'
-        ? 'mac-arm64.dmg'
-        : 'mac-x64.dmg'
-      : platform === 'win32'
-        ? 'win-x64.exe'
-        : null
-  if (!suffix || !Array.isArray(release.assets)) return null
-  const asset = release.assets.find((item) => item?.name === `BrewPhase-${version}-${suffix}`)
-  const url = asset?.browser_download_url
-  return typeof url === 'string' && isAllowedReleaseUrl(url) ? url : null
+  if (!version || !Array.isArray(release.assets)) return null
+  for (const name of assetCandidates(version, platform, arch)) {
+    const asset = release.assets.find((item) => item?.name === name)
+    if (!asset) continue
+    const url = asset.browser_download_url
+    return typeof url === 'string' && isAllowedReleaseUrl(url) ? url : null
+  }
+  return null
 }
 
 export type UpdateCandidate = {
   version: string
   releaseUrl: string
-  downloadUrl: string | null
+  /** available 一定可下载：没有本平台安装包的 Release 不会被选中。 */
+  downloadUrl: string
   publishedAt: string | null
 }
 
 /**
  * 从 GitHub Releases API 的响应里挑「值得提示」的最新版本。
- * 草稿跳过；tag 必须是 desktop-vX.Y.Z；版本必须严格大于当前版本。
- * prerelease 要算进去——目前所有桌面端发布都还是 prerelease。
+ *
+ * 四道门，缺一不可：
+ * 1. Stable 渠道（`isPublishedStable`）：Draft 与 Prerelease 跳过；
+ * 2. tag 可解析：`desktop-vX.Y.Z` 或 `vX.Y.Z`（后者是 0.2.0 的历史写法）；
+ * 3. 版本严格大于当前版本（数字段比较，等于也不提示）；
+ * 4. **Release 里确实有本平台、且文件名版本号与 tag 一致的安装包**——
+ *    这一条同时挡掉纯 iOS 的 `v1.1.0`、只发了 macOS 的 Release，
+ *    以及「tag 是 0.3.0、包还是 0.2.0」的错配。
  */
 export function selectUpdate(
   releases: unknown,
@@ -114,23 +193,24 @@ export function selectUpdate(
   arch: string
 ): UpdateCandidate | null {
   if (!Array.isArray(releases)) return null
+  const current = normalizeVersion(currentVersion)
   let best: UpdateCandidate | null = null
   for (const item of releases) {
     if (!item || typeof item !== 'object') continue
     const entry = item as ReleaseEntry
-    if (entry.draft === true) continue
-    const version = parseDesktopVersion(
-      typeof entry.tag_name === 'string' ? entry.tag_name : ''
-    )
-    if (!version || compareVersions(version, currentVersion) <= 0) continue
+    if (!isPublishedStable(entry)) continue
+    const tag = parseReleaseTag(typeof entry.tag_name === 'string' ? entry.tag_name : '')
+    if (!tag || compareVersions(tag.version, current) <= 0) continue
+    const downloadUrl = pickAssetUrl(entry, platform, arch)
+    if (!downloadUrl) continue
+    if (best && compareVersions(tag.version, best.version) <= 0) continue
     const rawUrl = typeof entry.html_url === 'string' ? entry.html_url : ''
-    const candidate: UpdateCandidate = {
-      version,
+    best = {
+      version: tag.version,
       releaseUrl: isAllowedReleaseUrl(rawUrl) ? rawUrl : UPDATE_RELEASES_PAGE,
-      downloadUrl: pickAssetUrl(entry, platform, arch),
+      downloadUrl,
       publishedAt: typeof entry.published_at === 'string' ? entry.published_at : null
     }
-    if (!best || compareVersions(version, best.version) > 0) best = candidate
   }
   return best
 }
