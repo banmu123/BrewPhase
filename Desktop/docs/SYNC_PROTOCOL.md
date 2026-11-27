@@ -1,18 +1,28 @@
-# BrewPhase 同步协议 v1（iOS → Desktop，局域网，已实现）
+# BrewPhase 同步协议 v2（iOS → Desktop，局域网 TLS，已实现）
 
-> 协议版本号（`protocolVersion=1`，wire 与 QR 一致）自首次落地以来未变；
-> 早期文档把「结构阶段/传输阶段」误标为 v1/v2，2026-11-09 修正。安全模型沿用
-> BrewPing 已验证的设计（见 `BREWPING_REUSE_AUDIT.md`），数据语义见
-> `FEATURE_PARITY_AUDIT.md`。
+> 协议版本号（`protocolVersion=2`，wire 与 QR 一致）。**v1 → v2 的唯一变更**
+> 是传输层：明文 HTTP → TLS + 证书 pinning（2026-11-27 正式发版前安全审计）。
+> 数据语义（§4 合并）与鉴权语义（§2）不变；v1 客户端无法与 v2 桌面端配对
+> （`/api/status` 的 protocolVersion 不匹配，探测直接失败——这是有意的
+> 安全门，不存在明文回退）。安全模型在 BrewPing 基础上加了证书身份
+> （见下）；数据语义见 `FEATURE_PARITY_AUDIT.md`。
 
 ## 0. 总则
 
-- 方向：第一版 **iOS → Desktop** 单向；协议字段为未来双向预留
+- 方向：**iOS → Desktop** 单向；协议字段为未来双向预留
   （`originDeviceId` / `revision` / tombstone）。
-- 传输：局域网 HTTP（端口首选 **47821**，被占自动回落并把实际端口写进二维码）。
-  **TLS 是下一跳**（落地时两端同时升级、wire 版本随之 +1）。
-  当前防护 = 一次性高熵配对码 + 每设备独立 Token（服务端只存 SHA-256）+
-  时间戳/nonce/HMAC 防重放；威胁模型与 BrewPing 现行版本一致。
+- 传输：局域网 **HTTPS**（端口首选 **47821**，被占自动回落并把实际端口写进
+  二维码）。桌面端生成 **ECDSA P-256 自签证书**（私钥只存桌面 userData，
+  0600），**只监听 TLS**——不存在明文回退。
+- **证书身份与 pinning**：证书的 SHA-256（hex，对整份证书 DER）经配对二维码
+  交付给 iOS（`certFingerprint` 字段）；iOS 存 Keychain（`desktop.certFingerprint`），
+  对**每一次连接**做证书 pinning：leaf 证书 DER 的哈希必须等于 Keychain 里的
+  指纹——不匹配、或未配置指纹时**取消连接**。iOS 侧实现是 URLSessionDelegate
+  的 serverTrust 处理（自签证书不依赖系统信任链）。
+- 证书轮换：桌面端重新生成证书后指纹变化，旧配对设备会被 pinning 拒绝——
+  重新扫码配对即恢复（配对把新指纹重新交付）。轮换不撤销设备授权。
+- 应用层防护**保留**（纵深防御）：一次性高熵配对码 + 每设备独立 Token
+  （服务端只存 SHA-256）+ 时间戳/nonce/HMAC 防重放。
 - 发现：二维码直连（`host`/`hosts` 候选）。Bonjour（`_brewphase._tcp`）作为
   增强项后置，TXT 约定：`deviceId/deviceName/protocolVersion/port`。
 
@@ -20,19 +30,22 @@
 
 1. 桌面端「连接新手机」→ 生成 **128-bit 高熵码**（`randomBytes(16)`，base64url
    22 字符；仅存 SHA-256，服务端不留明文），**2 分钟有效、一次性**；
-   二维码 = `brewphase://pair?host=&hosts=&port=&deviceId=&deviceName=&pairingCode=&protocolVersion=1&expiresAt=`。
+   二维码 = `brewphase://pair?host=&hosts=&port=&deviceId=&deviceName=&pairingCode=&certFingerprint=&protocolVersion=2&expiresAt=`。
    `hosts` 携带全部实际可达的局域网地址（多网卡；物理网卡 en* 优先，
-   VPN/容器虚拟网卡降权）。明文只在生成时返回一次、由设置页界面状态持有；
+   VPN/容器虚拟网卡降权）。`certFingerprint` 是桌面同步证书的 SHA-256
+   （hex，小写，64 字符）——**协议 v2 必填**，iOS 据此对配对与后续全部连接
+   做 pinning。明文只在生成时返回一次、由设置页界面状态持有；
    重新生成 = 旧码立即作废，`PairingService` 不为「返回同一个码」缓存明文。
 2. iOS 扫码（AVFoundation；解析只有 `SyncPairingLink.parse` 一处）→
-   **先逐一探测候选地址的 `GET /api/status`**（验证 service + protocolVersion，
-   每候选 2s 超时），对**验证可达的第一个地址**发一次
-   `POST /api/pair {pairingCode, deviceName}`——配对码一次性，绝不向多地址
-   并发兑换；响应丢失时由用户重新生成二维码。
+   **先逐一探测候选地址的 `GET /api/status`**（HTTPS + 指纹 pinning，验证
+   service + protocolVersion，每候选 2s 超时），对**验证可达的第一个地址**发
+   一次 `POST /api/pair {pairingCode, deviceName}`——配对码一次性，绝不向多
+   地址并发兑换；响应丢失时由用户重新生成二维码。
 3. 校验（恒定时间比较 + 双维限速：单源 5 次/5 分钟、全局 30 次/5 分钟、冷却 60s、
    「无码可兑不计数」）→ 签发 32 字节 Token：桌面端存哈希进 `devices` 表，
    iOS 存 Keychain；**码立即作废**。
 4. 响应：`{token, deviceId, desktopDeviceId, desktopDeviceName, protocolVersion}`。
+   配对完成后 iOS 把 `certFingerprint` 连同凭据一起存 Keychain。
 5. 端口策略：所有发布地址共用**同一个端口**（首选 47821，被占则统一探测一个
    空闲端口再绑全部地址；任一地址失败整体回滚重试）。没有可用局域网 IPv4
    时**不出二维码**，设置页提示检查网络——绝不给手机展示连不上的
@@ -42,15 +55,16 @@
 
 | 项 | 规则 |
 |---|---|
+| 传输 | **TLS**（自签证书 + iOS 侧证书 pinning；v2 起所有请求） |
 | 身份 | `Authorization: Bearer <token>`（服务端 `sha256(token)` 查 `devices`，`revoked_at` 非空拒绝） |
-| 读（GET） | 仅 Bearer（重放无害，同 BrewPing） |
-| 写（POST） | 额外 `x-bp-timestamp`（ms，窗口 ±120s）+ `x-bp-nonce`（有界去重 2048）+ `x-bp-signature = HMAC-SHA256(token, timestamp \n nonce \n sha256(body))` |
+| 读（GET） | 仅 Bearer（TLS 内传输；重放无害，同 BrewPing） |
+| 写（POST） | 额外 `x-bp-timestamp`（ms，窗口 ±120s）+ `x-bp-nonce`（有界去重 2048）+ `x-bp-signature = HMAC-SHA256(token, timestamp \n nonce \n sha256(body))`——TLS 之上的纵深防御，应用层重放防护不依赖 TLS 信任 |
 
 ## 3. 接口
 
 | 路由 | 说明 |
 |---|---|
-| `GET /api/status` | 无鉴权健康检查 `{service, protocolVersion}` |
+| `GET /api/status` | 无鉴权健康检查 `{service, protocolVersion, tls}`（v2 起 `tls=true`；客户端同时做证书 pinning） |
 | `GET /api/sync/manifest` | 连通性/版本探针 `{protocolVersion, desktopDeviceId}`；iOS 只检查请求成功，不消费响应体 |
 | `POST /api/sync/apply` | 批量合并（见 §4），返回 `{appliedCount, skippedCount, conflictCount, failedItems[], results[]}`（逐条 `{entityType,id,status,reason?}`） |
 | `POST /api/sync/media/manifest` | 清单比对 → `{missing[], have[], rejected[]}` |

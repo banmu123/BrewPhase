@@ -1,7 +1,7 @@
 import { and, eq, isNull } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { mcpDevices } from "../db/schema.js";
-import { sha256Hex } from "../security/crypto.js";
+import { constantTimeEqual, sha256Hex } from "../security/crypto.js";
 import { generateDeviceToken } from "./device-token.js";
 import {
   claimMismatch,
@@ -65,10 +65,11 @@ export async function claimCredentials(
   const device = rows[0];
   if (!device) throw deviceNotFound();
 
-  // 恒定时间比较：`sha256Hex` 的输出长度固定，但仍走 constantTimeEqual 语义
-  // （由 crypto.ts 的 constantTimeEqual 保证；这里直接比字符串是因为
-  // 输入先经过了哈希，长度信息不泄露原文长度）。
-  if (sha256Hex(input.claimSecret) !== device.claimSecretHash) throw claimMismatch();
+  // 恒定时间比较：与项目内其它凭据比较保持同一纪律（security/crypto.ts）。
+  // 比较对象虽是 sha256 hex，仍不偏离 constantTimeEqual 语义。
+  if (!constantTimeEqual(sha256Hex(input.claimSecret), device.claimSecretHash)) {
+    throw claimMismatch();
+  }
 
   if (device.status === "pending") {
     if (device.expiresAt.getTime() <= now.getTime()) throw confirmExpired();

@@ -2,7 +2,7 @@ import { randomInt } from "node:crypto";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Database } from "../db/client.js";
 import { mcpDevices } from "../db/schema.js";
-import { randomToken, sha256Hex } from "../security/crypto.js";
+import { constantTimeEqual, randomToken, sha256Hex } from "../security/crypto.js";
 import {
   confirmExpired,
   deviceExists,
@@ -33,6 +33,16 @@ import { rawPublicKeyByteLength, toDeviceSummary, type DeviceSummary } from "./s
  */
 
 /** 每个用户最多 5 台 `active + pending` 设备（协议 §3.2）。 */
+export /** Postgres 唯一约束冲突（23505）——drizzle/pg 会带 code 抛 PgError。 */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "23505"
+  );
+}
+
 export const MAX_DEVICES_PER_USER = 5;
 
 /** 确认码连续错误上限；达到后该 pending 行直接置 `revoked`（协议 §3.3）。 */
@@ -117,20 +127,29 @@ export async function registerDevice(
     if (used.some((row) => row.publicKey === input.publicKey)) throw deviceExists();
     if (used.length >= MAX_DEVICES_PER_USER) throw deviceLimitReached();
 
-    const rows = await tx
-      .insert(mcpDevices)
-      .values({
-        userId: input.userId,
-        name: input.name,
-        platform: input.platform,
-        publicKey: input.publicKey,
-        status: "pending",
-        confirmCodeHash: sha256Hex(confirmCode),
-        claimSecretHash: sha256Hex(claimSecret),
-        expiresAt: new Date(now.getTime() + PENDING_TTL_MS),
-        // grant_epoch 走列默认值 0：显式写 0 会让「默认值变更」在两条路径上不一致。
-      })
-      .returning({ id: mcpDevices.id });
+    // 并发加固（0006 唯一索引兜底）：即使两个事务同时通过 SELECT 查重，
+    // INSERT 也会被 (user_id, public_key) 的部分唯一索引拒绝——此处捕获
+    // 23505 转成与串行路径一致的 deviceExists。
+    let rows: { id: string }[];
+    try {
+      rows = await tx
+        .insert(mcpDevices)
+        .values({
+          userId: input.userId,
+          name: input.name,
+          platform: input.platform,
+          publicKey: input.publicKey,
+          status: "pending",
+          confirmCodeHash: sha256Hex(confirmCode),
+          claimSecretHash: sha256Hex(claimSecret),
+          expiresAt: new Date(now.getTime() + PENDING_TTL_MS),
+          // grant_epoch 走列默认值 0：显式写 0 会让「默认值变更」在两条路径上不一致。
+        })
+        .returning({ id: mcpDevices.id });
+    } catch (error) {
+      if (isUniqueViolation(error)) throw deviceExists();
+      throw error;
+    }
 
     const row = rows[0];
     if (!row) throw new Error("device insert returned no row");
@@ -174,7 +193,7 @@ export async function confirmDevice(
   }
   if (device.expiresAt.getTime() <= now.getTime()) throw confirmExpired();
 
-  if (sha256Hex(input.confirmCode) !== device.confirmCodeHash) {
+  if (!constantTimeEqual(sha256Hex(input.confirmCode), device.confirmCodeHash)) {
     // **原子地** +1 并在越线时锁行。
     //
     // 单条 UPDATE 里 `confirm_attempts + 1` 在所有 SET 表达式中读的都是**旧值**，

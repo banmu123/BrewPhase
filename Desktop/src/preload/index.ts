@@ -75,7 +75,6 @@ const api: RendererApi = {
     reattach: (tabId) => invoke(IPC.browserReattach, { tabId }),
     floatActivate: (windowId, tabId) => invoke(IPC.browserFloatActivate, { windowId, tabId }),
     floatBounds: (windowId, bounds) => invoke(IPC.browserFloatBounds, { windowId, bounds }),
-    executeOnTab: (tabId, script) => invoke(IPC.browserExecuteOnTab, { tabId, script })
   },
   // 缩略图：只收主进程采集好的本地 data URL，Renderer 不接触页面内容。
   browserPreviews: {

@@ -238,7 +238,8 @@ function bootstrap(): void {
       // 只处理真正落库的 record（跳过 skipped / conflict / failed）；
       // URL 是否变化由 prepareLocalMetadata 自己比对
       scheduleMetadataFor(recordIdsToResolve(outcome))
-    }
+    },
+    app.getPath('userData')
   )
   void syncService.restore().catch((error) => {
     console.error('[sync] restore failed', error)
@@ -818,12 +819,16 @@ app.on('before-quit', (event) => {
   // R6-4.3.3.1：证据 flush 与既有 stop() **共用同一次有界等待**（总超时兜底），
   // 不额外拖长退出、也不无限阻塞；超时后遗留的 pending 行不写半截——
   // 关库前 beginShutdown() 已封住写入，由下次启动统一标 capture_interrupted。
-  if ((bridgeServer || chromeService || remoteService || workspaceEvidenceRef) && !quitting) {
+  if ((bridgeServer || chromeService || remoteService || workspaceEvidenceRef || syncService) && !quitting) {
     quitting = true
     const server = bridgeServer
     const chrome = chromeService
     const remote = remoteService
     const evidence = workspaceEvidenceRef
+    // 安全审计（2026-11-27）：LAN 同步服务也要显式停——不靠进程退出兜底，
+    // 退出竞态窗口内不应再有新的同步请求进入（认证/落库）。
+    const sync = syncService
+    syncService = null
     bridgeServer = null
     chromeService = null
     remoteService = null
@@ -833,7 +838,8 @@ app.on('before-quit', (event) => {
     const stopped = Promise.allSettled([
       server?.stop(),
       chrome?.stop(),
-      remote?.stop()
+      remote?.stop(),
+      sync?.disable().catch(() => undefined)
     ]).then(() => undefined)
     // R6-4.3.3.1：等证据队列排空（触发路径 fire-and-forget，退出给它收尾窗口）。
     const flushed: Promise<void> = evidence

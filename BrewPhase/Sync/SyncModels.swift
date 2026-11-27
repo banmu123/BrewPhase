@@ -55,7 +55,7 @@ func epochMillis(_ date: Date?) -> Int64? {
 
 // MARK: - 配对深链
 
-/// `brewphase://pair?host=&hosts=&port=&deviceId=&deviceName=&pairingCode=&protocolVersion=&expiresAt=`
+/// `brewphase://pair?host=&hosts=&port=&deviceId=&deviceName=&pairingCode=&certFingerprint=&protocolVersion=&expiresAt=`
 ///
 /// 解析**只有这一处**：扫码与手输共用（BrewPing 的教训——两条路各写一份
 /// 解析，字段就会漂移）。`hosts` 是桌面端全部候选地址（多网卡），连接前
@@ -68,6 +68,10 @@ struct SyncPairingLink: Equatable {
     var deviceName: String
     var pairingCode: String
     var protocolVersion: Int
+    /// 桌面端同步服务 TLS 证书的 SHA-256（hex，小写）——协议 v2 起必填。
+    /// 信任来源是「面对面扫码」：二维码在配对窗口内唯一，扫码动作把证书
+    /// 身份带外交给 iOS，之后每一次连接都据此做证书 pinning。
+    var certFingerprint: String?
     var expiresAt: Date
 
     /// 探测顺序：host 优先，其余按二维码给出的次序，去重去空。
@@ -102,6 +106,7 @@ struct SyncPairingLink: Equatable {
             deviceName: dict["deviceName"] ?? "BrewPhase Desktop",
             pairingCode: code,
             protocolVersion: version,
+            certFingerprint: dict["certFingerprint"].map { $0.trimmingCharacters(in: .whitespaces) },
             expiresAt: expiresAt
         )
     }

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { openDatabase, type DatabaseHandle } from '../../src/main/database/client'
 import * as canvasRepo from '../../src/main/database/repositories/canvas'
 import { SyncService } from '../../src/main/sync/sync-service'
+import { generateIdentity } from '../../src/main/sync/tls-identity'
 import {
   applyBatch,
   canonical,
@@ -15,6 +16,9 @@ import {
   type SyncBatch,
   type SyncDeletion
 } from '../../src/main/sync/snapshot-importer'
+
+// TLS 证书身份目录（Windows 跳过场景的 SyncService 需要）
+const testUserDataDir = mkdtempSync(join(tmpdir(), 'bp-canvas-iso-ud-'))
 import { wipeSyncedData } from '../../src/main/sync/wipe'
 
 /**
@@ -300,7 +304,7 @@ describe('Canvas 同步隔离：iOS → Desktop 单向，Desktop 本地创作不
     expect(JSON.parse(String(conflicts[0].remote_payload)).annotation).toBe('手机改的备注')
 
     // 用户在设置页明确裁决之前，桌面内容不能被覆盖。
-    const service = new SyncService(handle.sqlite, () => undefined)
+    const service = new SyncService(handle.sqlite, () => undefined, undefined, testUserDataDir)
     service.resolveConflict(String(conflicts[0].id), 'remote')
 
     expect(row('canvas_nodes', NODE_ID).annotation).toBe('手机改的备注')
@@ -316,7 +320,7 @@ describe('Canvas 同步隔离：iOS → Desktop 单向，Desktop 本地创作不
 
     const conflicts = conflictRows()
     expect(conflicts).toHaveLength(1)
-    const service = new SyncService(handle.sqlite, () => undefined)
+    const service = new SyncService(handle.sqlite, () => undefined, undefined, testUserDataDir)
     service.resolveConflict(String(conflicts[0].id), 'local')
 
     expect(baseline('canvasNode', NODE_ID)).toBe(nodeFingerprint(nodePayload()))
@@ -497,7 +501,7 @@ describe('Canvas 同步隔离：iOS → Desktop 单向，Desktop 本地创作不
     importIos()
     expect(count('canvases')).toBe(2)
 
-    const service = new SyncService(handle.sqlite, () => undefined)
+    const service = new SyncService(handle.sqlite, () => undefined, undefined, testUserDataDir)
 
     // 1) 只解除配对：不清理本地画布。
     service.revokeDevice('device-to-revoke')

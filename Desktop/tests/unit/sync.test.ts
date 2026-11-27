@@ -11,6 +11,16 @@ import { migrate } from '../../src/main/database/migrations'
 import { NonceStore, sha256, verifyRequest, expectedSignature, randomToken } from '../../src/main/sync/auth'
 import { recordIdsToResolve } from '../../src/main/metadata'
 import { SyncServer } from '../../src/main/sync/server'
+import { generateIdentity, loadOrCreateIdentity, rotateIdentity } from '../../src/main/sync/tls-identity'
+import { syncTlsFetch } from '../helpers/sync-tls-fetch'
+
+
+// 当前同步服务的证书 PEM（iOS 配对后存 Keychain 的信任锚）：每个构建
+// server 的 describe 在创建实例后随手更新；tlsFetch 用它做锚定验证——
+// 与 iOS 的 SecTrustSetAnchorCertificates + 标准评估等价。
+let currentTrustedCertPem = ''
+const tlsFetch = (url: string, init?: RequestInit): ReturnType<typeof syncTlsFetch> =>
+  syncTlsFetch(url, init, currentTrustedCertPem)
 import { PairingService } from '../../src/main/sync/pairing-service'
 import { applyBatch, canonical, fingerprint, recordTagLinkId, type ApplyResult, type SyncBatch } from '../../src/main/sync/snapshot-importer'
 import { finalizeMedia, writeChunk, checkManifest, receivedBytes, type MediaManifestEntry } from '../../src/main/sync/media-transfer'
@@ -611,14 +621,22 @@ describe('媒体分块传输', () => {
 })
 
 describe('HTTP 路由 wire format（与 iOS 客户端逐字段对齐）', () => {
+
   let db: Database.Database
   let server: SyncServer
   let baseUrl: string
 
   beforeEach(() => {
     db = openDb()
-    server = new SyncServer(db, 'bp_desk_test', 'BrewPhase · test', () => {})
+    server = new SyncServer(db, 'bp_desk_test', 'BrewPhase · test', () => {}, undefined, generateIdentity())
+    currentTrustedCertPem = server.tlsCertPem()
   })
+
+  /**
+   * 模拟 iOS SyncNetworkClient 的 TLS 行为：不做系统 CA 验证
+   * （rejectUnauthorized=false），只做 **SPKI pinning**（证书指纹必须等于
+   * 配对二维码交付的指纹）。指纹不匹配 → 连接拒绝，绝不静默降级。
+   */
 
   afterEach(() => {
     server.stop()
@@ -636,7 +654,7 @@ describe('HTTP 路由 wire format（与 iOS 客户端逐字段对齐）', () => 
       probe.on('error', reject)
     })
     const state = await server.start(['127.0.0.1'], port)
-    baseUrl = `http://127.0.0.1:${state.port ?? port}`
+    baseUrl = `https://127.0.0.1:${state.port ?? port}`
   }
 
   function pairBody(body: Record<string, unknown>): RequestInit {
@@ -649,7 +667,7 @@ describe('HTTP 路由 wire format（与 iOS 客户端逐字段对齐）', () => 
 
   it('GET /api/status 可达且版本对齐', async () => {
     await startServer()
-    const response = await fetch(`${baseUrl}/api/status`)
+    const response = await tlsFetch(`${baseUrl}/api/status`)
     expect(response.status).toBe(200)
     const payload = (await response.json()) as { service: string; protocolVersion: number }
     expect(payload.service).toBe('brewphase-sync')
@@ -661,7 +679,7 @@ describe('HTTP 路由 wire format（与 iOS 客户端逐字段对齐）', () => 
     const { code } = server.pairingPayload()
     // 与 SyncNetworkClient.pair 的 body 逐字段一致——这正是 2026-11-07
     // 真机扫码 401（server 读 code、iOS 发 pairingCode）的回归防线。
-    const response = await fetch(`${baseUrl}/api/pair`, pairBody({ pairingCode: code, deviceName: 'iPhone' }))
+    const response = await tlsFetch(`${baseUrl}/api/pair`, pairBody({ pairingCode: code, deviceName: 'iPhone' }))
     expect(response.status).toBe(200)
     const payload = (await response.json()) as {
       token: string
@@ -680,9 +698,9 @@ describe('HTTP 路由 wire format（与 iOS 客户端逐字段对齐）', () => 
   it('GET /api/sync/media/offset 拒绝 unsafe name（路径穿越防护）', async () => {
     await startServer()
     const { code } = server.pairingPayload()
-    const pair = await fetch(`${baseUrl}/api/pair`, pairBody({ pairingCode: code, deviceName: 'iPhone' }))
+    const pair = await tlsFetch(`${baseUrl}/api/pair`, pairBody({ pairingCode: code, deviceName: 'iPhone' }))
     const { token } = (await pair.json()) as { token: string }
-    const response = await fetch(
+    const response = await tlsFetch(
       `${baseUrl}/api/sync/media/offset?name=${encodeURIComponent('../../etc/passwd.jpg')}`,
       { headers: { authorization: `Bearer ${token}` } }
     )
@@ -692,7 +710,7 @@ describe('HTTP 路由 wire format（与 iOS 客户端逐字段对齐）', () => 
   it('旧字段名 code 仍可兑换（兼容兜底）', async () => {
     await startServer()
     const { code } = server.pairingPayload()
-    const response = await fetch(`${baseUrl}/api/pair`, pairBody({ code, deviceName: 'iPhone' }))
+    const response = await tlsFetch(`${baseUrl}/api/pair`, pairBody({ code, deviceName: 'iPhone' }))
     expect(response.status).toBe(200)
   })
 
@@ -701,14 +719,14 @@ describe('HTTP 路由 wire format（与 iOS 客户端逐字段对齐）', () => 
     server.pairingPayload() // 生成一个码（猜错的对象）
     let lastStatus = 0
     for (let index = 0; index < 5; index += 1) {
-      const response = await fetch(
+      const response = await tlsFetch(
         `${baseUrl}/api/pair`,
         pairBody({ pairingCode: 'definitely-wrong-code', deviceName: 'iPhone' })
       )
       lastStatus = response.status
     }
     expect(lastStatus).toBe(401)
-    const limited = await fetch(
+    const limited = await tlsFetch(
       `${baseUrl}/api/pair`,
       pairBody({ pairingCode: 'definitely-wrong-code', deviceName: 'iPhone' })
     )
@@ -722,7 +740,8 @@ describe('端口与地址策略（统一端口）', () => {
 
   beforeEach(() => {
     db = openDb()
-    server = new SyncServer(db, 'bp_desk_test', 'BrewPhase · test', () => {})
+    server = new SyncServer(db, 'bp_desk_test', 'BrewPhase · test', () => {}, undefined, generateIdentity())
+    currentTrustedCertPem = server.tlsCertPem()
   })
 
   afterEach(() => {
@@ -770,7 +789,8 @@ describe('HTTP 端到端（模拟 iOS 客户端：Bearer + Timestamp + Nonce + H
     tempDir = await mkdtemp(join(tmpdir(), 'bp-e2e-'))
     process.env.BREWPHASE_USER_DATA_DIR = tempDir
     db = openDb()
-    server = new SyncServer(db, 'bp_desk_e2e', 'BrewPhase · e2e', () => {})
+    server = new SyncServer(db, 'bp_desk_e2e', 'BrewPhase · e2e', () => {}, undefined, generateIdentity())
+    currentTrustedCertPem = server.tlsCertPem()
     const port = await new Promise<number>((resolve, reject) => {
       const probe = createNetServer()
       probe.listen(0, '127.0.0.1', () => {
@@ -781,7 +801,7 @@ describe('HTTP 端到端（模拟 iOS 客户端：Bearer + Timestamp + Nonce + H
       probe.on('error', reject)
     })
     const state = await server.start(['127.0.0.1'], port)
-    baseUrl = `http://127.0.0.1:${state.port ?? port}`
+    baseUrl = `https://127.0.0.1:${state.port ?? port}`
   })
 
   afterEach(async () => {
@@ -807,7 +827,7 @@ describe('HTTP 端到端（模拟 iOS 客户端：Bearer + Timestamp + Nonce + H
 
   async function pairAndGetToken(): Promise<void> {
     const { code } = server.pairingPayload()
-    const pair = await fetch(`${baseUrl}/api/pair`, {
+    const pair = await tlsFetch(`${baseUrl}/api/pair`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ pairingCode: code, deviceName: 'iPhone' })
@@ -820,9 +840,9 @@ describe('HTTP 端到端（模拟 iOS 客户端：Bearer + Timestamp + Nonce + H
     await pairAndGetToken()
 
     // status / manifest
-    const status = await fetch(`${baseUrl}/api/status`)
+    const status = await tlsFetch(`${baseUrl}/api/status`)
     expect(status.status).toBe(200)
-    const manifest = await fetch(`${baseUrl}/api/sync/manifest`, { headers: { authorization: `Bearer ${token}` } })
+    const manifest = await tlsFetch(`${baseUrl}/api/sync/manifest`, { headers: { authorization: `Bearer ${token}` } })
     expect(manifest.status).toBe(200)
 
     // 数据批：record + tag + 关系（record 带 mediaPath/previewPath；payload 补全
@@ -848,7 +868,7 @@ describe('HTTP 端到端（模拟 iOS 客户端：Bearer + Timestamp + Nonce + H
       ]
     }
     const applyBody = Buffer.from(JSON.stringify(batch))
-    const apply = await fetch(`${baseUrl}/api/sync/apply`, {
+    const apply = await tlsFetch(`${baseUrl}/api/sync/apply`, {
       method: 'POST',
       headers: { ...signedHeaders(applyBody), 'content-type': 'application/json' },
       body: applyBody
@@ -863,7 +883,7 @@ describe('HTTP 端到端（模拟 iOS 客户端：Bearer + Timestamp + Nonce + H
     const manifestBody = Buffer.from(JSON.stringify({
       media: [{ name: videoFile, sha256: mediaSha, byteSize: content.length, mediaType: 'video', mimeType: 'video/mp4' }]
     }))
-    const mediaManifest = await fetch(`${baseUrl}/api/sync/media/manifest`, {
+    const mediaManifest = await tlsFetch(`${baseUrl}/api/sync/media/manifest`, {
       method: 'POST',
       headers: { ...signedHeaders(manifestBody), 'content-type': 'application/json' },
       body: manifestBody
@@ -875,44 +895,44 @@ describe('HTTP 端到端（模拟 iOS 客户端：Bearer + Timestamp + Nonce + H
     // （用独立探针文件名，避免污染主文件的 .part 偏移）
     const chunk1 = content.subarray(0, 256 * 1024)
     const probeQuery = `name=aaaaaaaa-5555-4555-8555-000000000005.jpg&offset=0`
-    const noAuth = await fetch(`${baseUrl}/api/sync/media/chunk?${probeQuery}`, {
+    const noAuth = await tlsFetch(`${baseUrl}/api/sync/media/chunk?${probeQuery}`, {
       method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: chunk1
     })
     expect(noAuth.status).toBe(401)
-    const wrongToken = await fetch(`${baseUrl}/api/sync/media/chunk?${probeQuery}`, {
+    const wrongToken = await tlsFetch(`${baseUrl}/api/sync/media/chunk?${probeQuery}`, {
       method: 'POST', headers: signedHeaders(chunk1, { token: 'wrong-token' }), body: chunk1
     })
     expect(wrongToken.status).toBe(401)
-    const badSignature = await fetch(`${baseUrl}/api/sync/media/chunk?${probeQuery}`, {
+    const badSignature = await tlsFetch(`${baseUrl}/api/sync/media/chunk?${probeQuery}`, {
       method: 'POST', headers: signedHeaders(chunk1, { signature: '0'.repeat(64) }), body: chunk1
     })
     expect(badSignature.status).toBe(401)
     const replayBody = Buffer.from('replay-probe')
     const replayHeaders = signedHeaders(replayBody)
-    await fetch(`${baseUrl}/api/sync/media/chunk?${probeQuery}`, {
+    await tlsFetch(`${baseUrl}/api/sync/media/chunk?${probeQuery}`, {
       method: 'POST', headers: replayHeaders, body: replayBody
     })
-    const replay = await fetch(`${baseUrl}/api/sync/media/chunk?${probeQuery}`, {
+    const replay = await tlsFetch(`${baseUrl}/api/sync/media/chunk?${probeQuery}`, {
       method: 'POST', headers: replayHeaders, body: replayBody
     })
     expect(replay.status).toBe(401)
 
     // 正常上传（两块）→ offset → finalize
     const chunk2 = content.subarray(256 * 1024)
-    const upload1 = await fetch(`${baseUrl}/api/sync/media/chunk?name=${videoFile}&offset=0`, {
+    const upload1 = await tlsFetch(`${baseUrl}/api/sync/media/chunk?name=${videoFile}&offset=0`, {
       method: 'POST', headers: signedHeaders(chunk1), body: chunk1
     })
     expect(upload1.status).toBe(200)
-    const upload2 = await fetch(`${baseUrl}/api/sync/media/chunk?name=${videoFile}&offset=${chunk1.length}`, {
+    const upload2 = await tlsFetch(`${baseUrl}/api/sync/media/chunk?name=${videoFile}&offset=${chunk1.length}`, {
       method: 'POST', headers: signedHeaders(chunk2), body: chunk2
     })
     expect(upload2.status).toBe(200)
-    const offset = await fetch(`${baseUrl}/api/sync/media/offset?name=${videoFile}`, {
+    const offset = await tlsFetch(`${baseUrl}/api/sync/media/offset?name=${videoFile}`, {
       headers: { authorization: `Bearer ${token}` }
     })
     expect(((await offset.json()) as { received: number }).received).toBe(content.length)
     const finalizeBody = Buffer.from(JSON.stringify({ name: videoFile, sha256: mediaSha, byteSize: content.length }))
-    const finalize = await fetch(`${baseUrl}/api/sync/media/finalize`, {
+    const finalize = await tlsFetch(`${baseUrl}/api/sync/media/finalize`, {
       method: 'POST',
       headers: { ...signedHeaders(finalizeBody), 'content-type': 'application/json' },
       body: finalizeBody
@@ -929,7 +949,7 @@ describe('HTTP 端到端（模拟 iOS 客户端：Bearer + Timestamp + Nonce + H
 
     // 二次同步幂等：同 payload 全 skipped
     const againBody = Buffer.from(JSON.stringify(batch))
-    const again = await fetch(`${baseUrl}/api/sync/apply`, {
+    const again = await tlsFetch(`${baseUrl}/api/sync/apply`, {
       method: 'POST',
       headers: { ...signedHeaders(againBody), 'content-type': 'application/json' },
       body: againBody
@@ -938,9 +958,9 @@ describe('HTTP 端到端（模拟 iOS 客户端：Bearer + Timestamp + Nonce + H
 
     // 撤销设备 → 旧 token 全部失效
     db.prepare('update devices set revoked_at = ?').run(Date.now())
-    const revoked = await fetch(`${baseUrl}/api/sync/manifest`, { headers: { authorization: `Bearer ${token}` } })
+    const revoked = await tlsFetch(`${baseUrl}/api/sync/manifest`, { headers: { authorization: `Bearer ${token}` } })
     expect(revoked.status).toBe(401)
-    const revokedChunk = await fetch(`${baseUrl}/api/sync/media/chunk?name=${videoFile}&offset=0`, {
+    const revokedChunk = await tlsFetch(`${baseUrl}/api/sync/media/chunk?name=${videoFile}&offset=0`, {
       method: 'POST', headers: signedHeaders(chunk1), body: chunk1
     })
     expect(revokedChunk.status).toBe(401)
@@ -1052,10 +1072,10 @@ describe('同步调度回调（Phase 3.2.1：生产 SyncServer 接线）', () =>
     }
   }
 
-  async function apply(body: SyncBatch): Promise<Response> {
+  async function apply(body: SyncBatch): Promise<ReturnType<typeof syncTlsFetch>> {
     const raw = Buffer.from(JSON.stringify(body), 'utf8')
     const started = Date.now()
-    const response = await fetch(`${baseUrl}/api/sync/apply`, { method: 'POST', headers: signedHeaders(raw), body: raw })
+    const response = await tlsFetch(`${baseUrl}/api/sync/apply`, { method: 'POST', headers: signedHeaders(raw), body: raw })
     applyLatencyMs = Date.now() - started
     return response
   }
@@ -1074,7 +1094,8 @@ describe('同步调度回调（Phase 3.2.1：生产 SyncServer 接线）', () =>
       appliedAt.push(Date.now())
       // 生产里这里只是 `queue.enqueue()`（同步、不 await）；测试可注入慢动作
       applyHook?.(outcome)
-    })
+    }, generateIdentity())
+    currentTrustedCertPem = server.tlsCertPem()
     const port = await new Promise<number>((resolve, reject) => {
       const probe = createNetServer()
       probe.listen(0, '127.0.0.1', () => {
@@ -1085,10 +1106,10 @@ describe('同步调度回调（Phase 3.2.1：生产 SyncServer 接线）', () =>
       probe.on('error', reject)
     })
     const state = await server.start(['127.0.0.1'], port)
-    baseUrl = `http://127.0.0.1:${state.port ?? port}`
+    baseUrl = `https://127.0.0.1:${state.port ?? port}`
 
     const { code } = server.pairingPayload()
-    const pair = await fetch(`${baseUrl}/api/pair`, {
+    const pair = await tlsFetch(`${baseUrl}/api/pair`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ pairingCode: code, deviceName: 'iPhone' })
@@ -1218,7 +1239,7 @@ describe('同步事件广播（sync:changed 的触发点）', () => {
 
   async function applyRecord(): Promise<ApplyResult> {
     const raw = Buffer.from(JSON.stringify(recordBatch()))
-    const response = await fetch(`${baseUrl}/api/sync/apply`, {
+    const response = await tlsFetch(`${baseUrl}/api/sync/apply`, {
       method: 'POST',
       headers: signed(raw),
       body: raw
@@ -1234,7 +1255,8 @@ describe('同步事件广播（sync:changed 的触发点）', () => {
     changes = 0
     server = new SyncServer(db, 'bp_desk_broadcast', 'BrewPhase · broadcast', () => {
       changes += 1
-    })
+    }, undefined, generateIdentity())
+    currentTrustedCertPem = server.tlsCertPem()
     const port = await new Promise<number>((resolve, reject) => {
       const probe = createNetServer()
       probe.listen(0, '127.0.0.1', () => {
@@ -1245,10 +1267,10 @@ describe('同步事件广播（sync:changed 的触发点）', () => {
       probe.on('error', reject)
     })
     const state = await server.start(['127.0.0.1'], port)
-    baseUrl = `http://127.0.0.1:${state.port ?? port}`
+    baseUrl = `https://127.0.0.1:${state.port ?? port}`
 
     const { code } = server.pairingPayload()
-    const pair = await fetch(`${baseUrl}/api/pair`, {
+    const pair = await tlsFetch(`${baseUrl}/api/pair`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ pairingCode: code, deviceName: 'iPhone' })
@@ -1274,7 +1296,7 @@ describe('同步事件广播（sync:changed 的触发点）', () => {
 
     const content = Buffer.alloc(1024, 7)
     const mediaSha = createHash('sha256').update(content).digest('hex')
-    const chunk = await fetch(`${baseUrl}/api/sync/media/chunk?name=${mediaName}&offset=0`, {
+    const chunk = await tlsFetch(`${baseUrl}/api/sync/media/chunk?name=${mediaName}&offset=0`, {
       method: 'POST',
       headers: { 'content-type': 'application/octet-stream', ...signed(content) },
       body: content
@@ -1284,7 +1306,7 @@ describe('同步事件广播（sync:changed 的触发点）', () => {
     expect(changes).toBe(1)
 
     const finalizeBody = Buffer.from(JSON.stringify({ name: mediaName, sha256: mediaSha, byteSize: content.length }))
-    const finalize = await fetch(`${baseUrl}/api/sync/media/finalize`, {
+    const finalize = await tlsFetch(`${baseUrl}/api/sync/media/finalize`, {
       method: 'POST',
       headers: signed(finalizeBody),
       body: finalizeBody
@@ -1304,7 +1326,7 @@ describe('同步事件广播（sync:changed 的触发点）', () => {
 
   it('鉴权失败不广播（401 不该引起任何界面动作）', async () => {
     const raw = Buffer.from(JSON.stringify(recordBatch()))
-    const response = await fetch(`${baseUrl}/api/sync/apply`, {
+    const response = await tlsFetch(`${baseUrl}/api/sync/apply`, {
       method: 'POST',
       // 用未配对的 token 签名：authorize 直接 401，进不到 applyBatch
       headers: { ...signed(raw), authorization: 'Bearer not-paired' },
@@ -1320,7 +1342,7 @@ describe('同步事件广播（sync:changed 的触发点）', () => {
 
     // 空 body：400，一条数据都不许动
     const noConfirm = Buffer.from(JSON.stringify({}))
-    const rejected = await fetch(`${baseUrl}/api/sync/wipe`, {
+    const rejected = await tlsFetch(`${baseUrl}/api/sync/wipe`, {
       method: 'POST',
       headers: signed(noConfirm),
       body: noConfirm
@@ -1330,7 +1352,7 @@ describe('同步事件广播（sync:changed 的触发点）', () => {
     expect(changes).toBe(1)
 
     const body = Buffer.from(JSON.stringify({ confirm: 'DELETE_SYNCED_CONTENT' }))
-    const response = await fetch(`${baseUrl}/api/sync/wipe`, {
+    const response = await tlsFetch(`${baseUrl}/api/sync/wipe`, {
       method: 'POST',
       headers: signed(body),
       body: body
@@ -1346,7 +1368,7 @@ describe('同步事件广播（sync:changed 的触发点）', () => {
   it('wipe：未鉴权一律 401（清空不可逆，不能只靠知道地址）', async () => {
     await applyRecord()
     const body = Buffer.from(JSON.stringify({ confirm: 'DELETE_SYNCED_CONTENT' }))
-    const response = await fetch(`${baseUrl}/api/sync/wipe`, {
+    const response = await tlsFetch(`${baseUrl}/api/sync/wipe`, {
       method: 'POST',
       headers: { ...signed(body), authorization: 'Bearer not-paired' },
       body: body
@@ -1372,7 +1394,7 @@ describe('同步事件广播（sync:changed 的触发点）', () => {
     ).run()
 
     const body = Buffer.from(JSON.stringify({ confirm: 'DELETE_SYNCED_CONTENT' }))
-    const response = await fetch(`${baseUrl}/api/sync/wipe`, { method: 'POST', headers: signed(body), body })
+    const response = await tlsFetch(`${baseUrl}/api/sync/wipe`, { method: 'POST', headers: signed(body), body })
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ beans: 1, brews: 1, tastings: 1 })
 
@@ -1414,9 +1436,9 @@ describe('同步事件广播（sync:changed 的触发点）', () => {
     }
   }
 
-  async function unpairWith(usedToken: string, signature?: string): Promise<Response> {
+  async function unpairWith(usedToken: string, signature?: string): Promise<ReturnType<typeof syncTlsFetch>> {
     const body = Buffer.from(JSON.stringify({}))
-    return fetch(`${baseUrl}/api/unpair`, {
+    return tlsFetch(`${baseUrl}/api/unpair`, {
       method: 'POST',
       headers: signedFor(body, usedToken, signature),
       body
@@ -1426,7 +1448,7 @@ describe('同步事件广播（sync:changed 的触发点）', () => {
   /** 再配一台（同一台手机解除配对后重扫二维码的场景）。 */
   async function pairAgain(): Promise<string> {
     const { code } = server.pairingPayload()
-    const pair = await fetch(`${baseUrl}/api/pair`, {
+    const pair = await tlsFetch(`${baseUrl}/api/pair`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ pairingCode: code, deviceName: 'iPhone' })
@@ -1446,7 +1468,7 @@ describe('同步事件广播（sync:changed 的触发点）', () => {
     // 桌面端设置页靠这次广播把设备列表刷新成空
     expect(changes).toBe(1)
 
-    const manifest = await fetch(`${baseUrl}/api/sync/manifest`, {
+    const manifest = await tlsFetch(`${baseUrl}/api/sync/manifest`, {
       headers: { authorization: `Bearer ${token}` }
     })
     expect(manifest.status).toBe(401)
@@ -1470,7 +1492,7 @@ describe('同步事件广播（sync:changed 的触发点）', () => {
     expect(activeDevices()).toBe(1)
     expect(changes).toBe(0)
 
-    const manifest = await fetch(`${baseUrl}/api/sync/manifest`, {
+    const manifest = await tlsFetch(`${baseUrl}/api/sync/manifest`, {
       headers: { authorization: `Bearer ${token}` }
     })
     expect(manifest.status).toBe(200)
@@ -1478,7 +1500,7 @@ describe('同步事件广播（sync:changed 的触发点）', () => {
 
   it('unpair：无 token / 陌生 token 一律 401', async () => {
     const body = Buffer.from(JSON.stringify({}))
-    const anonymous = await fetch(`${baseUrl}/api/unpair`, {
+    const anonymous = await tlsFetch(`${baseUrl}/api/unpair`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body
@@ -1498,10 +1520,10 @@ describe('同步事件广播（sync:changed 的触发点）', () => {
     expect((await unpairWith(firstToken)).status).toBe(200)
     expect(activeDevices()).toBe(1)
 
-    const firstManifest = await fetch(`${baseUrl}/api/sync/manifest`, {
+    const firstManifest = await tlsFetch(`${baseUrl}/api/sync/manifest`, {
       headers: { authorization: `Bearer ${firstToken}` }
     })
-    const secondManifest = await fetch(`${baseUrl}/api/sync/manifest`, {
+    const secondManifest = await tlsFetch(`${baseUrl}/api/sync/manifest`, {
       headers: { authorization: `Bearer ${secondToken}` }
     })
     expect(firstManifest.status).toBe(401)
@@ -1509,7 +1531,7 @@ describe('同步事件广播（sync:changed 的触发点）', () => {
   })
 
   it('媒体 finalize 校验失败不广播（残缺文件不该让页面以为可以显示）', async () => {    const content = Buffer.alloc(512, 3)
-    await fetch(`${baseUrl}/api/sync/media/chunk?name=${mediaName}&offset=0`, {
+    await tlsFetch(`${baseUrl}/api/sync/media/chunk?name=${mediaName}&offset=0`, {
       method: 'POST',
       headers: { 'content-type': 'application/octet-stream', ...signed(content) },
       body: content
@@ -1517,12 +1539,90 @@ describe('同步事件广播（sync:changed 的触发点）', () => {
     const badBody = Buffer.from(
       JSON.stringify({ name: mediaName, sha256: '0'.repeat(64), byteSize: content.length })
     )
-    const response = await fetch(`${baseUrl}/api/sync/media/finalize`, {
+    const response = await tlsFetch(`${baseUrl}/api/sync/media/finalize`, {
       method: 'POST',
       headers: signed(badBody),
       body: badBody
     })
     expect(response.status).toBe(400)
     expect(changes).toBe(0)
+  })
+})
+
+describe('TLS 传输边界（协议 v2 安全门）', () => {
+  let db: ReturnType<typeof openDb>
+  let server: SyncServer
+  let port: number
+
+  let tlsDataDir = ''
+
+  beforeEach(async () => {
+    const { mkdtempSync } = require('node:fs') as typeof import('node:fs')
+    const { tmpdir } = require('node:os') as typeof import('node:os')
+    const { join } = require('node:path') as typeof import('node:path')
+    tlsDataDir = mkdtempSync(join(tmpdir(), 'bp-sync-tls-'))
+    const identity = loadOrCreateIdentity(tlsDataDir)
+    db = openDb()
+    server = new SyncServer(db, 'bp_desk_tls', 'BrewPhase · tls', () => {}, undefined, identity)
+    const state = await server.start(['127.0.0.1'], 0)
+    port = state.port ?? 0
+    expect(port).toBeGreaterThan(0)
+  })
+
+  afterEach(() => {
+    server.stop()
+    db.close()
+  })
+
+  /** 显式锚定的 HTTPS 客户端：信任锚不是桌面证书时必须拒绝。 */
+  function pinnedRequest(
+    trustedCertPem: string,
+    path: string
+  ): Promise<{ status: number }> {
+    const { request } = require('node:https') as typeof import('node:https')
+    return new Promise((resolve, reject) => {
+      const req = request(
+        {
+          host: '127.0.0.1',
+          port,
+          path,
+          method: 'GET',
+          rejectUnauthorized: true,
+          ca: [trustedCertPem],
+          checkServerIdentity: () => undefined
+        },
+        (res) => {
+          res.resume()
+          res.on('end', () => resolve({ status: res.statusCode ?? 0 }))
+        }
+      )
+      req.on('error', (error) => reject(error))
+      req.end()
+    })
+  }
+
+  it('证书轮换：旧锚拒绝，重建实例后新锚通过', async () => {
+    // 模拟 iOS Keychain 里存着旧证书；轮换证书身份（写新证书文件）
+    const oldCertPem = server.tlsCertPem()
+    const rotated = rotateIdentity(tlsDataDir)
+    // 生产路径：sync-service 的轮换 = disable() + enable()，即**重建 SyncServer
+    // 实例**（构造时通过 loadOrCreateIdentity 读到新证书），而不是复用旧实例。
+    server.stop()
+    const rebuilt = new SyncServer(
+      db,
+      'bp_desk_tls',
+      'BrewPhase · tls',
+      () => {},
+      undefined,
+      loadOrCreateIdentity(tlsDataDir)
+    )
+    const state = await rebuilt.start(['127.0.0.1'], 0)
+    port = state.port ?? 0
+    expect(rebuilt.tlsFingerprint()).toBe(rotated.fingerprintHex)
+    // 旧锚（iOS 还没重新配对）→ 标准链验证失败；重新配对交付新证书 → 通过
+    await expect(pinnedRequest(oldCertPem, '/api/status')).rejects.toThrow()
+    const ok = await pinnedRequest(rebuilt.tlsCertPem(), '/api/status')
+    expect(ok.status).toBe(200)
+    server = rebuilt
   })
 })

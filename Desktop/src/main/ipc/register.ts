@@ -746,8 +746,9 @@ export function registerIpc(params: {
   // MARK: - 可拆卸浏览器窗口
   //
   // 归属判定全在主进程：渲染层只报屏幕坐标，这里决定「排序 / 接回 / 移到浮窗 /
-  // 拆出新窗口」。executeOnTab 是 DOM 自动化的正式入口——按 tabId 定位，
-  // 与页面在哪个窗口无关；脚本内容仍须来自主进程内的 Adapter。
+  // 拆出新窗口」。DOM 自动化（executeOnTab）是**主进程内部 API**——安全审计
+  // （2026-11-27）确认渲染端无人调用后已从 IPC 面移除：渲染进程哪怕被完全
+  // 攻破，也不能在已登录的内嵌页面里执行任意脚本。
 
   handle(IPC.browserCreateTab, () => browser.createTab())
   handle(IPC.browserActivateTab, (input) => browser.activateTab((input as { tabId: string }).tabId))
@@ -773,12 +774,6 @@ export function registerIpc(params: {
     const { windowId, bounds } = input as { windowId: number; bounds: BrowserBounds }
     browser.setFloatBounds(windowId, bounds)
     return null
-  })
-  // 限制：只放行主进程自家的 Adapter 脚本走这里；Renderer 不传任意脚本的口子
-  // 在 preload 上根本没有暴露 invoke 任意通道的能力，这里再按 tab 存在性收一道。
-  handle(IPC.browserExecuteOnTab, (input) => {
-    const { tabId, script } = input as { tabId: string; script: string }
-    return browser.executeOnTab(tabId, script)
   })
   handle(IPC.browserOpenExternal, (input) => {
     browser.openExternal((input as { url?: string } | undefined)?.url)

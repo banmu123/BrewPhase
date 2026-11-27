@@ -225,7 +225,6 @@ export const IPC = {
   browserReattach: 'browser:tab:reattach',
   browserFloatActivate: 'browser:float:activate',
   browserFloatBounds: 'browser:float:bounds',
-  browserExecuteOnTab: 'browser:tab:execute',
   // Phase 2：网页卡片 = 真实标签；缩略图与「架子上的标签」各自有独立入口。
   browserCreateShelfTab: 'browser:tab:create-shelf',
   browserNavigateTab: 'browser:tab:navigate',
@@ -588,10 +587,6 @@ export const ipcRequestSchemas = {
   [IPC.browserReattach]: z.object({ tabId: z.string().min(1).max(64) }),
   [IPC.browserFloatActivate]: z.object({ windowId: z.number().int(), tabId: z.string().min(1).max(64) }),
   [IPC.browserFloatBounds]: z.object({ windowId: z.number().int(), bounds: browserBoundsSchema }),
-  [IPC.browserExecuteOnTab]: z.object({
-    tabId: z.string().min(1).max(64),
-    script: z.string().min(1).max(32_000)
-  }),
   [IPC.browserCreateShelfTab]: z.void(),
   [IPC.browserNavigateTab]: browserNavigateTabSchema,
   [IPC.browserDetachTab]: browserDetachTabSchema,

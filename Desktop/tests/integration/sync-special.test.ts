@@ -9,6 +9,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { migrate } from '../../src/main/database/migrations'
 import { expectedSignature, sha256 } from '../../src/main/sync/auth'
 import { SyncServer } from '../../src/main/sync/server'
+import { generateIdentity } from '../../src/main/sync/tls-identity'
+import { syncTlsFetch } from '../helpers/sync-tls-fetch'
+
+let certPem = ''
+const syncTlsFetchUrl = (url: string, init?: RequestInit): ReturnType<typeof syncTlsFetch> =>
+  syncTlsFetch(url, init, certPem)
 import { mediaDir } from '../../src/main/media/store'
 import {
   canonical,
@@ -211,7 +217,7 @@ describe('iOS ↔ Desktop 同步专项（真实 HTTP + 真实 SQLite 文件）',
       socket.on('error', reject)
     })
     const state = await server.start(['127.0.0.1'], probe)
-    baseUrl = `http://127.0.0.1:${state.port ?? probe}`
+    baseUrl = `https://127.0.0.1:${state.port ?? probe}`
   }
 
   const openDatabase = (): Database.Database => {
@@ -226,7 +232,8 @@ describe('iOS ↔ Desktop 同步专项（真实 HTTP + 真实 SQLite 文件）',
     process.env.BREWPHASE_USER_DATA_DIR = dir
     dbPath = join(dir, 'brewphase.db')
     db = openDatabase()
-    server = new SyncServer(db, 'bp_desk_special', 'BrewPhase · 专项', () => {})
+    server = new SyncServer(db, 'bp_desk_special', 'BrewPhase · 专项', () => {}, undefined, generateIdentity())
+    certPem = server.tlsCertPem()
     await startServer()
     token = await pair()
   })
@@ -241,7 +248,7 @@ describe('iOS ↔ Desktop 同步专项（真实 HTTP + 真实 SQLite 文件）',
   /** 真实配对：走 POST /api/pair，与服务端 PairingService 完整握手。 */
   async function pair(deviceName = 'iPhone 专项'): Promise<string> {
     const { code } = server.pairingPayload()
-    const response = await fetch(`${baseUrl}/api/pair`, {
+    const response = await syncTlsFetchUrl(`${baseUrl}/api/pair`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ pairingCode: code, deviceName })
@@ -267,7 +274,7 @@ describe('iOS ↔ Desktop 同步专项（真实 HTTP + 真实 SQLite 文件）',
 
   async function apply(batch: SyncBatch, overrideToken?: string): Promise<{ status: number; body: ApplyResult }> {
     const body = Buffer.from(JSON.stringify(batch))
-    const response = await fetch(`${baseUrl}/api/sync/apply`, {
+    const response = await syncTlsFetchUrl(`${baseUrl}/api/sync/apply`, {
       method: 'POST',
       headers: signedHeaders(body, overrideToken),
       body
@@ -459,7 +466,8 @@ describe('iOS ↔ Desktop 同步专项（真实 HTTP + 真实 SQLite 文件）',
     server.stop()
     db.close()
     db = openDatabase()
-    server = new SyncServer(db, 'bp_desk_special', 'BrewPhase · 专项', () => {})
+    server = new SyncServer(db, 'bp_desk_special', 'BrewPhase · 专项', () => {}, undefined, generateIdentity())
+    certPem = server.tlsCertPem()
     await startServer()
 
     const afterRestart = await apply(batchOf([], [
@@ -663,7 +671,7 @@ describe('iOS ↔ Desktop 同步专项（真实 HTTP + 真实 SQLite 文件）',
     const manifestBody = Buffer.from(JSON.stringify({
       media: [{ name, sha256: digest, byteSize: content.length, mediaType: 'image', mimeType: 'image/jpeg' }]
     }))
-    const manifest = await fetch(`${baseUrl}/api/sync/media/manifest`, {
+    const manifest = await syncTlsFetchUrl(`${baseUrl}/api/sync/media/manifest`, {
       method: 'POST',
       headers: signedHeaders(manifestBody),
       body: manifestBody
@@ -673,14 +681,14 @@ describe('iOS ↔ Desktop 同步专项（真实 HTTP + 真实 SQLite 文件）',
 
     const chunk = content.subarray(0, 256 * 1024)
     const chunkBody = Buffer.from(chunk)
-    const chunkResponse = await fetch(
+    const chunkResponse = await syncTlsFetchUrl(
       `${baseUrl}/api/sync/media/chunk?name=${encodeURIComponent(name)}&offset=0`,
       { method: 'POST', headers: signedHeaders(chunkBody), body: chunkBody }
     )
     expect(chunkResponse.status).toBe(200)
 
     const finalizeBody = Buffer.from(JSON.stringify({ name, sha256: digest, byteSize: content.length }))
-    const finalize = await fetch(`${baseUrl}/api/sync/media/finalize`, {
+    const finalize = await syncTlsFetchUrl(`${baseUrl}/api/sync/media/finalize`, {
       method: 'POST',
       headers: signedHeaders(finalizeBody),
       body: finalizeBody
@@ -702,7 +710,7 @@ describe('iOS ↔ Desktop 同步专项（真实 HTTP + 真实 SQLite 文件）',
     const body = Buffer.from(JSON.stringify({
       media: [{ name: ID.image, sha256: digest, byteSize: content.length, mediaType: 'image', mimeType: 'image/jpeg' }]
     }))
-    const response = await fetch(`${baseUrl}/api/sync/media/manifest`, {
+    const response = await syncTlsFetchUrl(`${baseUrl}/api/sync/media/manifest`, {
       method: 'POST', headers: signedHeaders(body), body
     })
     const outcome = (await response.json()) as { missing: unknown[]; have: string[] }
@@ -714,11 +722,11 @@ describe('iOS ↔ Desktop 同步专项（真实 HTTP + 真实 SQLite 文件）',
     const content = Buffer.alloc(1000, 3)
     const wrong = 'deadbeef'.repeat(8)
     const chunkBody = Buffer.from(content)
-    await fetch(`${baseUrl}/api/sync/media/chunk?name=${encodeURIComponent(ID.image)}&offset=0`, {
+    await syncTlsFetchUrl(`${baseUrl}/api/sync/media/chunk?name=${encodeURIComponent(ID.image)}&offset=0`, {
       method: 'POST', headers: signedHeaders(chunkBody), body: chunkBody
     })
     const finalizeBody = Buffer.from(JSON.stringify({ name: ID.image, sha256: wrong, byteSize: content.length }))
-    const response = await fetch(`${baseUrl}/api/sync/media/finalize`, {
+    const response = await syncTlsFetchUrl(`${baseUrl}/api/sync/media/finalize`, {
       method: 'POST', headers: signedHeaders(finalizeBody), body: finalizeBody
     })
     expect(response.status).toBe(400)
@@ -754,7 +762,7 @@ describe('iOS ↔ Desktop 同步专项（真实 HTTP + 真实 SQLite 文件）',
 
   it('撤销授权后 token 立即失效：再同步 401，重复撤销幂等', async () => {
     const unpairBody = Buffer.from(JSON.stringify({}))
-    const first = await fetch(`${baseUrl}/api/unpair`, {
+    const first = await syncTlsFetchUrl(`${baseUrl}/api/unpair`, {
       method: 'POST', headers: signedHeaders(unpairBody), body: unpairBody
     })
     expect(first.status).toBe(200)
@@ -764,7 +772,7 @@ describe('iOS ↔ Desktop 同步专项（真实 HTTP + 真实 SQLite 文件）',
     expect(afterRevoke.status).toBe(401)
 
     // 响应丢失后的重试：仍要 200 且 already=true（幂等）。
-    const retry = await fetch(`${baseUrl}/api/unpair`, {
+    const retry = await syncTlsFetchUrl(`${baseUrl}/api/unpair`, {
       method: 'POST', headers: signedHeaders(unpairBody), body: unpairBody
     })
     expect(retry.status).toBe(200)

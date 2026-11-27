@@ -2,6 +2,7 @@ import { hostname } from 'node:os'
 import QRCode from 'qrcode'
 import type { Database } from 'better-sqlite3'
 import { SyncServer } from './server'
+import { loadOrCreateIdentity, type SyncTlsIdentity } from './tls-identity'
 import { lanAddresses } from './network-address'
 import { wipeSyncedData } from './wipe'
 import {
@@ -33,14 +34,19 @@ export class SyncService {
   private readonly desktopDeviceId: string
   private readonly desktopDeviceName: string
 
+  private readonly tls: SyncTlsIdentity
+
   constructor(
     private readonly sqlite: Database,
     private readonly onEvent: (event: { type: string }) => void,
     /** 同步落库之后的本地元数据调度（见 index.ts 的 ResolveQueue） */
-    private readonly onApplied?: (outcome: import('./snapshot-importer').ApplyResult) => void
+    private readonly onApplied: ((outcome: import('./snapshot-importer').ApplyResult) => void) | undefined,
+    /** 证书身份目录（userData）：sync-cert.pem / sync-key.pem 的持久化位置 */
+    private readonly tlsDataDir: string
   ) {
     this.desktopDeviceId = this.loadOrCreateDesktopDeviceId()
     this.desktopDeviceName = `BrewPhase · ${hostname()}`
+    this.tls = loadOrCreateIdentity(tlsDataDir)
   }
 
   private loadOrCreateDesktopDeviceId(): string {
@@ -82,7 +88,8 @@ export class SyncService {
         this.desktopDeviceId,
         this.desktopDeviceName,
         () => this.onEvent({ type: 'state-changed' }),
-        this.onApplied
+        this.onApplied,
+        this.tls
       )
     }
     const addresses = lanAddresses()
@@ -131,6 +138,9 @@ export class SyncService {
       deviceName: this.desktopDeviceName,
       pairingCode: code,
       protocolVersion: String(SYNC_PROTOCOL_VERSION),
+      // TLS 证书指纹（hex）：iOS 扫码后存 Keychain，并对每次连接做 SPKI
+      // pinning——二维码是「面对面」的带外信任通道。
+      certFingerprint: this.tls.fingerprintHex,
       expiresAt: String(expiresAt)
     })
     const qrText = `brewphase://pair?${params.toString()}`

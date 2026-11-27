@@ -25,6 +25,8 @@ final class SyncCrossEndTests: XCTestCase {
         var token: String
         var deviceId: String
         var dbPath: String
+        /// 桌面端 TLS 证书指纹（v2 夹具提供）：客户端据此做证书 pinning。
+        var certFingerprint: String?
     }
 
     private func loadHarness() throws -> Harness {
@@ -170,7 +172,12 @@ final class SyncCrossEndTests: XCTestCase {
     /// 单条用例共用同一个数据库与同一组 id，避免拆开后互相污染。
     func testFullLifecycleAgainstRealDesktop() async throws {
         let harness = try loadHarness()
-        let client = SyncNetworkClient(host: harness.host, port: harness.port, token: harness.token)
+        let client = SyncNetworkClient(
+            host: harness.host,
+            port: harness.port,
+            token: harness.token,
+            certFingerprint: harness.certFingerprint
+        )
         let context = try makeContext()
         let seeded = try seed(context)
         let driver = Driver(client: client)
@@ -239,7 +246,12 @@ final class SyncCrossEndTests: XCTestCase {
     /// 这条用真服务验证它是否会在重放时变成假冲突。
     func testTinyNegativeCoordinateFingerprintDrift() async throws {
         let harness = try loadHarness()
-        let client = SyncNetworkClient(host: harness.host, port: harness.port, token: harness.token)
+        let client = SyncNetworkClient(
+            host: harness.host,
+            port: harness.port,
+            token: harness.token,
+            certFingerprint: harness.certFingerprint
+        )
         let context = try makeContext()
         let driver = Driver(client: client)
 
@@ -277,7 +289,12 @@ final class SyncCrossEndTests: XCTestCase {
     /// 验证删除保护确实生效——这是 §6 非破坏性的关键边界。
     func testDeletionWithStaleBaselineBecomesConflict() async throws {
         let harness = try loadHarness()
-        let client = SyncNetworkClient(host: harness.host, port: harness.port, token: harness.token)
+        let client = SyncNetworkClient(
+            host: harness.host,
+            port: harness.port,
+            token: harness.token,
+            certFingerprint: harness.certFingerprint
+        )
         let context = try makeContext()
         let driver = Driver(client: client)
 

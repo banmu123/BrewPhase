@@ -153,3 +153,28 @@
 1. 按 §3 改写 `docs/privacy.html`（中英同步）+ 启用 GitHub Pages（解 §4 的 404）；
 2. 起草 Terms（或明确在目录表里标 `NOT VERIFIED` 直到有真实页面）；
 3. 与 `chatgpt-directory-readiness.md` 的 §6 清单一起复核，避免两份文档口径不一致。
+
+---
+
+## 2026-11-27 正式发版前安全审计补充（security/pre-release-hardening）
+
+审计基线 `edf60c1`，报告见 `docs/security/PRE_RELEASE_SECURITY_AUDIT.md`。本轮在
+上文 3 条 FAIL 之外**新确认**的隐私/披露不一致（已在上表基础上补充修复）：
+
+1. 桌面端无 JSON/CSV 导出（政策承诺的是 iOS 能力，文档未区分平台）→ 已在
+   privacy.html 增加「桌面端补充说明」章节（zh/en 双语）。
+2. 桌面端存在政策未披露的**本地网络监听**：LAN 同步服务（47821，TLS）、
+   MCP bridge（named pipe / unix socket）、Chrome bridge —— 已并入桌面端补充说明。
+   其中 LAN 同步已在本轮完成 **TLS + 证书 pinning** 改造（协议 v2，见
+   SYNC_PROTOCOL.md §0），明文凭证/内容传输问题已修复。
+3. 「卸载会删除全部数据」在 Windows 不成立（`deleteAppDataOnUninstall: false`）→
+   已并入桌面端补充说明。
+4. 链接元数据抓取（og:image / YouTube / GitHub providers）向第三方出站 →
+   已并入桌面端补充说明。
+5. Remote MCP 经 Cloud 转发时 Cloud 技术上可接触请求参数与结果（不落库）→
+   已并入桌面端补充说明，措辞与转发架构一致，不做「Cloud 完全不可见」的宣称。
+
+**仍然未修复的披露事项**（发布前需要产品决策）：
+- Privacy Policy URL 实际 404 / 无 Terms 页（上文已记录的发布阻断项）；
+- 政策页面尚未区分 iOS 与 Desktop 两个产品的适用范围（本轮只在文档内加了
+  补充章节，正式发布前建议把 privacy.html 拆分或改为双产品页）。

@@ -1,4 +1,6 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https'
+import type { SyncTlsIdentity } from './tls-identity'
 import type { Database } from 'better-sqlite3'
 import { NonceStore, sha256, verifyRequest } from './auth'
 import { PairingService } from './pairing-service'
@@ -21,8 +23,10 @@ import {
  * - 请求体限幅：JSON 批 8MB、媒体块 256KB，超限直接 413。
  * - 路由面固定：status / pair / unpair / sync manifest / sync apply / media 三件套。
  *   不存在任何「远程下发 SQL」或命令执行面。
- * - TLS 是下一跳（后续版本再评估）；本版以一次性码 +
- *   每设备独立 token + 时间戳/nonce/HMAC 防护，威胁模型与 BrewPing 相同。
+ * - **TLS（协议 v2）**：只监听 HTTPS（自签 ECDSA 证书），证书指纹经配对
+ *   二维码交付给 iOS 做 SPKI pinning；指纹不匹配的连接在 TLS 层拒绝，
+ *   **不存在明文回退**。TLS 之上保留一次性配对码 + 每设备独立 token +
+ *   时间戳/nonce/HMAC（纵深防御：应用层重放防护不依赖 TLS 信任）。
  */
 
 import { SYNC_PROTOCOL_VERSION } from '../../shared/contracts/version'
@@ -49,7 +53,7 @@ export type SyncServerState = {
 }
 
 export class SyncServer {
-  private servers: Server[] = []
+  private servers: HttpsServer[] = []
   private readonly pairing = new PairingService()
   private readonly nonces = new NonceStore()
   private activePort: number | null = null
@@ -64,7 +68,9 @@ export class SyncServer {
      * `applyBatch()` 已经提交（事务结束）之后回调，用于安排本地元数据补全。
      * **绝不能**在事务里发起网络请求——这里只是同步入队。
      */
-    private readonly onApplied?: (outcome: ApplyResult) => void
+    private readonly onApplied: ((outcome: ApplyResult) => void) | undefined,
+    /** TLS 证书身份（协议 v2）：服务端只监听 HTTPS，无明文回退。 */
+    private readonly tls: SyncTlsIdentity
   ) {}
 
   pairingPayload(): { code: string; expiresAt: number } {
@@ -88,9 +94,9 @@ export class SyncServer {
       for (const attempt of attempts) {
         const port = attempt.kind === 'fixed' ? attempt.port : await probeFreePort()
         try {
-          const servers = await this.bindAll(port, targets)
+          const { servers, actualPort } = await this.bindAll(port, targets)
           this.servers = servers
-          this.activePort = port
+          this.activePort = actualPort
           this.boundAddresses = targets
           this.onChanged()
           return this.stateFor()
@@ -103,10 +109,14 @@ export class SyncServer {
     return attemptStart()
   }
 
-  /** 把全部地址绑到同一个端口；任何一个失败就整体回滚（不留半启动状态）。 */
-  private bindAll(port: number, targets: string[]): Promise<Server[]> {
+  /**
+   * 把全部地址绑到同一个端口；任何一个失败就整体回滚（不留半启动状态）。
+   * 返回实际端口——`preferredPort=0`（OS 分配）场景下 `state.port` 必须是
+   * 内核分配的那个端口，而不是 0。
+   */
+  private bindAll(port: number, targets: string[]): Promise<{ servers: HttpsServer[]; actualPort: number }> {
     return new Promise((resolve, reject) => {
-      const opened: Server[] = []
+      const opened: HttpsServer[] = []
       let settled = false
       const fail = (error: Error): void => {
         if (settled) return
@@ -114,17 +124,24 @@ export class SyncServer {
         for (const server of opened) server.close()
         reject(error)
       }
+      const actualPort = (): number => {
+        const address = opened[0]?.address()
+        return typeof address === 'object' && address ? address.port : port
+      }
       targets.forEach((address, index) => {
-        const server = createServer((request, response) => {
-          void this.handle(request, response)
-        })
+        const server = createHttpsServer(
+          { key: this.tls.keyPem, cert: this.tls.certPem },
+          (request, response) => {
+            void this.handle(request, response)
+          }
+        )
         opened.push(server)
         server.on('error', fail)
         server.listen(port, address, () => {
           if (settled) return
           if (opened.every((item) => item.listening)) {
             settled = true
-            resolve(opened)
+            resolve({ servers: opened, actualPort: actualPort() })
           }
         })
         if (index === targets.length - 1) {
@@ -133,7 +150,7 @@ export class SyncServer {
             if (settled) return
             if (opened.every((item) => item.listening)) {
               settled = true
-              resolve(opened)
+              resolve({ servers: opened, actualPort: actualPort() })
             } else {
               fail(new Error(`部分地址绑定 ${port} 超时`))
             }
@@ -158,6 +175,16 @@ export class SyncServer {
     }
   }
 
+  /** 证书指纹（hex）：配对二维码交付给 iOS 做配对前校验。 */
+  tlsFingerprint(): string {
+    return this.tls.fingerprintHex
+  }
+
+  /** 证书 PEM：iOS 配对后存 Keychain 作为唯一信任锚（SecTrustSetAnchorCertificates）。 */
+  tlsCertPem(): string {
+    return this.tls.certPem
+  }
+
   // MARK: - 路由
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -167,7 +194,11 @@ export class SyncServer {
       const source = request.socket.remoteAddress ?? null
 
       if (route === 'GET /api/status') {
-        return this.json(response, 200, { service: 'brewphase-sync', protocolVersion: SYNC_PROTOCOL_VERSION })
+        return this.json(response, 200, {
+          service: 'brewphase-sync',
+          protocolVersion: SYNC_PROTOCOL_VERSION,
+          tls: true
+        })
       }
 
       if (route === 'POST /api/pair') {

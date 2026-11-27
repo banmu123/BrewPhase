@@ -32,7 +32,7 @@ final class SyncManager: ObservableObject {
     }
     @Published private(set) var lastMediaStats: MediaStats?
 
-    static let protocolVersion = 1
+    static let protocolVersion = 2
 
     /// 全 App 共用一个实例：设置页与「记录增删后的自动推送」必须看到同一份
     /// `phase` / `lastSyncAt`，否则自动同步成功了设置页还显示旧时间。
@@ -142,7 +142,17 @@ final class SyncManager: ObservableObject {
         var tried: [String] = []
         for candidate in link.candidateHosts {
             tried.append(candidate)
-            let probe = SyncNetworkClient(host: candidate, port: link.port, token: nil, timeout: 2.0)
+            // 配对阶段：指纹来自二维码（尚未入 Keychain），探测 + 配对都据它 pin。
+            guard let fingerprint = link.certFingerprint, !fingerprint.isEmpty else {
+                throw SyncError.missingCertificateFingerprint
+            }
+            let probe = SyncNetworkClient(
+                host: candidate,
+                port: link.port,
+                token: nil,
+                certFingerprint: fingerprint,
+                timeout: 2.0
+            )
             if let status = try? await probe.serviceStatus(),
                status.service == "brewphase-sync",
                status.protocolVersion == Self.protocolVersion {
@@ -155,7 +165,7 @@ final class SyncManager: ObservableObject {
         }
         var confirmed = link
         confirmed.host = host
-        let client = SyncNetworkClient(host: host, port: link.port, token: nil)
+        let client = SyncNetworkClient(host: host, port: link.port, token: nil, certFingerprint: link.certFingerprint)
         let response = try await client.pair(pairingCode: confirmed.pairingCode, deviceName: deviceName)
         guard response.protocolVersion == Self.protocolVersion else {
             throw SyncError.protocolMismatch
@@ -166,7 +176,9 @@ final class SyncManager: ObservableObject {
             ("desktop.host", host),
             ("desktop.port", String(link.port)),
             ("desktop.deviceId", response.deviceId),
-            ("desktop.deviceName", confirmed.deviceName)
+            ("desktop.deviceName", confirmed.deviceName),
+            // TLS 证书指纹：之后的每一次连接都用它做 pinning（撤销配对时一并清除）。
+            ("desktop.certFingerprint", link.certFingerprint ?? "")
         ]
         var written: [String] = []
         for credential in credentials {
@@ -210,6 +222,7 @@ final class SyncManager: ObservableObject {
                 host: device.host,
                 port: device.port,
                 token: device.token,
+                certFingerprint: SyncKeychain.string(forKey: "desktop.certFingerprint"),
                 timeout: 8
             )
             if wipeRemote {
@@ -232,7 +245,7 @@ final class SyncManager: ObservableObject {
     }
 
     private func clearLocalCredentials() {
-        for key in ["desktop.token", "desktop.host", "desktop.port", "desktop.deviceId", "desktop.deviceName"] {
+        for key in ["desktop.token", "desktop.host", "desktop.port", "desktop.deviceId", "desktop.deviceName", "desktop.certFingerprint"] {
             SyncKeychain.set(nil, forKey: key)
         }
         baseline = [:]
@@ -274,7 +287,12 @@ final class SyncManager: ObservableObject {
             phase = .preparing
             lastMediaStats = nil
             lastFailedReasons = []
-            let client = SyncNetworkClient(host: device.host, port: device.port, token: device.token)
+            let client = SyncNetworkClient(
+                host: device.host,
+                port: device.port,
+                token: device.token,
+                certFingerprint: SyncKeychain.string(forKey: "desktop.certFingerprint")
+            )
             _ = try await client.manifest()
 
             let builder = SyncSnapshotBuilder(context: context)
@@ -419,6 +437,10 @@ final class SyncManager: ObservableObject {
 }
 
 enum SyncError: LocalizedError {
+    /// 协议 v2：二维码里缺少 TLS 证书指纹（旧版桌面端 / 被篡改的二维码）。
+    case missingCertificateFingerprint
+    /// TLS 证书 pinning 失败：对端证书与配对时交付的指纹不一致。
+    case certificateMismatch
     case pairingCodeExpired
     case desktopUnreachable([String])
     case protocolMismatch
@@ -431,6 +453,8 @@ enum SyncError: LocalizedError {
             return L("无法连接桌面端（已尝试 %@）。请确认 iPhone 与 Mac 在同一 Wi-Fi，桌面端同步已启用，且 Mac 防火墙允许 BrewPhase。", tried.joined(separator: L("、")))
         case .protocolMismatch: return L("桌面端版本不兼容，请把两端都更新到最新版")
         case .keychainWriteFailed: return L("配对凭据保存失败，请重试；若反复出现请检查系统设置")
+        case .missingCertificateFingerprint: return L("二维码缺少证书指纹，请升级桌面端后重新扫码配对")
+        case .certificateMismatch: return L("桌面端证书与配对时不一致，请在桌面端重新扫码配对")
         }
     }
 }

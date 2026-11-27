@@ -144,6 +144,35 @@
   </ul>
 </section>
 
+
+<section id="zh-desktop">
+  <h2>桌面端补充说明（BrewPhase Desktop）<span class="en">Desktop addendum</span></h2>
+  <p>上述声明主体描述 <strong>iOS 应用</strong>。桌面端（BrewPhase Desktop，Windows / macOS）在
+  2026-11 起包含以下<strong>需要单独披露</strong>的网络与账号能力（正式发版前安全审计
+  2026-11-27 核对；详见 <a href="https://github.com/banmu123/BrewPhase/blob/main/docs/privacy-gap.md" rel="noopener">privacy-gap.md</a> 与
+  <a href="https://github.com/banmu123/BrewPhase/blob/main/Desktop/docs/SYNC_PROTOCOL.md" rel="noopener">同步协议文档</a>）：</p>
+  <ul>
+    <li><strong>可选的云账户（Remote MCP 的底座）</strong>：桌面端可以实现 Google / GitHub
+      登录（OAuth），在 BrewPhase 云服务创建账号。云服务为登录态、会话与设备授权
+      维护<strong>身份与授权元数据</strong>（不含你的咖啡/冲煮/风味记录内容——业务数据
+      永远保存在桌面本地）；</li>
+    <li><strong>可选的局域网同步（TLS）</strong>：桌面端可启动一个仅监听局域网地址的
+      同步服务（端口首选 47821），与你自己的 iPhone 之间用 HTTPS（自签证书 +
+      配对二维码交付证书指纹 + iPhone 侧证书 pinning）传输记录与图片；
+      <strong>不经过任何服务器</strong>，数据直接在两台设备之间传输；</li>
+    <li><strong>Remote MCP（可选，默认关闭）</strong>：当你授权一个外部 AI 客户端
+      （如 Claude）通过 BrewPhase 云服务访问桌面上的记录时，你的工具调用请求与
+      返回结果会<strong>经过云服务转发</strong>——云服务在转发过程中技术上可以接触
+      请求参数与返回内容（不落库）。这是转发架构的固有属性，请据实评估后启用；</li>
+    <li><strong>链接元数据抓取</strong>：记录里的链接会向目标站点（或其 og:image
+      所在 CDN）发起出站请求获取预览信息——目标站点能看到你的 IP 与请求时间；</li>
+    <li><strong>卸载行为（Windows）</strong>：Windows 安装程序卸载时<strong>不会</strong>
+      删除应用数据目录（SQLite 与媒体文件）——需要手动删除；macOS 删除 App
+      时数据目录（~/Library/Application Support）同理需要手动清理；</li>
+    <li><strong>JSON/CSV 导出</strong>是 iOS 应用功能；桌面端当前没有该功能。</li>
+  </ul>
+</section>
+
 <section id="zh-permissions">
   <h2>系统权限<span class="en">Permissions</span></h2>
   <ul>

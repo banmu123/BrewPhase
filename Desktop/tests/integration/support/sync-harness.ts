@@ -5,6 +5,8 @@ import Database from 'better-sqlite3'
 
 import { migrate } from '../../../src/main/database/migrations'
 import { SyncServer } from '../../../src/main/sync/server'
+import { generateIdentity } from '../../../src/main/sync/tls-identity'
+import { request as httpsRequest } from 'node:https'
 
 /**
  * 跨端联调夹具：起一个**真实**的 Desktop 同步服务（真实 SQLite 文件 + 真实
@@ -33,27 +35,47 @@ const sqlite = new Database(dbPath)
 sqlite.pragma('foreign_keys = ON')
 migrate(sqlite)
 
-const server = new SyncServer(sqlite, 'bp_desk_cross', 'BrewPhase · 跨端', () => {})
+const server = new SyncServer(sqlite, 'bp_desk_cross', 'BrewPhase · 跨端', () => {}, undefined, generateIdentity())
 
 async function main(): Promise<void> {
   const state = await server.start(['127.0.0.1'], preferredPort)
   const port = state.port ?? preferredPort
 
-  // 与 iOS 客户端完全相同的配对请求。
+  // 与 iOS 客户端完全相同的配对请求（TLS：信任锚 = harness 的自签证书）。
   const { code } = server.pairingPayload()
-  const response = await fetch(`http://127.0.0.1:${port}/api/pair`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ pairingCode: code, deviceName: 'iPhone 跨端联调' })
+  const response = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+    const req = httpsRequest(
+      {
+        protocol: 'https:',
+        hostname: '127.0.0.1',
+        port,
+        path: '/api/pair',
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        rejectUnauthorized: true,
+        ca: [server.tlsCertPem()],
+        checkServerIdentity: () => undefined
+      },
+      (res) => {
+        const chunks: Buffer[] = []
+        res.on('data', (chunk: Buffer) => chunks.push(chunk))
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }))
+      }
+    )
+    req.on('error', reject)
+    req.write(JSON.stringify({ pairingCode: code, deviceName: 'iPhone 跨端联调' }))
+    req.end()
   })
   if (response.status !== 200) throw new Error(`pair failed: ${response.status}`)
-  const paired = (await response.json()) as { token: string; deviceId: string }
+  const paired = JSON.parse(response.body) as { token: string; deviceId: string }
 
   const payload = {
     host: '127.0.0.1',
     port,
     token: paired.token,
     deviceId: paired.deviceId,
+    // iOS 测试客户端的 pinning 输入：配对二维码里交付的证书指纹。
+    certFingerprint: server.tlsFingerprint(),
     dbPath
   }
   const json = JSON.stringify(payload, null, 2)

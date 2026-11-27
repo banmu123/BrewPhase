@@ -369,7 +369,6 @@ export interface RendererApi {
   /**
    * 可拆卸浏览器窗口。归属判定全在主进程；resolveDrop 传屏幕坐标，
    * dragProbe 是拖动中的节流探测（窗口内 / 窗口外）。
-   * executeOnTab 只服务于主进程内的 Adapter（DOM 自动化按 tabId 定位）。
    */
   browserTabs: {
     create: () => Promise<BrowserState>
@@ -389,7 +388,6 @@ export interface RendererApi {
     reattach: (tabId: string) => Promise<BrowserState>
     floatActivate: (windowId: number, tabId: string) => Promise<BrowserState>
     floatBounds: (windowId: number, bounds: BrowserBounds) => Promise<void>
-    executeOnTab: (tabId: string, script: string) => Promise<unknown>
   }
   /**
    * 网页缩略图（真实截图，主进程内存缓存）。

@@ -1,31 +1,53 @@
 import Foundation
 import CryptoKit
 
-/// 桌面端同步服务的 HTTP 客户端。
+/// 桌面端同步服务的 HTTPS 客户端（协议 v2）。
 ///
-/// 鉴权与桌面端 `auth.ts` 同一套：Bearer token；写请求加
+/// 传输：**TLS + 证书 pinning**。桌面端证书的 SHA-256（hex）在配对时经二维码
+/// 交付并存入 Keychain（`desktop.certFingerprint`）；本客户端对每一次连接做
+/// 证书 pinning：leaf 证书的 DER 哈希必须与 Keychain 里的指纹一致——不匹配、
+/// 或没有指纹配置时**拒绝连接**，不存在明文回退（服务端只监听 TLS）。
+///
+/// 鉴权仍与桌面端 `auth.ts` 同一套：Bearer token；写请求加
 /// `x-bp-timestamp / x-bp-nonce / x-bp-signature`，签名 =
-/// `HMAC-SHA256(token, timestamp \n nonce \n sha256(body))`。
-/// 第一版为局域网 HTTP（威胁模型与 BrewPing 相同；TLS 见协议文档的下一步）。
+/// `HMAC-SHA256(token, timestamp \n nonce \n sha256(body))`（TLS 之上的
+/// 纵深防御：应用层重放防护不依赖 TLS 信任）。
 struct SyncNetworkClient {
     var host: String
     var port: Int
     var token: String?
+    /// 期望的桌面证书指纹（hex 小写）。nil = 未配置 pinning → 所有请求拒绝。
+    var certFingerprint: String?
 
     let session: URLSession
 
-    init(host: String, port: Int, token: String?, timeout: Double = 20) {
+    init(host: String, port: Int, token: String?, certFingerprint: String?, timeout: Double = 20) {
         self.host = host
         self.port = port
         self.token = token
+        self.certFingerprint = certFingerprint
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = timeout
         configuration.timeoutIntervalForResource = 300
-        self.session = URLSession(configuration: configuration)
+        if let certFingerprint {
+            self.session = URLSession(
+                configuration: configuration,
+                delegate: SyncPinningDelegate(expectedFingerprint: certFingerprint),
+                delegateQueue: nil
+            )
+        } else {
+            // 没有 pinning 配置就等于「不信任任何证书」：显式拒绝而不是
+            // 走系统默认验证（系统会因自签证书失败，行为不一致）。
+            self.session = URLSession(
+                configuration: configuration,
+                delegate: SyncPinningDelegate(expectedFingerprint: nil),
+                delegateQueue: nil
+            )
+        }
     }
 
     var baseURL: URL {
-        URL(string: "http://\(host):\(port)")!
+        URL(string: "https://\(host):\(port)")!
     }
 
     enum ClientError: LocalizedError {
@@ -194,5 +216,47 @@ struct SyncNetworkClient {
             throw ClientError.http(http.statusCode, message)
         }
         return try JSONDecoder().decode(T.self, from: data)
+    }
+}
+
+
+// MARK: - 证书 Pinning
+
+/// TLS 服务器信任评估：**leaf 证书 DER 的 SHA-256 必须等于配对时交付的
+/// 指纹**。不依赖系统信任链（桌面证书是自签的）；不匹配或缺少配置一律
+/// 取消连接——不存在「跳过验证继续用」的路径。
+final class SyncPinningDelegate: NSObject, URLSessionDataDelegate {
+    /// hex（小写）形式的期望指纹；nil 表示未配置 → 一律拒绝。
+    private let expectedFingerprint: String?
+
+    init(expectedFingerprint: String?) {
+        self.expectedFingerprint = expectedFingerprint?.lowercased()
+        super.init()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let trust = challenge.protectionSpace.serverTrust,
+              let expected = expectedFingerprint,
+              !expected.isEmpty,
+              let certificateChain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
+              let leaf = certificateChain.first else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+        // 口径与桌面端一致：SHA256(证书 DER)。
+        let certificateData = SecCertificateCopyData(leaf) as Data
+        let digest = SHA256.hash(data: certificateData)
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        guard hex == expected else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+        // 指纹匹配 = 证书身份确认。这里是**唯一**放行路径。
+        completionHandler(.useCredential, URLCredential(trust: trust))
     }
 }
