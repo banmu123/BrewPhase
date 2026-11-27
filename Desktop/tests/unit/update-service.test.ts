@@ -50,6 +50,9 @@ function release(version: string, overrides: Partial<ReleaseEntry> = {}): Releas
     tag_name: `desktop-v${version}`,
     html_url: `https://github.com/banmu123/BrewPhase/releases/tag/desktop-v${version}`,
     published_at: '2026-11-26T13:49:48Z',
+    // 已正式发布：Stable 渠道要求这两个字段显式为 false。
+    draft: false,
+    prerelease: false,
     assets: [asset(version, 'mac-arm64.dmg'), asset(version, 'win-x64.exe')],
     ...overrides
   }

@@ -42,6 +42,9 @@ function desktopRelease(version: string, overrides: Partial<ReleaseEntry> = {}):
     tag_name: `desktop-v${version}`,
     html_url: `https://github.com/banmu123/BrewPhase/releases/tag/desktop-v${version}`,
     published_at: '2026-11-20T08:00:00Z',
+    // 正式发布的 Release：两个布尔值必须显式为 false（Stable 渠道的准入条件）。
+    draft: false,
+    prerelease: false,
     assets: [...macAssets(version), ...winAssets(version)],
     ...overrides
   }
@@ -75,6 +78,14 @@ function prereleaseV014(): ReleaseEntry {
     prerelease: true,
     assets: [...macAssets('0.1.4'), ...winAssets('0.1.4')]
   }
+}
+
+/** 去掉 draft / prerelease 字段：模拟数据来源不完整（缓存 / 代理 / 手写响应）。 */
+function withoutFlags(entry: ReleaseEntry): ReleaseEntry {
+  const copy = { ...entry }
+  delete copy.draft
+  delete copy.prerelease
+  return copy
 }
 
 describe('parseReleaseTag', () => {
@@ -135,10 +146,22 @@ describe('normalizeVersion', () => {
 })
 
 describe('isPublishedStable', () => {
-  it('Draft 与 Prerelease 都不算正式发布', () => {
-    expect(isPublishedStable({ tag_name: 'v0.2.0', html_url: '' })).toBe(true)
-    expect(isPublishedStable({ tag_name: 'v0.2.0', html_url: '', draft: true })).toBe(false)
-    expect(isPublishedStable({ tag_name: 'v0.2.0', html_url: '', prerelease: true })).toBe(false)
+  const base = { tag_name: 'v0.2.0', html_url: '' }
+
+  it('只有显式 draft=false 且 prerelease=false 才算正式发布', () => {
+    expect(isPublishedStable({ ...base, draft: false, prerelease: false })).toBe(true)
+  })
+
+  it('Draft / Prerelease 都拒绝', () => {
+    expect(isPublishedStable({ ...base, draft: true, prerelease: false })).toBe(false)
+    expect(isPublishedStable({ ...base, draft: false, prerelease: true })).toBe(false)
+    expect(isPublishedStable({ ...base, draft: true, prerelease: true })).toBe(false)
+  })
+
+  it('字段缺失一律不当成正式发布', () => {
+    expect(isPublishedStable(base)).toBe(false)
+    expect(isPublishedStable({ ...base, draft: false })).toBe(false)
+    expect(isPublishedStable({ ...base, prerelease: false })).toBe(false)
   })
 })
 
@@ -209,6 +232,11 @@ describe('selectUpdate', () => {
 
   it('Draft 不参与检查', () => {
     expect(selectUpdate([desktopRelease('0.2.0', { draft: true })], '0.1.4', 'darwin', 'arm64')).toBeNull()
+  })
+
+  it('缺少 draft / prerelease 字段的 Release 不参与 Stable 比较', () => {
+    expect(selectUpdate([withoutFlags(desktopRelease('0.2.1'))], '0.2.0', 'darwin', 'arm64')).toBeNull()
+    expect(selectUpdate([withoutFlags(desktopRelease('0.2.1'))], '0.2.0', 'win32', 'x64')).toBeNull()
   })
 
   it('v0.2.0 兼容：正式 Release 能被 0.1.4 看见', () => {

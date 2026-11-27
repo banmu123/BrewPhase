@@ -9,9 +9,10 @@
 #   草稿**不再默认打 Prerelease 标记**：审核通过后直接 Publish 即为 Stable。
 #   客户端只认非 draft、非 prerelease 的 Release（见
 #   Desktop/src/shared/contracts/update.ts 的 isPublishedStable）。
-# - tag 名必须与 Desktop/package.json 的 version 一致（下方有校验）：安装包
-#   文件名里的版本来自 package.json，而客户端按 tag 版本去找这个文件名，
-#   不一致就会「Release 发出去了，但没人匹配得到安装包」。
+# - 目标 tag 必须与 Desktop/package.json 的 version 一致（下方 Verify 步骤，
+#   tag 推送与手动补发都校验）：安装包文件名里的版本来自 package.json，
+#   客户端却按 tag 版本去找这个文件名，不一致就会「Release 发出去了，
+#   但没人匹配得到安装包」。不支持拿当前代码给旧版本补发资产。
 # - 下一次正式版预计 desktop-v0.2.1；已发布的 desktop-v0.1.x 与 v0.2.0
 #   不重命名、不删除、不重建。
 # 签名/公证凭据全部走 Repository Secrets；未配置时明确产出未签名内测包。
@@ -61,23 +62,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # tag 与 package.json 的版本必须一致：安装包名是
-      # `BrewPhase-${version}-${os}-${arch}.${ext}`（version 来自 package.json），
-      # 客户端却按 tag 版本去找这个文件名。不一致时 Release 能发出去，
-      # 但所有人都会看到「已是最新」——这类错配只能在这里拦住。
-      - name: Verify tag matches package.json version
-        if: startsWith(github.ref, 'refs/tags/desktop-v')
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag_version="${GITHUB_REF_NAME#desktop-v}"
-          pkg_version="$(node -p "require('./package.json').version")"
-          if [ "$tag_version" != "$pkg_version" ]; then
-            echo "::error::tag ${GITHUB_REF_NAME} does not match package.json version ${pkg_version}"
-            exit 1
-          fi
-          echo "tag ${GITHUB_REF_NAME} matches package.json ${pkg_version}"
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -89,6 +73,23 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: Desktop/pnpm-lock.yaml
+
+      # 版本闸门：目标 Release tag 必须与 Desktop/package.json 的 version 一致。
+      # - tag 推送：校验被推的 tag；
+      # - 手动补发（release_tag 非空）：校验要上传资产的那个已有 Release tag，
+      #   两种写法都认（desktop-vX.Y.Z / 历史 vX.Y.Z）；
+      # - 手动触发但不填 release_tag：只产出 artifacts，没有目标 tag，脚本直接放行。
+      #
+      # 校验放在打包之前：错配在这里失败，构建作业整体失败，release 作业
+      # （needs: build）不会上传任何资产——不会出现「错版本资产进了已有 Release」。
+      # 旧版本补发不通过关闭校验来绕过：版本对不上就是失败。
+      - name: Verify release tag matches package.json version
+        shell: bash
+        env:
+          # 只有 tag 推送时 ref_type 才是 tag；dispatch 时是 branch，这里得到空串。
+          PUSHED_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          TARGET_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: node scripts/verify-release-tag.mjs --pushed "$PUSHED_TAG" --target "$TARGET_RELEASE_TAG"
 
       - name: Install
         run: pnpm install --frozen-lockfile

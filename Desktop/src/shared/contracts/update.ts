@@ -34,6 +34,10 @@ export type UpdateCheckResult = {
 export type ReleaseAsset = { name: string; browser_download_url: string }
 export type ReleaseEntry = {
   tag_name: string
+  /**
+   * GitHub API 对每条 Release 都会明确给出这两个布尔值；缺失说明数据来源不完整
+   * （缓存 / 代理 / 手写 fixture），按「未确认正式发布」处理（见 `isPublishedStable`）。
+   */
   draft?: boolean
   prerelease?: boolean
   html_url: string
@@ -76,14 +80,18 @@ export function parseDesktopVersion(tagName: string): string | null {
 }
 
 /**
- * Stable 渠道的准入：Draft（含 tag 触发后待人工审核的草稿）与 Prerelease
- * 都不参与比较，只比已经正式发布的版本。
+ * Stable 渠道的准入：**必须显式** `draft === false` 且 `prerelease === false`。
+ *
+ * 字段缺失一律拒绝：GitHub Releases API 对每条记录都会给出这两个布尔值，
+ * 缺字段只可能来自别处（缓存、代理、手写 fixture），而「缺字段当成正式版」
+ * 正是最坏的一种猜——它会把草稿或预发布推给所有稳定版用户。
+ * 宁可漏掉一次提示，也不要把未发布的包当成更新。
  *
  * 目前项目只有一个渠道；将来要开 Beta 时，在这里按渠道分派，而不是放宽
  * 这个判断——放宽会让 0.1.x 那些 Prerelease 重新变成「新版本」。
  */
 export function isPublishedStable(entry: ReleaseEntry): boolean {
-  return entry.draft !== true && entry.prerelease !== true
+  return entry.draft === false && entry.prerelease === false
 }
 
 /** 比较用的规范化：去空白、去前导 v、去预发布后缀（`0.2.0-beta.1` → `0.2.0`）。 */
