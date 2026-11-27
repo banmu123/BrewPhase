@@ -1717,7 +1717,10 @@ describe('Tree 完整性（修复二）', () => {
 
 // MARK: - 修复三：文件 Mode 变化（规格 §五）
 
-describe('文件 mode 变化（修复三）', () => {
+// Windows 没有 POSIX 文件 mode：chmod 不改变 git 索引里的 exec 位，
+// 第二次 `git commit` 会得到 "nothing to commit"。这组用例的前提只在
+// POSIX 上成立，跳过而不是放宽断言（放宽会把真正的问题一起盖掉）。
+describe.skipIf(process.platform === 'win32')('文件 mode 变化（修复三）', () => {
   function initWithMode(dir: string): void {
     initRepo(dir, { 'script.sh': '#!/bin/sh\necho hi\n', 'plain.txt': 'p\n' })
     git(['config', 'core.filemode', 'true'], dir) // 明确开启 mode 追踪（测试确定性）
