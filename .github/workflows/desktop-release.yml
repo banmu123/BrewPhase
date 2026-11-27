@@ -13,6 +13,9 @@
 #   tag 推送与手动补发都校验）：安装包文件名里的版本来自 package.json，
 #   客户端却按 tag 版本去找这个文件名，不一致就会「Release 发出去了，
 #   但没人匹配得到安装包」。不支持拿当前代码给旧版本补发资产。
+# - 自动更新：产物必须带上 electron-builder 生成的 latest-mac.yml / latest.yml
+#   （见 Verify update metadata）。客户端 electron-updater 靠它判断版本、文件名
+#   与 sha512；Release 里缺了它，用户会一直停在「检查更新失败」。
 # - 下一次正式版预计 desktop-v0.2.1；已发布的 desktop-v0.1.x 与 v0.2.0
 #   不重命名、不删除、不重建。
 # 签名/公证凭据全部走 Repository Secrets；未配置时明确产出未签名内测包。
@@ -136,8 +139,7 @@ jobs:
           fi
           pnpm exec electron-builder "${args[@]}"
 
-      - name: Package Windows (NSIS exe)
-        if: runner.os == 'Windows'
+      - name: Package Windows (NSIS exe)        if: runner.os == 'Windows'
         shell: pwsh
         env:
           WIN_CERT_P12_B64: ${{ secrets.WIN_CERT_P12_B64 }}
@@ -156,6 +158,27 @@ jobs:
           }
           pnpm exec electron-builder $builderArgs
 
+      # 自动更新靠的**不是**安装包本身，而是 electron-builder 生成的更新元数据：
+      # macOS 读 latest-mac.yml、Windows 读 latest.yml。少了它，electron-updater
+      # 只会得到「找不到更新信息」，客户端永远停在检查失败。
+      # 这里显式断言文件存在并打印内容（文件名 / 版本 / sha512 都在里面），
+      # 免得哪天 publish 配置被改动、构建"成功"但用户永远收不到更新。
+      - name: Verify update metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            metadata=release/latest-mac.yml
+          else
+            metadata=release/latest.yml
+          fi
+          if [ ! -f "$metadata" ]; then
+            echo "::error::$metadata was not generated; auto-update metadata is missing"
+            exit 1
+          fi
+          echo "---- $metadata ----"
+          cat "$metadata"
+
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
@@ -165,6 +188,7 @@ jobs:
             Desktop/release/*.zip
             Desktop/release/*.exe
             Desktop/release/*.blockmap
+            Desktop/release/latest*.yml
           if-no-files-found: error
           retention-days: 14
 
@@ -234,7 +258,7 @@ jobs:
               < <(find dist -maxdepth 1 -type f -print)
           else
             while IFS= read -r f; do files+=("$f"); done \
-              < <(find dist -maxdepth 1 -type f \( -name '*.exe' -o -name '*.exe.sha256' \) -print)
+              < <(find dist -maxdepth 1 -type f \( -name '*.exe' -o -name '*.exe.sha256' -o -name 'latest.yml' \) -print)
           fi
           [ "${#files[@]}" -gt 0 ] || { echo "::error::No matching assets in dist/"; exit 1; }
           printf 'Uploading: %s\n' "${files[@]}"

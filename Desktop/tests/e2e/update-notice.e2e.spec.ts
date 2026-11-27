@@ -56,30 +56,29 @@ test('设置 → 常规：更新区块是主按钮，检查中禁用，失败不
   try {
     await openSettings(page)
 
-    const checkButton = page.getByRole('button', { name: '检查更新', exact: true })
+    const checkButton = page.getByTestId('update-check')
     await expect(checkButton).toBeVisible()
     // 不再是 ghost 文本按钮：用设计系统的主按钮样式，并带一个刷新图标。
     await expect(checkButton).toHaveClass(/button--primary/)
     await expect(checkButton.locator('svg')).toHaveCount(1)
 
-    // 启动时的自动检查会落定成 unavailable（死代理）。
+    // 开发态（未打包）不能自动更新，走 GitHub API 兜底；死代理让检查落定成 error。
     await expect
       .poll(() => updateState(page), { timeout: 25_000 })
-      .toBe('unavailable')
-    await expect(page.locator('.settings-update__state')).toContainText('暂时无法检查更新')
-    // 没有可更新版本 → 不出现「前往下载」。
+      .toBe('error')
+    await expect(page.locator('.settings-update__state')).toContainText('检查更新失败')
+    // 失败后同一个按钮变成「重试」，主按钮样式不变。
+    await expect(checkButton).toContainText('重试')
+    // 没有可更新版本 → 不出现任何下载/更新按钮。
     await expect(page.getByRole('button', { name: '前往下载', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '立即更新', exact: true })).toHaveCount(0)
     // 检查失败绝不弹提醒，也不影响页面继续使用。
     await expect(page.locator('[data-testid="update-banner"]')).toHaveCount(0)
 
     // 检查中的禁用态：在点击前挂 MutationObserver，避免与人眼竞速。
-    await page.evaluate(() => {
+    await checkButton.evaluate((button) => {
       const scope = window as unknown as { __updateDisabledSeen?: boolean }
       scope.__updateDisabledSeen = false
-      const button = Array.from(document.querySelectorAll('button')).find((item) =>
-        item.textContent?.includes('检查更新')
-      )
-      if (!button) return
       const observer = new MutationObserver(() => {
         if ((button as HTMLButtonElement).disabled) scope.__updateDisabledSeen = true
       })
@@ -96,7 +95,7 @@ test('设置 → 常规：更新区块是主按钮，检查中禁用，失败不
       )
       .toBe(true)
     await expect(checkButton).toBeEnabled({ timeout: 20_000 })
-    await expect.poll(() => updateState(page)).toBe('unavailable')
+    await expect.poll(() => updateState(page)).toBe('error')
   } finally {
     await app.close()
     rmSync(userData, { recursive: true, force: true })
@@ -169,8 +168,8 @@ test.describe('live（UPDATE_LIVE_SMOKE=1）', () => {
        */
       const checked = await page.evaluate(() => window.brewphase.update.check(false))
       test.skip(
-        checked.status === 'unavailable' && (checked.reason ?? '').startsWith('HTTP 403'),
-        `GitHub API 配额耗尽（${checked.reason ?? 'HTTP 403'}），本次无法验证 live 提醒`
+        checked.phase === 'error' && (checked.error ?? '').startsWith('HTTP 403'),
+        `GitHub API 配额耗尽（${checked.error ?? 'HTTP 403'}），本次无法验证 live 提醒`
       )
 
       const banner = page.locator('[data-testid="update-banner"]')
@@ -179,10 +178,16 @@ test.describe('live（UPDATE_LIVE_SMOKE=1）', () => {
       await expect(banner).toContainText('0.2.0')
       // 两个操作都有文字，不是纯图标。
       await expect(banner.getByRole('button', { name: '稍后提醒', exact: true })).toBeVisible()
-      const openButton = banner.getByRole('button', { name: '查看更新', exact: true })
+      /*
+       * 这是未打包的临时副本：`app.isPackaged === false`，自动更新按设计关闭，
+       * 所以它只能给「前往下载」——不能给「立即更新」，否则就是骗用户。
+       * 真正的下载/安装闭环由 update-service 的单测（假 adapter）覆盖。
+       */
+      await expect(banner.getByRole('button', { name: '立即更新', exact: true })).toHaveCount(0)
+      const openButton = banner.getByRole('button', { name: '前往下载', exact: true })
       await expect(openButton).toBeVisible()
 
-      // 查看更新：Renderer 不传 URL，主进程用缓存的白名单地址。
+      // 前往下载：Renderer 不传 URL，主进程用缓存的白名单地址。
       await openButton.click()
       await expect
         .poll(() => app.evaluate(() => (globalThis as unknown as { __openedUrl?: string }).__openedUrl ?? null))

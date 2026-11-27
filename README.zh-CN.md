@@ -219,7 +219,7 @@ Records、Canvas、桌面端与 MCP 只存在于 `main` —— 已实现，但**
 |---|---|---|
 | **iOS · App Store** | **已发布 Available** —— [1.1](https://apps.apple.com/us/app/brewphase/id6815591631) | 仅 iPhone，iOS 18.0+，免费，美区；只含 Coffee 笔记本，没有 Records / Canvas / 同步。 |
 | **iOS · `main`（2.0）** | **开发中，未发布** | 源码里已有 Coffee + Records + Canvas + 局域网同步，尚未作为 2.0 提交。 |
-| **macOS · 桌面端** | **已发布（0.2.0 正式版）** | arm64 `.dmg` / `.zip` 在 `v0.2.0`（圆桌工作区、Agent Journey、Local MCP、设备同步），Developer ID 签名（本版未公证，首启右键 → 打开）。`desktop-v0.1.4` 为已公证 + staple 的 prerelease（已被取代）。已实现版本检查提示（自动安装更新仍未实现）。没有 Intel 构建。 |
+| **macOS · 桌面端** | **已发布（0.2.0 正式版）** | arm64 `.dmg` / `.zip` 在 `v0.2.0`（圆桌工作区、Agent Journey、Local MCP、设备同步），Developer ID 签名（本版未公证，首启右键 → 打开）。`desktop-v0.1.4` 为已公证 + staple 的 prerelease（已被取代）。已实现应用内检查与自动下载安装（自下一个 Release 起带更新元数据；0.2.0 这个 Release 本身仍只能手动下载）。没有 Intel 构建。 |
 | **Windows · 桌面端** | **已发布（0.2.0），未签名** | NSIS x64 `.exe` 在 `v0.2.0`，Windows 11 实机构建（此前 CI 构建在 `desktop-v0.1.4` / `0.1.3` / `0.1.2` / `0.1.0`）。**0.2.0 起含 Local MCP runtime**（打包自检通过）；Named Pipe 等运行时行为未在实机完整验证。无 Authenticode 证书，安装器未做安装/冒烟验证。 |
 | **Linux · 桌面端** | **暂不支持** | 配置里保留 `AppImage` target；无构建、无验证。 |
 | **MCP** | **已构建，未发布** | 仅桌面端。macOS / Linux 走 Unix socket；Windows Named Pipe 权限未验证，不提供 TCP 退化。 |

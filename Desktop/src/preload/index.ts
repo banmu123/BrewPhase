@@ -15,7 +15,7 @@ import {
 } from '../shared/roundtable'
 import { ROUNDTABLE_AI_TASK_CHANGED_CHANNEL } from '../shared/contracts/roundtable-ai'
 import { ACCOUNT_CHANGED_CHANNEL } from '../shared/contracts/account'
-import { UPDATE_CHANGED_CHANNEL, type UpdateCheckResult } from '../shared/contracts/update'
+import { UPDATE_CHANGED_CHANNEL, type UpdateState } from '../shared/contracts/update'
 import { REMOTE_CHANNELS, type RemoteStatus } from '../shared/contracts/remote'
 import type { RendererApi } from '../shared/contracts'
 
@@ -403,12 +403,14 @@ const api: RendererApi = {
     buildContext: (workspaceId, relativePaths) =>
       invoke(IPC.workspaceContextBuild, { workspaceId, relativePaths })
   },
-  // 版本感知：只读检查 + 打开下载页；URL 主进程决定，Renderer 不传地址。
+  // 应用更新：状态由主进程唯一持有；这里只转发意图，不传地址、不传路径。
   update: {
+    state: () => invoke(IPC.updateState),
     check: (force?: boolean) => invoke(IPC.updateCheck, { force: force === true }),
+    download: () => invoke(IPC.updateDownload),
     openRelease: () => invoke(IPC.updateOpenRelease),
     onChanged: (listener) => {
-      const wrapped = (_event: unknown, result: UpdateCheckResult) => listener(result)
+      const wrapped = (_event: unknown, state: UpdateState) => listener(state)
       ipcRenderer.on(UPDATE_CHANGED_CHANNEL, wrapped)
       return () => ipcRenderer.removeListener(UPDATE_CHANGED_CHANNEL, wrapped)
     }

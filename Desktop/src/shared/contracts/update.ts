@@ -1,10 +1,14 @@
 /**
- * 版本感知（update awareness）契约。
+ * 应用更新契约。
  *
- * 这一版只做「有没有可安装的新版本」的判断与提示：**不下载、不安装、不替换 App**。
- * macOS 上自动替换安装要求代码签名与公证链路稳定，而当前发布链还没做到，
- * 所以把决定权留给用户：告诉他有新版本，给出 GitHub Releases 下载页。
- * 所有 URL 都来自 GitHub API，且必须过白名单；Renderer 不能传任意地址进来。
+ * Phase 1.3 起不再只是「感知」：主进程用 electron-updater 走完整的
+ * 检查 → 下载 → 安装 → 重启闭环，Renderer 只读一份状态、只表达意图。
+ *
+ * 边界（安全模型没变）：
+ * - 更新源、下载地址、安装包路径全部来自打包时写入的 `app-update.yml`，
+ *   Renderer 既不能传 URL，也不能传路径；
+ * - `selectUpdate` / `isPublishedStable` 这套纯逻辑保留给「本机不能自动更新」
+ *   时的兜底发现（开发态、元数据缺失、平台不支持），那条路径只读 GitHub API。
  */
 
 export const UPDATE_RELEASES_PAGE = 'https://github.com/banmu123/BrewPhase/releases'
@@ -15,20 +19,70 @@ export const UPDATE_CHANGED_CHANNEL = 'update:changed'
 export const UPDATE_AUTO_CHECK_DELAY_MS = 8_000
 export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
 export const UPDATE_REQUEST_TIMEOUT_MS = 8_000
+/**
+ * 下载完成后先让界面把「正在安装并重启」显示出来，再真正退出安装。
+ * 太短用户看不到状态，太长又拖慢更新；1.2s 大约是一次呼吸。
+ */
+export const UPDATE_INSTALL_DELAY_MS = 1_200
 
-export type UpdateCheckStatus = 'up-to-date' | 'available' | 'unavailable'
+/**
+ * 更新状态机。单向推进为主，只有两类回退：
+ * - `downloading → error → (重试) downloading`；
+ * - `* → checking`（用户手动重查）。
+ */
+export type UpdatePhase =
+  | 'idle'
+  | 'checking'
+  | 'up-to-date'
+  | 'available'
+  | 'downloading'
+  | 'downloaded'
+  | 'installing'
+  | 'error'
+  | 'unsupported'
 
-export type UpdateCheckResult = {
-  status: UpdateCheckStatus
+/** 失败发生在哪一步：决定界面给「重试下载」还是「重试检查」。 */
+export type UpdateFailureScope = 'check' | 'download'
+
+export type UpdateState = {
+  phase: UpdatePhase
   currentVersion: string
   latestVersion: string | null
+  /** 0–100，只来自 electron-updater 的真实 download-progress 事件。 */
+  percent: number | null
+  transferred: number | null
+  total: number | null
+  /** 面向用户的错误摘要（不含堆栈、不含本地路径）。 */
+  error: string | null
+  failedAt: UpdateFailureScope | null
+  /**
+   * 本机是否具备「点一下自动下载并安装」的能力：
+   * 打包版 + 受支持平台 + 更新配置可用。false 时界面只能给手动下载入口。
+   */
+  autoUpdate: boolean
+  /** 手动兜底地址（已过白名单）；自动更新可用时通常为 null。 */
+  downloadUrl: string | null
   /** 永远指向 GitHub 的 Release 页或下载资产，主进程打开前会再校验一次。 */
   releaseUrl: string
-  downloadUrl: string | null
-  publishedAt: string | null
-  checkedAt: number
-  /** 失败原因，只用于设置页展示，不含堆栈与本地路径。 */
-  reason: string | null
+  checkedAt: number | null
+}
+
+/** 初始状态：还没查过。 */
+export function initialUpdateState(currentVersion: string, autoUpdate: boolean): UpdateState {
+  return {
+    phase: 'idle',
+    currentVersion,
+    latestVersion: null,
+    percent: null,
+    transferred: null,
+    total: null,
+    error: null,
+    failedAt: null,
+    autoUpdate,
+    downloadUrl: null,
+    releaseUrl: UPDATE_RELEASES_PAGE,
+    checkedAt: null
+  }
 }
 
 export type ReleaseAsset = { name: string; browser_download_url: string }

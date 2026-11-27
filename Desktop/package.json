@@ -32,6 +32,7 @@
     "@modelcontextprotocol/server": "^2.4.0",
     "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.4",
+    "electron-updater": "^6.8.12",
     "konva": "^10.9.1",
     "qrcode": "^1.5.4",
     "react": "^19.3.1",

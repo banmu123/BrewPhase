@@ -17,12 +17,13 @@ import type {
   McpClientInfo,
   McpScope,
   SyncConflictItem,
-  SyncStatus,
-  UpdateCheckResult
+  SyncStatus
 } from '@shared/contracts'
 import { MCP_SCOPE_GROUPS, MCP_SCOPE_PRESETS } from '@shared/contracts'
 import { api } from '../../shared/api'
-import { ExternalIcon, ReloadIcon } from '../../shared/icons'
+import { DownloadIcon, ExternalIcon, ReloadIcon } from '../../shared/icons'
+import { UpdateProgress } from '../update/UpdateProgress'
+import { useUpdateStore } from '../update/update-store'
 import { SUPPORTED_LOCALES, useI18n } from '../../i18n'
 import { THEMES } from '../../shared/theme'
 import { useTheme } from '../../shared/useTheme'
@@ -43,14 +44,10 @@ import { CLOUD_ACCOUNT_VISIBLE, REMOTE_ACCESS_VISIBLE } from '../../shared/featu
  * 用户数据（设备名、客户端名、token、路径）不翻译。
  */
 
-export function SettingsPage({
-  info,
-  update
-}: {
-  info: AppInfo | null
-  update: UpdateCheckResult | null
-}) {
+export function SettingsPage({ info }: { info: AppInfo | null }) {
   const { t } = useI18n()
+  // 导航圆点订阅最小切片（布尔），下载进度不会带着整个设置页重渲染。
+  const hasUpdate = useUpdateStore((state) => state.state?.phase === 'available')
   // 跨页直达（引导页「打开设备同步设置」）：mount 时消费一次挂起的请求，
   // 之后每次新请求跟随切换。用户手动点子导航不经过 store，不受影响。
   const requested = useAppStore((state) => state.openSettingsCategory)
@@ -96,7 +93,7 @@ export function SettingsPage({
                 onClick={() => setCategory(item.key)}
               >
                 {item.label}
-                {item.key === 'general' && update?.status === 'available' && (
+                {item.key === 'general' && hasUpdate && (
                   <span
                     className="settings-nav__dot"
                     title={t.settings.general.update.badge}
@@ -108,7 +105,7 @@ export function SettingsPage({
           </nav>
 
           <div className="settings-pane">
-            {category === 'general' && <GeneralSection info={info} update={update} />}
+            {category === 'general' && <GeneralSection info={info} />}
             // 防御：分类导航里已没有「账户」，但跨页直达（openSettings('account')）
             // 仍可能把 category 设成它——那时渲染空面板而不是旧内容。
             {CLOUD_ACCOUNT_VISIBLE && category === 'account' && <AccountSection />}
@@ -125,49 +122,52 @@ export function SettingsPage({
 }
 
 /** 常规：语言、应用信息、本地数据、关于。 */
-function GeneralSection({
-  info,
-  update
-}: {
-  info: AppInfo | null
-  update: UpdateCheckResult | null
-}) {
+function GeneralSection({ info }: { info: AppInfo | null }) {
   const { t, locale, setLocale, formatDateTime } = useI18n()
   const { preference, setPreference } = useTheme()
   const [location, setLocation] = useState<DataLocationStatus | null>(null)
   const [moving, setMoving] = useState(false)
   const [restarting, setRestarting] = useState(false)
   const [moveError, setMoveError] = useState<string | null>(null)
-  const [checkingUpdate, setCheckingUpdate] = useState(false)
+  // 更新状态来自主进程广播（经 update-store），设置页不另存一份。
+  const update = useUpdateStore((state) => state.state)
+  const checkUpdate = useUpdateStore((state) => state.check)
+  const downloadUpdate = useUpdateStore((state) => state.download)
 
-  async function checkUpdate(): Promise<void> {
-    setCheckingUpdate(true)
-    try {
-      // 结果由主进程广播回 App，再经 props 流回这里；设置页不另存一份状态。
-      await api.update.check(true)
-    } catch (cause) {
-      console.error('[update] check failed', cause)
-    } finally {
-      setCheckingUpdate(false)
-    }
-  }
+  const checkingUpdate = update?.phase === 'checking'
+  const updateFailed = update?.phase === 'error'
+  const updateInProgress =
+    update?.phase === 'downloading' || update?.phase === 'downloaded' || update?.phase === 'installing'
 
   const updateStatus =
-    update == null
+    update == null || update.phase === 'idle'
       ? t.settings.general.update.idle
-      : update.status === 'available' && update.latestVersion
-        ? t.settings.general.update.available(update.latestVersion)
-        : update.status === 'up-to-date'
-          ? t.settings.general.update.upToDate(update.currentVersion)
-          : t.settings.general.update.unavailable
+      : update.phase === 'checking'
+        ? t.settings.general.update.checking
+        : update.phase === 'available' && update.latestVersion
+          ? t.settings.general.update.available(update.latestVersion)
+          : update.phase === 'up-to-date'
+            ? t.settings.general.update.upToDate(update.currentVersion)
+            : update.phase === 'downloading'
+              ? t.settings.general.update.downloading(update.percent ?? 0)
+              : update.phase === 'downloaded'
+                ? t.settings.general.update.downloaded
+                : update.phase === 'installing'
+                  ? t.settings.general.update.installing
+                  : update.phase === 'unsupported'
+                    ? t.settings.general.update.unsupported
+                    : update.failedAt === 'download'
+                      ? t.settings.general.update.downloadFailed
+                      : t.settings.general.update.checkFailed
 
   /**
-   * 有更新、并且**本平台真有可下载的安装包**时，才把「前往下载」放出来。
-   * `downloadUrl` 为空意味着这个 Release 没给当前平台发包，此时只显示版本号，
-   * 不给一个点了也下不到的按钮。
+   * 有更新时，主按钮让给「立即更新 / 前往下载」——同一屏里两个实心主按钮
+   * 会互相抵消；不能自动更新（开发态、元数据缺失）时只给手动下载。
    */
-  const updateDownloadable =
-    update?.status === 'available' && Boolean(update.latestVersion) && Boolean(update.downloadUrl)
+  const showManualDownload =
+    update?.phase === 'available' && !update.autoUpdate && Boolean(update.downloadUrl)
+  const showAutoUpdate = update?.phase === 'available' && update.autoUpdate
+  const primaryIsDownload = showManualDownload || showAutoUpdate
 
   useEffect(() => {
     void api.dataLocation
@@ -292,49 +292,96 @@ function GeneralSection({
         <h2 className="settings-subsection__title">{t.settings.general.update.title}</h2>
         <p className="note">{t.settings.general.update.hint}</p>
         {/*
-          独立信息区块：只把「状态 + 操作」收进一块面板，不动二级导航与页面结构。
-          有更新时把主按钮让给「前往下载」——同一屏里两个实心主按钮会互相抵消，
-          检查按钮退回次要样式依然一眼可见，而下载才是此刻该做的事。
+          独立信息区块：只把「状态 + 操作 + 进度」收进一块面板，不动二级导航与页面结构。
+          有更新时把主按钮让给「立即更新 / 前往下载」——同一屏里两个实心主按钮
+          会互相抵消；检查按钮退回次要样式依然一眼可见，而升级才是此刻该做的事。
         */}
-        <div className="settings-update" data-tone={update?.status ?? 'idle'}>
+        <div className="settings-update" data-tone={update?.phase ?? 'idle'}>
           <div className="settings-update__status">
             <span
               className="settings-update__state"
-              data-update-status={update?.status ?? 'idle'}
+              data-update-status={update?.phase ?? 'idle'}
               aria-live="polite"
             >
               {updateStatus}
             </span>
-            {update && (
+            {update?.checkedAt != null && (
               <span className="settings-update__meta">
                 {t.settings.general.update.lastChecked(formatDateTime(update.checkedAt))}
               </span>
             )}
-          </div>
-          <div className="settings-update__actions">
-            <button
-              type="button"
-              className={`button ${updateDownloadable ? '' : 'button--primary'}`}
-              onClick={() => void checkUpdate()}
-              disabled={checkingUpdate}
-              aria-busy={checkingUpdate}
-            >
-              <span className={checkingUpdate ? 'update-spin' : undefined} aria-hidden="true">
-                <ReloadIcon size={14} />
-              </span>
-              {checkingUpdate ? t.settings.general.update.checking : t.settings.general.update.check}
-            </button>
-            {updateDownloadable && (
-              <button
-                type="button"
-                className="button button--primary"
-                onClick={() => void api.update.openRelease()}
-              >
-                <ExternalIcon size={14} />
-                {t.settings.general.update.open}
-              </button>
+            {updateFailed && update?.error && (
+              <span className="settings-update__error">{update.error}</span>
+            )}
+            {update?.phase === 'available' && update.autoUpdate && (
+              <span className="settings-update__hint">{t.settings.general.update.autoRestart}</span>
             )}
           </div>
+
+          {updateInProgress ? (
+            <div className="settings-update__actions">
+              <UpdateProgress
+                percent={update?.percent ?? null}
+                transferred={update?.transferred ?? null}
+                total={update?.total ?? null}
+                label={updateStatus}
+              />
+            </div>
+          ) : (
+            <div className="settings-update__actions">
+              {/* 兜底入口只在「确实知道有新版本、但本机装不了/下载失败」时给；
+                  单纯检查失败不该把人推到浏览器（版本号都还不知道）。 */}
+              {updateFailed && update?.downloadUrl && (
+                <button
+                  type="button"
+                  className="button button--ghost"
+                  onClick={() => void api.update.openRelease()}
+                >
+                  <ExternalIcon size={14} />
+                  {t.settings.general.update.open}
+                </button>
+              )}
+              <button
+                type="button"
+                className={`button ${primaryIsDownload ? '' : 'button--primary'}`}
+                onClick={() => void checkUpdate(true)}
+                disabled={checkingUpdate}
+                aria-busy={checkingUpdate}
+                data-testid="update-check"
+              >
+                <span className={checkingUpdate ? 'update-spin' : undefined} aria-hidden="true">
+                  <ReloadIcon size={14} />
+                </span>
+                {checkingUpdate
+                  ? t.settings.general.update.checking
+                  : updateFailed
+                    ? t.settings.general.update.retry
+                    : t.settings.general.update.check}
+              </button>
+              {showAutoUpdate && (
+                <button
+                  type="button"
+                  className="button button--primary"
+                  onClick={() => void downloadUpdate()}
+                  data-testid="update-download"
+                >
+                  <DownloadIcon size={14} />
+                  {t.settings.general.update.download}
+                </button>
+              )}
+              {showManualDownload && (
+                <button
+                  type="button"
+                  className="button button--primary"
+                  onClick={() => void api.update.openRelease()}
+                  data-testid="update-manual"
+                >
+                  <ExternalIcon size={14} />
+                  {t.settings.general.update.open}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </section>
 

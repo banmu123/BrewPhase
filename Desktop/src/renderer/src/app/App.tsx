@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { AppInfo, UpdateCheckResult } from '@shared/contracts'
+import type { AppInfo } from '@shared/contracts'
 import { api } from '../shared/api'
 import { CanvasPage } from '../features/canvas/CanvasPage'
 import { BrowserFloatWindow } from '../features/browser/BrowserFloatWindow'
@@ -30,11 +30,7 @@ import { useAppStore } from './store'
 import { ConfirmHost } from '../shared/ConfirmDialog'
 import { titleBarPlatform } from '../shared/platform'
 import { UpdateBanner } from '../features/update/UpdateBanner'
-import {
-  readDismissedUpdateVersion,
-  rememberDismissedUpdateVersion,
-  shouldAnnounceUpdate
-} from '../features/update/update-notice'
+import { subscribeUpdateState, useUpdateStore } from '../features/update/update-store'
 
 /**
  * Studio Desk 外壳：一条极简全局顶栏 + 自适应工作区。
@@ -50,15 +46,12 @@ export function App() {
   const { t } = useI18n()
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
-  // 版本感知结果由主进程持有，这里只做展示；设置页与导航徽标共用同一份。
-  const [update, setUpdate] = useState<UpdateCheckResult | null>(null)
   /**
-   * 用户点过「稍后提醒」的版本号。只在渲染层保存（localStorage）：主进程负责
-   * 「有没有新版本」，这里负责「要不要现在打扰」，两边不重写彼此的判断。
+   * 更新状态只有主进程那一份，这里仅订阅它的镜像。
+   * `bannerVisible` 是派生的布尔值（selector 返回原始值），下载进度每秒推几次
+   * 也不会把 Studio 桌面一起重渲染——真正关心进度的组件自己订阅 store。
    */
-  const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string | null>(() =>
-    readDismissedUpdateVersion()
-  )
+  const bannerVisible = useUpdateStore((state) => state.bannerVisible)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   // 设置页可以随时重新打开接入向导；那条路径直接进 AI 分支。
   const agentOnboarding = useAppStore((state) => state.agentOnboarding)
@@ -66,6 +59,13 @@ export function App() {
   const [searchOpen, setSearchOpen] = useState(false)
   /** 平台形态：mac 红绿灯在左上角；Windows 原生按钮叠在右上角（WCO）。 */
   const platform = titleBarPlatform()
+  /**
+   * 独立窗口（圆桌 / 浏览器浮窗）只渲染各自的壳：不订阅更新、不发起检查，
+   * 也就不可能重复触发更新流程。判定必须在 hooks 之前算出来。
+   */
+  const roundtableWindow = /bpRoundtable=/.test(window.location.hash)
+  const floatWindowId = Number(/bpFloat=(\d+)/.exec(window.location.hash)?.[1]) || null
+  const secondaryWindow = roundtableWindow || floatWindowId !== null
 
   useEffect(() => {
     api.app
@@ -75,32 +75,17 @@ export function App() {
   }, [])
 
   /**
-   * 启动时问一次「有没有新版本」，之后由主进程的 24h 定时器广播。
-   * 检查失败只是 unavailable，不弹错、不阻塞应用——离线仍可完整使用。
+   * 更新：挂载时同步一次主进程状态，并订阅之后的广播。
+   * - 状态归主进程，渲染层不另存判断；
+   * - 只在主窗口订阅：独立窗口既不显示提醒，也不重复触发检查；
+   * - 检查失败只是 error / unsupported，不弹错、不阻塞应用。
    */
   useEffect(() => {
-    const unsubscribe = api.update.onChanged(setUpdate)
-    void api.update
-      .check()
-      .then(setUpdate)
-      .catch(() => {})
+    if (secondaryWindow) return
+    const unsubscribe = subscribeUpdateState()
+    void useUpdateStore.getState().hydrate()
     return unsubscribe
-  }, [])
-
-  /**
-   * 提醒由「主进程唯一的检查结果 + 用户暂缓的版本」**推导**，不另存一份状态：
-   * 广播与启动 Promise 给的是同一个版本，`shouldAnnounceUpdate` 又是纯函数，
-   * 所以两条回调先后到达也只会渲染一个 Banner，不需要「弹过没有」的标记。
-   */
-  const updateNotice = shouldAnnounceUpdate(update, dismissedUpdateVersion) ? update : null
-
-  /** 「稍后提醒」：记住版本号并立刻收起；更高版本仍会重新提醒。 */
-  function postponeUpdate(): void {
-    const version = updateNotice?.latestVersion
-    if (!version) return
-    rememberDismissedUpdateVersion(version)
-    setDismissedUpdateVersion(version)
-  }
+  }, [secondaryWindow])
 
   /**
    * 浏览器浮窗是**全局**的：订阅装一次、面板挂在模块切换之外，
@@ -181,14 +166,11 @@ export function App() {
 
   // 独立圆桌窗口：同一份应用，#bpRoundtable=<id> 时只渲染圆桌壳。
   // 判定放在 bpFloat 之前：两个路由互不冲突，但都要先于主应用。
-  const roundtableWindow = /bpRoundtable=/.test(window.location.hash)
   if (roundtableWindow) {
     return <RoundtableWindow />
   }
 
   // 独立浏览器窗口：同一份应用，#bpFloat=<windowId> 时只渲染浮窗壳。
-  const floatWindowId = Number(/bpFloat=(\d+)/.exec(window.location.hash)?.[1]) || null
-
   if (floatWindowId) {
     return <BrowserFloatWindow windowId={floatWindowId} />
   }
@@ -199,14 +181,9 @@ export function App() {
         <TopBar platform={platform} onSearch={() => setSearchOpen(true)} />
 
         {/* 更新提醒：顶栏与工作区之间的一条通知，占自己的高度、不覆盖内容。
+            下载/安装阶段会换成进度与状态，仍然是同一条，不会叠出第二个。
             独立圆桌 / 浮窗在更早的分支就 return 了，所以这里天然只在主窗口出现。 */}
-        {updateNotice && (
-          <UpdateBanner
-            version={updateNotice.latestVersion}
-            onLater={postponeUpdate}
-            onOpen={() => void api.update.openRelease().catch(() => undefined)}
-          />
-        )}
+        {bannerVisible && <UpdateBanner />}
 
         <main className="workspace">
           {error ? (
@@ -221,7 +198,7 @@ export function App() {
           ) : module === 'canvas' ? (
             <CanvasPage />
           ) : module === 'settings' ? (
-            <SettingsPage info={info} update={update} />
+            <SettingsPage info={info} />
           ) : (
             <StudioHome />
           )}

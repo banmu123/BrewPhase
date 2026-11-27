@@ -1,197 +1,318 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import {
-  UPDATE_AUTO_CHECK_DELAY_MS,
-  UPDATE_RELEASES_API,
-  type ReleaseAsset,
-  type ReleaseEntry
-} from '../../src/shared/contracts/update'
+import type { UpdaterAdapter, UpdaterHandlers, UpdaterProgress } from '../../src/main/update/updater'
 
 /**
- * UpdateService 的默认版本来源必须是 Electron 的 `app.getVersion()`——
- * 它读的是 package.json（打包后是 Info.plist），不是任何硬编码副本。
- * 这里把 electron 换成假的，顺便证明：构造服务不联网、失败不抛给界面。
+ * 状态机的单元测试：用一个假 adapter 完整走「检查 → 下载 → 进度 → 安装」。
+ *
+ * 真实安装（Squirrel / NSIS）没法在单测里跑，也不该跑——这里验证的是
+ * **调用顺序与状态收敛**：检查不会下载、重复点击不会重复下载、安装前一定
+ * 先做完收尾、失败停在可重试的位置。
  */
 
-const mocks = vi.hoisted(() => ({
-  getVersion: vi.fn(() => '0.2.0')
-}))
-
 vi.mock('electron', () => ({
-  app: { getVersion: mocks.getVersion },
+  app: { getVersion: () => '0.2.0' },
   net: {
     fetch: async () => {
-      throw new Error('net.fetch should not be used in tests')
+      throw new Error('net.fetch should not be called in unit tests')
     }
   }
 }))
 
-const { UpdateService } = await import('../../src/main/update/update-service')
+const { UpdateService, createReleaseDiscovery } = await import(
+  '../../src/main/update/update-service'
+)
+type UpdateDiscoveryResult = import('../../src/main/update/update-service').UpdateDiscoveryResult
 
-type FetchParams = { headers: Record<string, string>; signal: AbortSignal }
-type FetchResult = { ok: boolean; status: number; json: () => Promise<unknown> }
+type FakeMode = 'available' | 'up-to-date' | 'throw' | 'error-event'
 
-function respond(payload: unknown, init: { ok?: boolean; status?: number } = {}): FetchResult {
-  return {
-    ok: init.ok ?? true,
-    status: init.status ?? 200,
-    json: async () => payload
+function createFakeAdapter(options: { supported?: boolean; mode?: FakeMode } = {}) {
+  let handlers: UpdaterHandlers | null = null
+  const calls = { check: 0, download: 0, install: 0 }
+  const adapter: UpdaterAdapter = {
+    supported: options.supported ?? true,
+    bind(next) {
+      handlers = next
+    },
+    async check() {
+      calls.check += 1
+      if (!handlers) throw new Error('adapter not bound')
+      switch (options.mode ?? 'available') {
+        case 'available':
+          handlers.available({ version: '0.2.1' })
+          break
+        case 'up-to-date':
+          handlers.notAvailable()
+          break
+        case 'error-event':
+          handlers.error(new Error('latest-mac.yml not found'))
+          break
+        case 'throw':
+          throw new Error('app-update.yml missing')
+      }
+    },
+    async download() {
+      calls.download += 1
+    },
+    quitAndInstall() {
+      calls.install += 1
+    }
   }
-}
-
-const DOWNLOAD_BASE = 'https://github.com/banmu123/BrewPhase/releases/download/release'
-
-function asset(version: string, suffix: string): ReleaseAsset {
-  const name = `BrewPhase-${version}-${suffix}`
-  return { name, browser_download_url: `${DOWNLOAD_BASE}/${name}` }
-}
-
-function release(version: string, overrides: Partial<ReleaseEntry> = {}): ReleaseEntry {
-  return {
-    tag_name: `desktop-v${version}`,
-    html_url: `https://github.com/banmu123/BrewPhase/releases/tag/desktop-v${version}`,
-    published_at: '2026-11-26T13:49:48Z',
-    // 已正式发布：Stable 渠道要求这两个字段显式为 false。
-    draft: false,
-    prerelease: false,
-    assets: [asset(version, 'mac-arm64.dmg'), asset(version, 'win-x64.exe')],
-    ...overrides
+  const emit = {
+    progress(progress: UpdaterProgress) {
+      handlers?.progress(progress)
+    },
+    downloaded(version = '0.2.1') {
+      handlers?.downloaded({ version })
+    },
+    error(message = 'download failed') {
+      handlers?.error(new Error(message))
+    },
+    available(version = '0.2.1') {
+      handlers?.available({ version })
+    }
   }
+  return { adapter, calls, emit }
 }
 
-const V020: ReleaseEntry = release('0.2.0', { tag_name: 'v0.2.0' })
+const UP_TO_DATE: UpdateDiscoveryResult = { status: 'up-to-date' }
+const MANUAL_AVAILABLE: UpdateDiscoveryResult = {
+  status: 'available',
+  version: '0.2.1',
+  downloadUrl:
+    'https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.2.1/BrewPhase-0.2.1-mac-arm64.dmg',
+  releaseUrl: 'https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.2.1'
+}
+
+function createService(options: { supported?: boolean; mode?: FakeMode } = {}) {
+  const fake = createFakeAdapter(options)
+  const service = new UpdateService({
+    currentVersion: '0.2.0',
+    adapter: fake.adapter,
+    discover: async () => UP_TO_DATE
+  })
+  return { service, fake }
+}
 
 afterEach(() => {
-  mocks.getVersion.mockReturnValue('0.2.0')
   vi.useRealTimers()
 })
 
-describe('UpdateService 版本来源', () => {
-  it('未注入时使用 app.getVersion()，并以此版本去查/报', async () => {
-    const fetchImpl = vi.fn(async (_url: string, _init: FetchParams) => respond([V020]))
-    const service = new UpdateService({ fetchImpl })
-
-    const result = await service.check()
-
-    expect(mocks.getVersion).toHaveBeenCalled()
-    expect(result.currentVersion).toBe('0.2.0')
-    // 当前就是 0.2.0：同一个版本不能再次提示更新。
-    expect(result.status).toBe('up-to-date')
-    expect(result.latestVersion).toBeNull()
-    expect(fetchImpl.mock.calls[0][0]).toBe(UPDATE_RELEASES_API)
-    expect(fetchImpl.mock.calls[0][1].headers['User-Agent']).toBe('BrewPhase/0.2.0')
+describe('UpdateService：检查', () => {
+  it('打包版用 electron-updater 检查，available 后不会自动下载', async () => {
+    const { service, fake } = createService()
+    const state = await service.check()
+    expect(fake.calls.check).toBe(1)
+    expect(state.phase).toBe('available')
+    expect(state.latestVersion).toBe('0.2.1')
+    expect(state.autoUpdate).toBe(true)
+    // 关键：检查阶段绝不下载。
+    expect(fake.calls.download).toBe(0)
+    expect(fake.calls.install).toBe(0)
   })
 
-  it('注入版本优先（测试/便携），空串视为未注入', async () => {
-    const injected = new UpdateService({
-      currentVersion: '0.1.4',
-      fetchImpl: async () => respond([V020])
-    })
-    expect((await injected.check()).currentVersion).toBe('0.1.4')
+  it('没有新版本时落成 up-to-date', async () => {
+    const { service } = createService({ mode: 'up-to-date' })
+    expect((await service.check()).phase).toBe('up-to-date')
+  })
 
-    const blank = new UpdateService({ currentVersion: '  ', fetchImpl: async () => respond([V020]) })
-    expect((await blank.check()).currentVersion).toBe('0.2.0')
+  it('24 小时内复用结果，force 才重新检查（手动按钮）', async () => {
+    const { service, fake } = createService()
+    await service.check()
+    await service.check()
+    expect(fake.calls.check).toBe(1)
+    await service.check({ force: true })
+    expect(fake.calls.check).toBe(2)
+  })
+
+  it('下载进行中不接受新的检查', async () => {
+    const { service, fake } = createService()
+    await service.check()
+    await service.download()
+    await service.check({ force: true })
+    expect(fake.calls.check).toBe(1)
+    expect(service.snapshot.phase).toBe('downloading')
+  })
+
+  it('electron-updater 报错（元数据缺失）时用 GitHub API 兜底成「可手动下载」', async () => {
+    const fake = createFakeAdapter({ mode: 'error-event' })
+    const service = new UpdateService({
+      currentVersion: '0.2.0',
+      adapter: fake.adapter,
+      discover: async () => MANUAL_AVAILABLE
+    })
+    const state = await service.check()
+    expect(state.phase).toBe('available')
+    expect(state.autoUpdate).toBe(false)
+    expect(state.downloadUrl).toContain('BrewPhase-0.2.1-mac-arm64.dmg')
+    // 不能自动更新的构建里，download() 不会触发真实下载。
+    await service.download()
+    expect(fake.calls.download).toBe(0)
+  })
+
+  it('不支持自动更新的构建（开发态）走发现逻辑；发现失败则停在 error', async () => {
+    const available = new UpdateService({
+      currentVersion: '0.2.0',
+      adapter: createFakeAdapter({ supported: false }).adapter,
+      discover: async () => MANUAL_AVAILABLE
+    })
+    const state = await available.check()
+    expect(state.autoUpdate).toBe(false)
+    expect(state.phase).toBe('available')
+
+    const failing = new UpdateService({
+      currentVersion: '0.2.0',
+      adapter: createFakeAdapter({ supported: false }).adapter,
+      discover: async () => ({ status: 'error', reason: 'HTTP 403' })
+    })
+    const failed = await failing.check()
+    expect(failed.phase).toBe('error')
+    expect(failed.failedAt).toBe('check')
+    expect(failed.error).toBe('HTTP 403')
+  })
+
+  it('当前版本始终取自运行时并规范化', async () => {
+    const service = new UpdateService({
+      currentVersion: ' v0.2.0 ',
+      adapter: createFakeAdapter({ mode: 'up-to-date' }).adapter
+    })
+    expect((await service.check()).currentVersion).toBe('0.2.0')
   })
 })
 
-describe('UpdateService 检查结果', () => {
-  it('0.1.4 能看到 v0.2.0 的正式版，并带上本平台安装包', async () => {
+describe('UpdateService：下载与安装', () => {
+  it('点「立即更新」才下载；进度只来自真实事件', async () => {
+    const { service, fake } = createService()
+    await service.check()
+    const pending = service.download()
+    expect(service.snapshot.phase).toBe('downloading')
+    expect(service.snapshot.percent).toBe(0)
+
+    fake.emit.progress({ percent: 42.6, transferred: 4_200_000, total: 10_000_000 })
+    expect(service.snapshot.percent).toBe(43)
+    expect(service.snapshot.transferred).toBe(4_200_000)
+    expect(service.snapshot.total).toBe(10_000_000)
+
+    await pending
+    expect(fake.calls.download).toBe(1)
+  })
+
+  it('重复点击不会重复下载（同一时间只有一个任务）', async () => {
+    const { service, fake } = createService()
+    await service.check()
+    const first = service.download()
+    await service.download()
+    await service.download()
+    await first
+    expect(fake.calls.download).toBe(1)
+  })
+
+  it('下载完成后先收尾再安装（顺序固定）', async () => {
+    const order: string[] = []
+    const fake = createFakeAdapter()
     const service = new UpdateService({
-      currentVersion: '0.1.4',
-      fetchImpl: async () => respond([V020])
-    })
-    const result = await service.check()
-    expect(result.status).toBe('available')
-    expect(result.latestVersion).toBe('0.2.0')
-    expect(result.downloadUrl).toContain('BrewPhase-0.2.0-')
-    expect(result.releaseUrl).toContain('github.com')
-    expect(result.checkedAt).toBeGreaterThan(0)
-  })
-
-  it('网络异常降级为 unavailable：不抛错，应用照常可用', async () => {
-    const fetchImpl = vi.fn(async () => {
-      throw new Error('network down')
-    })
-    const service = new UpdateService({ currentVersion: '0.2.0', fetchImpl })
-
-    // 构造服务本身不发起任何请求：启动路径不被联网阻塞。
-    expect(fetchImpl).not.toHaveBeenCalled()
-
-    const result = await service.check()
-    expect(result.status).toBe('unavailable')
-    expect(result.reason).toBe('network down')
-    expect(result.latestVersion).toBeNull()
-    expect(service.cached).toEqual(result)
-    expect(service.lastCheckedAt).toBe(result.checkedAt)
-
-    // 失败结果可以再次查询（设置页强制刷新），仍然不抛。
-    await expect(service.check({ force: true })).resolves.toMatchObject({ status: 'unavailable' })
-  })
-
-  it('HTTP 错误与损坏的 JSON 都只影响检查结果', async () => {
-    const badStatus = new UpdateService({
       currentVersion: '0.2.0',
-      fetchImpl: async () => respond(null, { ok: false, status: 500 })
+      adapter: fake.adapter,
+      installDelayMs: 1,
+      prepareForInstall: async () => {
+        order.push('flush-db')
+        await Promise.resolve()
+        order.push('db-closed')
+      }
     })
-    expect((await badStatus.check()).reason).toBe('HTTP 500')
+    await service.check()
+    await service.download()
+    fake.emit.downloaded('0.2.1')
+    expect(service.snapshot.phase).toBe('downloaded')
 
-    const brokenBody = new UpdateService({
-      currentVersion: '0.2.0',
-      fetchImpl: async () => ({
-        ok: true,
-        status: 200,
-        json: async () => {
-          throw new Error('invalid json')
-        }
-      })
-    })
-    const result = await brokenBody.check()
-    expect(result.status).toBe('unavailable')
-    expect(result.reason).toBe('invalid json')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(order).toEqual(['flush-db', 'db-closed'])
+    expect(fake.calls.install).toBe(1)
+    expect(service.snapshot.phase).toBe('installing')
   })
 
-  it('24 小时内复用缓存，force 才重新请求（设置页按钮）', async () => {
-    let payload: ReleaseEntry[] = [V020]
-    const fetchImpl = vi.fn(async () => respond(payload))
-    const service = new UpdateService({ currentVersion: '0.2.0', fetchImpl })
+  it('收尾失败时不安装，停在可重试的错误上', async () => {
+    const fake = createFakeAdapter()
+    const service = new UpdateService({
+      currentVersion: '0.2.0',
+      adapter: fake.adapter,
+      installDelayMs: 1,
+      prepareForInstall: () => {
+        throw new Error('db busy')
+      }
+    })
+    await service.check()
+    await service.download()
+    fake.emit.downloaded('0.2.1')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(fake.calls.install).toBe(0)
+    expect(service.snapshot.phase).toBe('error')
+    expect(service.snapshot.failedAt).toBe('download')
+    expect(service.snapshot.error).toBe('db busy')
+  })
 
-    expect((await service.check()).status).toBe('up-to-date')
-    expect((await service.check()).status).toBe('up-to-date')
-    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  it('下载失败保留版本号，可以重试', async () => {
+    const { service, fake } = createService()
+    await service.check()
+    await service.download()
+    fake.emit.error('socket hang up')
+    expect(service.snapshot.phase).toBe('error')
+    expect(service.snapshot.failedAt).toBe('download')
+    expect(service.snapshot.latestVersion).toBe('0.2.1')
 
-    payload = [V020, release('0.2.1')]
-    expect((await service.check({ force: true })).status).toBe('available')
-    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    await service.download()
+    expect(fake.calls.download).toBe(2)
+    expect(service.snapshot.phase).toBe('downloading')
+  })
+
+  it('下载失败不影响当前版本', async () => {
+    const { service, fake } = createService()
+    await service.check()
+    await service.download()
+    fake.emit.error('disk full')
+    expect(service.snapshot.currentVersion).toBe('0.2.0')
+    expect(service.snapshot.phase).toBe('error')
+  })
+
+  it('每次状态变化都广播，最后一条与 snapshot 一致', async () => {
+    const broadcast = vi.fn()
+    const fake = createFakeAdapter()
+    const service = new UpdateService({ currentVersion: '0.2.0', adapter: fake.adapter, broadcast })
+    await service.check()
+    await service.download()
+    fake.emit.progress({ percent: 10, transferred: 1, total: 10 })
+    expect(broadcast.mock.calls.at(-1)?.[0]).toEqual(service.snapshot)
+    expect(broadcast.mock.calls.length).toBeGreaterThanOrEqual(4)
   })
 })
 
-describe('UpdateService 自动检查', () => {
-  it('启动后延迟一次，重复调用不会叠加定时器', async () => {
-    vi.useFakeTimers()
-    const fetchImpl = vi.fn(async () => respond([V020]))
-    const service = new UpdateService({ currentVersion: '0.2.0', fetchImpl })
-
-    service.startAutoCheck()
-    service.startAutoCheck()
-    expect(fetchImpl).not.toHaveBeenCalled()
-
-    await vi.advanceTimersByTimeAsync(UPDATE_AUTO_CHECK_DELAY_MS)
-    expect(fetchImpl).toHaveBeenCalledTimes(1)
-
-    service.stopAutoCheck()
-  })
-
-  it('检查失败不会让定时器抛出未处理的拒绝', async () => {
-    vi.useFakeTimers()
-    const service = new UpdateService({
+describe('createReleaseDiscovery', () => {
+  it('HTTP 错误与异常都归成 error（不抛出）', async () => {
+    const failing = createReleaseDiscovery({
       currentVersion: '0.2.0',
+      platform: 'darwin',
+      arch: 'arm64',
+      fetchImpl: async () => ({ ok: false, status: 503, json: async () => ({}) })
+    })
+    expect(await failing()).toEqual({ status: 'error', reason: 'HTTP 503' })
+
+    const throwing = createReleaseDiscovery({
+      currentVersion: '0.2.0',
+      platform: 'darwin',
+      arch: 'arm64',
       fetchImpl: async () => {
         throw new Error('offline')
-      },
-      broadcast: () => undefined
+      }
     })
-    service.startAutoCheck()
-    await vi.advanceTimersByTimeAsync(UPDATE_AUTO_CHECK_DELAY_MS)
-    expect(service.cached?.status).toBe('unavailable')
-    service.stopAutoCheck()
+    expect(await throwing()).toEqual({ status: 'error', reason: 'offline' })
+  })
+
+  it('没有可更新版本时返回 up-to-date', async () => {
+    const discover = createReleaseDiscovery({
+      currentVersion: '0.2.0',
+      platform: 'darwin',
+      arch: 'arm64',
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => [] })
+    })
+    expect(await discover()).toEqual({ status: 'up-to-date' })
   })
 })

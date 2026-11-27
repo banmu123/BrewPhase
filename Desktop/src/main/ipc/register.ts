@@ -208,11 +208,14 @@ export function registerIpc(params: {
     onboardingEligible: app.isPackaged || process.env.BREWPHASE_FORCE_ONBOARDING === 'yes'
   }))
 
-  // 版本感知：只查版本号；打开下载页的地址由主进程从自己的缓存里取，
-  // Renderer 传不进 URL，也就无法借这条通道打开任意地址。
+  // 应用更新：状态只由主进程的 UpdateService 产生；打开下载页的地址也从它
+  // 自己的缓存里取，Renderer 传不进 URL，也就无法借这条通道打开任意地址。
+  handle(IPC.updateState, () => updates.snapshot)
   handle(IPC.updateCheck, (input) =>
     updates.check({ force: (input as { force?: boolean } | undefined)?.force === true })
   )
+  // 没有参数：下载哪份、装到哪，都由主进程按 app-update.yml 决定。
+  handle(IPC.updateDownload, () => updates.download())
   handle(IPC.updateOpenRelease, () => {
     void shell.openExternal(updates.releaseUrl())
     return null

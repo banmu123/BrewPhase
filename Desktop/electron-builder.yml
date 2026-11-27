@@ -27,6 +27,16 @@ extraResources:
       - "!**/*.map"
 artifactName: "BrewPhase-${version}-${os}-${arch}.${ext}"
 
+# 自动更新的发布源（electron-updater 读取）。
+# - 打包时据此写入应用内的 app-update.yml（客户端只认这份，不接受 Renderer 传参）；
+# - 同时在产物目录生成 latest-mac.yml / latest.yml（版本、文件名、大小、sha512）；
+# - 真正的上传仍由 Release 工作流的 gh 完成，保持 Draft 人工审核后再公开的流程。
+publish:
+  provider: github
+  owner: banmu123
+  repo: BrewPhase
+  releaseType: draft
+
 mac:
   # Native Messaging Host（Chrome Companion）：只带当前平台的二进制。
   extraResources:

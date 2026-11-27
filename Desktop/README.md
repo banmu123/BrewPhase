@@ -317,7 +317,8 @@ e2e（Playwright + 真 Electron）需要图形环境，**不进 CI**，发布前
       `desktop-v0.1.0` 已发布、可匿名下载；定义在
       `BrewPhase/Shared/Utilities/AppLinks.swift` 的 `desktopDownload`）
 - [ ] `package.json` 版本号与 `desktop-v*` tag 一致
-- [x] 版本检查提示已实现（设置 → 常规 → 检查更新）；自动安装更新仍未实现，Release 文案需写明「发现新版本后需手动下载覆盖」
+- [x] 应用内更新已实现（设置 → 常规 → 检查更新 / 顶栏提醒）：检查 → 下载 → 安装 → 重启全在主进程完成（electron-updater）；
+  注意 **Release 必须带 `latest-mac.yml` / `latest.yml`**，否则客户端只能退回「打开下载页」
 - [ ] 若作为正式版发布，去掉草稿的 prerelease 标记
 
 ### 已知边界
@@ -328,7 +329,10 @@ e2e（Playwright + 真 Electron）需要图形环境，**不进 CI**，发布前
   `windows-latest` job 已于 2026-11-10 首次实跑全绿（run `42761926389`，单测按
   `platformSupportsBridge` 跳过 Windows 专有的 socket 用例）；但该产物仍未在
   Windows 实机安装、启动、退出验证过。
-- 自动安装更新未实现；**版本检查（提示式）已实现**：启动时与设置页手动触发，只读取 GitHub Releases 的版本号 / 下载页地址，不上传任何本地数据；有新版本时提示并打开下载页，仍由用户手动下载覆盖。
+- 自动更新（electron-updater）已接入：启动后与每 24 小时检查，发现新版本后由用户点「立即更新」触发后台下载，
+  下载完成自动安装并重启；列表里的下载/安装状态全部来自真实事件。
+  两个前提：构建产物必须带 `latest-mac.yml` / `latest.yml`（工作流已校验），且 macOS 包必须签名（未签名包无法被 Squirrel 替换）。
+  `v0.2.0` 这个历史 Release 没有更新元数据，所以 0.2.0 的用户暂时仍只能手动下载。
 - 本机受工具环境影响时，`electron-builder` 下载 Electron/7zip/dmgbuild 资源可能
   撞到 TLS 证书或文件代理限制；CI runner 与本机普通终端不受此限制。
 
@@ -344,7 +348,8 @@ e2e（Playwright + 真 Electron）需要图形环境，**不进 CI**，发布前
 - MCP 的平台与能力边界：V1 只支持 macOS / Linux（Windows Named Pipe 权限未验证，
   不提供 TCP 退化）；WorkBuddy 若运行在没有本地进程访问能力的云端环境，无法连接
   本地 Bridge；MCP 写入是 `desktop_local_only`，不会自动回传 iOS。
-- **自动安装更新**（electron-updater / 更新清单签名）：仍未实现；当前只有「检查更新 → 提示新版本 → 打开下载页 → 用户手动下载覆盖」，见「打包与发布」。
+- **自动安装更新的签名前提**：macOS 端 Squirrel.Mac 只接受 Developer ID 签名且公证过的包；CI 未配置 secrets 时产出的是
+  未签名内测包，能检查、能下载，但安装会被系统拒绝。这一条只能靠真实签名包验证，单测覆盖不到。
   代码签名与公证的配置位、CI secrets 接线已就绪；CI 未配置 secrets 时产出的是
   未签名内测包，不能对外发布。本机钥匙串若已有 Developer ID 证书，`pnpm dist`
   会自动签名，但要对外分发仍须 notarytool 公证（需要 Apple 凭据）。

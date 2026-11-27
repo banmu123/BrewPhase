@@ -55,7 +55,8 @@ import type { McpBridgeStatus } from '../shared/contracts/mcp'
 import { UPDATE_CHANGED_CHANNEL } from '../shared/contracts/update'
 import { DB_SCHEMA_VERSION } from '../shared/contracts/version'
 import { EMBED_FRAME_ORIGINS } from '../shared/link-embed'
-import { UpdateService } from './update/update-service'
+import { UpdateService, createReleaseDiscovery } from './update/update-service'
+import { createElectronUpdaterAdapter } from './update/updater'
 import { AccountService } from './account/account-service'
 import { CloudClient, resolveCloudBaseUrl } from './account/cloud-client'
 import { CredentialStore } from './account/credentials'
@@ -554,13 +555,47 @@ function bootstrap(): void {
     }
   })
 
-  // 版本感知：主进程唯一状态，结果广播给所有 Renderer 窗口（含独立窗口）。
+  /**
+   * 更新安装前的收尾：与 before-quit 同一套顺序，但**不等第二轮退出**——
+   * electron-updater 调 quitAndInstall() 之后没有机会再拦一次，所以必须先写完。
+   * 任何一步抛错都会让服务停在 error，安装不会发生，旧版本与数据都不动。
+   */
+  const prepareForUpdateInstall = async (): Promise<void> => {
+    await Promise.allSettled([
+      chromeIntegration.stop(),
+      bridgeServer?.stop(),
+      remoteService?.stop()
+    ])
+    bridgeServer = null
+    remoteService = null
+    chromeService = null
+    // 证据队列先排空再封写：未完成的 pending 由下次启动标 capture_interrupted。
+    workspaceEvidenceRef?.beginShutdown()
+    await workspaceEvidenceRef?.flushPending().catch(() => undefined)
+    workspaceEvidenceRef = null
+    db?.close()
+    db = null
+    // 收尾完成后再置位：before-quit 看到它会跳过「先拦一次再退」的异步分支。
+    quitting = true
+  }
+
+  // 更新：主进程唯一状态机，结果广播给所有 Renderer 窗口（含独立窗口，
+  // 但只有主窗口会渲染提醒——见 App.tsx 的窗口分支）。
   const updateService = new UpdateService({
     // 事实来源 = package.json 的 version（打包后即 Info.plist 的版本）。
     currentVersion: app.getVersion(),
-    broadcast: (result) => {
+    // 打包版才具备自动更新能力；dev/e2e 走 GitHub API 兜底，绝不会去装东西。
+    adapter: createElectronUpdaterAdapter({ packaged: app.isPackaged }),
+    discover: createReleaseDiscovery({
+      currentVersion: app.getVersion(),
+      platform: process.platform,
+      arch: process.arch
+    }),
+    prepareForInstall: prepareForUpdateInstall,
+    broadcast: (state) => {
       for (const window of BrowserWindow.getAllWindows()) {
-        window.webContents.send(UPDATE_CHANGED_CHANNEL, result)
+        if (window.isDestroyed()) continue
+        window.webContents.send(UPDATE_CHANGED_CHANNEL, state)
       }
     }
   })
@@ -816,6 +851,16 @@ app.on('before-quit', (event) => {
   db?.close()
   db = null
 })
+
+/**
+ * 关于 `before-quit-for-update`：
+ *
+ * 它只在 Electron **内置** autoUpdater 的 `quitAndInstall()` 路径上触发；本项目
+ * 用的是 electron-updater（Squirrel.Mac / NSIS），这条事件不保证出现，Electron 45
+ * 的类型里也没有它。所以不能把「保存数据」挂在这条生命周期上——真正的收尾统一
+ * 放在 `prepareForUpdateInstall()`：先 flush 证据、停服务、关库，再调
+ * `quitAndInstall()`。即便安装器随后直接 `app.quit()`，也不会有未落盘的写入。
+ */
 
 /**
  * CSP 由主进程下发，而不是只写在 HTML 里——meta 标签可以被注入的内容绕过，

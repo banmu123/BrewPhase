@@ -50,8 +50,10 @@ import { accountProviderSchema } from '../account'
 
 export const IPC = {
   appInfo: 'app:info',
-  // 版本感知：只查询 GitHub Releases 的版本号，不下载、不安装。
+  // 应用更新：读取状态 / 检查 / 下载 / 打开下载页（地址由主进程决定）。
+  updateState: 'update:state',
   updateCheck: 'update:check',
+  updateDownload: 'update:download',
   updateOpenRelease: 'update:open-release',
   appPopupMenu: 'app:popup-menu',
   // 外观：Renderer 只报「现在是浅色还是深色」，色值由主进程自己决定。
@@ -314,8 +316,12 @@ export const IPC = {
 
 export const ipcRequestSchemas = {
   [IPC.appInfo]: z.void(),
+  // 挂载时同步一次当前状态（广播只负责之后的变化）。
+  [IPC.updateState]: z.void(),
   // force 只由设置页「检查更新」按钮传 true；自动检查走 24h 缓存。
   [IPC.updateCheck]: z.object({ force: z.boolean().optional() }).optional(),
+  // 下载/安装：没有参数——用哪份更新、装到哪，全由主进程的更新服务决定。
+  [IPC.updateDownload]: z.void(),
   // 刻意不收 URL：主进程只打开自己缓存且过白名单的 GitHub 地址。
   [IPC.updateOpenRelease]: z.void(),
   // Studio Home「继续工作」区块的只读读取（创建/更新走 MCP）。

@@ -11409,14 +11409,20 @@ textarea {
 .update-banner {
   flex: 0 0 auto;
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 12px;
+  flex-direction: column;
+  gap: 8px;
   padding: 7px 16px 7px 14px;
   border-bottom: 1px solid var(--hairline);
   background: var(--card);
   /* 左侧一条主色：说明这是新信息，但不和顶栏抢视线。 */
   box-shadow: inset 3px 0 0 var(--espresso);
+}
+
+.update-banner__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
 }
 
 .update-banner__text {
@@ -11441,11 +11447,51 @@ textarea {
   color: var(--ink-soft);
 }
 
+/* 「更新后会重启」这类前置说明独占一行，不挤在标题旁边。 */
+.update-banner__hint {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--fs-caption);
+  color: var(--ink-soft);
+}
+
 .update-banner__actions {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* ---------- 下载进度 ---------- */
+.update-progress {
+  flex: 1 1 240px;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.update-progress__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: var(--fs-caption);
+  color: var(--ink-soft);
+}
+
+.update-progress__track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--well);
+  overflow: hidden;
+}
+
+.update-progress__bar {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--espresso);
+  transition: width 0.2s linear;
 }
 
 /* ---------- 设置 → 常规 → 检查更新 ---------- */
@@ -11463,8 +11509,11 @@ textarea {
   gap: 10px 16px;
 }
 
-/* 有更新：边框转主色、状态文字加重放大——版本号是此刻最重要的信息。 */
-.settings-update[data-tone='available'] {
+/* 有更新（含下载/安装中）：边框转主色、状态文字加重放大。 */
+.settings-update[data-tone='available'],
+.settings-update[data-tone='downloading'],
+.settings-update[data-tone='downloaded'],
+.settings-update[data-tone='installing'] {
   border-color: var(--espresso);
 }
 
@@ -11480,13 +11529,14 @@ textarea {
   color: var(--ink-soft);
 }
 
-.settings-update[data-tone='available'] .settings-update__state {
+.settings-update[data-tone='available'] .settings-update__state,
+.settings-update[data-tone='downloading'] .settings-update__state {
   font-size: var(--fs-body);
   font-weight: 600;
   color: var(--ink);
 }
 
-.settings-update[data-tone='unavailable'] .settings-update__state {
+.settings-update[data-tone='error'] .settings-update__state {
   color: var(--priority);
 }
 
@@ -11495,10 +11545,23 @@ textarea {
   color: var(--ink-soft);
 }
 
+.settings-update__error {
+  font-size: var(--fs-caption);
+  color: var(--priority);
+  overflow-wrap: anywhere;
+}
+
+.settings-update__hint {
+  font-size: var(--fs-caption);
+  color: var(--ink-soft);
+}
+
 .settings-update__actions {
+  flex: 1 1 260px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
 }
 
@@ -11517,5 +11580,9 @@ textarea {
 @media (prefers-reduced-motion: reduce) {
   .update-spin {
     animation: none;
+  }
+
+  .update-progress__bar {
+    transition: none;
   }
 }

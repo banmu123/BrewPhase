@@ -80,7 +80,7 @@ import type {
   ChromeSelfTestResult
 } from './chrome-bridge'
 import type { DataLocationChangeResult, DataLocationStatus } from './data-location'
-import type { UpdateCheckResult } from './update'
+import type { UpdateState } from './update'
 import type {
   CardWorkspaceBinding,
   ContextPackage,
@@ -175,11 +175,18 @@ export interface RendererApi {
     /** 主进程写系统剪贴板（无焦点窗口也可靠；只写文本）。 */
     copyText: (text: string) => Promise<void>
   }
-  /** 版本感知：只读检查 + 打开 GitHub 下载页，不下载、不安装。 */
+  /**
+   * 应用更新：状态由主进程的更新服务唯一持有。
+   *
+   * `download` 没有任何参数——下载哪一版、装到哪里，都由主进程按打包时写入的
+   * `app-update.yml` 决定；Renderer 不能传 URL，也不能传安装包路径。
+   */
   update: {
-    check: (force?: boolean) => Promise<UpdateCheckResult>
+    state: () => Promise<UpdateState>
+    check: (force?: boolean) => Promise<UpdateState>
+    download: () => Promise<UpdateState>
     openRelease: () => Promise<void>
-    onChanged: (listener: (result: UpdateCheckResult) => void) => () => void
+    onChanged: (listener: (state: UpdateState) => void) => () => void
   }
   /**
    * Personal Direction：现状 / 方向 / 阶段。

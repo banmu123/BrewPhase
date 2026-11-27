@@ -253,6 +253,17 @@ export function ExternalIcon({ size = 20 }: IconProps) {
   )
 }
 
+/** 下载：箭头落进托盘 */
+export function DownloadIcon({ size = 20 }: IconProps) {
+  return (
+    <svg {...base(size)}>
+      <path d="M10 3.2v8.2" />
+      <path d="M6.7 8.3 10 11.6l3.3-3.3" />
+      <path d="M4.2 14.2v1.4a1.2 1.2 0 0 0 1.2 1.2h9.2a1.2 1.2 0 0 0 1.2-1.2v-1.4" />
+    </svg>
+  )
+}
+
 /** 起始页：一栋房子的轮廓 */
 export function HomeIcon({ size = 20 }: IconProps) {
   return (

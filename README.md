@@ -565,7 +565,7 @@ companion, LAN sync, MCP V1, backup/restore, export, bilingual UI, packaging con
 - Windows install and smoke test on real hardware; Authenticode signing for the Windows installer.
 - Updating the privacy policy for the newer feature set; a standalone download page is no longer
   planned (the iOS app links straight to GitHub Releases).
-- Bonjour auto-discovery, TLS for LAN sync, Intel Mac builds, and automatic update installation (update notifications with manual download are implemented).
+- Bonjour auto-discovery, TLS for LAN sync, and Intel Mac builds. In-app updates are implemented for Desktop builds that ship `latest-mac.yml` / `latest.yml` (signed macOS builds only; the `v0.2.0` release predates them, so it still needs a manual download).
 
 **Planned**
 - Bidirectional sync, desktop video playback and system reminder scheduling.

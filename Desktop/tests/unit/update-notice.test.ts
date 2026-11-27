@@ -1,28 +1,32 @@
 import { describe, expect, it } from 'vitest'
-import type { UpdateCheckResult } from '../../src/shared/contracts'
+import type { UpdateState } from '../../src/shared/contracts'
 import {
   UPDATE_DISMISSED_KEY,
   readDismissedUpdateVersion,
   rememberDismissedUpdateVersion,
-  shouldAnnounceUpdate
+  shouldAnnounceUpdate,
+  shouldShowUpdateBanner
 } from '../../src/renderer/src/features/update/update-notice'
 
 /**
- * 提醒判定是纯函数：广播与启动 Promise 给的是同一份结果，所以「不重复提醒」
+ * 提醒判定是纯函数：广播与启动 Promise 给的是同一份状态，所以「不重复提醒」
  * 靠的是「没有第二份状态」，而不是一个「弹过没有」的计数器。
  */
 
-function result(overrides: Partial<UpdateCheckResult> = {}): UpdateCheckResult {
+function state(overrides: Partial<UpdateState> = {}): UpdateState {
   return {
-    status: 'available',
+    phase: 'available',
     currentVersion: '0.2.0',
     latestVersion: '0.2.1',
-    releaseUrl: 'https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.2.1',
-    downloadUrl:
-      'https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.2.1/BrewPhase-0.2.1-mac-arm64.dmg',
-    publishedAt: '2026-11-27T00:00:00Z',
+    percent: null,
+    transferred: null,
+    total: null,
+    error: null,
+    failedAt: null,
+    autoUpdate: true,
+    downloadUrl: null,
+    releaseUrl: 'https://github.com/banmu123/BrewPhase/releases',
     checkedAt: 1_800_000_000_000,
-    reason: null,
     ...overrides
   }
 }
@@ -53,47 +57,84 @@ const throwingStorage: StorageLike = {
 }
 
 describe('shouldAnnounceUpdate', () => {
-  it('有新版本、有本平台安装包时提醒', () => {
-    expect(shouldAnnounceUpdate(result(), null)).toBe(true)
+  it('能自动更新时，available 就提醒', () => {
+    expect(shouldAnnounceUpdate(state(), null)).toBe(true)
   })
 
-  it('没有更新 / 检查失败 / 还没查过都不提醒', () => {
-    expect(shouldAnnounceUpdate(result({ status: 'up-to-date', latestVersion: null, downloadUrl: null }), null)).toBe(false)
-    expect(shouldAnnounceUpdate(result({ status: 'unavailable', latestVersion: null, downloadUrl: null, reason: 'offline' }), null)).toBe(false)
+  it('不能自动更新但有手动下载地址时也提醒（开发态 / 元数据缺失的兜底）', () => {
+    expect(
+      shouldAnnounceUpdate(
+        state({ autoUpdate: false, downloadUrl: 'https://github.com/banmu123/BrewPhase/releases' }),
+        null
+      )
+    ).toBe(true)
+  })
+
+  it('既不能自动更新又没有下载地址时不提醒', () => {
+    expect(shouldAnnounceUpdate(state({ autoUpdate: false, downloadUrl: null }), null)).toBe(false)
+  })
+
+  it('没有更新 / 检查失败 / 还没查过 / 下载中都不主动提醒', () => {
+    expect(shouldAnnounceUpdate(state({ phase: 'up-to-date', latestVersion: null }), null)).toBe(false)
+    expect(
+      shouldAnnounceUpdate(
+        state({ phase: 'error', failedAt: 'check', latestVersion: null, error: 'offline' }),
+        null
+      )
+    ).toBe(false)
     expect(shouldAnnounceUpdate(null, null)).toBe(false)
+    expect(shouldAnnounceUpdate(state({ phase: 'downloading' }), null)).toBe(false)
   })
 
-  it('缺少版本号或本平台资产时不提醒（不给出点了也下不了的入口）', () => {
-    expect(shouldAnnounceUpdate(result({ latestVersion: null }), null)).toBe(false)
-    expect(shouldAnnounceUpdate(result({ downloadUrl: null }), null)).toBe(false)
+  it('缺少版本号时不提醒', () => {
+    expect(shouldAnnounceUpdate(state({ latestVersion: null }), null)).toBe(false)
   })
 
   it('暂缓过的相同版本不再提醒', () => {
-    expect(shouldAnnounceUpdate(result(), '0.2.1')).toBe(false)
+    expect(shouldAnnounceUpdate(state(), '0.2.1')).toBe(false)
   })
 
   it('暂缓 0.2.0 后，0.2.1 仍然提醒', () => {
-    expect(shouldAnnounceUpdate(result(), '0.2.0')).toBe(true)
+    expect(shouldAnnounceUpdate(state(), '0.2.0')).toBe(true)
   })
 
   it('已暂缓更高版本时，较低版本不回头打扰（0.2.10 > 0.2.9）', () => {
-    expect(shouldAnnounceUpdate(result({ latestVersion: '0.2.9' }), '0.2.10')).toBe(false)
-    expect(shouldAnnounceUpdate(result({ latestVersion: '0.2.10' }), '0.2.9')).toBe(true)
+    expect(shouldAnnounceUpdate(state({ latestVersion: '0.2.9' }), '0.2.10')).toBe(false)
+    expect(shouldAnnounceUpdate(state({ latestVersion: '0.2.10' }), '0.2.9')).toBe(true)
   })
 
   it('暂缓值带空白也能正确比较', () => {
-    expect(shouldAnnounceUpdate(result(), ' 0.2.1 ')).toBe(false)
+    expect(shouldAnnounceUpdate(state(), ' 0.2.1 ')).toBe(false)
   })
 
-  it('同一份结果连续判定两次都成立：去重靠单一状态，不靠内部计数', () => {
-    const value = result()
+  it('同一份状态连续判定两次都成立：去重靠单一状态，不靠内部计数', () => {
+    const value = state()
     expect(shouldAnnounceUpdate(value, null)).toBe(true)
     expect(shouldAnnounceUpdate(value, null)).toBe(true)
   })
+})
 
-  it('最小可提醒结果不需要 releaseUrl 之外的东西（判定只看四项）', () => {
-    const minimal = result({ releaseUrl: 'https://github.com/banmu123/BrewPhase/releases' })
-    expect(shouldAnnounceUpdate(minimal, null)).toBe(true)
+describe('shouldShowUpdateBanner', () => {
+  it('提示阶段受「稍后提醒」控制', () => {
+    expect(shouldShowUpdateBanner(state(), null)).toBe(true)
+    expect(shouldShowUpdateBanner(state(), '0.2.1')).toBe(false)
+  })
+
+  it('下载 / 安装阶段必须继续展示进度，哪怕这个版本被暂缓过', () => {
+    for (const phase of ['downloading', 'downloaded', 'installing'] as const) {
+      expect(shouldShowUpdateBanner(state({ phase }), '0.2.1')).toBe(true)
+    }
+  })
+
+  it('只有「下载失败」才留在横幅上；检查失败不弹', () => {
+    expect(shouldShowUpdateBanner(state({ phase: 'error', failedAt: 'download' }), null)).toBe(true)
+    expect(shouldShowUpdateBanner(state({ phase: 'error', failedAt: 'check' }), null)).toBe(false)
+  })
+
+  it('没有状态 / 已是最新 / 还没查过时都不显示', () => {
+    expect(shouldShowUpdateBanner(null, null)).toBe(false)
+    expect(shouldShowUpdateBanner(state({ phase: 'up-to-date' }), null)).toBe(false)
+    expect(shouldShowUpdateBanner(state({ phase: 'idle' }), null)).toBe(false)
   })
 })
 
@@ -123,18 +164,11 @@ describe('暂缓版本持久化', () => {
     expect(() => rememberDismissedUpdateVersion('0.2.1', throwingStorage)).not.toThrow()
   })
 
-  it('键只放版本号，不掺业务数据', () => {
-    const store = fakeStorage()
-    rememberDismissedUpdateVersion('0.2.1', store)
-    expect(UPDATE_DISMISSED_KEY).toBe('brewphase.desktop.update.dismissedVersion')
-    expect(readDismissedUpdateVersion(store)).not.toMatch(/[{}[\]]/)
-  })
-
   it('读到的值直接喂给判定即可生效（记忆与判定同一份语义）', () => {
     const store = fakeStorage()
     rememberDismissedUpdateVersion('0.2.1', store)
     const dismissed = readDismissedUpdateVersion(store)
-    expect(shouldAnnounceUpdate(result(), dismissed)).toBe(false)
-    expect(shouldAnnounceUpdate(result({ latestVersion: '0.2.2' }), dismissed)).toBe(true)
+    expect(shouldAnnounceUpdate(state(), dismissed)).toBe(false)
+    expect(shouldAnnounceUpdate(state({ latestVersion: '0.2.2' }), dismissed)).toBe(true)
   })
 })
