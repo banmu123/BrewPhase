@@ -1,5 +1,5 @@
 import { net } from 'electron'
-import { APP_VERSION } from '../../shared/contracts/version'
+import { app } from 'electron'
 import {
   UPDATE_AUTO_CHECK_DELAY_MS,
   UPDATE_CHECK_INTERVAL_MS,
@@ -71,7 +71,9 @@ export class UpdateService {
   }
 
   private async perform(now: number): Promise<UpdateCheckResult> {
-    const currentVersion = this.params.currentVersion ?? APP_VERSION
+    // 注入优先（测试）；生产用 `app.getVersion()`——事实来源是
+    // package.json 的 version，不是任何硬编码副本。
+    const currentVersion = this.params.currentVersion ?? app.getVersion()
     const base = {
       currentVersion,
       releaseUrl: UPDATE_RELEASES_PAGE,
