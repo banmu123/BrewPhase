@@ -12,6 +12,7 @@ import { records } from './records'
 import { settings } from './settings'
 import { studio } from './studio'
 import { sync } from './sync'
+import { updateNotice } from './update-notice'
 import { workspace } from './workspace'
 
 /**
@@ -32,5 +33,6 @@ export const enUS = {
   browser,
   direction,
   aiWorkspace,
-  workspace
+  workspace,
+  updateNotice
 } satisfies Messages

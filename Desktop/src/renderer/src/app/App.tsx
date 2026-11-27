@@ -29,6 +29,12 @@ import { TopBar } from './TopBar'
 import { useAppStore } from './store'
 import { ConfirmHost } from '../shared/ConfirmDialog'
 import { titleBarPlatform } from '../shared/platform'
+import { UpdateBanner } from '../features/update/UpdateBanner'
+import {
+  readDismissedUpdateVersion,
+  rememberDismissedUpdateVersion,
+  shouldAnnounceUpdate
+} from '../features/update/update-notice'
 
 /**
  * Studio Desk 外壳：一条极简全局顶栏 + 自适应工作区。
@@ -46,6 +52,13 @@ export function App() {
   const [error, setError] = useState<string | null>(null)
   // 版本感知结果由主进程持有，这里只做展示；设置页与导航徽标共用同一份。
   const [update, setUpdate] = useState<UpdateCheckResult | null>(null)
+  /**
+   * 用户点过「稍后提醒」的版本号。只在渲染层保存（localStorage）：主进程负责
+   * 「有没有新版本」，这里负责「要不要现在打扰」，两边不重写彼此的判断。
+   */
+  const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string | null>(() =>
+    readDismissedUpdateVersion()
+  )
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   // 设置页可以随时重新打开接入向导；那条路径直接进 AI 分支。
   const agentOnboarding = useAppStore((state) => state.agentOnboarding)
@@ -73,6 +86,21 @@ export function App() {
       .catch(() => {})
     return unsubscribe
   }, [])
+
+  /**
+   * 提醒由「主进程唯一的检查结果 + 用户暂缓的版本」**推导**，不另存一份状态：
+   * 广播与启动 Promise 给的是同一个版本，`shouldAnnounceUpdate` 又是纯函数，
+   * 所以两条回调先后到达也只会渲染一个 Banner，不需要「弹过没有」的标记。
+   */
+  const updateNotice = shouldAnnounceUpdate(update, dismissedUpdateVersion) ? update : null
+
+  /** 「稍后提醒」：记住版本号并立刻收起；更高版本仍会重新提醒。 */
+  function postponeUpdate(): void {
+    const version = updateNotice?.latestVersion
+    if (!version) return
+    rememberDismissedUpdateVersion(version)
+    setDismissedUpdateVersion(version)
+  }
 
   /**
    * 浏览器浮窗是**全局**的：订阅装一次、面板挂在模块切换之外，
@@ -169,6 +197,16 @@ export function App() {
     <>
       <div className="app">
         <TopBar platform={platform} onSearch={() => setSearchOpen(true)} />
+
+        {/* 更新提醒：顶栏与工作区之间的一条通知，占自己的高度、不覆盖内容。
+            独立圆桌 / 浮窗在更早的分支就 return 了，所以这里天然只在主窗口出现。 */}
+        {updateNotice && (
+          <UpdateBanner
+            version={updateNotice.latestVersion}
+            onLater={postponeUpdate}
+            onOpen={() => void api.update.openRelease().catch(() => undefined)}
+          />
+        )}
 
         <main className="workspace">
           {error ? (

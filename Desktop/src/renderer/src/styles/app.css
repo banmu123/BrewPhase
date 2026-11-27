@@ -11398,3 +11398,124 @@ textarea {
   line-height: 1.6;
   color: var(--journey-ink);
 }
+
+/* ============================================================
+   更新提醒（Phase 1.2）
+   - 顶栏与工作区之间的一条通知：占自己的高度，**不覆盖**任何内容，
+     所以永远不会挡住用户正在操作的按钮；
+   - 没有遮罩、不抢焦点、不锁滚动；
+   - 颜色全部取现有令牌，明暗两套主题自动跟随。
+   ============================================================ */
+.update-banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 7px 16px 7px 14px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--card);
+  /* 左侧一条主色：说明这是新信息，但不和顶栏抢视线。 */
+  box-shadow: inset 3px 0 0 var(--espresso);
+}
+
+.update-banner__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+}
+
+.update-banner__title {
+  margin: 0;
+  font-size: var(--fs-callout);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.update-banner__body {
+  margin: 0;
+  font-size: var(--fs-caption);
+  color: var(--ink-soft);
+}
+
+.update-banner__actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ---------- 设置 → 常规 → 检查更新 ---------- */
+/* 独立信息区块：只是把状态与操作收进一块面板，不动设置页的导航与结构。 */
+.settings-update {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--card);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+
+/* 有更新：边框转主色、状态文字加重放大——版本号是此刻最重要的信息。 */
+.settings-update[data-tone='available'] {
+  border-color: var(--espresso);
+}
+
+.settings-update__status {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-update__state {
+  font-size: var(--fs-callout);
+  color: var(--ink-soft);
+}
+
+.settings-update[data-tone='available'] .settings-update__state {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.settings-update[data-tone='unavailable'] .settings-update__state {
+  color: var(--priority);
+}
+
+.settings-update__meta {
+  font-size: var(--fs-caption);
+  color: var(--ink-soft);
+}
+
+.settings-update__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 检查中：图标旋转是**加载状态**，不是装饰动画；减动效偏好下直接停。 */
+.update-spin {
+  display: inline-flex;
+  animation: update-spin 0.9s linear infinite;
+}
+
+@keyframes update-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-spin {
+    animation: none;
+  }
+}

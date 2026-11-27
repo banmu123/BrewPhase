@@ -11,6 +11,7 @@ import { records } from './records'
 import { settings } from './settings'
 import { studio } from './studio'
 import { sync } from './sync'
+import { updateNotice } from './update-notice'
 import { workspace } from './workspace'
 
 /**
@@ -31,7 +32,8 @@ export const zhCN = {
   browser,
   direction,
   aiWorkspace,
-  workspace
+  workspace,
+  updateNotice
 }
 
 export type Messages = typeof zhCN

@@ -22,6 +22,7 @@ import type {
 } from '@shared/contracts'
 import { MCP_SCOPE_GROUPS, MCP_SCOPE_PRESETS } from '@shared/contracts'
 import { api } from '../../shared/api'
+import { ExternalIcon, ReloadIcon } from '../../shared/icons'
 import { SUPPORTED_LOCALES, useI18n } from '../../i18n'
 import { THEMES } from '../../shared/theme'
 import { useTheme } from '../../shared/useTheme'
@@ -160,6 +161,14 @@ function GeneralSection({
           ? t.settings.general.update.upToDate(update.currentVersion)
           : t.settings.general.update.unavailable
 
+  /**
+   * 有更新、并且**本平台真有可下载的安装包**时，才把「前往下载」放出来。
+   * `downloadUrl` 为空意味着这个 Release 没给当前平台发包，此时只显示版本号，
+   * 不给一个点了也下不到的按钮。
+   */
+  const updateDownloadable =
+    update?.status === 'available' && Boolean(update.latestVersion) && Boolean(update.downloadUrl)
+
   useEffect(() => {
     void api.dataLocation
       .status()
@@ -282,32 +291,51 @@ function GeneralSection({
       <section className="settings-subsection">
         <h2 className="settings-subsection__title">{t.settings.general.update.title}</h2>
         <p className="note">{t.settings.general.update.hint}</p>
-        <div className="row" style={{ marginTop: 10, alignItems: 'center' }}>
-          <span
-            className="note"
-            data-update-status={update?.status ?? 'idle'}
-            style={update?.status === 'unavailable' ? { color: 'var(--priority)' } : undefined}
-          >
-            {updateStatus}
-          </span>
-          <button
-            className="button button--ghost"
-            onClick={() => void checkUpdate()}
-            disabled={checkingUpdate}
-          >
-            {checkingUpdate ? t.settings.general.update.checking : t.settings.general.update.check}
-          </button>
-          {update?.status === 'available' && (
-            <button className="button" onClick={() => void api.update.openRelease()}>
-              {t.settings.general.update.open}
+        {/*
+          独立信息区块：只把「状态 + 操作」收进一块面板，不动二级导航与页面结构。
+          有更新时把主按钮让给「前往下载」——同一屏里两个实心主按钮会互相抵消，
+          检查按钮退回次要样式依然一眼可见，而下载才是此刻该做的事。
+        */}
+        <div className="settings-update" data-tone={update?.status ?? 'idle'}>
+          <div className="settings-update__status">
+            <span
+              className="settings-update__state"
+              data-update-status={update?.status ?? 'idle'}
+              aria-live="polite"
+            >
+              {updateStatus}
+            </span>
+            {update && (
+              <span className="settings-update__meta">
+                {t.settings.general.update.lastChecked(formatDateTime(update.checkedAt))}
+              </span>
+            )}
+          </div>
+          <div className="settings-update__actions">
+            <button
+              type="button"
+              className={`button ${updateDownloadable ? '' : 'button--primary'}`}
+              onClick={() => void checkUpdate()}
+              disabled={checkingUpdate}
+              aria-busy={checkingUpdate}
+            >
+              <span className={checkingUpdate ? 'update-spin' : undefined} aria-hidden="true">
+                <ReloadIcon size={14} />
+              </span>
+              {checkingUpdate ? t.settings.general.update.checking : t.settings.general.update.check}
             </button>
-          )}
+            {updateDownloadable && (
+              <button
+                type="button"
+                className="button button--primary"
+                onClick={() => void api.update.openRelease()}
+              >
+                <ExternalIcon size={14} />
+                {t.settings.general.update.open}
+              </button>
+            )}
+          </div>
         </div>
-        {update && (
-          <p className="note" style={{ marginTop: 6 }}>
-            {t.settings.general.update.lastChecked(formatDateTime(update.checkedAt))}
-          </p>
-        )}
       </section>
 
       <section className="settings-subsection">
