@@ -65,6 +65,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Windows runner 的 git 默认 core.autocrlf=true，checkout 会把源码写成
+      # CRLF，与 macOS runner（LF）不一致——依赖源码形态的断言（如
+      # mcp-journey-bridge 的 executeTool 调用点检查）会因此误报。统一成 LF，
+      # 让测试结果与平台解耦；不改任何文件内容，只重写工作区的行尾。
+      - name: Normalize line endings to LF (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          git config core.autocrlf false
+          git rm --cached -r -q .
+          git reset --hard -q
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:

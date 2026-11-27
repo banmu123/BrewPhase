@@ -83,7 +83,21 @@ afterEach(() => {
 
 /** fixture 用的 git 调用（写操作仅限测试构造，不在生产引擎里）。 */
 function git(args: string[], cwd: string): string {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' })
+  return execFileSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    // 身份从环境注入，而不是只写仓库级 config：submodule 检出的是独立仓库
+    // （.git/modules/<name>/config），不继承 initRepo 的仓库级配置；一旦
+    // 依赖机器全局 identity，没有全局配置的 CI runner 会在子模块内 commit
+    // 时报 "Author identity unknown"。环境变量对子模块进程同样生效。
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'e2e',
+      GIT_AUTHOR_EMAIL: 'e2e@brewphase.test',
+      GIT_COMMITTER_NAME: 'e2e',
+      GIT_COMMITTER_EMAIL: 'e2e@brewphase.test'
+    }
+  })
 }
 
 function initRepo(dir: string, files: Record<string, string | Buffer> = { 'README.md': '# hi\n' }): void {

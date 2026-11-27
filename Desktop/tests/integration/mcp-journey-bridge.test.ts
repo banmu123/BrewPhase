@@ -216,7 +216,7 @@ describe('C. 调用者身份来自认证，不来自请求体', () => {
       const source = readFileSync(joinPath(process.cwd(), file), 'utf8')
       const calls = source.match(/executeTool\(/g) ?? []
       expect(calls, `${file} 应有 executeTool 调用`).toHaveLength(1)
-      expect(source, `${file} 必须传 context`).toMatch(/context[,\n]/)
+      expect(source, `${file} 必须传 context`).toMatch(/context[,\r\n]/)
     }
   })
 })
