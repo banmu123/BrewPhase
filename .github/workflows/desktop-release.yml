@@ -139,7 +139,8 @@ jobs:
           fi
           pnpm exec electron-builder "${args[@]}"
 
-      - name: Package Windows (NSIS exe)        if: runner.os == 'Windows'
+      - name: Package Windows (NSIS exe)
+        if: runner.os == 'Windows'
         shell: pwsh
         env:
           WIN_CERT_P12_B64: ${{ secrets.WIN_CERT_P12_B64 }}
