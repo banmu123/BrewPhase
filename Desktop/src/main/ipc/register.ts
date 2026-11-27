@@ -53,7 +53,7 @@ import type { RoundtableService } from '../roundtable/roundtable-service'
 import type { ChromeService } from '../integrations/chrome/chrome-service'
 import type { DataLocationService } from '../data-location-service'
 import { DEFAULT_PHASE_RULES } from '../../shared/domain/phase'
-import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from '../../shared/contracts/version'
+import { DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from '../../shared/contracts/version'
 import { WINDOW_CHROME, type WindowAppearance } from '../appearance'
 import type {
   DirectionInput,
@@ -199,7 +199,8 @@ export function registerIpc(params: {
   }
 
   handle(IPC.appInfo, () => ({
-    appVersion: APP_VERSION,
+    // 事实来源 = package.json 的 version（打包后即 Info.plist）。
+    appVersion: app.getVersion(),
     dbSchemaVersion: DB_SCHEMA_VERSION,
     syncProtocolVersion: SYNC_PROTOCOL_VERSION,
     platform: process.platform,

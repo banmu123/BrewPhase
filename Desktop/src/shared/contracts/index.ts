@@ -98,7 +98,7 @@ import type {
   ReplySegment
 } from './reply-intelligence'
 import type { AccountProvider, AccountSnapshot } from './account'
-import { APP_VERSION, DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from './version'
+import { DB_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION } from './version'
 
 export * from './version'
 export * from './entities/coffee'
@@ -671,8 +671,12 @@ export interface RendererApi {
   }
 }
 
+/**
+ * 协议/存储层的契约版本。**不含应用版本**——那的事实来源是
+ * `package.json` 的 `version`（`app.getVersion()`），见 `version.ts` 的说明；
+ * 硬编码副本曾在 0.2.0 发版时漂移。
+ */
 export const CONTRACT_VERSIONS = {
-  app: APP_VERSION,
   db: DB_SCHEMA_VERSION,
   sync: SYNC_PROTOCOL_VERSION
 } as const

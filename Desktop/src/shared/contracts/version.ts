@@ -1,8 +1,14 @@
 /**
- * 版本号是**契约**的一部分：数据库 schema、IPC 契约、同步协议各自独立演进。
- * 任何一端不匹配都要能被显式拒绝，而不是靠字段缺省值蒙混过去。
+ * 应用版本**没有**这里的副本——事实来源是 `package.json` 的 `version` 字段，
+ * 运行时一律通过 Electron `app.getVersion()` 读取（打包后来自 Info.plist）。
+ *
+ * 过去这里曾硬编码一份 `APP_VERSION`，两处并存必然漂移：0.2.0 发版时
+ * package.json 已升、常量停在 0.1.4，导致更新比较把自己当成旧版（永远提示
+ * 更新）且设置页显示错版本。需要版本号的地方：主进程用 `app.getVersion()`，
+ * Renderer 从 `IPC.appInfo` 的 `appVersion` 拿（主进程填的同一来源）。
+ *
+ * 本文件剩下的都是**协议/存储层**的版本：它们与包版本独立演进，各自显式声明。
  */
-export const APP_VERSION = '0.1.4'
 
 /** 本地 SQLite 的 schema 版本。与 `migrations.ts` 里的迁移序号一一对应。 */
 export const DB_SCHEMA_VERSION = 1
