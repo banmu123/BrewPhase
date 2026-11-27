@@ -116,7 +116,7 @@ export function verifyReleaseTag(rawOptions) {
         `tag ${tag} 的版本 ${parsed.version} 与 ${packagePath} 的 version ${version} 不一致。` +
         '安装包文件名取自 package.json，客户端却按 tag 版本匹配安装包，' +
         '放行只会得到「发布成功但没人能更新」。' +
-        '本工作流只支持从与目标 Tag 同版本的提交构建，**不支持**用当前代码给旧版本补发资产；' +
+        '本工作流只支持从与目标 Tag 同版本的提交构建，不支持用当前代码给旧版本补发资产；' +
         '请切到该 Tag 对应的提交后重跑，或先提升 package.json 并重新发布。'
     }
   }
