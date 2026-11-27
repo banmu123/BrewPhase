@@ -675,7 +675,8 @@ describe('五个生命周期触发点（T1–T5）', () => {
     await evidence.flushPending()
     expect(rowsOfType(await snapshotRows(created.journey.id), 'execution_end')).toHaveLength(0)
     expect(rowsOfType(await snapshotRows(created.journey.id), 'execution_start')).toHaveLength(0)
-  })
+    // Windows 上 git 子进程更慢（4 个 target 各需一次真实采集），默认 5s 不够。
+  }, 60_000)
 
   it('T5-取消：updateJourneyStatus(cancelled) 绕过 updateEventStatus 也补采 running 窗口', async () => {
     const created = createJourney(service, { workspaceId })
@@ -965,7 +966,7 @@ describe('失败降级与证据可信度', () => {
     expect(selectJourney(handle.db, created.journey.id)!.status).toBe('created')
   })
 
-  it('Workspace 目录不可访问（权限）→ 失败快照；恢复后重新绑定可用', async () => {
+  it.skipIf(process.platform === 'win32')('Workspace 目录不可访问（权限）→ 失败快照；恢复后重新绑定可用', async () => {
     chmodSync(repoRoot, 0o000)
     try {
       const created = createJourney(service, { workspaceId })

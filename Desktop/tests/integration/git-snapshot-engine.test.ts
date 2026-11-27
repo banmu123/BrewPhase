@@ -26,6 +26,27 @@ import { parseLsTreeAll, sha256Hex } from '../../src/main/application/agent-jour
 import { runGit } from '../../src/main/application/agent-journey/git-command-runner'
 
 /**
+ * Windows 平台限制：哪些用例为什么跳过（集中说明，逐处用 skipIf 标记）。
+ *
+ * 这些用例的**前提在 Windows 上不可表达**，不是断言放宽——POSIX 行为不变，
+ * 跳过它们不会盖住真正的回归（每处都在用例名旁边标注了具体限制）：
+ *
+ * 1. **symlink 创建需要特权**：非管理员/未开开发者模式的 Windows 上
+ *    `symlinkSync` 抛 EPERM。凡是「先把文件换成 symlink」再验证防护的用例
+ *    （Symlink 安全整组、lstat/readlink 一致性整组、以及各处单条）都受影响。
+ *    引擎的 symlink 防护逻辑本身仍由 POSIX CI 覆盖。
+ * 2. **文件名限制**：Windows 文件名不允许 Tab / 换行，`writeFileSync` 直接
+ *    ENOENT——「特殊文件名不拆坏」与「Tree 按 NUL 解析特殊文件名」无法构造。
+ * 3. **POSIX 权限语义**：`chmod 0o000` 不会阻止读取（ACL 模型不同），
+ *    「权限拒绝 → unreadable / 结构化成 error」无法构造；exec 位在 NTFS 上
+ *    不存在，git 永远报 100644，「mode 变化」无法构造（同 2d2f7e2 的先例）。
+ *
+ * 技术债：Windows 上的 symlink 逃逸 / TOCTOU / 不可读文件防护目前**没有**
+ * 自动化验证，需要一次专门的 Windows 安全回归（开启开发者模式或特权 CI）。
+ */
+const isWindows = process.platform === 'win32'
+
+/**
  * Git Snapshot Engine 的**真实 Git 仓库**集成测试（R6-4.3.2 §十一）。
  *
  * 不 mock 任何 git 输出：每个用例自建临时仓库（fixture 允许写操作——
@@ -249,7 +270,7 @@ describe('staged / unstaged / 双重变化（§7）', () => {
     expect(diff.stats.omitted_binary).toBe(1)
   })
 
-  it('type_changed（文件换成 symlink）', async () => {
+  it.skipIf(isWindows)('type_changed（文件换成 symlink）', async () => {
     const dir = makeDir('bp-snap-type-')
     initRepo(dir, { 'f.txt': 'real\n', 'g.txt': 'target\n' })
     const baseline = await engine.capture(dir)
@@ -473,7 +494,7 @@ describe('仓库形态识别（§6）', () => {
 // MARK: - §4.4 特殊文件名
 
 describe('特殊文件名（§4.4 / §十一 18–19）', () => {
-  it('中文 / 空格 / Tab / 换行 / 前导连字符 / pathspec 魔法字符都不拆坏', async () => {
+  it.skipIf(isWindows)('中文 / 空格 / Tab / 换行 / 前导连字符 / pathspec 魔法字符都不拆坏', async () => {
     const dir = makeDir('bp-snap-names-')
     const names = [
       '中文文件.txt',
@@ -660,7 +681,7 @@ describe('错误与边界（§十一 24–27）', () => {
     expect(snapshot.error_code).toBe('root_unavailable')
   })
 
-  it('工作区根不可访问（权限拒绝）→ 结构化 error', async () => {
+  it.skipIf(isWindows)('工作区根不可访问（权限拒绝）→ 结构化 error', async () => {
     const dir = makeDir('bp-snap-perm-')
     initRepo(dir)
     chmodSync(dir, 0o000)
@@ -675,7 +696,7 @@ describe('错误与边界（§十一 24–27）', () => {
     }
   })
 
-  it('symlink 指向工作区外部：只取目标字符串，绝不读取外部内容', async () => {
+  it.skipIf(isWindows)('symlink 指向工作区外部：只取目标字符串，绝不读取外部内容', async () => {
     const outside = makeDir('bp-snap-outside-')
     write(outside, 'secret.txt', 'OUTSIDE_SECRET_CONTENT_MUST_NOT_APPEAR\n')
     const dir = makeDir('bp-snap-link-')
@@ -891,7 +912,7 @@ describe('只读保证（§十一 额外）', () => {
 // MARK: - 修复一：HEAD Tree 清单与 Commit 场景（规格 §三 A–F）
 
 describe('HEAD Tree 清单与 Commit 场景（修复一）', () => {
-  it('Tree 清单字段：path/mode/type/sha，按 NUL 解析特殊文件名', async () => {
+  it.skipIf(isWindows)('Tree 清单字段：path/mode/type/sha，按 NUL 解析特殊文件名', async () => {
     const dir = makeDir('bp-tree-fields-')
     initRepo(dir, { '中文 文件.txt': 'x\n', 'tab\there.txt': 'y\n', 'plain.ts': 'z\n' })
     const snapshot = await engine.capture(dir)
@@ -1066,7 +1087,7 @@ describe('HEAD Tree 清单与 Commit 场景（修复一）', () => {
 
 // MARK: - 修复二：Symlink 安全（规格 §四）
 
-describe('Symlink 安全（修复二）', () => {
+describe.skipIf(isWindows)('Symlink 安全（修复二）', () => {
   it('指向含敏感内容的外部文件：内容与绝对路径都不进 Diff / JSON', async () => {
     const outside = makeDir('bp-link-secret-out-')
     write(outside, 'creds.txt', 'AWS_SECRET=AKIA_SUPER_SECRET_VALUE\n')
@@ -1212,7 +1233,7 @@ describe('Snapshot 时间点一致性（修复三）', () => {
     expect(entry?.content_hash_after).toBe(sha256Hex(Buffer.from('B\n')))
   })
 
-  it('capture current 后把文件替换成 symlink → 不跟随、Diff 仍是采集内容', async () => {
+  it.skipIf(isWindows)('capture current 后把文件替换成 symlink → 不跟随、Diff 仍是采集内容', async () => {
     const outside = makeDir('bp-consist-out-')
     write(outside, 'x.txt', 'EXTERNAL_AFTER_CAPTURE\n')
     const dir = makeDir('bp-consist-link-')
@@ -1310,7 +1331,7 @@ describe('不可观测状态（修复四）', () => {
     }
   })
 
-  it('基线侧读取权限消失（unreadable、size 相同）→ unavailable，不按「status 相同」跳过', async () => {
+  it.skipIf(isWindows)('基线侧读取权限消失（unreadable、size 相同）→ unavailable，不按「status 相同」跳过', async () => {
     const dir = makeDir('bp-unknown-perm-')
     initRepo(dir, { 'app.ts': 'x\n', 'locked.txt': 'original\n' })
     write(dir, 'locked.txt', 'modified\n') // 变脏，让基线有条目
@@ -1333,7 +1354,7 @@ describe('不可观测状态（修复四）', () => {
     expect(entry?.insertions).toBeNull()
   })
 
-  it('当前侧读取权限消失（unreadable、size 相同）→ unavailable', async () => {
+  it.skipIf(isWindows)('当前侧读取权限消失（unreadable、size 相同）→ unavailable', async () => {
     const dir = makeDir('bp-unknown-perm2-')
     initRepo(dir, { 'app.ts': 'x\n', 'locked.txt': 'original\n' })
     const baseline = await engine.capture(dir)
@@ -1904,7 +1925,7 @@ describe('Symlink 路径竞态（修复四）', () => {
     }
   })
 
-  it('打开前最终文件被替换成外部 symlink → O_NOFOLLOW 拒绝（ELOOP），不读外部内容', async () => {
+  it.skipIf(isWindows)('打开前最终文件被替换成外部 symlink → O_NOFOLLOW 拒绝（ELOOP），不读外部内容', async () => {
     const outside = makeDir('bp-race-file-out-')
     write(outside, 'x.txt', 'SWAPPED_FILE_CONTENT\n')
     const dir = makeDir('bp-race-file-')
@@ -2288,7 +2309,7 @@ describe('malformed Tree 的路径存在性（规格 §五）', () => {
 
 // MARK: - 修复四：Symlink lstat/readlink 一致性（规格 §六）
 
-describe('Symlink lstat/readlink 一致性（规格 §六）', () => {
+describe.skipIf(isWindows)('Symlink lstat/readlink 一致性（规格 §六）', () => {
   /** 已提交的链接 + 窗口内换目标（让链接在 current capture 时是脏的、会被读取）。 */
   async function linkFixture(prefix: string): Promise<{ dir: string; baseline: GitWorkspaceSnapshot }> {
     const dir = makeDir(prefix)
@@ -2408,7 +2429,7 @@ describe('元数据与读取结果同源（R6-4.3.2.4 修复一）', () => {
     expect(JSON.stringify(diff)).not.toContain('BBBB') // 新内容从未被采用
   })
 
-  it('2) 首次 lstat 后改变未跟踪文件执行权限 → torn_read（mode/ctime 证据）', async () => {
+  it.skipIf(isWindows)('2) 首次 lstat 后改变未跟踪文件执行权限 → torn_read（mode/ctime 证据）', async () => {
     const dir = makeDir('bp-meta-chmod-')
     initRepo(dir, { 'app.ts': 'x\n' })
     write(dir, 'perm.txt', 'p\n')
@@ -2449,7 +2470,7 @@ describe('元数据与读取结果同源（R6-4.3.2.4 修复一）', () => {
     expect(entry?.worktree_hash).toBeNull()
   })
 
-  it('4) 首次 lstat 后替换符号链接 → torn_read（最初 lstat × linkBefore 身份不符）', async () => {
+  it.skipIf(isWindows)('4) 首次 lstat 后替换符号链接 → torn_read（最初 lstat × linkBefore 身份不符）', async () => {
     const dir = makeDir('bp-meta-link-')
     initRepo(dir, { 'app.ts': 'x\n', 'g1.txt': 'one\n', 'g2.txt': 'two\n' })
     symlinkSync('g1.txt', join(dir, 'race.txt')) // untracked 链接
@@ -2474,7 +2495,7 @@ describe('元数据与读取结果同源（R6-4.3.2.4 修复一）', () => {
     expect(fileOf(diff, 'race.txt')?.observation).toBe('unavailable')
   })
 
-  it('5) 稳定文件正常采集：size / mode / hash 与实际文件同源一致', async () => {
+  it.skipIf(isWindows)('5) 稳定文件正常采集：size / mode / hash 与实际文件同源一致', async () => {
     const dir = makeDir('bp-meta-stable-')
     initRepo(dir, { 'app.ts': 'x\n' })
     // untracked 可执行文件：mode 由读取窗口的 fstat 归一

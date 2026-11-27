@@ -471,7 +471,9 @@ describe('Diff Artifact 持久化与按需读取（真实 SQLite + Git）', () =
 // MARK: - 2) Artifact 类型映射（真实 git）
 
 describe('Artifact 类型映射与隐私（真实 git）', () => {
-  it('全类型：diff / binary / sensitive / mode_only / symlink；证据特有排除（.git/**、*.p12）无正文', async () => {
+  // Windows：symlink 创建需特权（EPERM）、mode 位在 NTFS 不存在——
+  // 「mode_only / symlink 类型映射」的前提无法构造，POSIX 行为由 CI 覆盖。
+  it.skipIf(process.platform === 'win32')('全类型：diff / binary / sensitive / mode_only / symlink；证据特有排除（.git/**、*.p12）无正文', async () => {
     const typeRepo = join(dir, 'types')
     initRepo(typeRepo, {
       'a.ts': 'plain\n',

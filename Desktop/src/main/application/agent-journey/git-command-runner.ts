@@ -11,7 +11,8 @@
  *    `GIT_EXTERNAL_DIFF`、`GIT_CONFIG_PARAMETERS`…），再注入明确需要的三个：
  *    - `GIT_OPTIONAL_LOCKS=0`：status/diff 不刷新索引 → **不产生任何写锁**；
  *    - `GIT_TERMINAL_PROMPT=0`：绝不弹凭据对话框；
- *    - `GIT_CONFIG_NOSYSTEM=1`：忽略系统级 gitconfig。
+ *    - `GIT_CONFIG_NOSYSTEM=1`：忽略系统级 gitconfig（**仅 POSIX**；Windows
+ *      例外及原因见 `buildGitEnv` 注释——系统 config 承载 autocrlf 等落盘语义）。
  * 4. **仓库配置防触发**：每条命令统一加 `--no-pager`、`--literal-pathspecs`
  *    （文件名里的 `*`、`:(…)` 等 pathspec 魔法按字面处理，§4.4）与
  *    `-c core.fsmonitor=false`（仓库/用户配置里的 fsmonitor 钩子不会被拉起）。
@@ -97,6 +98,15 @@ export function buildGitArgv(subcommand: GitAllowedCommand, args: readonly strin
  * 受控环境：清掉继承的全部 `GIT_*`，再注入白名单变量。
  * 其余（PATH、HOME、LANG…）原样保留——git 需要它们，且它们不是 git 的
  * 命令注入面。
+ *
+ * **Windows 例外（实测）**：不设 `GIT_CONFIG_NOSYSTEM`。Git for Windows 把
+ * `core.autocrlf`（文件**落盘形态**的转换设置）放在系统级 config 里；禁掉
+ * 系统 config 后 autocrlf 回落到 false，工作区里按 CRLF 落盘的文件与 index
+ * 里的 LF blob 不再等值，git 会把干净的工作区（乃至干净的 submodule）报成
+ * `modified`（porcelain v2 出现 `1 .M` / `S.M.`），快照出现幽灵变更。
+ * 系统 config 里真正有注入风险的项已被显式覆盖：`core.fsmonitor=false`
+ * （防外部钩子进程）、`--no-pager`（防 pager 启动）。alias 只影响高层命令名，
+ * 引擎只调用底层的 ls-files/status/rev-parse 等。
  */
 export function buildGitEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {}
@@ -106,7 +116,9 @@ export function buildGitEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.Proce
   }
   env.GIT_OPTIONAL_LOCKS = '0'
   env.GIT_TERMINAL_PROMPT = '0'
-  env.GIT_CONFIG_NOSYSTEM = '1'
+  // POSIX 上系统级 config 基本为空，隔离它是纯收益；Windows 上它会改变
+  // 「工作区文件 vs index」的判定语义（见上），保留才是与平台一致的行为。
+  if (process.platform !== 'win32') env.GIT_CONFIG_NOSYSTEM = '1'
   return env
 }
 

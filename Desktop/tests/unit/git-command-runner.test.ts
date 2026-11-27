@@ -119,7 +119,13 @@ describe('受控环境（§4.2）', () => {
     const env = buildGitEnv({})
     expect(env.GIT_OPTIONAL_LOCKS).toBe('0')
     expect(env.GIT_TERMINAL_PROMPT).toBe('0')
-    expect(env.GIT_CONFIG_NOSYSTEM).toBe('1')
+    // Windows 保留系统级 gitconfig：Git for Windows 把 core.autocrlf 放在那里，
+    // 禁掉会让工作区按 CRLF 落盘的文件与 index 失配，冒出幽灵 modified。
+    if (process.platform === 'win32') {
+      expect(env.GIT_CONFIG_NOSYSTEM).toBeUndefined()
+    } else {
+      expect(env.GIT_CONFIG_NOSYSTEM).toBe('1')
+    }
   })
 })
 
