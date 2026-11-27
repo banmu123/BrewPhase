@@ -53,7 +53,7 @@ import { REMOTE_CHANNELS } from '../shared/contracts/remote'
 import { BRIDGE_PROTOCOL_VERSION, bridgePaths, platformSupportsBridge } from './mcp-bridge/bridge-contract'
 import type { McpBridgeStatus } from '../shared/contracts/mcp'
 import { UPDATE_CHANGED_CHANNEL } from '../shared/contracts/update'
-import { APP_VERSION } from '../shared/contracts/version'
+import { DB_SCHEMA_VERSION } from '../shared/contracts/version'
 import { EMBED_FRAME_ORIGINS } from '../shared/link-embed'
 import { UpdateService } from './update/update-service'
 import { AccountService } from './account/account-service'
@@ -311,7 +311,7 @@ function bootstrap(): void {
     const server = new BridgeServer(
       bridgePaths(app.getPath('userData')),
       { db: db.db, clients, records, coffee, canvas, workContexts, personalDirection, agentJourneys },
-      APP_VERSION
+      app.getVersion()
     )
     bridgeServer = server
     void server.start().catch((error) => {
@@ -510,7 +510,7 @@ function bootstrap(): void {
   const chromeIntegration = new ChromeService({
     userDataDir: app.getPath('userData'),
     dataDir: initialDataLocation.dataDir,
-    appVersion: APP_VERSION,
+    appVersion: app.getVersion(),
     appPath: app.getAppPath(),
     resourcesPath: process.resourcesPath,
     isPackaged: app.isPackaged,
@@ -556,6 +556,8 @@ function bootstrap(): void {
 
   // 版本感知：主进程唯一状态，结果广播给所有 Renderer 窗口（含独立窗口）。
   const updateService = new UpdateService({
+    // 事实来源 = package.json 的 version（打包后即 Info.plist 的版本）。
+    currentVersion: app.getVersion(),
     broadcast: (result) => {
       for (const window of BrowserWindow.getAllWindows()) {
         window.webContents.send(UPDATE_CHANGED_CHANNEL, result)
