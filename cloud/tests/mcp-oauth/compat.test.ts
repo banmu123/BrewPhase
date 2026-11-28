@@ -36,6 +36,16 @@ const EXISTING_TABLES = [
   "mcp_grants",
 ];
 
+/**
+ * 0003 之后**有意**落在既有表上的 schema 变更登记（按表名）。
+ * 兼容性测试允许这里的差异，其余任何列/约束/索引变化都要红。
+ * - 0006（2026-11-28 安全审计 P1-3）：mcp_devices 加 (user_id, public_key)
+ *   部分唯一索引（排除 revoked），把「同公钥查重」下沉为数据库约束。
+ */
+const INTRODUCED_INDEXES: Record<string, string[]> = {
+  mcp_devices: ["mcp_devices_user_pubkey_active_uq"],
+};
+
 const NEW_TABLES = [
   "mcp_oauth_clients",
   "mcp_auth_requests",
@@ -135,7 +145,7 @@ afterAll(async () => {
 });
 
 describe("migration 0003 的兼容性", () => {
-  it("既有 8 张表的列、约束、索引一字未改（与只应用 0000–0002 的基线逐字比对）", async () => {
+  it("既有 8 张表的列与约束一字未改；索引只允许登记过的有意新增（0006）", async () => {
     const handle = createDb(url);
     try {
       await runMigrations(handle.db, partialDir);
@@ -153,9 +163,20 @@ describe("migration 0003 的兼容性", () => {
       await runMigrations(handle.db, MIGRATIONS_FOLDER);
 
       for (const table of EXISTING_TABLES) {
-        expect(await snapshotTable(handle, table), `${table} 被 0003 改动了`).toEqual(
-          baseline[table],
-        );
+        const before = baseline[table]!;
+        const after = await snapshotTable(handle, table);
+        expect(after.columns, `${table} 的列被后续迁移改动了`).toEqual(before.columns);
+        expect(after.constraints, `${table} 的约束被后续迁移改动了`).toEqual(before.constraints);
+        // 索引：允许「登记过的新增」（0006 的设备公钥唯一索引）；删除、改名、
+        // 意外新增、既有索引被改，仍然全部要红。
+        const allowed = new Set(INTRODUCED_INDEXES[table] ?? []);
+        const addedNames = after.indexes
+          .filter((idx) => !before.indexes.includes(idx))
+          .map((idx) => idx.split("|")[0]!)
+          .sort();
+        expect(addedNames, `${table} 出现了未登记的索引变更`).toEqual([...allowed].sort());
+        const kept = after.indexes.filter((idx) => !allowed.has(idx.split("|")[0]!));
+        expect(kept, `${table} 的既有索引被改动了`).toEqual(before.indexes);
       }
     } finally {
       await handle.close();
