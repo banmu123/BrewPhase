@@ -21,8 +21,8 @@ keep the notes, links and images you collect, and to arrange them in a space tha
 
 <p>
   <a href="https://apps.apple.com/us/app/brewphase/id6815591631"><img src="https://img.shields.io/badge/App%20Store-BrewPhase%201.1-0D96F6?style=for-the-badge&logo=appstore&logoColor=white" alt="Download BrewPhase on the App Store" /></a>
-  <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.2.1/BrewPhase-0.2.1-mac-arm64.dmg"><img src="https://img.shields.io/badge/Download-macOS%20arm64-30372f?style=for-the-badge&logo=apple&logoColor=white" alt="Download BrewPhase for macOS" /></a>
-  <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.2.1/BrewPhase-0.2.1-win-x64.exe"><img src="https://img.shields.io/badge/Download-Windows%20x64-30372f?style=for-the-badge&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGgxMS4zNzd2MTEuMzcySDB6bTEyLjYyMyAwSDI0djExLjM3MkgxMi42MjN6TTAgMTIuNjIzaDExLjM3N1YyNEgwem0xMi42MjMgMEgyNFYyNEgxMi42MjN6Ii8%2BPC9zdmc%2B" alt="Download BrewPhase for Windows" /></a>
+  <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.2.2/BrewPhase-0.2.2-mac-arm64.dmg"><img src="https://img.shields.io/badge/Download-macOS%20arm64-30372f?style=for-the-badge&logo=apple&logoColor=white" alt="Download BrewPhase for macOS" /></a>
+  <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.2.2/BrewPhase-0.2.2-win-x64.exe"><img src="https://img.shields.io/badge/Download-Windows%20x64-30372f?style=for-the-badge&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGgxMS4zNzd2MTEuMzcySDB6bTEyLjYyMyAwSDI0djExLjM3MkgxMi42MjN6TTAgMTIuNjIzaDExLjM3N1YyNEgwem0xMi42MjMgMEgyNFYyNEgxMi42MjN6Ii8%2BPC9zdmc%2B" alt="Download BrewPhase for Windows" /></a>
   <a href="https://github.com/banmu123/BrewPhase"><img src="https://img.shields.io/badge/Source-GitHub-30372f?style=for-the-badge&logo=github&logoColor=white" alt="BrewPhase on GitHub" /></a>
 </p>
 
@@ -52,22 +52,27 @@ only on `desktop-v*` tags or manual dispatch. This repository has no test-on-eve
 
 <p>
   <a href="https://apps.apple.com/us/app/brewphase/id6815591631"><img src="https://img.shields.io/badge/App%20Store-BrewPhase%201.1-0D96F6?style=for-the-badge&logo=appstore&logoColor=white" alt="Download BrewPhase on the App Store" /></a>
-  <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.2.1/BrewPhase-0.2.1-mac-arm64.dmg"><img src="https://img.shields.io/badge/⬇%20macOS%20arm64-.dmg-30372f?style=for-the-badge&logo=apple&logoColor=white" alt="Download BrewPhase for macOS" /></a>
-  <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.2.1/BrewPhase-0.2.1-win-x64.exe"><img src="https://img.shields.io/badge/⬇%20Windows%20x64-.exe-30372f?style=for-the-badge&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGgxMS4zNzd2MTEuMzcySDB6bTEyLjYyMyAwSDI0djExLjM3MkgxMi42MjN6TTAgMTIuNjIzaDExLjM3N1YyNEgwem0xMi42MjMgMEgyNFYyNEgxMi42MjN6Ii8%2BPC9zdmc%2B" alt="Download BrewPhase for Windows" /></a>
+  <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.2.2/BrewPhase-0.2.2-mac-arm64.dmg"><img src="https://img.shields.io/badge/⬇%20macOS%20arm64-.dmg-30372f?style=for-the-badge&logo=apple&logoColor=white" alt="Download BrewPhase for macOS" /></a>
+  <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.2.2/BrewPhase-0.2.2-win-x64.exe"><img src="https://img.shields.io/badge/⬇%20Windows%20x64-.exe-30372f?style=for-the-badge&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGgxMS4zNzd2MTEuMzcySDB6bTEyLjYyMyAwSDI0djExLjM3MkgxMi42MjN6TTAgMTIuNjIzaDExLjM3N1YyNEgwem0xMi42MjMgMEgyNFYyNEgxMi42MjN6Ii8%2BPC9zdmc%2B" alt="Download BrewPhase for Windows" /></a>
   <a href="https://github.com/banmu123/BrewPhase"><img src="https://img.shields.io/badge/Source-GitHub-30372f?style=for-the-badge&logo=github&logoColor=white" alt="BrewPhase on GitHub" /></a>
 </p>
 
 | Platform              | Get it                                                                                                                                            |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **iPhone · iOS 18+**  | **[BrewPhase 1.1 on the App Store](https://apps.apple.com/us/app/brewphase/id6815591631)** — free, US storefront, English + Simplified Chinese    |
-| **macOS · Desktop**   | **[BrewPhase Desktop 0.2.1 — macOS arm64](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.2.1)** — in-app auto-update loop (download / install / restart), a prominent update entry and an in-window update prompt; roundtable workspaces, Agent Journey, Local MCP with per-permission grants, LAN device sync. Developer ID signed (**not notarized in this build**: right-click → Open on first launch). Apple Silicon only. |
-| **Windows · Desktop** | **[BrewPhase Desktop 0.2.1 — Windows x64](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.2.1)** — NSIS `.exe` + `.sha256` + `latest.yml` (auto-update metadata), unsigned (SmartScreen will warn — choose "Run anyway"). Same-version build as the macOS release above; **ships the Local MCP runtime** (`stdio.mjs` outside the asar, verified post-pack). Built on a real Windows 11 machine; the installer itself has not been smoke-tested through an install cycle. |
+| **macOS · Desktop**   | **[BrewPhase Desktop 0.2.2 — macOS arm64](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.2.2)** — pre-release security hardening: LAN device sync moves to **TLS** (self-signed certificate identity, fingerprint delivered via the pairing QR, certificate pinning on the phone — sync protocol v2, no plaintext fallback); in-app auto-update loop; roundtable workspaces, Agent Journey, Local MCP, embedded YouTube playback restored. Developer ID signed (**not notarized in this build**: right-click → Open on first launch). Apple Silicon only. |
+| **Windows · Desktop** | **[BrewPhase Desktop 0.2.2 — Windows x64](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.2.2)** — NSIS `.exe` + `.sha256` + `latest.yml` (auto-update metadata), unsigned (SmartScreen will warn — choose "Run anyway"). Same hardening as the macOS release above (LAN sync TLS v2), plus **restored embedded YouTube playback** (loopback wrapper origin) and **tweet photos on X link cards**. Ships the Local MCP runtime (`stdio.mjs` outside the asar, verified post-pack); built on a real Windows 11 machine and by CI. |
 | **Linux · Desktop**   | No artifact. An `AppImage` target is kept in the config only; it is not built or verified.                                                        |
 | **Source**            | `git clone https://github.com/banmu123/BrewPhase.git`                                                                                             |
 
-The [Releases page](https://github.com/banmu123/BrewPhase/releases) carries **desktop-v0.2.1** and
-**v0.2.0 (first stable release)** plus five earlier prereleases, each anonymously downloadable
-(`.sha256` sidecars where noted):
+The [Releases page](https://github.com/banmu123/BrewPhase/releases) carries **desktop-v0.2.2**,
+**desktop-v0.2.1** and **v0.2.0 (first stable release)** plus five earlier prereleases, each
+anonymously downloadable (`.sha256` sidecars where noted):
+**desktop-v0.2.2** (2026-11-28) — pre-release security hardening: LAN sync over TLS
+(sync protocol v2 — certificate identity via the pairing QR, pinning on the phone, no
+plaintext fallback), removed a renderer-reachable arbitrary-script IPC, constant-time
+credential comparisons, a device-registration uniqueness constraint; embedded YouTube
+playback restored (player error 153); X link cards now show tweet photos;
 **desktop-v0.2.1** (2026-11-27) — in-app auto-update loop (download / install / restart), a
 prominent update entry in Settings and an in-window update prompt; Windows ships the Local MCP
 runtime and `latest.yml` for the updater;
@@ -86,10 +91,12 @@ the team agreement, so first launch needed right-click → **Open**) plus an ear
 build;
 **desktop-v0.1.1** (2026-11-11) — signed + notarized + stapled macOS;
 **desktop-v0.1.0** (2026-11-10) — the first macOS and Windows builds.
-**desktop-v0.2.1 supersedes v0.2.0 as the latest release.** The Windows installers have no
-Authenticode signature yet, so SmartScreen warns (choose "Run anyway"); the macOS 0.2.1 build
+**desktop-v0.2.2 supersedes desktop-v0.2.1 as the latest release.** The Windows installers have
+no Authenticode signature yet, so SmartScreen warns (choose "Run anyway"); the macOS 0.2.2 build
 needs right-click → Open on first launch (not notarized), while the macOS 0.1.3 / 0.1.4 packages
-open on a plain double-click.
+open on a plain double-click. 0.2.2 also ships the security hardening from the pre-release audit
+(`docs/security/PRE_RELEASE_SECURITY_AUDIT.md`); LAN sync between a 0.2.1 phone/desktop pair and
+a 0.2.2 desktop is **intentionally incompatible** (sync protocol v1 → v2 — upgrade both ends).
 The download entry inside the iOS app points at this same Releases page — there is no external
 download site to keep in sync.
 
@@ -278,8 +285,8 @@ replay, not confidentiality. TLS is planned, not shipped.
 |---|---|---|
 | **iOS · App Store** | **Available** — [1.1](https://apps.apple.com/us/app/brewphase/id6815591631) | iPhone only, iOS 18.0+, free, US storefront. Ships the Coffee notebook; no Records / Canvas / sync. |
 | **iOS · `main` (2.0)** | **In development — not published** | Coffee + Records + Canvas + LAN sync exist in source. Not submitted as 2.0. |
-| **macOS · Desktop** | **Published (desktop-v0.2.1)** | Latest arm64 `.dmg` / `.zip` in `desktop-v0.2.1` (in-app auto-update loop — download / install / restart; roundtable workspaces, Agent Journey, Local MCP, device sync), Developer ID signed (not notarized in this build — right-click → Open on first launch). `v0.2.0` remains the previous stable release. No Intel build. |
-| **Windows · Desktop** | **Published (desktop-v0.2.1), unsigned** | NSIS x64 `.exe` + `latest.yml` in `desktop-v0.2.1` — built on real Windows 11 hardware (earlier builds in `v0.2.0`, `desktop-v0.1.4`, `0.1.3`, `0.1.2`, `0.1.0`). Ships the Local MCP runtime (`stdio.mjs` outside asar, post-pack verification passed). Named Pipe and installer behavior not yet smoke-tested. No Authenticode certificate. |
+| **macOS · Desktop** | **Published (desktop-v0.2.2)** | Latest arm64 `.dmg` / `.zip` in `desktop-v0.2.2` (LAN sync over TLS — sync protocol v2; in-app auto-update loop; roundtable workspaces, Agent Journey, Local MCP), Developer ID signed (not notarized in this build — right-click → Open on first launch). `desktop-v0.2.1` remains the previous stable release. No Intel build. |
+| **Windows · Desktop** | **Published (desktop-v0.2.2), unsigned** | NSIS x64 `.exe` + `latest.yml` in `desktop-v0.2.2` — CI-built (Windows unit tests unblocked: git isolation autocrlf fix + platform skipIfs) on top of real Windows 11 hardware validation. Embedded YouTube playback restored via a loopback wrapper origin (player error 153). Ships the Local MCP runtime (`stdio.mjs` outside asar, post-pack verification passed). No Authenticode certificate. |
 | **Linux · Desktop** | **Not supported yet** | `AppImage` target kept in the config; no build, no verification. |
 | **MCP** | **Built, not published** | Desktop-only. macOS / Linux via Unix socket; Windows Named Pipe permissions unverified, no TCP fallback. |
 
