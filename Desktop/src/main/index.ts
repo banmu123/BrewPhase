@@ -2,6 +2,13 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { app, BrowserWindow, net, powerMonitor, protocol, safeStorage, screen, session, shell } from 'electron'
+import { windowIconPath } from './appearance'
+
+// 文件日志最早启动：launch 卡死可能发生在 app ready 之前（单实例锁、
+// 数据目录解析、数据库打开），必须在最早期留下打点。
+startFileLogging()
+teeConsole()
+logWrite('[boot] main module loaded')
 import { installApplicationMenu } from './app-menu'
 import { openDatabase, type DatabaseHandle } from './database/client'
 import { registerIpc } from './ipc/register'
@@ -56,6 +63,8 @@ import { UPDATE_CHANGED_CHANNEL } from '../shared/contracts/update'
 import { DB_SCHEMA_VERSION } from '../shared/contracts/version'
 import { EMBED_FRAME_ORIGINS } from '../shared/link-embed'
 import { EmbedHost } from './embed-host'
+import { TrayService } from './tray'
+import { startFileLogging, teeConsole, write as logWrite } from './logging'
 import { UpdateService, createReleaseDiscovery } from './update/update-service'
 import { createElectronUpdaterAdapter } from './update/updater'
 import { AccountService } from './account/account-service'
@@ -99,6 +108,8 @@ export function resolveMcpEntryPath(params?: {
 let db: DatabaseHandle | null = null
 let syncService: SyncService | null = null
 let embedHost: EmbedHost | null = null
+let tray: TrayService | null = null
+let userQuitRequested = false
 let bridgeServer: BridgeServer | null = null
 let chromeService: ChromeService | null = null
 let browserManager: BrowserManager | null = null
@@ -199,6 +210,7 @@ if (!gotLock) {
 }
 
 function bootstrap(): void {
+  logWrite('[boot] bootstrap begin')
   // Windows 的任务栏分组与系统通知身份：必须与 electron-builder 的 appId
   // 一致，否则任务栏、通知、系统弹窗都会显示「Electron」的默认原子图标。
   if (process.platform === 'win32') {
@@ -228,6 +240,33 @@ function bootstrap(): void {
 
   // YouTube 错误 153 修复：起回环包装页主机（失败容忍——未运行时播放器
   // 回退直链，行为回到今天的现状）。
+  // 托盘常驻（2026-11-28 用户需求）：关闭窗口 = 隐藏到托盘（同步、提醒、
+  // 自动更新继续在后台跑）；托盘点击恢复窗口，菜单「退出」走完整收尾链。
+  tray = new TrayService({
+    iconPath: windowIconPath(),
+    isQuitting: () => quitting || userQuitRequested,
+    onRequestShow: () => {
+      const [existing] = BrowserWindow.getAllWindows().filter((item) => !item.isDestroyed())
+      if (existing) {
+        if (existing.isMinimized()) existing.restore()
+        existing.show()
+        existing.focus()
+        return
+      }
+      try {
+        createMainWindow({ devServerUrl, embedHostOrigin: embedHost?.origin() ?? null })
+      } catch (error) {
+        logWrite(`[tray] reopen failed: ${(error as Error).message}`)
+      }
+    },
+    onRequestQuit: () => {
+      userQuitRequested = true
+      app.quit()
+    },
+    label: 'BrewPhase'
+  })
+  tray.start()
+
   embedHost = new EmbedHost()
   // fire-and-forget：包装页晚几百毫秒可用没有影响，不阻塞 bootstrap。
   void embedHost.start().catch((error) => {
@@ -754,6 +793,14 @@ function bootstrap(): void {
   installApplicationMenu()
 
   const mainWindow = createMainWindow({ devServerUrl, embedHostOrigin: embedHost?.origin() ?? null })
+  // 托盘常驻：关闭窗口 = 隐藏（不是销毁）；真退出（托盘菜单 / before-quit
+  // 收尾完成后的 quitting）时放行销毁。
+  mainWindow.on('close', (event) => {
+    if (tray?.interceptClose(mainWindow)) {
+      logWrite('[tray] close intercepted -> hide to tray')
+      event.preventDefault()
+    }
+  })
   mainWindowRef = mainWindow
   // 版本探针只在打包版跑：dev / e2e 不联网；定时器 unref，不阻止退出。
   if (app.isPackaged) updateService.startAutoCheck()
@@ -791,18 +838,38 @@ function bootstrap(): void {
 }
 
 app.on('second-instance', () => {
-  const [window] = BrowserWindow.getAllWindows()
-  if (window) {
-    if (window.isMinimized()) window.restore()
-    window.focus()
+  // 2026-11-28 修复「应用打不开」：旧实例若已没有任何窗口（上次退出被
+  // 卡住、窗口已销毁），再次启动必须**重建**主窗口，而不是静默返回——
+  // 否则新实例拿不到锁直接退出、旧实例又没有窗口，用户就被锁在门外。
+  const windows = BrowserWindow.getAllWindows()
+  const existing = windows.find((item) => !item.isDestroyed())
+  if (existing) {
+    if (existing.isMinimized()) existing.restore()
+    existing.show()
+    existing.focus()
+    return
+  }
+  logWrite('[second-instance] no live window, rebuilding main window')
+  try {
+    const window = createMainWindow({ devServerUrl, embedHostOrigin: embedHost?.origin() ?? null })
+    void window
+  } catch (error) {
+    logWrite(`[second-instance] rebuild failed: ${(error as Error).message}`)
   }
 })
 
+// 托盘常驻模式（2026-11-28）：关闭窗口 = 隐藏，不会走到这里；这里只剩
+// 真销毁（退出流程中 quitting=true）与 macOS 用户 Cmd+Q 的路径。
+// 注意 `quitting` 由 before-quit 置位——托盘「退出」同样走完整收尾链。
 app.on('window-all-closed', () => {
+  if (tray) return
   if (process.platform !== 'darwin') app.quit()
 })
 
 app.on('before-quit', (event) => {
+  // 托盘退出 / Cmd+Q 都会到这里；`quitting` 仍在**异步收尾完成后**才置位
+  // （保持原有语义：第一次进 here 先拦截做收尾，收尾完再真正退出）。
+  logWrite(`[quit] before-quit begin (quitting=${quitting})`)
   // 登录进行中退出：先关本机回调端口，不留悬挂监听。
   accountService?.dispose()
   accountService = null
@@ -870,8 +937,11 @@ app.on('before-quit', (event) => {
   // 下次启动标 capture_interrupted）——绝不允许异步任务在 DB 关闭后继续写。
   workspaceEvidenceRef?.beginShutdown()
   workspaceEvidenceRef = null
+  tray?.stop()
+  logWrite('[quit] db closing')
   db?.close()
   db = null
+  logWrite('[quit] db closed')
 })
 
 /**
