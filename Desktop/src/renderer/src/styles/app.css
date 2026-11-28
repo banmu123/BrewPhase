@@ -11471,6 +11471,14 @@ textarea {
   gap: 6px;
 }
 
+/* 提醒条是纵向 flex：上面的 flex-basis 240px 在这里会变成**垂直基础高度**，
+   把进度条下面撑出一大片空白（2026-11-28 用户实测）。提醒条内改为按内容
+   占位、占满整行。 */
+.update-banner .update-progress {
+  flex: 0 0 auto;
+  width: 100%;
+}
+
 .update-progress__head {
   display: flex;
   align-items: baseline;

@@ -2,6 +2,7 @@ import { app, net } from 'electron'
 import {
   UPDATE_AUTO_CHECK_DELAY_MS,
   UPDATE_CHECK_INTERVAL_MS,
+  UPDATE_CHECK_RETRY_MS,
   UPDATE_INSTALL_DELAY_MS,
   UPDATE_RELEASES_API,
   UPDATE_RELEASES_PAGE,
@@ -92,6 +93,10 @@ export class UpdateService {
   private installTimer: NodeJS.Timeout | null = null
   private delayTimer: NodeJS.Timeout | null = null
   private intervalTimer: NodeJS.Timeout | null = null
+  private retryTimer: NodeJS.Timeout | null = null
+  /** 自动检查是否启用（startAutoCheck 置位）：fail 在首检的同步调用链里，
+   *  此时 intervalTimer 还没建，不能拿它当「自动模式开着」的判据。 */
+  private autoCheckEnabled = false
   private checkedAt = 0
 
   constructor(
@@ -174,6 +179,8 @@ export class UpdateService {
   /** 打包版才启动；dev / e2e 不需要联网探针。定时器不阻止应用退出。 */
   startAutoCheck(): void {
     if (this.delayTimer || this.intervalTimer) return
+    this.autoCheckEnabled = true
+    this.clearRetryTimer()
     const tick = (): void => {
       void this.check().catch(() => undefined)
     }
@@ -187,10 +194,12 @@ export class UpdateService {
   }
 
   stopAutoCheck(): void {
+    this.autoCheckEnabled = false
     if (this.delayTimer) clearTimeout(this.delayTimer)
     if (this.intervalTimer) clearInterval(this.intervalTimer)
     this.delayTimer = null
     this.intervalTimer = null
+    this.clearRetryTimer()
     this.clearInstallTimer()
   }
 
@@ -334,6 +343,22 @@ export class UpdateService {
       transferred: null,
       total: null
     })
+    // 2026-11-28：检查失败后安排短间隔自动重试——之前失败要等 24 小时的
+    // 整点 interval 才再试一次，用户看到的体验是「自动提示不见了」。
+    // 下载失败不自动重试（大文件 + 用户已看到错误条，由用户决定重试时机）。
+    if (scope === 'check' && this.autoCheckEnabled) {
+      this.clearRetryTimer()
+      this.retryTimer = setTimeout(() => {
+        this.retryTimer = null
+        void this.check().catch(() => undefined)
+      }, UPDATE_CHECK_RETRY_MS)
+      this.retryTimer.unref?.()
+    }
+  }
+
+  private clearRetryTimer(): void {
+    if (this.retryTimer) clearTimeout(this.retryTimer)
+    this.retryTimer = null
   }
 
   private scheduleInstall(): void {

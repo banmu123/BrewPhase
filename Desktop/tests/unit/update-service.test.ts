@@ -83,12 +83,18 @@ const MANUAL_AVAILABLE: UpdateDiscoveryResult = {
   releaseUrl: 'https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.2.1'
 }
 
-function createService(options: { supported?: boolean; mode?: FakeMode } = {}) {
+function createService(
+  options: {
+    supported?: boolean
+    mode?: FakeMode
+    discover?: () => Promise<UpdateDiscoveryResult>
+  } = {}
+) {
   const fake = createFakeAdapter(options)
   const service = new UpdateService({
     currentVersion: '0.2.0',
     adapter: fake.adapter,
-    discover: async () => UP_TO_DATE
+    discover: options.discover ?? (async () => UP_TO_DATE)
   })
   return { service, fake }
 }
@@ -122,6 +128,36 @@ describe('UpdateService：检查', () => {
     expect(fake.calls.check).toBe(1)
     await service.check({ force: true })
     expect(fake.calls.check).toBe(2)
+  })
+
+  it('检查失败后 5 分钟自动重试（不再等 24 小时整点）', async () => {
+    vi.useFakeTimers()
+    try {
+      // error-event 模式 + 兜底发现也失败（GitHub API 也挂）→ fail('check')。
+      // 真实世界对应：网络抖动让两条通道同时失败——修复前要等 24h 才重试。
+      const { service, fake } = createService({
+        mode: 'error-event',
+        discover: async () => ({ status: 'error', reason: 'HTTP 403' })
+      })
+      service.startAutoCheck()
+      // 启动延迟 8s：第一次自动检查失败
+      await vi.advanceTimersByTimeAsync(8_000)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(service.snapshot.phase).toBe('error')
+      const failedCalls = fake.calls.check
+
+      // 快进 4 分钟：不应重试（间隔是 5 分钟）
+      await vi.advanceTimersByTimeAsync(4 * 60_000)
+      expect(fake.calls.check).toBe(failedCalls)
+
+      // 快进到 5 分钟：自动重试发生（adapter.check 再被调用）
+      await vi.advanceTimersByTimeAsync(1 * 60_000)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fake.calls.check).toBeGreaterThan(failedCalls)
+    } finally {
+      vi.useRealTimers()
+      vi.restoreAllMocks()
+    }
   })
 
   it('下载进行中不接受新的检查', async () => {

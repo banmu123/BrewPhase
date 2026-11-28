@@ -18,6 +18,13 @@ export const UPDATE_CHANGED_CHANNEL = 'update:changed'
 /** 启动后延迟一点再查，别和开窗、开库、同步抢网络。 */
 export const UPDATE_AUTO_CHECK_DELAY_MS = 8_000
 export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
+/**
+ * 检查失败（GitHub API 限流 / 网络抖动）后的重试间隔。
+ * 失败不推进 checkedAt，但自动重试靠的是下面这个短间隔——
+ * 否则一次启动时的偶发失败要等 24 小时的整点 interval 才会再试，
+ * 用户就会觉得「自动提示不见了，得手动去点」。
+ */
+export const UPDATE_CHECK_RETRY_MS = 5 * 60 * 1000
 export const UPDATE_REQUEST_TIMEOUT_MS = 8_000
 /**
  * 下载完成后先让界面把「正在安装并重启」显示出来，再真正退出安装。

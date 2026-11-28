@@ -28,7 +28,11 @@ import { YOUTUBE_VIDEO_ID } from '../shared/link-embed'
 const NO_STORE_HEADERS = {
   'Cache-Control': 'no-store',
   'X-Content-Type-Options': 'nosniff',
-  'Referrer-Policy': 'no-referrer'
+  // 2026-11-28 修复：不能是 no-referrer——YouTube 校验「嵌入页 origin」用的
+  // 就是这个请求里的 Referer；no-referrer 让播放器请求裸奔，黑屏拒播
+  // （silent fail）。strict-origin-when-cross-origin 跨域恰好发 origin，
+  // 与播放器 URL 的 origin 参数互相印证。
+  'Referrer-Policy': 'strict-origin-when-cross-origin'
 } as const
 
 const WRAPPER_CSP = "default-src 'none'; frame-src https://www.youtube-nocookie.com; style-src 'unsafe-inline'"
