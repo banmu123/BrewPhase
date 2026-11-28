@@ -15,8 +15,8 @@ BrewPhase 起初是一本咖啡笔记：从烘焙日期跟着一包豆走到最�
 <div align="center">
 
 [![App Store](https://img.shields.io/badge/App%20Store-BrewPhase%201.1-0D96F6?logo=appstore&logoColor=white)](https://apps.apple.com/us/app/brewphase/id6815591631)
-[![macOS arm64](https://img.shields.io/badge/Download-macOS%20arm64-30372f?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.2.2/BrewPhase-0.2.2-mac-arm64.dmg)
-[![Windows x64](https://img.shields.io/badge/Download-Windows%20x64-30372f?style=for-the-badge&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGgxMS4zNzd2MTEuMzcySDB6bTEyLjYyMyAwSDI0djExLjM3MkgxMi42MjN6TTAgMTIuNjIzaDExLjM3N1YyNEgwem0xMi42MjMgMEgyNFYyNEgxMi42MjN6Ii8%2BPC9zdmc%2B&logoColor=white)](https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.2.2/BrewPhase-0.2.2-win-x64.exe)
+[![macOS arm64](https://img.shields.io/badge/Download-macOS%20arm64-30372f?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.2.3/BrewPhase-0.2.3-mac-arm64.dmg)
+[![Windows x64](https://img.shields.io/badge/Download-Windows%20x64-30372f?style=for-the-badge&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGgxMS4zNzd2MTEuMzcySDB6bTEyLjYyMyAwSDI0djExLjM3MkgxMi42MjN6TTAgMTIuNjIzaDExLjM3N1YyNEgwem0xMi42MjMgMEgyNFYyNEgxMi42MjN6Ii8%2BPC9zdmc%2B&logoColor=white)](https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.2.3/BrewPhase-0.2.3-win-x64.exe)
 [![GitHub Stars](https://img.shields.io/github/stars/banmu123/BrewPhase?style=social)](https://github.com/banmu123/BrewPhase)
 [![Desktop Release](https://github.com/banmu123/BrewPhase/actions/workflows/desktop-release.yml/badge.svg)](https://github.com/banmu123/BrewPhase/actions/workflows/desktop-release.yml)
 ![iOS](https://img.shields.io/badge/iOS-18.0%2B-000000?logo=apple&logoColor=white)
@@ -36,20 +36,23 @@ tag 或手动触发时运行。本仓库目前还没有「每次 push 都跑测�
 
 <p>
   <a href="https://apps.apple.com/us/app/brewphase/id6815591631"><img src="https://img.shields.io/badge/App%20Store-BrewPhase%201.1-0D96F6?style=for-the-badge&logo=appstore&logoColor=white" alt="在 App Store 下载 BrewPhase" /></a>
-  <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.2.2/BrewPhase-0.2.2-mac-arm64.dmg"><img src="https://img.shields.io/badge/⬇%20macOS%20arm64-.dmg-30372f?style=for-the-badge&logo=apple&logoColor=white" alt="下载 macOS 版 BrewPhase" /></a>
-  <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.2.2/BrewPhase-0.2.2-win-x64.exe"><img src="https://img.shields.io/badge/⬇%20Windows%20x64-.exe-30372f?style=for-the-badge&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGgxMS4zNzd2MTEuMzcySDB6bTEyLjYyMyAwSDI0djExLjM3MkgxMi42MjN6TTAgMTIuNjIzaDExLjM3N1YyNEgwem0xMi42MjMgMEgyNFYyNEgxMi42MjN6Ii8%2BPC9zdmc%2B" alt="下载 Windows 版 BrewPhase" /></a>
+  <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.2.3/BrewPhase-0.2.3-mac-arm64.dmg"><img src="https://img.shields.io/badge/⬇%20macOS%20arm64-.dmg-30372f?style=for-the-badge&logo=apple&logoColor=white" alt="下载 macOS 版 BrewPhase" /></a>
+  <a href="https://github.com/banmu123/BrewPhase/releases/download/desktop-v0.2.3/BrewPhase-0.2.3-win-x64.exe"><img src="https://img.shields.io/badge/⬇%20Windows%20x64-.exe-30372f?style=for-the-badge&logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMGgxMS4zNzd2MTEuMzcySDB6bTEyLjYyMyAwSDI0djExLjM3MkgxMi42MjN6TTAgMTIuNjIzaDExLjM3N1YyNEgwem0xMi42MjMgMEgyNFYyNEgxMi42MjN6Ii8%2BPC9zdmc%2B" alt="下载 Windows 版 BrewPhase" /></a>
   <a href="https://github.com/banmu123/BrewPhase"><img src="https://img.shields.io/badge/Source-GitHub-30372f?style=for-the-badge&logo=github&logoColor=white" alt="在 GitHub 查看源码" /></a>
 </p>
 
 | 端 | 获取方式 |
 |---|---|
 | **iPhone · iOS 18+** | **[App Store 上的 BrewPhase 1.1](https://apps.apple.com/us/app/brewphase/id6815591631)** —— 免费，美区，中英双语 |
-| **macOS · 桌面端** | **[BrewPhase Desktop 0.2.2 — macOS arm64](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.2.2)** — 正式发版前安全加固：局域网设备同步升级为 **TLS**（自签证书身份、配对二维码交付指纹、手机侧证书 pinning——同步协议 v2，不存在明文回退）；应用内自动更新闭环；圆桌工作区、Agent Journey、Local MCP、内嵌 YouTube 播放恢复。Developer ID 签名（**本版未公证**，Gatekeeper 首启需右键 → 打开或在设置中允许）；仅 Apple Silicon。 |
-| **Windows · 桌面端** | **[BrewPhase Desktop 0.2.2 — Windows x64](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.2.2)** — NSIS `.exe` + `.sha256` + `latest.yml`（自动更新元数据），未签名（SmartScreen 会提示，选择仍要运行即可）。与 macOS 版同等的安全加固（LAN 同步 TLS v2），并**恢复内嵌 YouTube 播放**（错误 153）、X 链接卡片显示推文图片。含 Local MCP runtime（`stdio.mjs` 独立于 asar，安装后自检通过）；Windows 11 实机验证 + CI 构建。 |
+| **macOS · 桌面端** | **[BrewPhase Desktop 0.2.2 — macOS arm64](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.2.3)** — 正式发版前安全加固：局域网设备同步升级为 **TLS**（自签证书身份、配对二维码交付指纹、手机侧证书 pinning——同步协议 v2，不存在明文回退）；应用内自动更新闭环；圆桌工作区、Agent Journey、Local MCP、内嵌 YouTube 播放恢复。Developer ID 签名（**本版未公证**，Gatekeeper 首启需右键 → 打开或在设置中允许）；仅 Apple Silicon。 |
+| **Windows · 桌面端** | **[BrewPhase Desktop 0.2.2 — Windows x64](https://github.com/banmu123/BrewPhase/releases/tag/desktop-v0.2.3)** — NSIS `.exe` + `.sha256` + `latest.yml`（自动更新元数据），未签名（SmartScreen 会提示，选择仍要运行即可）。与 macOS 版同等的安全加固（LAN 同步 TLS v2），并**恢复内嵌 YouTube 播放**（错误 153）、X 链接卡片显示推文图片。含 Local MCP runtime（`stdio.mjs` 独立于 asar，安装后自检通过）；Windows 11 实机验证 + CI 构建。 |
 | **Linux · 桌面端** | 无产物。配置里保留了 `AppImage` target，仅此而已，未构建、未验证。 |
 | **源码** | `git clone https://github.com/banmu123/BrewPhase.git` |
 
-[Releases 页面](https://github.com/banmu123/BrewPhase/releases)已发布 **desktop-v0.2.2**、**desktop-v0.2.1**、**v0.2.0（首个正式版）** 与五个更早的 desktop prerelease，均可匿名下载：
+[Releases 页面](https://github.com/banmu123/BrewPhase/releases)已发布 **desktop-v0.2.3**、**desktop-v0.2.1**、**v0.2.0（首个正式版）** 与五个更早的 desktop prerelease，均可匿名下载：
+**desktop-v0.2.3**（2026-11-28）三项用户可见修复：YouTube 内嵌播放不再黑屏（包装页此前把
+YouTube 校验用的 Referer 剥掉了）、更新检查失败后 5 分钟自动重试（此前要等一天）、更新
+提醒条内进度条下的空白消除；
 **desktop-v0.2.2**（2026-11-28）正式发版前安全加固：局域网同步升级 TLS（同步协议 v2——配对二维码交付证书指纹、手机侧 pinning、无明文回退）、移除渲染端可触达的任意脚本 IPC、凭据恒定时间比较、设备注册唯一约束；内嵌 YouTube 播放恢复（错误 153）；X 卡片显示推文图片；
 **desktop-v0.2.1**（2026-11-27）应用内自动更新闭环（下载 / 安装 / 重启）、设置页醒目更新入口与主窗口主动提醒；Windows 版含 Local MCP runtime 与自动更新所需的 `latest.yml`；
 **v0.2.0**（2026-11-26）圆桌工作区（多网页面板同屏、拆出为独立窗口再归位）、Agent Journey（AI 会话记录、证据产物、按需 Diff）、Local MCP（16 项权限逐项可见、四档预设）、局域网设备同步；macOS 为 Developer ID 签名（**未公证**，首启需右键 → 打开）的 arm64 `.dmg`/`.zip`，Windows 为实机构建的未签名 x64 NSIS `.exe`（含 Local MCP runtime，`.sha256` 校验文件齐备）；
@@ -62,7 +65,7 @@ tag 或手动触发时运行。本仓库目前还没有「每次 push 都跑测�
 （当时 Apple 因团队协议返回 403，首次启动需右键 → 打开）；
 **desktop-v0.1.1**（2026-11-11）为此前已公证 + staple 的 macOS 构建；
 **desktop-v0.1.0**（2026-11-10）是第一批 macOS 与 Windows 构建。
-**desktop-v0.2.2 已取代 desktop-v0.2.1 成为最新版本。** Windows 包暂无 Authenticode 签名，SmartScreen
+**desktop-v0.2.3 已取代 desktop-v0.2.2 成为最新版本。** Windows 包暂无 Authenticode 签名，SmartScreen
 会提示风险（选择「仍要运行」即可）；macOS 的 0.2.2 首启需右键 → 打开（未公证），0.1.3 / 0.1.4 双击即可打开。0.2.2 同时包含正式发版前安全加固
 （`docs/security/PRE_RELEASE_SECURITY_AUDIT.md`）；0.2.1 手机/桌面与 0.2.2 桌面的局域网同步**有意不兼容**
 （同步协议 v1 → v2——两端都需要升级）。iOS 应用内的下载入口就指向这个 Releases 页面——没有需要
@@ -223,8 +226,8 @@ Records、Canvas、桌面端与 MCP 只存在于 `main` —— 已实现，但**
 |---|---|---|
 | **iOS · App Store** | **已发布 Available** —— [1.1](https://apps.apple.com/us/app/brewphase/id6815591631) | 仅 iPhone，iOS 18.0+，免费，美区；只含 Coffee 笔记本，没有 Records / Canvas / 同步。 |
 | **iOS · `main`（2.0）** | **开发中，未发布** | 源码里已有 Coffee + Records + Canvas + 局域网同步，尚未作为 2.0 提交。 |
-| **macOS · 桌面端** | **已发布（desktop-v0.2.2）** | arm64 `.dmg` / `.zip` 在 `desktop-v0.2.2`（局域网同步 TLS——同步协议 v2；应用内自动更新闭环；圆桌工作区、Agent Journey、Local MCP），Developer ID 签名（本版未公证，首启右键 → 打开）。`desktop-v0.2.1` 为上一个正式版。没有 Intel 构建。 |
-| **Windows · 桌面端** | **已发布（desktop-v0.2.2），未签名** | NSIS x64 `.exe` + `latest.yml` 在 `desktop-v0.2.2`——CI 构建（Windows 单测已解除阻塞：git 隔离环境 autocrlf 修复 + 平台限制用例显式 skip），叠加 Windows 11 实机验证。内嵌 YouTube 播放通过回环包装页恢复（错误 153）。含 Local MCP runtime（打包自检通过）。无 Authenticode 证书。 |
+| **macOS · 桌面端** | **已发布（desktop-v0.2.3）** | arm64 `.dmg` / `.zip` 在 `desktop-v0.2.3`（局域网同步 TLS——同步协议 v2；应用内自动更新闭环；圆桌工作区、Agent Journey、Local MCP），Developer ID 签名（本版未公证，首启右键 → 打开）。`desktop-v0.2.1` 为上一个正式版。没有 Intel 构建。 |
+| **Windows · 桌面端** | **已发布（desktop-v0.2.3），未签名** | NSIS x64 `.exe` + `latest.yml` 在 `desktop-v0.2.3`——CI 构建（Windows 单测已解除阻塞：git 隔离环境 autocrlf 修复 + 平台限制用例显式 skip），叠加 Windows 11 实机验证。内嵌 YouTube 播放通过回环包装页恢复（错误 153）。含 Local MCP runtime（打包自检通过）。无 Authenticode 证书。 |
 | **Linux · 桌面端** | **暂不支持** | 配置里保留 `AppImage` target；无构建、无验证。 |
 | **MCP** | **已构建，未发布** | 仅桌面端。macOS / Linux 走 Unix socket；Windows Named Pipe 权限未验证，不提供 TCP 退化。 |
 
