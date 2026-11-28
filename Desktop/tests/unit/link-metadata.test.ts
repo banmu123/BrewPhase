@@ -216,7 +216,7 @@ describe('Bilibili provider（mock 网页）', () => {
   })
 })
 
-describe('X provider（mock oEmbed）', () => {
+describe('X provider（mock oEmbed + 媒体发现）', () => {
   it('成功：作者名 + 纯文本正文（HTML 被剥离）', async () => {
     const fetcher = mockFetcher([
       {
@@ -241,6 +241,51 @@ describe('X provider（mock oEmbed）', () => {
     expect(resolved.status).toBe('failed')
     expect(resolved.authorName).toBe('@banmu')
     expect(resolved.description).toBeNull()
+    expect(resolved.thumbnailUrl).toBeNull()
+  })
+
+  it('媒体：syndication 的 photo 命中 X 媒体 CDN → 进 image', async () => {
+    const fetcher = mockFetcher([
+      { match: 'publish.twitter.com/oembed', body: JSON.stringify({ author_name: '半木', html: '<p>手冲记录</p>' }) },
+      {
+        match: 'cdn.syndication.twimg.com/tweet-result',
+        body: JSON.stringify({
+          text: '手冲记录',
+          mediaDetails: [{ type: 'photo', media_url_https: 'https://pbs.twimg.com/media/abc123.jpg' }]
+        })
+      }
+    ])
+    const resolved = await resolveMetadata(parseLink('https://x.com/banmu/status/1234567890'), fetcher)
+    expect(resolved.status).toBe('success')
+    expect(resolved.thumbnailUrl).toBe('https://pbs.twimg.com/media/abc123.jpg')
+  })
+
+  it('媒体：syndication 失败时 FXTwitter 兜底（非白名单 host 不采纳）', async () => {
+    const fetcher = mockFetcher([
+      {
+        match: 'api.fxtwitter.com',
+        body: JSON.stringify({
+          tweet: {
+            text: '拿铁拉花练习',
+            media: { photos: [{ url: 'https://cdn.evil.com/pwn.jpg' }, { url: 'https://pbs.twimg.com/media/def456.jpg' }] }
+          }
+        })
+      }
+    ])
+    const resolved = await resolveMetadata(parseLink('https://x.com/banmu/status/9876543210'), fetcher)
+    expect(resolved.thumbnailUrl).toBe('https://pbs.twimg.com/media/def456.jpg')
+    // 第三方文本兜底也生效
+    expect(resolved.description).toBe('拿铁拉花练习')
+  })
+
+  it('媒体：全部来源失败 → 无图卡片，不劣化主结果', async () => {
+    const fetcher = mockFetcher([
+      { match: 'publish.twitter.com/oembed', body: JSON.stringify({ author_name: '半木', html: '<p>只有文字</p>' }) }
+    ])
+    const resolved = await resolveMetadata(parseLink('https://x.com/banmu/status/1111'), fetcher)
+    expect(resolved.status).toBe('success')
+    expect(resolved.thumbnailUrl).toBeNull()
+    expect(resolved.description).toContain('只有文字')
   })
 })
 
