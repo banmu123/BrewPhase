@@ -679,7 +679,8 @@ describe('场景 F：数据边界（local-first）', () => {
     expect(ddl.sql).toMatch(/REFERENCES agent_journeys\(id\) ON DELETE CASCADE/i)
   })
 
-  it('从版本 14 升级到最新：旧库数据原样保留', () => {
+  // CI runner 高负载下会超默认 5s（迁移 + 全库校验的操作时长），不是平台差异。
+  it('从版本 14 升级到最新：旧库数据原样保留', { timeout: 60_000 }, () => {
     // 上面 beforeEach 已经跑到最新版；这里再造一个只到 14 的库验证升级路径
     const oldDir = mkdtempSync(join(tmpdir(), 'r641-v14-'))
     try {
