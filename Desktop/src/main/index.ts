@@ -55,6 +55,7 @@ import type { McpBridgeStatus } from '../shared/contracts/mcp'
 import { UPDATE_CHANGED_CHANNEL } from '../shared/contracts/update'
 import { DB_SCHEMA_VERSION } from '../shared/contracts/version'
 import { EMBED_FRAME_ORIGINS } from '../shared/link-embed'
+import { EmbedHost } from './embed-host'
 import { UpdateService, createReleaseDiscovery } from './update/update-service'
 import { createElectronUpdaterAdapter } from './update/updater'
 import { AccountService } from './account/account-service'
@@ -97,6 +98,7 @@ export function resolveMcpEntryPath(params?: {
 
 let db: DatabaseHandle | null = null
 let syncService: SyncService | null = null
+let embedHost: EmbedHost | null = null
 let bridgeServer: BridgeServer | null = null
 let chromeService: ChromeService | null = null
 let browserManager: BrowserManager | null = null
@@ -224,6 +226,14 @@ function bootstrap(): void {
     }
   })
 
+  // YouTube 错误 153 修复：起回环包装页主机（失败容忍——未运行时播放器
+  // 回退直链，行为回到今天的现状）。
+  embedHost = new EmbedHost()
+  // fire-and-forget：包装页晚几百毫秒可用没有影响，不阻塞 bootstrap。
+  void embedHost.start().catch((error) => {
+    console.error('[embed-host] start failed', error)
+    embedHost = null
+  })
   applyCsp(session.defaultSession, devServerUrl)
 
   // 同步服务：按持久化开关恢复（用户启用过才监听端口）。
@@ -701,6 +711,7 @@ function bootstrap(): void {
   registerIpc({
     db,
     devServerUrl,
+    embedHostOrigin: embedHost?.origin() ?? null,
     sync: syncService,
     account,
     remote: remoteService,
@@ -742,7 +753,7 @@ function bootstrap(): void {
   // Windows/Linux 的传统菜单栏由 autoHideMenuBar 收起，入口在 Renderer 顶栏。
   installApplicationMenu()
 
-  const mainWindow = createMainWindow({ devServerUrl })
+  const mainWindow = createMainWindow({ devServerUrl, embedHostOrigin: embedHost?.origin() ?? null })
   mainWindowRef = mainWindow
   // 版本探针只在打包版跑：dev / e2e 不联网；定时器 unref，不阻止退出。
   if (app.isPackaged) updateService.startAutoCheck()
@@ -770,7 +781,7 @@ function bootstrap(): void {
     // 圆桌独立窗口活着时它不是 0，但主窗口仍然需要回来（规格 §4.8）。
     const main = mainWindowRef
     if (!main || main.isDestroyed()) {
-      const window = createMainWindow({ devServerUrl })
+      const window = createMainWindow({ devServerUrl, embedHostOrigin: embedHost?.origin() ?? null })
       mainWindowRef = window
       window.on('closed', () => {
         mainWindowRef = null
@@ -829,6 +840,8 @@ app.on('before-quit', (event) => {
     // 退出竞态窗口内不应再有新的同步请求进入（认证/落库）。
     const sync = syncService
     syncService = null
+    const embed = embedHost
+    embedHost = null
     bridgeServer = null
     chromeService = null
     remoteService = null
@@ -839,7 +852,10 @@ app.on('before-quit', (event) => {
       server?.stop(),
       chrome?.stop(),
       remote?.stop(),
-      sync?.disable().catch(() => undefined)
+      sync?.disable().catch(() => undefined),
+      (async () => {
+        embed?.stop()
+      })()
     ]).then(() => undefined)
     // R6-4.3.3.1：等证据队列排空（触发路径 fire-and-forget，退出给它收尾窗口）。
     const flushed: Promise<void> = evidence
@@ -876,7 +892,15 @@ app.on('before-quit', (event) => {
  * 共用同一份白名单；不写 `https:`，否则任意站点都能进 iframe。
  */
 function applyCsp(target: Electron.Session, dev: string | null): void {
-  const frameSrc = `frame-src ${EMBED_FRAME_ORIGINS.join(' ')}`
+  // YouTube 错误 153 修复：内嵌播放器走主进程回环包装页（http origin）。
+  // frame-src **每次响应时实时求值**——embed host 是异步启动的随机端口，
+  // 拦截器注册时它可能还没就绪。
+  const frameSrc = (): string => {
+    const embedHostOrigin = embedHost?.origin() ?? null
+    return `frame-src ${[...EMBED_FRAME_ORIGINS, embedHostOrigin]
+      .filter((origin): origin is string => Boolean(origin))
+      .join(' ')}`
+  }
   // img-src 的 https: 是远程缩略图（og:image、i.ytimg.com）的加载通道；
   // 失败由组件落平台 fallback，不放宽 connect-src/script-src 等其他指令。
   // media-src bpmedia: 是画布节点内嵌视频（<video>）的加载通道——没有它
@@ -889,7 +913,7 @@ function applyCsp(target: Electron.Session, dev: string | null): void {
         "img-src 'self' bpmedia: data: https: blob:",
         "media-src 'self' bpmedia:",
         "font-src 'self' data:",
-        frameSrc,
+        frameSrc(),
         "connect-src 'self' ws: http://localhost:* http://127.0.0.1:*"
       ].join('; ')
     : [
@@ -899,7 +923,7 @@ function applyCsp(target: Electron.Session, dev: string | null): void {
         "img-src 'self' bpmedia: data: https:",
         "media-src 'self' bpmedia:",
         "font-src 'self' data:",
-        frameSrc,
+        frameSrc(),
         "connect-src 'self'"
       ].join('; ')
 

@@ -150,6 +150,8 @@ export type AppInfo = {
   syncProtocolVersion: number
   platform: string
   dataDir: string
+  /** 回环包装页 origin（YouTube 错误 153 修复）；null = embed host 未运行。 */
+  embedHostOrigin: string | null
   /**
    * 首次启动引导（配对指引）是否该出现：打包版为 true；dev / e2e 跑的是
    * `out/`（未打包）恒为 false，避免测试与开发被 overlay 挡住。

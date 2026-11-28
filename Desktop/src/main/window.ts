@@ -11,7 +11,11 @@ import { initialWindowAppearance, WINDOW_CHROME, windowIconPath } from './appear
  * `window.open` 一律拒绝——外部链接交给系统浏览器，而不是在应用里开一个没有
  * 地址栏的窗口。
  */
-export function createMainWindow(params: { devServerUrl: string | null }): BrowserWindow {
+export function createMainWindow(params: {
+  devServerUrl: string | null
+  /** 回环包装页 origin（YouTube 错误 153 修复）；null = embed host 未运行。 */
+  embedHostOrigin?: string | null
+}): BrowserWindow {
   const mac = process.platform === 'darwin'
   const windows = process.platform === 'win32'
 
@@ -76,11 +80,11 @@ export function createMainWindow(params: { devServerUrl: string | null }): Brows
     }
   })
 
-  // 子框架只允许待在自己那一家的播放器域名里（YouTube / B 站）。
+  // 子框架只允许待在自己那一家的播放器域名里（YouTube / B 站 / 回环包装页）。
   // 被嵌页面想把我们当跳板去别处，或借 iframe 打开登录页，一律拒绝。
   window.webContents.on('will-frame-navigate', (event) => {
     if (event.isMainFrame) return
-    if (isEmbedFrameURL(event.url)) return
+    if (isEmbedFrameURL(event.url, params.embedHostOrigin)) return
     event.preventDefault()
   })
 

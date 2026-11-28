@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { embedURL } from '@shared/link-embed'
+import { embedURL, youtubeEmbedHostPath } from '@shared/link-embed'
 import { parseLink } from '@shared/link-parser'
 import { useI18n } from '../../../i18n'
+import { api } from '../../../shared/api'
 import type { RecordPreview } from './preview-model'
 
 /**
@@ -21,7 +22,28 @@ export function LinkPlayer(props: { preview: RecordPreview }) {
   // 记录里的 contentID 是权威值；早期同步过来的记录可能没有这个字段，
   // 再按地址现认一次——有地址却显示「不能播」才是最让人困惑的状态。
   const contentId = preview.videoId ?? parseLink(preview.detailUrl ?? '').contentId
-  const src = useMemo(() => embedURL(platform, contentId), [platform, contentId])
+
+  // YouTube 错误 153 修复：打包版的渲染进程是 file://（null origin），YouTube
+  // 直接拒播。主进程起了一个回环包装页主机（http origin + 播放器 origin 参数），
+  // YouTube 播放器改走包装页；embed host 未运行时回退直链（行为回到旧现状）。
+  const [embedHostOrigin, setEmbedHostOrigin] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void api.app.info().then((info) => {
+      if (!cancelled) setEmbedHostOrigin(info.embedHostOrigin)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const src = useMemo(() => {
+    if (platform === 'youtube' && embedHostOrigin) {
+      const path = youtubeEmbedHostPath(contentId)
+      if (path) return `${embedHostOrigin}${path}`
+    }
+    return embedURL(platform, contentId)
+  }, [platform, contentId, embedHostOrigin])
 
   const [playing, setPlaying] = useState(false)
   const [zoomed, setZoomed] = useState(false)

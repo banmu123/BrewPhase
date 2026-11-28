@@ -96,6 +96,8 @@ export function registerIpc(params: {
   db: DatabaseHandle
   devServerUrl: string | null
   sync: SyncService
+  /** 回环包装页 origin（YouTube 错误 153 修复）；null = embed host 未运行。 */
+  embedHostOrigin: string | null
   /** Cloud Account：登录 / 恢复 / 退出的唯一入口（无凭据快照）。 */
   account: AccountService
   /** Remote MCP：远程访问状态与启停（**不含任何凭据**）。 */
@@ -205,7 +207,9 @@ export function registerIpc(params: {
     syncProtocolVersion: SYNC_PROTOCOL_VERSION,
     platform: process.platform,
     dataDir,
-    onboardingEligible: app.isPackaged || process.env.BREWPHASE_FORCE_ONBOARDING === 'yes'
+    onboardingEligible: app.isPackaged || process.env.BREWPHASE_FORCE_ONBOARDING === 'yes',
+    // YouTube 错误 153 修复：回环包装页 origin（YouTube 内嵌播放器用它）。
+    embedHostOrigin: params.embedHostOrigin
   }))
 
   // 应用更新：状态只由主进程的 UpdateService 产生；打开下载页的地址也从它

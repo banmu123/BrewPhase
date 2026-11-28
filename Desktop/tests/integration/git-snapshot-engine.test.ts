@@ -443,7 +443,10 @@ describe('仓库形态识别（§6）', () => {
     expect(fileOf(diff, 'f.txt')?.change_kind).toBe('modified')
   })
 
-  it('Submodule：子模块自身 is_submodule=true；父仓库只记一个特殊路径、不下钻', async () => {
+  // Windows 上整条链（submodule add + 多次 commit + 多次 capture）在机器
+  // 负载高时会超默认 5s——这里是操作数量导致的时长，不是平台语义差异，
+  // 与 journey T3 同理加显式超时而不是跳过。
+  it('Submodule：子模块自身 is_submodule=true；父仓库只记一个特殊路径、不下钻', { timeout: 60_000 }, async () => {
     const base = makeDir('bp-snap-sub-')
     const child = join(base, 'child')
     initRepo(child, { 'sub.txt': 'v1\n' })

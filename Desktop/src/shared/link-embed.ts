@@ -27,7 +27,7 @@ export const EMBED_FRAME_ORIGINS = [
 const EMBED_FRAME_HOSTS = ['youtube.com', 'player.bilibili.com'] as const
 
 /** YouTube 视频 ID 恒为 11 位 base64url，与 iOS `YouTubeAdapter.isVideoID` 一致。 */
-const YOUTUBE_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/
+export const YOUTUBE_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/
 /** B 站 BV 号：BV + 10 位 base58。 */
 const BILIBILI_BVID = /^BV[0-9A-Za-z]{10}$/
 /** B 站老 av 号：纯数字，最多 12 位。 */
@@ -69,7 +69,24 @@ export function embedURL(
  * 这个地址是否属于允许的播放器来源（含其子域）。
  * 主进程用它拦 iframe 内部导航：播放器自己跳自己的域名可以，跳去别处不行。
  */
-export function isEmbedFrameURL(raw: string): boolean {
+export function isEmbedFrameURL(raw: string, embedHostOrigin?: string | null): boolean {
+  // 回环包装页（YouTube 错误 153 的修复）：只有**完全等于**主进程 embed host
+  // 的 origin 时放行——端口是主进程随机分配的，渲染端伪造不出这个值。
+  if (embedHostOrigin) {
+    try {
+      const candidate = new URL(raw)
+      const expected = new URL(embedHostOrigin)
+      if (
+        candidate.protocol === expected.protocol &&
+        candidate.hostname === expected.hostname &&
+        candidate.port === expected.port
+      ) {
+        return true
+      }
+    } catch {
+      // 继续走常规播放器域判定
+    }
+  }
   let url: URL
   try {
     url = new URL(raw)
@@ -81,4 +98,10 @@ export function isEmbedFrameURL(raw: string): boolean {
   return EMBED_FRAME_HOSTS.some(
     (allowed) => host === allowed || host.endsWith(`.${allowed}`)
   )
+}
+
+/** 回环包装页路径（主进程 embed host 提供）：只由视频 ID 拼，与 embedURL 同一规矩。 */
+export function youtubeEmbedHostPath(contentId: string | null | undefined): string | null {
+  const id = (contentId ?? '').trim()
+  return YOUTUBE_VIDEO_ID.test(id) ? `/youtube/${id}` : null
 }
